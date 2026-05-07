@@ -1,0 +1,13 @@
+#!/bin/sh
+
+# Run lint-staged for JS/TS files
+pnpm exec lint-staged
+
+# Run cargo fmt check for any staged Rust files
+STAGED_RS=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' || true)
+if [ -n "$STAGED_RS" ]; then
+  echo "Running cargo fmt check..."
+  cargo fmt --all -- --check
+  echo "Running cargo clippy..."
+  cargo clippy --workspace --all-targets -- -D warnings
+fi

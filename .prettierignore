@@ -1,0 +1,6 @@
+target/
+node_modules/
+.next/
+out/
+dist/
+pnpm-lock.yaml

@@ -6,10 +6,26 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.2",
+    "prettier": "^3.8.3",
+    "tsc-files": "^1.1.4",
     "turbo": "^2.9.9"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx}": [
+      "tsc-files --noEmit"
+    ],
+    "**/*.{ts,tsx,js,mjs,cjs}": [
+      "prettier --write"
+    ],
+    "**/*.{json,md,yaml,yml}": [
+      "prettier --write"
+    ]
   },
   "engines": {
     "node": ">=20",
