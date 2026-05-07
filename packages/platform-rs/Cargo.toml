@@ -1,0 +1,30 @@
+[package]
+name = "platform-rs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+cfg-if = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 = { version = "2", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
+], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = { version = "0.2", optional = true }
+
+[features]
+default = []
+linux-x11 = ["x11"]
+windows-hooks = ["windows"]
+macos-tcc = ["objc"]

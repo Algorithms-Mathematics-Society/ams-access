@@ -1,0 +1,36 @@
+.claude
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Node
+node_modules/
+.pnpm-store/
+.turbo/
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+
+# Tauri
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/WixTools/
+
+# sccache
+.sccache/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

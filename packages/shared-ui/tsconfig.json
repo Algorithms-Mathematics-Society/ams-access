@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "declaration": true,
+    "outDir": "dist"
+  },
+  "include": ["components/**/*.ts", "components/**/*.tsx"],
+  "exclude": ["node_modules", "dist"]
+}
