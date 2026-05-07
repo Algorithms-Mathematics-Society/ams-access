@@ -20,12 +20,13 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             bundle: msi nsis
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-            bundle: dmg
-          - platform: macos-13
-            target: x86_64-apple-darwin
-            bundle: dmg
+          # macOS disabled — signing secrets not configured
+          # - platform: macos-latest
+          #   target: aarch64-apple-darwin
+          #   bundle: dmg
+          # - platform: macos-13
+          #   target: x86_64-apple-darwin
+          #   bundle: dmg
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.target }})
