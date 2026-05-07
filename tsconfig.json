@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "apps/web" },
+    { "path": "packages/api-client" },
+    { "path": "packages/shared-ui" }
+  ]
+}
