@@ -14,7 +14,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@ams/api-client": "workspace:*",
-    "@ams/shared-ui": "workspace:*"
+    "@ams/shared-ui": "workspace:*",
+    "@supabase/supabase-js": "^2.45.4",
+    "framer-motion": "^11.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

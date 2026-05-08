@@ -22,6 +22,7 @@ export default function LoginPage() {
 
     if (email === TEST_EMAIL && password === TEST_PASSWORD) {
       setLoading(true);
+      localStorage.setItem("ams_user_email", email);
       setTimeout(() => router.push("/home"), 800);
     } else {
       setError("Incorrect email or password. Try the test credentials below.");

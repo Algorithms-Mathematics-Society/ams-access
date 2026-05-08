@@ -16,9 +16,11 @@
         "title": "AMS Access",
         "width": 1280,
         "height": 800,
-        "resizable": false,
+        "resizable": true,
         "fullscreen": false,
-        "decorations": true
+        "decorations": true,
+        "alwaysOnTop": false,
+        "center": true
       }
     ],
     "security": {

@@ -1,7 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+type InvitedContest = {
+  id: string;
+  title: string;
+  description: string | null;
+  start_at: string;
+  end_at: string;
+  status: string;
+  org_name: string;
+  question_count: number;
+};
 
 const NAV_ITEMS = [
   {
@@ -106,9 +121,29 @@ export default function HomePage() {
   const router = useRouter();
   const [activeNav, setActiveNav] = useState("overview");
   const [signingOut, setSigningOut] = useState(false);
+  const [contests, setContests] = useState<InvitedContest[]>([]);
+  const [contestsLoading, setContestsLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState("tester@ams.local");
+
+  useEffect(() => {
+    const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
+    setUserEmail(email);
+
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      setContestsLoading(false);
+      return;
+    }
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    sb.rpc("get_invited_contests", { p_email: email }).then(({ data }) => {
+      setContests((data as InvitedContest[]) ?? []);
+      setContestsLoading(false);
+    });
+  }, []);
 
   function handleSignOut() {
     setSigningOut(true);
+    localStorage.removeItem("ams_user_email");
     setTimeout(() => router.push("/"), 600);
   }
 
@@ -309,7 +344,7 @@ export default function HomePage() {
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ fontSize: "12px", fontWeight: 500, color: "#e2e8f0", lineHeight: 1.2 }}>
-                testuser
+                {userEmail.split("@")[0]}
               </p>
               <p
                 style={{
@@ -321,7 +356,7 @@ export default function HomePage() {
                   whiteSpace: "nowrap",
                 }}
               >
-                testuser@ams.local
+                {userEmail}
               </p>
             </div>
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0 }}>
@@ -362,10 +397,10 @@ export default function HomePage() {
                 marginBottom: "5px",
               }}
             >
-              Welcome back, testuser! 👋
+              Welcome back! 👋
             </h1>
             <p style={{ fontSize: "13px", color: "#64748b", fontWeight: 300 }}>
-              You&apos;re signed in as <span style={{ color: "#a7b0c0" }}>testuser@ams.local</span>
+              You&apos;re signed in as <span style={{ color: "#a7b0c0" }}>{userEmail}</span>
             </p>
           </div>
 
@@ -431,185 +466,8 @@ export default function HomePage() {
             </div>
           </section>
 
-          {/* No contests panel */}
-          <div
-            style={{
-              background:
-                "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
-              border: "1px solid rgba(255,255,255,0.05)",
-              borderRadius: "16px",
-              padding: "60px 40px",
-              textAlign: "center",
-              position: "relative",
-              overflow: "hidden",
-              minHeight: "300px",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {/* Ambient particles */}
-            <div
-              style={{
-                position: "absolute",
-                top: "20px",
-                left: "60px",
-                width: "5px",
-                height: "5px",
-                borderRadius: "50%",
-                background: "rgba(168,85,247,0.3)",
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: "40px",
-                right: "100px",
-                width: "3px",
-                height: "3px",
-                borderRadius: "50%",
-                background: "rgba(168,85,247,0.2)",
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                bottom: "30px",
-                left: "120px",
-                width: "4px",
-                height: "4px",
-                borderRadius: "50%",
-                background: "rgba(168,85,247,0.25)",
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                bottom: "50px",
-                right: "80px",
-                width: "3px",
-                height: "3px",
-                borderRadius: "50%",
-                background: "rgba(168,85,247,0.2)",
-              }}
-            />
-
-            {/* Calendar icon */}
-            <div style={{ position: "relative", marginBottom: "28px" }}>
-              {/* Orbit ring */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "50%",
-                  left: "50%",
-                  transform: "translate(-50%, -50%)",
-                  width: "100px",
-                  height: "44px",
-                  border: "1px solid rgba(168,85,247,0.2)",
-                  borderRadius: "50%",
-                  pointerEvents: "none",
-                }}
-              />
-              <div
-                style={{
-                  width: "72px",
-                  height: "72px",
-                  borderRadius: "20px",
-                  background:
-                    "linear-gradient(135deg, rgba(126,34,206,0.3) 0%, rgba(168,85,247,0.2) 100%)",
-                  border: "1px solid rgba(168,85,247,0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 0 40px rgba(168,85,247,0.15)",
-                  position: "relative",
-                  zIndex: 1,
-                }}
-              >
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                  <rect
-                    x="4"
-                    y="7"
-                    width="24"
-                    height="21"
-                    rx="3"
-                    stroke="#a855f7"
-                    strokeWidth="1.8"
-                  />
-                  <path
-                    d="M10 7V4M22 7V4"
-                    stroke="#a855f7"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                  />
-                  <path d="M4 13h24" stroke="#a855f7" strokeWidth="1.8" />
-                  <rect x="10" y="18" width="5" height="5" rx="1" fill="#a855f7" opacity="0.5" />
-                </svg>
-              </div>
-            </div>
-
-            <h2
-              style={{
-                fontSize: "20px",
-                fontWeight: 600,
-                color: "#f5f7fa",
-                letterSpacing: "-0.01em",
-                marginBottom: "10px",
-              }}
-            >
-              No contests scheduled yet
-            </h2>
-            <p
-              style={{
-                fontSize: "13px",
-                color: "#64748b",
-                fontWeight: 300,
-                lineHeight: 1.7,
-                maxWidth: "380px",
-                marginBottom: "32px",
-              }}
-            >
-              Your organiser hasn&apos;t set up a contest yet.
-              <br />
-              Check back closer to your event — this page will update automatically.
-            </p>
-
-            {/* Waiting button */}
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "10px",
-                padding: "12px 28px",
-                borderRadius: "10px",
-                background: "rgba(245,158,11,0.1)",
-                border: "1px solid rgba(245,158,11,0.25)",
-                cursor: "default",
-              }}
-            >
-              <div
-                style={{
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "50%",
-                  background: "#f59e0b",
-                  boxShadow: "0 0 8px rgba(245,158,11,0.5)",
-                  animation: "pulse-dot 2s ease-in-out infinite",
-                }}
-              />
-              <span
-                style={{
-                  fontSize: "13px",
-                  fontWeight: 500,
-                  color: "#f59e0b",
-                  letterSpacing: "0.03em",
-                }}
-              >
-                Waiting for contest
-              </span>
-            </div>
-          </div>
+          {/* Contests panel */}
+          <ContestsPanel contests={contests} loading={contestsLoading} />
         </div>
 
         {/* Footer metadata */}
@@ -773,5 +631,308 @@ function SignOutButton({ onClick, loading }: { onClick: () => void; loading: boo
       </svg>
       Sign out
     </button>
+  );
+}
+
+function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; loading: boolean }) {
+  const router = useRouter();
+
+  function statusColor(s: string) {
+    if (s === "ACTIVE")
+      return { dot: "#22c55e", bg: "rgba(34,197,94,0.1)", border: "rgba(34,197,94,0.25)" };
+    if (s === "SCHEDULED")
+      return { dot: "#a855f7", bg: "rgba(168,85,247,0.1)", border: "rgba(168,85,247,0.25)" };
+    if (s === "ENDED")
+      return { dot: "#94a3b8", bg: "rgba(148,163,184,0.08)", border: "rgba(148,163,184,0.2)" };
+    return { dot: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)" };
+  }
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          borderRadius: "16px",
+          border: "1px solid rgba(255,255,255,0.06)",
+          background: "rgba(10,20,44,0.6)",
+          padding: "24px",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "12px",
+            color: "#64748b",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            marginBottom: "14px",
+          }}
+        >
+          Your Contests
+        </p>
+        {[1, 2].map((i) => (
+          <div
+            key={i}
+            style={{
+              height: "72px",
+              borderRadius: "12px",
+              background: "rgba(255,255,255,0.03)",
+              marginBottom: "8px",
+              animation: "pulse-dot 1.5s ease-in-out infinite",
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (contests.length === 0) {
+    return (
+      <div
+        style={{
+          background: "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
+          border: "1px solid rgba(255,255,255,0.05)",
+          borderRadius: "16px",
+          padding: "60px 40px",
+          textAlign: "center",
+          minHeight: "260px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            width: "64px",
+            height: "64px",
+            borderRadius: "18px",
+            background: "rgba(126,34,206,0.15)",
+            border: "1px solid rgba(168,85,247,0.25)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: "24px",
+            boxShadow: "0 0 32px rgba(168,85,247,0.1)",
+          }}
+        >
+          <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+            <rect x="4" y="7" width="24" height="21" rx="3" stroke="#a855f7" strokeWidth="1.8" />
+            <path d="M10 7V4M22 7V4" stroke="#a855f7" strokeWidth="1.8" strokeLinecap="round" />
+            <path d="M4 13h24" stroke="#a855f7" strokeWidth="1.8" />
+            <rect x="10" y="18" width="5" height="5" rx="1" fill="#a855f7" opacity="0.5" />
+          </svg>
+        </div>
+        <h2 style={{ fontSize: "18px", fontWeight: 600, color: "#f5f7fa", marginBottom: "8px" }}>
+          No contests scheduled yet
+        </h2>
+        <p
+          style={{
+            fontSize: "13px",
+            color: "#64748b",
+            fontWeight: 300,
+            lineHeight: 1.7,
+            maxWidth: "340px",
+            marginBottom: "28px",
+          }}
+        >
+          Your organiser hasn&apos;t invited you to a contest yet. Check back closer to your event.
+        </p>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "10px 24px",
+            borderRadius: "10px",
+            background: "rgba(245,158,11,0.1)",
+            border: "1px solid rgba(245,158,11,0.25)",
+          }}
+        >
+          <div
+            style={{
+              width: "7px",
+              height: "7px",
+              borderRadius: "50%",
+              background: "#f59e0b",
+              boxShadow: "0 0 8px rgba(245,158,11,0.5)",
+              animation: "pulse-dot 2s ease-in-out infinite",
+            }}
+          />
+          <span style={{ fontSize: "12px", fontWeight: 500, color: "#f59e0b" }}>
+            Waiting for contest
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p
+        style={{
+          fontSize: "12px",
+          color: "#64748b",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          marginBottom: "14px",
+          fontWeight: 500,
+        }}
+      >
+        Your Contests ({contests.length})
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        {contests.map((c) => {
+          const col = statusColor(c.status);
+          const canEnter = c.status === "ACTIVE";
+          return (
+            <div
+              key={c.id}
+              style={{
+                background:
+                  "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
+                border: `1px solid ${canEnter ? "rgba(168,85,247,0.18)" : "rgba(255,255,255,0.07)"}`,
+                borderRadius: "14px",
+                padding: "18px 20px",
+                transition: "border-color 300ms",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: "16px",
+                }}
+              >
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "14px",
+                        fontWeight: 600,
+                        color: "#f5f7fa",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {c.title}
+                    </span>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: "11px",
+                        fontWeight: 500,
+                        padding: "2px 8px",
+                        borderRadius: "6px",
+                        background: col.bg,
+                        border: `1px solid ${col.border}`,
+                        color: col.dot,
+                      }}
+                    >
+                      {c.status}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "6px" }}>
+                    {c.org_name}
+                  </p>
+                  {c.description && (
+                    <p
+                      style={{
+                        fontSize: "12px",
+                        color: "#94a3b8",
+                        marginBottom: "6px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {c.description}
+                    </p>
+                  )}
+                  <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: "#475569" }}>
+                    <span>
+                      📅 {new Date(c.start_at).toLocaleDateString()} —{" "}
+                      {new Date(c.end_at).toLocaleDateString()}
+                    </span>
+                    <span>
+                      {c.question_count} question{c.question_count !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    gap: "10px",
+                    flexShrink: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: col.dot,
+                      boxShadow: `0 0 8px ${col.dot}88`,
+                    }}
+                  />
+                  {canEnter && (
+                    <button
+                      onClick={() => router.push(`/session/onboarding?contestId=${c.id}`)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        padding: "8px 16px",
+                        borderRadius: "9px",
+                        border: "1px solid rgba(168,85,247,0.45)",
+                        background:
+                          "linear-gradient(135deg, rgba(126,34,206,0.7) 0%, rgba(168,85,247,0.55) 100%)",
+                        color: "#e9d5ff",
+                        fontSize: "12px",
+                        fontWeight: 500,
+                        fontFamily: "inherit",
+                        cursor: "pointer",
+                        letterSpacing: "0.02em",
+                        boxShadow: "0 0 16px rgba(168,85,247,0.2)",
+                        transition: "all 220ms cubic-bezier(0.22,1,0.36,1)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path
+                          d="M6 1L2 3.5v3c0 2.5 2 4.5 4 5 2-.5 4-2.5 4-5v-3L6 1z"
+                          stroke="currentColor"
+                          strokeWidth="1.2"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Enter Secure Session
+                    </button>
+                  )}
+                  {c.status === "SCHEDULED" && (
+                    <span style={{ fontSize: "11px", color: "#a855f7", fontWeight: 400 }}>
+                      Starts{" "}
+                      {new Date(c.start_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

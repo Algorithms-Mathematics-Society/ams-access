@@ -14,12 +14,12 @@ name = "ams-access"
 path = "src/main.rs"
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-build = { version = "2", features = [] }
+tauri = { version = "2", features = ["devtools"] }
 platform-rs = { path = "../../../packages/platform-rs" }
 core-rs = { path = "../../../packages/core-rs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["net", "rt"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

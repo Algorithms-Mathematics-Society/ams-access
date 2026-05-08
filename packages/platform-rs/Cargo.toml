@@ -9,6 +9,7 @@ license.workspace = true
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 cfg-if = "1"
+core-rs = { path = "../core-rs" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11 = { version = "2", optional = true }
