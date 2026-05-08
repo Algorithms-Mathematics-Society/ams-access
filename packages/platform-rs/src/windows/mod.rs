@@ -1,4 +1,8 @@
 use core_rs::exam::{KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
+static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 const RESTRICTED: &[&str] = &[
     "obs64.exe",
@@ -31,10 +35,8 @@ const RESTRICTED: &[&str] = &[
     "rdpclip.exe",
 ];
 
-/// Scan running processes via `tasklist /FO CSV`.
 pub fn scan_processes() -> ProcessScanResult {
     let mut found = Vec::new();
-
     if let Ok(out) = std::process::Command::new("tasklist")
         .args(["/FO", "CSV", "/NH"])
         .output()
@@ -46,12 +48,10 @@ pub fn scan_processes() -> ProcessScanResult {
             }
         }
     }
-
     let clean = found.is_empty();
     ProcessScanResult { found, clean }
 }
 
-/// Detect virtualisation via systeminfo and registry.
 pub fn detect_virtualization() -> VirtDetectionResult {
     if let Ok(out) = std::process::Command::new("systeminfo").output() {
         let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
@@ -75,8 +75,6 @@ pub fn detect_virtualization() -> VirtDetectionResult {
             }
         }
     }
-
-    // Check Hyper-V guest key
     let hv_check = std::process::Command::new("reg")
         .args([
             "query",
@@ -90,7 +88,6 @@ pub fn detect_virtualization() -> VirtDetectionResult {
             confidence: "high",
         };
     }
-
     VirtDetectionResult {
         detected: false,
         platform: None,
@@ -99,18 +96,97 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 }
 
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
-    #[cfg(feature = "windows-hooks")]
-    {
-        // SetWindowsHookExW(WH_KEYBOARD_LL, ...) would go here
+    if HOOK_ACTIVE.load(Ordering::SeqCst) {
+        return KeyboardInterceptResult {
+            active: true,
+            method: "ll-keyboard-hook",
+            platform: "windows",
+        };
     }
+    HOOK_ACTIVE.store(true, Ordering::SeqCst);
+
+    std::thread::spawn(|| {
+        use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
+            KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, MSG, WH_KEYBOARD_LL,
+        };
+
+        let tid = unsafe { GetCurrentThreadId() };
+        HOOK_THREAD_ID.store(tid, Ordering::SeqCst);
+
+        unsafe {
+            let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbproc), None, 0) {
+                Ok(h) => h,
+                Err(_) => {
+                    HOOK_ACTIVE.store(false, Ordering::SeqCst);
+                    HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                    return;
+                }
+            };
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, HWND(0), 0, 0).as_bool() {}
+
+            UnhookWindowsHookEx(hook).ok();
+        }
+
+        HOOK_ACTIVE.store(false, Ordering::SeqCst);
+        HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+    });
+
     KeyboardInterceptResult {
         active: true,
-        method: "tauri-webview-intercept",
+        method: "ll-keyboard-hook",
         platform: "windows",
     }
 }
 
-pub fn disable_keyboard_intercept() {}
+pub fn disable_keyboard_intercept() {
+    let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
+    if tid != 0 {
+        unsafe {
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+            PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).ok();
+        }
+    }
+}
+
+unsafe extern "system" fn kbproc(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN,
+    };
+
+    if code >= 0 {
+        let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        let vk = kb.vkCode;
+        let alt_down = (kb.flags & LLKHF_ALTDOWN.0) != 0;
+        let ctrl_down =
+            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11) as u16 & 0x8000)
+                != 0;
+
+        // Block: Win keys, PrintScreen, Alt+Tab, Alt+F4, Ctrl+Esc, Escape
+        let blocked = vk == 0x5B  // LWin
+            || vk == 0x5C          // RWin
+            || vk == 0x2C          // PrintScreen
+            || (alt_down && vk == 0x09)  // Alt+Tab
+            || (alt_down && vk == 0x73)  // Alt+F4
+            || (ctrl_down && vk == 0x1B) // Ctrl+Esc
+            || vk == 0x1B; // Escape
+
+        if blocked {
+            return LRESULT(1);
+        }
+    }
+    CallNextHookEx(HHOOK(0), code, wparam, lparam)
+}
 
 pub fn detect_remote_desktop() -> bool {
     std::env::var("SESSIONNAME")

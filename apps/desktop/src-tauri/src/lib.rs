@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use core_rs::exam::{
     KeyboardInterceptResult, NetworkCheckResult, ProcessScanResult, VirtDetectionResult,
 };
@@ -152,6 +153,29 @@ fn get_security_environment() -> SecurityEnvironment {
     }
 }
 
+/// Save a base64-encoded face image to the faces directory.
+#[tauri::command]
+async fn save_face_image(image_data: String, index: u8) -> Result<String, String> {
+    let b64 = image_data.split(',').nth(1).unwrap_or(image_data.as_str());
+    let bytes = base64::prelude::BASE64_STANDARD
+        .decode(b64)
+        .map_err(|e| e.to_string())?;
+
+    let dir = if cfg!(target_os = "windows") {
+        format!(
+            "{}\\ams_faces",
+            std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into())
+        )
+    } else {
+        "/tmp/ams_faces".to_string()
+    };
+
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = format!("{}/face_{}.png", dir, index);
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -164,7 +188,26 @@ pub fn run() {
             check_network_stability,
             get_platform,
             get_security_environment,
+            save_face_image,
         ])
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    win.with_webview(|wv| {
+                        use webkit2gtk::{PermissionRequestExt, WebViewExt};
+                        wv.inner().connect_permission_request(|_, req| {
+                            // Auto-grant camera + microphone for proctoring
+                            req.allow();
+                            true
+                        });
+                    })
+                    .ok();
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error running AMS Access");
 }

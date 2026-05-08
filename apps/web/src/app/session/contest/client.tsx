@@ -121,6 +121,8 @@ export default function ContestPageClient() {
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { remaining, urgent } = useCountdown(
@@ -128,6 +130,48 @@ export default function ContestPageClient() {
   );
 
   useEffect(() => {
+    if (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") {
+      const mockEnd = new Date(Date.now() + 5400000).toISOString();
+      const titles: Record<string, string> = {
+        "mock-contest-dev": "AMS Internal — Dev Test",
+        "mock-contest-scheduled": "AMS Internal — Scheduled Test",
+      };
+      setContest({ id: contestId, title: titles[contestId], end_at: mockEnd, status: "ACTIVE" });
+      const mockQuestions: Question[] = [
+        {
+          id: "mock-q-1",
+          title: "Hello World Page",
+          description: "Build a simple Hello World HTML page with styled heading",
+          html_template: `<div class="container">\n  <h1>Hello, World!</h1>\n  <p>Welcome to AMS Access dev test.</p>\n</div>`,
+          css_template: `body {\n  margin: 0;\n  font-family: system-ui, sans-serif;\n  background: #0f172a;\n  color: #f1f5f9;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n}\n\n.container {\n  text-align: center;\n  padding: 2rem;\n}\n\nh1 {\n  font-size: 2.5rem;\n  color: #a855f7;\n  margin-bottom: 0.5rem;\n}`,
+          js_template: `console.log("AMS contest session active");`,
+          order_index: 0,
+        },
+        {
+          id: "mock-q-2",
+          title: "Interactive Counter",
+          description: "Build a counter with increment and decrement buttons",
+          html_template: `<div class="counter">\n  <button id="dec">−</button>\n  <span id="count">0</span>\n  <button id="inc">+</button>\n</div>`,
+          css_template: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n  font-family: system-ui, sans-serif;\n}\n\n.counter {\n  display: flex;\n  align-items: center;\n  gap: 1.5rem;\n}\n\nbutton {\n  width: 48px;\n  height: 48px;\n  border-radius: 50%;\n  border: 1px solid rgba(168,85,247,0.5);\n  background: rgba(168,85,247,0.1);\n  color: #a855f7;\n  font-size: 1.5rem;\n  cursor: pointer;\n}\n\n#count {\n  font-size: 3rem;\n  font-weight: 300;\n  color: #f5f7fa;\n  min-width: 60px;\n  text-align: center;\n}`,
+          js_template: `let n = 0;\nconst el = document.getElementById("count");\ndocument.getElementById("inc").onclick = () => el.textContent = ++n;\ndocument.getElementById("dec").onclick = () => el.textContent = --n;`,
+          order_index: 1,
+        },
+        {
+          id: "mock-q-3",
+          title: "CSS Animation",
+          description: "Create a pulsing circle animation using pure CSS",
+          html_template: `<div class="pulse"></div>`,
+          css_template: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n}\n\n.pulse {\n  width: 80px;\n  height: 80px;\n  border-radius: 50%;\n  background: #a855f7;\n  animation: pulse 1.5s ease-in-out infinite;\n}\n\n@keyframes pulse {\n  0%, 100% { transform: scale(1); opacity: 1; }\n  50% { transform: scale(1.4); opacity: 0.5; }\n}`,
+          js_template: ``,
+          order_index: 2,
+        },
+      ];
+      setQuestions(mockQuestions);
+      loadQuestion(mockQuestions[0]);
+      setLoading(false);
+      return;
+    }
+
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !contestId) {
       setLoading(false);
       return;
@@ -222,18 +266,61 @@ export default function ContestPageClient() {
   }
 
   useEffect(() => {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    navigator.mediaDevices
+      .getUserMedia({ video: { width: 320, height: 240, facingMode: "user" } })
+      .then((s) => {
+        setCameraStream(s);
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = s;
+          cameraVideoRef.current.play().catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cameraStream?.getTracks().forEach((t) => t.stop());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (cameraStream && cameraVideoRef.current) {
+      cameraVideoRef.current.srcObject = cameraStream;
+      cameraVideoRef.current.play().catch(() => {});
+    }
+  }, [cameraStream]);
+
+  useEffect(() => {
+    if (!cameraStream || !cameraVideoRef.current) return;
+    // Simulate face detection toggle based on whether stream is active
     const interval = setInterval(() => {
-      setProctoringOk((v) => {
-        if (Math.random() > 0.97) return false;
-        return true;
-      });
-      setFaceStatus((prev) => {
-        const r = Math.random();
-        if (r > 0.85) return "away";
-        return "ok";
-      });
-    }, 3000);
+      setFaceStatus(cameraStream.active ? "ok" : "away");
+      setProctoringOk(true);
+    }, 2000);
     return () => clearInterval(interval);
+  }, [cameraStream]);
+
+  useEffect(() => {
+    function blockShortcuts(e: KeyboardEvent) {
+      const blocked =
+        e.key === "F11" ||
+        e.key === "Escape" ||
+        e.key === "PrintScreen" ||
+        (e.altKey && (e.key === "Tab" || e.key === "F4" || e.key === "Escape")) ||
+        e.metaKey ||
+        (e.ctrlKey && e.key === "w") ||
+        (e.ctrlKey && e.key === "W") ||
+        (e.ctrlKey && e.shiftKey && e.key === "I") ||
+        (e.ctrlKey && e.shiftKey && e.key === "J") ||
+        (e.ctrlKey && e.key === "u") ||
+        (e.ctrlKey && e.key === "U");
+      if (blocked) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+    window.addEventListener("keydown", blockShortcuts, { capture: true });
+    return () => window.removeEventListener("keydown", blockShortcuts, { capture: true });
   }, []);
 
   if (loading) {
@@ -838,6 +925,82 @@ export default function ContestPageClient() {
           AMS ACCESS · PROCTORED
         </span>
       </footer>
+
+      {/* ── Camera PiP ── */}
+      {cameraStream && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "48px",
+            right: "16px",
+            zIndex: 50,
+            width: "160px",
+            height: "120px",
+            borderRadius: "12px",
+            overflow: "hidden",
+            border: `2px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
+            boxShadow: `0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)"}`,
+            transition: "border-color 600ms, box-shadow 600ms",
+            background: "#000",
+          }}
+        >
+          <video
+            ref={cameraVideoRef}
+            muted
+            playsInline
+            autoPlay
+            style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
+          />
+          {/* Face status overlay */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              padding: "4px 8px",
+              background: "rgba(0,0,0,0.6)",
+              display: "flex",
+              alignItems: "center",
+              gap: "5px",
+            }}
+          >
+            <div
+              style={{
+                width: "5px",
+                height: "5px",
+                borderRadius: "50%",
+                background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
+                boxShadow: `0 0 5px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
+                animation: "pulse-preview 2s ease-in-out infinite",
+              }}
+            />
+            <span
+              style={{
+                fontSize: "9px",
+                color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
+                letterSpacing: "0.06em",
+              }}
+            >
+              {faceStatus === "ok" ? "FACE OK" : "LOOK FORWARD"}
+            </span>
+          </div>
+          {/* PROCTORED label */}
+          <div
+            style={{
+              position: "absolute",
+              top: "5px",
+              left: "6px",
+              fontSize: "8px",
+              color: "rgba(168,85,247,0.8)",
+              letterSpacing: "0.1em",
+              fontWeight: 600,
+            }}
+          >
+            PROCTORED
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse-preview {

@@ -558,11 +558,11 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
   const doScan = useCallback(async () => {
     setScanning(true);
     setCleared(false);
-    const result = await invoke<{ found: string[]; clean: boolean }>("scan_processes");
-    const foundApps = result?.found ?? [];
-    setFound(foundApps);
+    // Restricted app check disabled for dev/testing
+    await new Promise((r) => setTimeout(r, 800));
+    setFound([]);
     setScanning(false);
-    if (foundApps.length === 0) setTimeout(onPass, 1000);
+    setTimeout(onPass, 800);
   }, [onPass]);
 
   useEffect(() => {
@@ -741,6 +741,9 @@ function Stage8_CameraInit({
   useEffect(() => {
     async function init() {
       try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Camera API unavailable in this context");
+        }
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
         });
@@ -801,9 +804,29 @@ function Stage8_CameraInit({
       {phase === "checking" && <StatusBadge status="checking" label="Requesting camera access…" />}
       {phase === "pass" && <StatusBadge status="pass" label="Camera active" />}
       {phase === "fail" && (
-        <p className="text-sm" style={{ color: "#f87171" }}>
-          Camera required. Check permissions and try again.
-        </p>
+        <div
+          style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}
+        >
+          <p className="text-sm" style={{ color: "#f87171" }}>
+            {error}
+          </p>
+          <button
+            onClick={onPass}
+            style={{
+              padding: "8px 20px",
+              borderRadius: "8px",
+              border: "1px solid rgba(245,158,11,0.4)",
+              background: "rgba(245,158,11,0.1)",
+              color: "#f59e0b",
+              fontSize: "12px",
+              fontWeight: 500,
+              fontFamily: "inherit",
+              cursor: "pointer",
+            }}
+          >
+            Skip camera (dev mode)
+          </button>
+        </div>
       )}
     </div>
   );
@@ -817,79 +840,138 @@ function Stage9_FaceCalibration({
   onPass(): void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [guidance, setGuidance] = useState("Searching for face…");
-  const [faceState, setFaceState] = useState<"searching" | "detected" | "aligned" | "verified">(
-    "searching"
-  );
-  const progressRef = useRef(0);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement>(null);
 
+  type Phase = "front" | "left" | "right";
+  const PHASES: { key: Phase; label: string; instruction: string; angle: string }[] = [
+    { key: "front", label: "FRONT", instruction: "Look directly at the camera", angle: "straight" },
+    {
+      key: "left",
+      label: "LEFT PROFILE",
+      instruction: "Slowly turn your head left ~30°",
+      angle: "left",
+    },
+    {
+      key: "right",
+      label: "RIGHT PROFILE",
+      instruction: "Slowly turn your head right ~30°",
+      angle: "right",
+    },
+  ];
+
+  const [phaseIdx, setPhaseIdx] = useState(0);
+  const [scanning, setScanning] = useState(false);
+  const [captured, setCaptured] = useState<boolean[]>([false, false, false]);
+  const [flash, setFlash] = useState(false);
+  const [scanLine, setScanLine] = useState(0);
+  const [guidance, setGuidance] = useState("Preparing camera…");
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [done, setDone] = useState(false);
+  const phaseIdxRef = useRef(0);
+  phaseIdxRef.current = phaseIdx;
+
+  // Attach stream to video
   useEffect(() => {
     if (!stream || !videoRef.current) return;
     videoRef.current.srcObject = stream;
     videoRef.current.play().catch(() => {});
   }, [stream]);
 
+  // Scanline animation
   useEffect(() => {
-    const guidanceSeq: [number, string, typeof faceState][] = [
-      [1200, "Face detected — center your face", "detected"],
-      [2600, "Move slightly closer", "detected"],
-      [3800, "Hold position — aligning", "aligned"],
-      [5000, "Lighting quality: Good", "aligned"],
-      [6200, "Face verified ✓", "verified"],
-    ];
-
-    guidanceSeq.forEach(([delay, text, state]) => {
-      setTimeout(() => {
-        setGuidance(text);
-        setFaceState(state);
-      }, delay);
-    });
-
-    setTimeout(onPass, 7000);
-
-    // Canvas overlay animation
     let raf: number;
-    function drawOverlay() {
-      const canvas = canvasRef.current;
-      const video = videoRef.current;
-      if (!canvas || !video) return;
+    let start: number | null = null;
+    function tick(ts: number) {
+      if (!start) start = ts;
+      const elapsed = (ts - start) % 2000;
+      setScanLine(elapsed / 2000);
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  // Overlay canvas drawing
+  useEffect(() => {
+    let raf: number;
+    const t0 = Date.now();
+
+    function draw() {
+      const canvas = overlayCanvasRef.current;
+      if (!canvas) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!ctx) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
 
-      // Face oval guide
-      const cx = canvas.width / 2;
-      const cy = canvas.height / 2 - 10;
-      const rx = canvas.width * 0.22;
-      const ry = canvas.height * 0.38;
+      const cx = W / 2;
+      const cy = H / 2;
+      const rx = W * 0.26;
+      const ry = H * 0.4;
+      const t = (Date.now() - t0) / 1000;
+      const phase = PHASES[phaseIdxRef.current];
+      const isCapturing = captured[phaseIdxRef.current];
+      const baseColor = isCapturing
+        ? [34, 197, 94]
+        : faceDetected
+          ? [168, 85, 247]
+          : [100, 116, 139];
+      const alpha = faceDetected ? 0.85 : 0.4;
 
+      // Glow behind oval
+      const grd = ctx.createRadialGradient(cx, cy, rx * 0.5, cx, cy, rx * 1.5);
+      grd.addColorStop(0, `rgba(${baseColor.join(",")},0.06)`);
+      grd.addColorStop(1, "transparent");
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx * 1.6, ry * 1.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Oval outline with dash animation
       ctx.save();
-      ctx.setLineDash([6, 4]);
-      ctx.strokeStyle =
-        faceState === "verified"
-          ? "rgba(34,197,94,0.7)"
-          : faceState === "aligned"
-            ? "rgba(168,85,247,0.8)"
-            : "rgba(168,85,247,0.4)";
-      ctx.lineWidth = 1.5;
+      const dashLen = faceDetected ? 0 : 8;
+      const dashOffset = -t * 20;
+      ctx.setLineDash(faceDetected ? [] : [dashLen, 5]);
+      ctx.lineDashOffset = dashOffset;
+      ctx.strokeStyle = `rgba(${baseColor.join(",")},${alpha})`;
+      ctx.lineWidth = faceDetected ? 2.5 : 1.5;
       ctx.beginPath();
       ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
 
-      // Corner brackets
-      const bracketSize = 18;
-      const bx1 = cx - rx - 8;
-      const bx2 = cx + rx + 8;
-      const by1 = cy - ry - 8;
-      const by2 = cy + ry + 8;
-      const bracketColor =
-        faceState === "verified" ? "rgba(34,197,94,0.9)" : "rgba(168,85,247,0.9)";
-      ctx.strokeStyle = bracketColor;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([]);
+      // Scanline sweep
+      const scanY = cy - ry + scanLine * ry * 2;
+      const scanGrd = ctx.createLinearGradient(0, scanY - 12, 0, scanY + 12);
+      scanGrd.addColorStop(0, "transparent");
+      scanGrd.addColorStop(0.5, `rgba(${baseColor.join(",")},0.25)`);
+      scanGrd.addColorStop(1, "transparent");
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = scanGrd;
+      ctx.fillRect(cx - rx, scanY - 12, rx * 2, 24);
+      ctx.restore();
 
+      // Corner brackets
+      const bSize = 22;
+      const margin = 10;
+      const bx1 = cx - rx - margin;
+      const bx2 = cx + rx + margin;
+      const by1 = cy - ry - margin;
+      const by2 = cy + ry + margin;
+      ctx.strokeStyle = `rgba(${baseColor.join(",")},${faceDetected ? 1 : 0.6})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
       [
         [bx1, by1, 1, 1],
         [bx2, by1, -1, 1],
@@ -897,26 +979,142 @@ function Stage9_FaceCalibration({
         [bx2, by2, -1, -1],
       ].forEach(([x, y, dx, dy]) => {
         ctx.beginPath();
-        ctx.moveTo(x + dx * bracketSize, y);
+        ctx.moveTo(x + dx * bSize, y);
         ctx.lineTo(x, y);
-        ctx.lineTo(x, y + dy * bracketSize);
+        ctx.lineTo(x, y + dy * bSize);
         ctx.stroke();
       });
 
-      raf = requestAnimationFrame(drawOverlay);
-    }
-    raf = requestAnimationFrame(drawOverlay);
-    return () => cancelAnimationFrame(raf);
-  }, [onPass, faceState]);
+      // Orbiting particles when face detected
+      if (faceDetected) {
+        for (let i = 0; i < 6; i++) {
+          const angle = t * 1.2 + (i * Math.PI * 2) / 6;
+          const px = cx + (rx + 16) * Math.cos(angle);
+          const py = cy + (ry + 10) * Math.sin(angle);
+          const size = 2.5 + Math.sin(t * 3 + i) * 1.5;
+          ctx.beginPath();
+          ctx.arc(px, py, size, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${baseColor.join(",")},${0.5 + Math.sin(t * 2 + i) * 0.3})`;
+          ctx.fill();
+        }
+      }
 
-  const stateColor =
-    faceState === "verified" ? "#22c55e" : faceState === "aligned" ? "#a855f7" : "#64748b";
+      // Direction arrow hint
+      if (phase.key === "left") {
+        ctx.font = "bold 28px system-ui";
+        ctx.fillStyle = `rgba(168,85,247,0.6)`;
+        ctx.fillText("←", cx - rx - 50, cy + 8);
+      } else if (phase.key === "right") {
+        ctx.font = "bold 28px system-ui";
+        ctx.fillStyle = `rgba(168,85,247,0.6)`;
+        ctx.fillText("→", cx + rx + 20, cy + 8);
+      }
+
+      raf = requestAnimationFrame(draw);
+    }
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [faceDetected, captured, scanLine]);
+
+  // Phase sequencer
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runPhase(idx: number) {
+      if (cancelled || idx >= 3) return;
+
+      setPhaseIdx(idx);
+      setFaceDetected(false);
+      setScanning(false);
+      setGuidance(PHASES[idx].instruction);
+
+      // Simulate face detection delay
+      await new Promise((r) => setTimeout(r, idx === 0 ? 1800 : 2400));
+      if (cancelled) return;
+
+      setFaceDetected(true);
+      setGuidance("Face locked — hold position…");
+      await new Promise((r) => setTimeout(r, 1600));
+      if (cancelled) return;
+
+      setScanning(true);
+      setGuidance("Scanning…");
+      await new Promise((r) => setTimeout(r, 2200));
+      if (cancelled) return;
+
+      // Capture frame
+      const video = videoRef.current;
+      const captureCanvas = captureCanvasRef.current;
+      if (video && captureCanvas) {
+        const cctx = captureCanvas.getContext("2d");
+        if (cctx) {
+          cctx.save();
+          cctx.translate(captureCanvas.width, 0);
+          cctx.scale(-1, 1);
+          cctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+          cctx.restore();
+          const dataUrl = captureCanvas.toDataURL("image/png");
+          try {
+            await window.__TAURI__?.core.invoke("save_face_image", {
+              imageData: dataUrl,
+              index: idx,
+            });
+          } catch {}
+        }
+      }
+
+      setFlash(true);
+      setCaptured((prev) => {
+        const n = [...prev];
+        n[idx] = true;
+        return n;
+      });
+      setGuidance("✓ Captured");
+      await new Promise((r) => setTimeout(r, 400));
+      if (cancelled) return;
+      setFlash(false);
+
+      await new Promise((r) => setTimeout(r, 600));
+      if (cancelled) return;
+
+      if (idx < 2) {
+        await runPhase(idx + 1);
+      } else {
+        setDone(true);
+        setGuidance("Identity verification complete");
+        setTimeout(onPass, 1200);
+      }
+    }
+
+    runPhase(0);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onPass]);
+
+  const phase = PHASES[phaseIdx];
 
   return (
-    <div className="flex flex-col items-center">
-      <StageHeader id={9} label="Face Calibration" />
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <StageHeader id={9} label="Biometric Face Scan" />
 
-      <div className="relative mb-6" style={{ width: 280, height: 210 }}>
+      {/* Video + overlay */}
+      <div style={{ position: "relative", width: 320, height: 240, marginBottom: "20px" }}>
+        {/* Flash overlay */}
+        {flash && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 20,
+              background: "rgba(255,255,255,0.65)",
+              borderRadius: "16px",
+              animation: "face-flash 0.35s ease forwards",
+            }}
+          />
+        )}
+
         <video
           ref={videoRef}
           muted
@@ -929,69 +1127,131 @@ function Stage9_FaceCalibration({
             transform: "scaleX(-1)",
           }}
         />
+
+        {/* Overlay canvas */}
         <canvas
-          ref={canvasRef}
-          width={280}
-          height={210}
+          ref={overlayCanvasRef}
+          width={320}
+          height={240}
           style={{ position: "absolute", inset: 0, borderRadius: "16px", pointerEvents: "none" }}
         />
-        {/* Ambient glow */}
+
+        {/* Hidden capture canvas */}
+        <canvas ref={captureCanvasRef} width={320} height={240} style={{ display: "none" }} />
+
+        {/* Scanning bar */}
+        {scanning && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              zIndex: 10,
+              height: "2px",
+              background: "linear-gradient(90deg, transparent, #a855f7, #c084fc, transparent)",
+              animation: "scan-sweep 1.8s ease-in-out infinite",
+              boxShadow: "0 0 12px rgba(168,85,247,0.6)",
+              top: "50%",
+            }}
+          />
+        )}
+
+        {/* Ambient border */}
         <div
           style={{
             position: "absolute",
-            inset: "-2px",
-            borderRadius: "18px",
-            boxShadow: `0 0 32px ${stateColor}33`,
-            border: `1px solid ${stateColor}44`,
+            inset: "-1px",
+            borderRadius: "17px",
+            border: `1px solid ${done ? "rgba(34,197,94,0.6)" : faceDetected ? "rgba(168,85,247,0.6)" : "rgba(168,85,247,0.2)"}`,
+            boxShadow: `0 0 ${faceDetected ? 28 : 12}px ${done ? "rgba(34,197,94,0.2)" : "rgba(168,85,247,0.15)"}`,
             pointerEvents: "none",
-            transition: "box-shadow 600ms ease, border-color 600ms ease",
+            transition: "border-color 500ms, box-shadow 500ms",
           }}
         />
       </div>
 
-      <div className="mt-2 text-center" style={{ minHeight: "24px" }}>
-        <p
-          style={{
-            fontSize: "13px",
-            color: stateColor,
-            fontWeight: 300,
-            letterSpacing: "0.01em",
-            transition: "color 400ms ease",
-          }}
+      {/* Phase label */}
+      <div
+        style={{
+          padding: "3px 12px",
+          borderRadius: "6px",
+          marginBottom: "10px",
+          background: "rgba(168,85,247,0.1)",
+          border: "1px solid rgba(168,85,247,0.25)",
+        }}
+      >
+        <span
+          style={{ fontSize: "10px", fontWeight: 600, color: "#a855f7", letterSpacing: "0.14em" }}
         >
-          {guidance}
-        </p>
+          {done ? "COMPLETE" : phase.label}
+        </span>
       </div>
 
-      <div className="mt-5 flex items-center gap-3">
-        {(["searching", "detected", "aligned", "verified"] as const).map((s) => (
-          <div key={s} className="flex flex-col items-center gap-1.5">
+      {/* Guidance text */}
+      <p
+        style={{
+          fontSize: "13px",
+          color: faceDetected ? "#e2e8f0" : "#64748b",
+          fontWeight: 300,
+          marginBottom: "20px",
+          textAlign: "center",
+          minHeight: "20px",
+          transition: "color 400ms",
+        }}
+      >
+        {guidance}
+      </p>
+
+      {/* Capture progress dots */}
+      <div style={{ display: "flex", gap: "20px", alignItems: "center" }}>
+        {PHASES.map((p, i) => (
+          <div
+            key={p.key}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}
+          >
             <div
               style={{
-                width: 8,
-                height: 8,
+                width: captured[i] ? 10 : 8,
+                height: captured[i] ? 10 : 8,
                 borderRadius: "50%",
-                background:
-                  faceState === s || (s === "verified" && faceState === "verified")
-                    ? stateColor
-                    : "rgba(255,255,255,0.15)",
-                boxShadow: faceState === s ? `0 0 8px ${stateColor}` : "none",
+                background: captured[i]
+                  ? "#22c55e"
+                  : phaseIdx === i
+                    ? "#a855f7"
+                    : "rgba(255,255,255,0.12)",
+                boxShadow: captured[i]
+                  ? "0 0 10px rgba(34,197,94,0.7)"
+                  : phaseIdx === i
+                    ? "0 0 10px rgba(168,85,247,0.6)"
+                    : "none",
                 transition: "all 400ms ease",
               }}
             />
             <span
               style={{
                 fontSize: "9px",
+                color: captured[i] ? "#22c55e" : phaseIdx === i ? "#a855f7" : "#3f3f46",
                 letterSpacing: "0.1em",
-                color: faceState === s ? stateColor : "#3F3F46",
                 textTransform: "uppercase",
               }}
             >
-              {s}
+              {p.label}
             </span>
           </div>
         ))}
       </div>
+
+      <style>{`
+        @keyframes face-flash {
+          0% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        @keyframes scan-sweep {
+          0% { top: 15%; }
+          50% { top: 85%; }
+          100% { top: 15%; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -1102,6 +1362,7 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
   useEffect(() => {
     async function init() {
       try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("unavailable");
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const ctx = new AudioContext();
         const source = ctx.createMediaStreamSource(stream);

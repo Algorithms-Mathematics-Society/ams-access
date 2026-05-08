@@ -20,7 +20,8 @@
         "fullscreen": false,
         "decorations": true,
         "alwaysOnTop": false,
-        "center": true
+        "center": true,
+        "userAgent": "AMS Access"
       }
     ],
     "security": {

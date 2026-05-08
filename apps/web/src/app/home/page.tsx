@@ -125,9 +125,34 @@ export default function HomePage() {
   const [contestsLoading, setContestsLoading] = useState(true);
   const [userEmail, setUserEmail] = useState("tester@ams.local");
 
+  const MOCK_CONTESTS: InvitedContest[] = [
+    {
+      id: "mock-contest-dev",
+      title: "AMS Internal — Dev Test",
+      description: "Active mock contest for onboarding flow testing",
+      start_at: new Date(Date.now() - 3600000).toISOString(),
+      end_at: new Date(Date.now() + 7200000).toISOString(),
+      status: "ACTIVE",
+      org_name: "AMS Internal",
+      question_count: 3,
+    },
+    {
+      id: "mock-contest-scheduled",
+      title: "AMS Internal — Scheduled Test",
+      description: "Scheduled mock — click Join to trigger verification flow",
+      start_at: new Date(Date.now() + 120000).toISOString(),
+      end_at: new Date(Date.now() + 5400000).toISOString(),
+      status: "SCHEDULED",
+      org_name: "AMS Internal",
+      question_count: 3,
+    },
+  ];
+
   useEffect(() => {
     const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
     setUserEmail(email);
+
+    setContests([...MOCK_CONTESTS]);
 
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
       setContestsLoading(false);
@@ -136,7 +161,7 @@ export default function HomePage() {
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     sb.rpc("get_invited_contests", { p_email: email }).then(({ data }) => {
-      setContests((data as InvitedContest[]) ?? []);
+      setContests([...MOCK_CONTESTS, ...((data as InvitedContest[]) ?? [])]);
       setContestsLoading(false);
     });
   }, []);
@@ -634,6 +659,167 @@ function SignOutButton({ onClick, loading }: { onClick: () => void; loading: boo
   );
 }
 
+function useStartsIn(startAt: string) {
+  const [label, setLabel] = useState("");
+  useEffect(() => {
+    function tick() {
+      const diff = new Date(startAt).getTime() - Date.now();
+      if (diff <= 0) {
+        setLabel("Starting now");
+        return;
+      }
+      const m = Math.floor(diff / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setLabel(m > 0 ? `Starts in ${m}m ${s}s` : `Starts in ${s}s`);
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startAt]);
+  return label;
+}
+
+function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => void }) {
+  const startsIn = useStartsIn(c.start_at);
+  const col = { dot: "#a855f7", bg: "rgba(168,85,247,0.1)", border: "rgba(168,85,247,0.25)" };
+  return (
+    <div
+      style={{
+        background: "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
+        border: "1px solid rgba(168,85,247,0.22)",
+        borderRadius: "14px",
+        padding: "18px 20px",
+        transition: "border-color 300ms",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "16px",
+        }}
+      >
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+            <span
+              style={{
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#f5f7fa",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {c.title}
+            </span>
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: "11px",
+                fontWeight: 500,
+                padding: "2px 8px",
+                borderRadius: "6px",
+                background: col.bg,
+                border: `1px solid ${col.border}`,
+                color: col.dot,
+              }}
+            >
+              SCHEDULED
+            </span>
+          </div>
+          <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "6px" }}>{c.org_name}</p>
+          {c.description && (
+            <p
+              style={{
+                fontSize: "12px",
+                color: "#94a3b8",
+                marginBottom: "6px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {c.description}
+            </p>
+          )}
+          <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: "#475569" }}>
+            <span>
+              📅 {new Date(c.start_at).toLocaleDateString()} —{" "}
+              {new Date(c.end_at).toLocaleDateString()}
+            </span>
+            <span>
+              {c.question_count} question{c.question_count !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: "8px",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              background: "#a855f7",
+              boxShadow: "0 0 8px rgba(168,85,247,0.6)",
+              animation: "pulse-dot 1.5s ease-in-out infinite",
+            }}
+          />
+          <span
+            style={{
+              fontSize: "11px",
+              color: "#a855f7",
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {startsIn}
+          </span>
+          <button
+            onClick={onJoin}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              borderRadius: "9px",
+              border: "1px solid rgba(168,85,247,0.45)",
+              background:
+                "linear-gradient(135deg, rgba(126,34,206,0.7) 0%, rgba(168,85,247,0.55) 100%)",
+              color: "#e9d5ff",
+              fontSize: "12px",
+              fontWeight: 500,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              letterSpacing: "0.02em",
+              boxShadow: "0 0 16px rgba(168,85,247,0.2)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path
+                d="M6 1L2 3.5v3c0 2.5 2 4.5 4 5 2-.5 4-2.5 4-5v-3L6 1z"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Join Session
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; loading: boolean }) {
   const router = useRouter();
 
@@ -781,6 +967,15 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         {contests.map((c) => {
+          if (c.status === "SCHEDULED") {
+            return (
+              <ScheduledContestCard
+                key={c.id}
+                c={c}
+                onJoin={() => router.push(`/session/onboarding?contestId=${c.id}`)}
+              />
+            );
+          }
           const col = statusColor(c.status);
           const canEnter = c.status === "ACTIVE";
           return (
