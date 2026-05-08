@@ -106,11 +106,10 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     HOOK_ACTIVE.store(true, Ordering::SeqCst);
 
     std::thread::spawn(|| {
-        use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+        use windows::Win32::Foundation::HWND;
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::WindowsAndMessaging::{
-            CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
-            KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, MSG, WH_KEYBOARD_LL,
+            GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL,
         };
 
         let tid = unsafe { GetCurrentThreadId() };
@@ -127,7 +126,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             };
 
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, HWND(0), 0, 0).as_bool() {}
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
 
             UnhookWindowsHookEx(hook).ok();
         }
@@ -167,7 +166,7 @@ unsafe extern "system" fn kbproc(
     if code >= 0 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let vk = kb.vkCode;
-        let alt_down = (kb.flags & LLKHF_ALTDOWN.0) != 0;
+        let alt_down = kb.flags.0 & LLKHF_ALTDOWN.0 != 0;
         let ctrl_down =
             (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11) as u16 & 0x8000)
                 != 0;
@@ -185,7 +184,7 @@ unsafe extern "system" fn kbproc(
             return LRESULT(1);
         }
     }
-    CallNextHookEx(HHOOK(0), code, wparam, lparam)
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 pub fn detect_remote_desktop() -> bool {
