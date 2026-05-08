@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scalable Contest Platform — Architecture v2</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,600;1,300&family=DM+Sans:wght@300;400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0b0d10;
+    --bg2:      #0f1217;
+    --bg3:      #13171e;
+    --surface:  #1a1f28;
+    --surface2: #1f2533;
+    --border:   rgba(255,255,255,0.06);
+    --border2:  rgba(255,255,255,0.11);
+    --text:     #dde3ee;
+    --muted:    #7a8499;
+    --dim:      #4a5268;
+
+    --blue:     #5b9cf6;
+    --green:    #3ecf8e;
+    --purple:   #b48ef6;
+    --orange:   #f5a623;
+    --red:      #f06e6e;
+    --cyan:     #38bec9;
+    --teal:     #2dd4bf;
+    --yellow:   #e8d06a;
+
+    --mono: 'IBM Plex Mono', monospace;
+    --serif: 'Fraunces', serif;
+    --sans: 'DM Sans', system-ui, sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14.5px;
+    line-height: 1.8;
+  }
+
+  .page { display: flex; min-height: 100vh; }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 248px;
+    min-width: 248px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 1.75rem 0;
+    flex-shrink: 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+  }
+
+  .sidebar-brand {
+    padding: 0 1.4rem 1.4rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.4rem;
+  }
+
+  .brand-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--blue);
+    background: rgba(91,156,246,0.1);
+    border: 1px solid rgba(91,156,246,0.2);
+    padding: 2px 8px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-bottom: 8px;
+  }
+
+  .sidebar-brand h2 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.45;
+    letter-spacing: -0.01em;
+  }
+
+  .sidebar nav ul { list-style: none; }
+  .sidebar nav li { margin-bottom: 1px; }
+
+  .nav-group {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 10px 1.4rem 3px;
+  }
+
+  .sidebar nav a {
+    display: block;
+    padding: 4.5px 1.4rem;
+    font-size: 12.5px;
+    color: var(--muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: all 0.13s;
+  }
+
+  .sidebar nav a:hover { color: var(--text); background: rgba(255,255,255,0.03); border-left-color: var(--blue); }
+  .sidebar nav a.sub { padding-left: 2.4rem; font-size: 12px; color: var(--dim); }
+  .sidebar nav a.sub:hover { color: var(--muted); }
+
+  /* ── MAIN ── */
+  .main {
+    flex: 1;
+    max-width: 920px;
+    padding: 3rem 3.5rem 5rem;
+    margin: 0 auto;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    margin-bottom: 4rem;
+    padding-bottom: 3rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 1.25rem;
+  }
+
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: 3rem;
+    font-weight: 300;
+    line-height: 1.12;
+    color: var(--text);
+    margin-bottom: 1.25rem;
+    letter-spacing: -0.02em;
+  }
+
+  .hero h1 em {
+    font-style: italic;
+    color: #a0bef8;
+  }
+
+  .hero p {
+    font-size: 15px;
+    color: var(--muted);
+    max-width: 640px;
+    line-height: 1.85;
+    margin-bottom: 1.5rem;
+  }
+
+  .pills {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .pill {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    background: var(--surface);
+  }
+
+  /* ── SECTIONS ── */
+  .section {
+    margin-bottom: 4rem;
+    padding-bottom: 3.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .section:last-child { border-bottom: none; }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 2rem;
+  }
+
+  .sid {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--blue);
+    background: rgba(91,156,246,0.1);
+    border: 1px solid rgba(91,156,246,0.18);
+    padding: 3px 8px;
+    border-radius: 3px;
+  }
+
+  .section h2 {
+    font-family: var(--serif);
+    font-size: 1.85rem;
+    font-weight: 300;
+    color: var(--text);
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+  }
+
+  h3 {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--purple);
+    margin: 2.2rem 0 0.9rem;
+  }
+
+  h4 {
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--text);
+    margin: 1.4rem 0 0.5rem;
+    letter-spacing: -0.01em;
+  }
+
+  p { margin-bottom: 1rem; color: var(--muted); }
+  strong { color: var(--text); font-weight: 500; }
+
+  ul.list, ol.list {
+    margin: 0.6rem 0 1.1rem 1.2rem;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  ul.list li, ol.list li { margin-bottom: 0.35rem; padding-left: 4px; }
+  ul.list li strong, ol.list li strong { color: var(--text); }
+
+  /* ── CALLOUTS ── */
+  .callout {
+    border-radius: 7px;
+    padding: 0.9rem 1.1rem;
+    margin: 1.25rem 0;
+    border-left: 3px solid;
+    font-size: 13.5px;
+    line-height: 1.75;
+  }
+  .callout.info    { background: rgba(91,156,246,0.06);  border-color: var(--blue);   color: #8cb8f8; }
+  .callout.warn    { background: rgba(245,166,35,0.06);  border-color: var(--orange); color: #d9a653; }
+  .callout.danger  { background: rgba(240,110,110,0.06); border-color: var(--red);    color: #e08888; }
+  .callout.success { background: rgba(62,207,142,0.06);  border-color: var(--green);  color: #5ec99b; }
+  .callout strong  { color: inherit; font-weight: 600; }
+
+  /* ── CODE BLOCKS ── */
+  .code-block {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 1rem 0 1.5rem;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .code-header {
+    background: var(--surface);
+    padding: 5px 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 10.5px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.r { background: #ff5f56; } .dot.y { background: #ffbd2e; } .dot.g { background: #27c93f; }
+
+  .code-body { padding: 1rem 1.2rem; overflow-x: auto; }
+  pre { white-space: pre; }
+
+  .kw  { color: #ff7b72; }
+  .fn  { color: #c9a4ff; }
+  .str { color: #a5d6ff; }
+  .key { color: #79c0ff; }
+  .num { color: #f0883e; }
+  .cmt { color: #484f5d; font-style: italic; }
+  .val { color: #a5d6ff; }
+  .typ { color: #7ee787; }
+
+  /* ── ARCH DIAGRAM ── */
+  .arch {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.75rem;
+    margin: 1.25rem 0 1.75rem;
+    overflow-x: auto;
+  }
+
+  .arch-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 7px;
+  }
+
+  .arch-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin-bottom: 7px;
+    flex-wrap: nowrap;
+  }
+
+  .abox {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 6px 13px;
+    font-size: 11.5px;
+    font-family: var(--mono);
+    color: var(--text);
+    text-align: center;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+
+  .abox small { display: block; font-size: 9.5px; color: var(--dim); margin-top: 2px; }
+
+  .abox.b { border-color: rgba(91,156,246,0.4);  background: rgba(91,156,246,0.07);  color: var(--blue); }
+  .abox.g { border-color: rgba(62,207,142,0.4);  background: rgba(62,207,142,0.07);  color: var(--green); }
+  .abox.p { border-color: rgba(180,142,246,0.4); background: rgba(180,142,246,0.07); color: var(--purple); }
+  .abox.o { border-color: rgba(245,166,35,0.4);  background: rgba(245,166,35,0.07);  color: var(--orange); }
+  .abox.r { border-color: rgba(240,110,110,0.4); background: rgba(240,110,110,0.07); color: var(--red); }
+  .abox.c { border-color: rgba(56,190,201,0.4);  background: rgba(56,190,201,0.07);  color: var(--cyan); }
+  .abox.t { border-color: rgba(45,212,191,0.4);  background: rgba(45,212,191,0.07);  color: var(--teal); }
+  .abox.y { border-color: rgba(232,208,106,0.4); background: rgba(232,208,106,0.07); color: var(--yellow); }
+
+  .arr { font-size: 14px; color: var(--dim); flex-shrink: 0; }
+  .arch-sep { width: 100%; border: none; border-top: 1px dashed var(--border); margin: 10px 0; }
+
+  .arch-group {
+    border: 1px dashed var(--border2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+  }
+
+  .arch-group-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dim);
+    margin-bottom: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ── TABLES ── */
+  .tbl-wrap { overflow-x: auto; margin: 1rem 0 1.5rem; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead tr { border-bottom: 1px solid var(--border2); }
+  thead th { padding: 7px 12px; text-align: left; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); font-weight: 400; }
+
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody td { padding: 8px 12px; color: var(--muted); vertical-align: top; line-height: 1.6; }
+  tbody td:first-child { color: var(--text); font-weight: 500; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+  tbody td strong { color: var(--text); font-weight: 500; }
+
+  .cost-total td { border-top: 1px solid var(--border2) !important; }
+  .cost-total td { color: var(--text) !important; font-weight: 600 !important; }
+
+  /* ── GRID CARDS ── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 1rem 0 1.5rem;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+  }
+
+  .card .card-top {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 0.5rem;
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .tag.core    { background: rgba(62,207,142,0.12); color: var(--green);  border: 1px solid rgba(62,207,142,0.2); }
+  .tag.ext     { background: rgba(180,142,246,0.12); color: var(--purple); border: 1px solid rgba(180,142,246,0.2); }
+  .tag.future  { background: rgba(245,166,35,0.12); color: var(--orange); border: 1px solid rgba(245,166,35,0.2); }
+
+  .card h4 { margin: 0; font-size: 13.5px; }
+  .card p  { font-size: 12.5px; margin: 0; }
+
+  /* ── PHASE TIMELINE ── */
+  .timeline { position: relative; padding-left: 2rem; }
+  .timeline::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; background: var(--border2); border-radius: 2px; }
+
+  .phase { position: relative; margin-bottom: 2.5rem; }
+  .phase::before { content: attr(data-n); position: absolute; left: -2.55rem; top: 0; width: 22px; height: 22px; border-radius: 50%; font-family: var(--mono); font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: 500; }
+  .phase.p1::before { background: rgba(62,207,142,0.15); color: var(--green); border: 1px solid rgba(62,207,142,0.3); }
+  .phase.p2::before { background: rgba(91,156,246,0.15); color: var(--blue); border: 1px solid rgba(91,156,246,0.3); }
+  .phase.p3::before { background: rgba(180,142,246,0.15); color: var(--purple); border: 1px solid rgba(180,142,246,0.3); }
+
+  .phase h4 { font-size: 14.5px; margin: 0 0 4px; }
+  .phase-dur { font-family: var(--mono); font-size: 10.5px; color: var(--dim); margin-bottom: 0.75rem; }
+
+  /* ── INLINE CODE ── */
+  code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--surface);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--purple);
+  }
+
+  .divider { height: 1px; background: var(--border); margin: 1.75rem 0; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  @media (max-width: 880px) {
+    .sidebar { display: none; }
+    .main { padding: 2rem 1.5rem; }
+    .card-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-label">ARCH DOC v2.0</div>
+    <h2>Contest + Assessment<br>Platform</h2>
+  </div>
+  <nav>
+    <ul>
+      <li><div class="nav-group">Overview</div></li>
+      <li><a href="#intro">Goals & Scope</a></li>
+
+      <li><div class="nav-group">Architecture</div></li>
+      <li><a href="#arch">A — System Architecture</a></li>
+      <li><a href="#arch" class="sub">High-level diagram</a></li>
+      <li><a href="#auth">B — Auth & Multi-tenancy</a></li>
+      <li><a href="#auth" class="sub">Supabase Auth + RBAC</a></li>
+      <li><a href="#auth" class="sub">Organization model</a></li>
+      <li><a href="#db">C — Database Design</a></li>
+      <li><a href="#db" class="sub">Schema</a></li>
+      <li><a href="#db" class="sub">RLS policies</a></li>
+      <li><a href="#judge">D — Judge Infrastructure</a></li>
+      <li><a href="#judge" class="sub">Submission pipeline</a></li>
+      <li><a href="#judge" class="sub">Sandbox isolation</a></li>
+      <li><a href="#judge" class="sub">Autoscaling</a></li>
+      <li><a href="#realtime">E — Realtime Layer</a></li>
+      <li><a href="#contest">F — Contest Engine</a></li>
+      <li><a href="#security">G — Security</a></li>
+      <li><a href="#cost">H — AWS Cost Breakdown</a></li>
+      <li><a href="#roadmap">I — Roadmap</a></li>
+      <li><a href="#stack">J — Final Stack</a></li>
+    </ul>
+  </nav>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- HERO -->
+  <div class="hero" id="intro">
+    <div class="eyebrow">AWS · Supabase · Go · nsjail — Production Architecture 2026</div>
+    <h1>Scalable <em>Competitive Programming</em><br>+ Assessment Platform</h1>
+    <p>A production-grade architecture for a multi-tenant contest and assessment operating system. Covers authentication, multi-tenancy, isolated judge infrastructure, real-time rankings, and a clear path from MVP to 50k+ concurrent users.</p>
+    <div class="pills">
+      <div class="pill">Supabase Auth + DB</div>
+      <div class="pill">AWS EC2 + S3 + SQS</div>
+      <div class="pill">Go API + Judge Workers</div>
+      <div class="pill">nsjail → Firecracker</div>
+      <div class="pill">10k–100k concurrent</div>
+      <div class="pill">Multi-tenant orgs</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════
+       A. SYSTEM ARCHITECTURE
+  ═══════════════════════════════════ -->
+  <section class="section" id="arch">
+    <div class="section-header">
+      <span class="sid">A</span>
+      <h2>System Architecture</h2>
+    </div>
+
+    <p>The platform is partitioned into four planes: <strong>Client Plane</strong> (Next.js, native exam shell), <strong>Application Plane</strong> (Go API, Supabase Auth, Realtime), <strong>Execution Plane</strong> (judge workers, sandboxes), and <strong>Storage Plane</strong> (Supabase Postgres, S3, Redis). Each plane scales independently.</p>
+
+    <div class="arch">
+      <div class="arch-label">Client Plane</div>
+      <div class="arch-row">
+        <div class="abox b">Next.js Frontend<small>CloudFront CDN</small></div>
+        <div class="arr">·</div>
+        <div class="abox b">Monaco Editor<small>WebSockets / Supabase RT</small></div>
+        <div class="arr">·</div>
+        <div class="abox b">Tauri Exam Shell<small>optional – high stakes</small></div>
+      </div>
+      <div class="arch-row"><div class="arr" style="font-size:18px;">↓</div></div>
+
+      <div class="arch-sep"></div>
+      <div class="arch-label">Application Plane</div>
+      <div class="arch-row">
+        <div class="abox g">AWS ALB<small>TLS termination</small></div>
+        <div class="arr">→</div>
+        <div class="abox g">Go API (ECS Fargate)<small>Chi router · RBAC</small></div>
+        <div class="arr">→</div>
+        <div class="abox t">Supabase Auth<small>JWT · OAuth2 · MFA</small></div>
+      </div>
+      <div class="arch-row">
+        <div class="arr">↙</div>
+        <div class="arr">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div>
+        <div class="arr">↘</div>
+      </div>
+      <div class="arch-row">
+        <div class="abox o">AWS SQS<small>submission jobs</small></div>
+        <div class="arr">·</div>
+        <div class="abox p">Redis (ElastiCache)<small>leaderboard · sessions</small></div>
+        <div class="arr">·</div>
+        <div class="abox c">Supabase Realtime<small>rankings · verdicts</small></div>
+      </div>
+
+      <div class="arch-sep"></div>
+      <div class="arch-label">Execution Plane</div>
+      <div class="arch-row">
+        <div class="abox r">Judge Scheduler<small>Go worker · pulls SQS</small></div>
+        <div class="arr">→</div>
+        <div class="abox r">EC2 Judge Fleet<small>c6i.xlarge · Spot</small></div>
+        <div class="arr">→</div>
+        <div class="abox r">nsjail Sandbox<small>per submission</small></div>
+      </div>
+
+      <div class="arch-sep"></div>
+      <div class="arch-label">Storage Plane</div>
+      <div class="arch-row">
+        <div class="abox y">Supabase Postgres<small>RDS-backed · RLS</small></div>
+        <div class="arr">·</div>
+        <div class="abox y">S3<small>testcases · media · logs</small></div>
+        <div class="arr">·</div>
+        <div class="abox y">CloudWatch + Grafana<small>metrics · alerting</small></div>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <strong>Design principle:</strong> The Go API layer is the single source of business logic. Supabase handles auth and provides direct Postgres access with Row Level Security for the frontend where appropriate. Judge nodes are air-gapped from the public internet and talk only to SQS and S3.
+    </div>
+
+    <h3>Why Supabase over Raw RDS + Custom Auth</h3>
+    <p>Supabase provides Postgres (with RLS), Auth (JWT, OAuth, MFA, magic links), Storage (S3-compatible), and Realtime (Postgres change streams over WebSockets) as a unified SDK. This eliminates 3–4 custom services that would otherwise take significant engineering time to build and secure. For a contest platform, Supabase Realtime's channel-based pub/sub directly replaces a custom WebSocket broadcast layer for verdicts and rankings.</p>
+
+    <div class="callout warn">
+      <strong>Supabase in production:</strong> Run on Supabase Pro or deploy self-hosted (supabase/supabase Docker Compose on EC2) for data sovereignty, custom VPC placement, and no row-count limits. Self-hosted is recommended when your Postgres load exceeds ~500 concurrent connections or you need to colocate with judge nodes.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       B. AUTH & MULTI-TENANCY
+  ═══════════════════════════════════ -->
+  <section class="section" id="auth">
+    <div class="section-header">
+      <span class="sid">B</span>
+      <h2>Auth & Multi-tenancy</h2>
+    </div>
+
+    <p>Authentication is handled entirely by <strong>Supabase Auth</strong>. The platform wraps it with an organization-scoped RBAC layer enforced both in the Go API (middleware) and in Postgres (RLS policies). Every authenticated request carries a signed JWT containing <code>user_id</code>, <code>org_id</code>, and <code>role</code>.</p>
+
+    <h3>Auth Flows</h3>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Email + Password</h4></div>
+        <p>Standard Supabase email auth with email confirmation. Rate-limited via Supabase Auth settings. Use for contestant self-registration.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Magic Link / OTP</h4></div>
+        <p>Passwordless invite-based onboarding. Ideal for org admins inviting team members and candidates to specific contests.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag ext">EXTENDED</span><h4>OAuth (Google, GitHub)</h4></div>
+        <p>One-click social login. Reduces registration friction for open contests. Supabase handles token exchange and user upsert automatically.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag ext">EXTENDED</span><h4>SAML 2.0 / SSO</h4></div>
+        <p>Enterprise requirement. Supabase Auth supports SAML via the Enterprise plan, or proxy through Auth0/Okta and issue Supabase sessions post-validation.</p>
+      </div>
+    </div>
+
+    <h3>Organization Model</h3>
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>SQL — core multi-tenant schema</span></div>
+      <div class="code-body"><pre><span class="cmt">-- Organizations are the top-level tenant unit</span>
+<span class="kw">CREATE TABLE</span> <span class="fn">organizations</span> (
+  id            <span class="typ">uuid</span> <span class="kw">PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  name          <span class="typ">text</span> <span class="kw">NOT NULL</span>,
+  slug          <span class="typ">text</span> <span class="kw">NOT NULL UNIQUE</span>,
+  owner_id      <span class="typ">uuid</span> <span class="kw">REFERENCES</span> auth.users(id),
+  plan          <span class="typ">text</span> <span class="kw">NOT NULL DEFAULT</span> <span class="str">'free'</span>,  <span class="cmt">-- free | pro | enterprise</span>
+  settings      <span class="typ">jsonb</span> <span class="kw">NOT NULL DEFAULT</span> <span class="str">'{}'</span>,
+  created_at    <span class="typ">timestamptz</span> <span class="kw">DEFAULT</span> now()
+);
+
+<span class="cmt">-- Membership with role-based access</span>
+<span class="kw">CREATE TABLE</span> <span class="fn">org_members</span> (
+  org_id        <span class="typ">uuid</span> <span class="kw">REFERENCES</span> organizations(id) <span class="kw">ON DELETE CASCADE</span>,
+  user_id       <span class="typ">uuid</span> <span class="kw">REFERENCES</span> auth.users(id)   <span class="kw">ON DELETE CASCADE</span>,
+  role          <span class="typ">text</span> <span class="kw">NOT NULL</span>,  <span class="cmt">-- owner | admin | problem_setter | reviewer | participant</span>
+  joined_at     <span class="typ">timestamptz</span> <span class="kw">DEFAULT</span> now(),
+  <span class="kw">PRIMARY KEY</span> (org_id, user_id)
+);
+
+<span class="cmt">-- Role hierarchy (enforced in Go middleware + RLS)</span>
+<span class="cmt">-- platform_admin > owner > admin > problem_setter > reviewer > participant</span></pre></div>
+    </div>
+
+    <h3>RBAC Roles</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Role</th><th>Scope</th><th>Key Permissions</th></tr></thead>
+        <tbody>
+          <tr><td>platform_admin</td><td>Global</td><td>Full infra access, org moderation, billing override, user impersonation</td></tr>
+          <tr><td>owner</td><td>Org</td><td>Billing, member management, create/delete contests and problems, all admin capabilities</td></tr>
+          <tr><td>admin</td><td>Org</td><td>Create and run contests, manage members except owner, view all submissions</td></tr>
+          <tr><td>problem_setter</td><td>Org</td><td>Create/edit problems, upload testcases, add checkers, submit for review</td></tr>
+          <tr><td>reviewer</td><td>Org</td><td>Approve/reject problems, view all testcases, mark problems contest-ready</td></tr>
+          <tr><td>participant</td><td>Contest</td><td>Submit solutions, view public rankings, read clarifications</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Row Level Security</h3>
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>RLS — contests table</span></div>
+      <div class="code-body"><pre><span class="kw">ALTER TABLE</span> contests <span class="kw">ENABLE ROW LEVEL SECURITY</span>;
+
+<span class="cmt">-- Participants can only see contests they are registered for OR public ones</span>
+<span class="kw">CREATE POLICY</span> <span class="str">"contestant_read"</span> <span class="kw">ON</span> contests
+  <span class="kw">FOR SELECT USING</span> (
+    visibility = <span class="str">'public'</span>
+    <span class="kw">OR</span> org_id <span class="kw">IN</span> (
+      <span class="kw">SELECT</span> org_id <span class="kw">FROM</span> org_members
+      <span class="kw">WHERE</span> user_id = auth.uid()
+    )
+  );
+
+<span class="cmt">-- Only org admins and above can insert/update contests</span>
+<span class="kw">CREATE POLICY</span> <span class="str">"admin_write"</span> <span class="kw">ON</span> contests
+  <span class="kw">FOR ALL USING</span> (
+    org_id <span class="kw">IN</span> (
+      <span class="kw">SELECT</span> org_id <span class="kw">FROM</span> org_members
+      <span class="kw">WHERE</span> user_id = auth.uid()
+        <span class="kw">AND</span> role <span class="kw">IN</span> (<span class="str">'owner'</span>, <span class="str">'admin'</span>)
+    )
+  );</pre></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       C. DATABASE DESIGN
+  ═══════════════════════════════════ -->
+  <section class="section" id="db">
+    <div class="section-header">
+      <span class="sid">C</span>
+      <h2>Database Design</h2>
+    </div>
+
+    <p>Supabase Postgres is the primary datastore. The Go API owns all writes through prepared statements. Supabase's direct PostgREST endpoint is used by the frontend only for read-heavy, RLS-protected queries (e.g. live ranking fetches, problem statements). Critical paths (submission pipeline, verdict writes) always go through the Go API.</p>
+
+    <h3>Core Schema</h3>
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>SQL — full contest schema</span></div>
+      <div class="code-body"><pre><span class="kw">CREATE TABLE</span> <span class="fn">contests</span> (
+  id              <span class="typ">uuid</span>        <span class="kw">PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  org_id          <span class="typ">uuid</span>        <span class="kw">REFERENCES</span> organizations(id) <span class="kw">ON DELETE CASCADE</span>,
+  title           <span class="typ">text</span>        <span class="kw">NOT NULL</span>,
+  slug            <span class="typ">text</span>        <span class="kw">UNIQUE NOT NULL</span>,
+  status          <span class="typ">text</span>        <span class="kw">NOT NULL DEFAULT</span> <span class="str">'draft'</span>,  <span class="cmt">-- draft|review|scheduled|live|ended</span>
+  visibility      <span class="typ">text</span>        <span class="kw">NOT NULL DEFAULT</span> <span class="str">'public'</span>, <span class="cmt">-- public|private|invite_only</span>
+  start_time      <span class="typ">timestamptz NOT NULL</span>,
+  end_time        <span class="typ">timestamptz NOT NULL</span>,
+  freeze_time     <span class="typ">timestamptz</span>,                              <span class="cmt">-- null = no freeze</span>
+  scoring_type    <span class="typ">text</span>        <span class="kw">NOT NULL DEFAULT</span> <span class="str">'icpc'</span>,    <span class="cmt">-- icpc|ioi|custom</span>
+  config          <span class="typ">jsonb</span>       <span class="kw">NOT NULL DEFAULT</span> <span class="str">'{}'</span>,
+  created_at      <span class="typ">timestamptz DEFAULT</span> now()
+);
+
+<span class="kw">CREATE TABLE</span> <span class="fn">problems</span> (
+  id              <span class="typ">uuid PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  org_id          <span class="typ">uuid REFERENCES</span> organizations(id),
+  title           <span class="typ">text NOT NULL</span>,
+  statement_md    <span class="typ">text NOT NULL</span>,
+  checker_type    <span class="typ">text NOT NULL DEFAULT</span> <span class="str">'exact'</span>,           <span class="cmt">-- exact|custom|checker</span>
+  checker_code    <span class="typ">text</span>,
+  time_limit_ms   <span class="typ">int  NOT NULL DEFAULT</span> <span class="num">2000</span>,
+  memory_limit_mb <span class="typ">int  NOT NULL DEFAULT</span> <span class="num">256</span>,
+  status          <span class="typ">text NOT NULL DEFAULT</span> <span class="str">'draft'</span>,            <span class="cmt">-- draft|review|approved</span>
+  created_by      <span class="typ">uuid REFERENCES</span> auth.users(id)
+);
+
+<span class="kw">CREATE TABLE</span> <span class="fn">contest_problems</span> (
+  contest_id      <span class="typ">uuid REFERENCES</span> contests(id)  <span class="kw">ON DELETE CASCADE</span>,
+  problem_id      <span class="typ">uuid REFERENCES</span> problems(id),
+  label           <span class="typ">text NOT NULL</span>,                             <span class="cmt">-- "A", "B", "C"...</span>
+  points          <span class="typ">int  NOT NULL DEFAULT</span> <span class="num">100</span>,
+  <span class="kw">PRIMARY KEY</span> (contest_id, problem_id)
+);
+
+<span class="kw">CREATE TABLE</span> <span class="fn">submissions</span> (
+  id              <span class="typ">uuid        PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  contest_id      <span class="typ">uuid        REFERENCES</span> contests(id),
+  problem_id      <span class="typ">uuid        REFERENCES</span> problems(id),
+  user_id         <span class="typ">uuid        REFERENCES</span> auth.users(id),
+  language        <span class="typ">text        NOT NULL</span>,
+  code_s3_key     <span class="typ">text        NOT NULL</span>,                      <span class="cmt">-- code stored in S3, not DB</span>
+  status          <span class="typ">text        NOT NULL DEFAULT</span> <span class="str">'pending'</span>,
+  verdict         <span class="typ">text</span>,                                       <span class="cmt">-- AC|WA|TLE|MLE|RE|CE|SE</span>
+  score           <span class="typ">int</span>,
+  time_ms         <span class="typ">int</span>,
+  memory_kb       <span class="typ">int</span>,
+  judge_output    <span class="typ">text</span>,
+  submitted_at    <span class="typ">timestamptz DEFAULT</span> now(),
+  judged_at       <span class="typ">timestamptz</span>
+);
+
+<span class="cmt">-- Partial index: only index pending/judging submissions for fast queue polling</span>
+<span class="kw">CREATE INDEX</span> idx_submissions_pending <span class="kw">ON</span> submissions(submitted_at)
+  <span class="kw">WHERE</span> status <span class="kw">IN</span> (<span class="str">'pending'</span>, <span class="str">'judging'</span>);</pre></div>
+    </div>
+
+    <div class="callout info">
+      <strong>Source code in S3, not Postgres.</strong> Submission code is stored as <code>submissions/{submission_id}/solution.{ext}</code> in S3. The <code>code_s3_key</code> column holds only the object key. This keeps the Postgres row small (fast ranking queries) and avoids large text payloads in WAL replication.
+    </div>
+
+    <h3>Ranking Materialization</h3>
+    <p>Rankings are <em>not</em> recomputed on every read. A lightweight Go process (the Ranking Updater) subscribes to the Supabase Realtime <code>submissions</code> channel, receives <code>INSERT</code>/<code>UPDATE</code> events on verdict changes, and updates a <code>leaderboard</code> table + a Redis sorted set in a single atomic operation. The frontend reads from Redis (via API) for live updates and falls back to Postgres for historical views.</p>
+
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>SQL — leaderboard table</span></div>
+      <div class="code-body"><pre><span class="kw">CREATE TABLE</span> <span class="fn">leaderboard</span> (
+  contest_id      <span class="typ">uuid REFERENCES</span> contests(id) <span class="kw">ON DELETE CASCADE</span>,
+  user_id         <span class="typ">uuid REFERENCES</span> auth.users(id),
+  total_score     <span class="typ">int  NOT NULL DEFAULT</span> <span class="num">0</span>,
+  penalty_secs    <span class="typ">int  NOT NULL DEFAULT</span> <span class="num">0</span>,           <span class="cmt">-- ICPC-style</span>
+  solved_count    <span class="typ">int  NOT NULL DEFAULT</span> <span class="num">0</span>,
+  last_accept_at  <span class="typ">timestamptz</span>,
+  rank            <span class="typ">int</span>,                                <span class="cmt">-- precomputed, updated by Ranking Updater</span>
+  is_frozen       <span class="typ">bool NOT NULL DEFAULT</span> <span class="kw">false</span>,
+  updated_at      <span class="typ">timestamptz DEFAULT</span> now(),
+  <span class="kw">PRIMARY KEY</span> (contest_id, user_id)
+);</pre></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       D. JUDGE INFRASTRUCTURE
+  ═══════════════════════════════════ -->
+  <section class="section" id="judge">
+    <div class="section-header">
+      <span class="sid">D</span>
+      <h2>Judge Infrastructure</h2>
+    </div>
+
+    <h3>Submission Pipeline</h3>
+    <div class="arch">
+      <div class="arch-row">
+        <div class="abox b">Contestant Browser</div>
+        <div class="arr">→</div>
+        <div class="abox g">POST /submit (Go API)</div>
+        <div class="arr">→</div>
+        <div class="abox g">Validate + Rate-limit</div>
+        <div class="arr">→</div>
+        <div class="abox y">code → S3</div>
+      </div>
+      <div class="arch-row"><div class="arr" style="font-size:18px;">↓</div></div>
+      <div class="arch-row">
+        <div class="abox o">SQS Queue<small>submission_jobs</small></div>
+        <div class="arr">→</div>
+        <div class="abox r">Judge Worker (Go)<small>long-polls SQS</small></div>
+        <div class="arr">→</div>
+        <div class="abox r">Compile + Sandbox<small>nsjail per run</small></div>
+      </div>
+      <div class="arch-row"><div class="arr" style="font-size:18px;">↓</div></div>
+      <div class="arch-row">
+        <div class="abox g">Verdict → Supabase<small>submissions table</small></div>
+        <div class="arr">→</div>
+        <div class="abox c">Realtime broadcast<small>leaderboard update</small></div>
+        <div class="arr">→</div>
+        <div class="abox b">Contestant UI update<small>&lt;2s end-to-end</small></div>
+      </div>
+    </div>
+
+    <h3>SQS Job Payload</h3>
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>JSON — SQS message body</span></div>
+      <div class="code-body"><pre>{
+  <span class="key">"submission_id"</span>: <span class="str">"018f2a3b-..."</span>,
+  <span class="key">"problem_id"</span>:    <span class="str">"018e9c12-..."</span>,
+  <span class="key">"language"</span>:      <span class="str">"cpp17"</span>,
+  <span class="key">"code_s3_key"</span>:   <span class="str">"submissions/018f2a3b-.../solution.cpp"</span>,
+  <span class="key">"time_limit_ms"</span>: <span class="num">2000</span>,
+  <span class="key">"memory_limit_mb"</span>: <span class="num">256</span>,
+  <span class="key">"testcase_s3_prefix"</span>: <span class="str">"problems/018e9c12-.../testcases/"</span>,
+  <span class="key">"checker_type"</span>:  <span class="str">"exact"</span>,
+  <span class="key">"enqueued_at"</span>:   <span class="str">"2026-05-07T10:23:11Z"</span>
+}</pre></div>
+    </div>
+
+    <h3>Sandbox Isolation — nsjail</h3>
+    <p>Every submission executes inside an <strong>nsjail</strong> sandbox on the judge EC2 instance. nsjail uses Linux namespaces, cgroups v2, and seccomp-bpf syscall filtering to isolate untrusted code. This is the first tier of isolation; the second tier is that judge instances sit in a dedicated private subnet with no inbound internet routing.</p>
+
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>bash — nsjail execution command</span></div>
+      <div class="code-body"><pre>nsjail \
+  --mode o \
+  --time_limit <span class="num">4</span> \              <span class="cmt"># 2× the problem limit; wall-clock safety</span>
+  --rlimit_as <span class="num">512</span> \             <span class="cmt"># address space (MB)</span>
+  --rlimit_cpu <span class="num">3</span> \              <span class="cmt"># CPU seconds</span>
+  --rlimit_nproc <span class="num">1</span> \            <span class="cmt"># no fork()</span>
+  --rlimit_nofile <span class="num">32</span> \          <span class="cmt"># restrict file descriptors</span>
+  --disable_proc \               <span class="cmt"># hide /proc</span>
+  --iface_no_lo \                <span class="cmt"># no loopback = no network</span>
+  --user <span class="num">65534</span> --group <span class="num">65534</span> \ <span class="cmt"># nobody:nogroup</span>
+  --chroot /sandbox/rootfs \
+  --cwd /sandbox/work \
+  --seccomp_string <span class="str">"ALLOW { read, write, exit_group, brk, mmap, ... }"</span> \
+  -- /sandbox/work/run.sh</pre></div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Mechanism</th><th>What it enforces</th><th>Implementation</th></tr></thead>
+        <tbody>
+          <tr><td>cgroups v2</td><td>CPU time, memory, PIDs</td><td><code>memory.max</code>, <code>cpu.max</code>, <code>pids.max=1</code></td></tr>
+          <tr><td>Linux namespaces</td><td>Isolated filesystem, process tree, network, IPC</td><td>mount/pid/net/ipc/uts ns</td></tr>
+          <tr><td>seccomp-bpf</td><td>Syscall allowlist; any other syscall → SIGKILL</td><td>Allowlist: ~40 safe syscalls for each language</td></tr>
+          <tr><td>rlimits</td><td>Stack, open files, address space, nproc</td><td><code>setrlimit()</code> before exec</td></tr>
+          <tr><td>Non-root UID</td><td>No privilege escalation via setuid binaries</td><td>UID 65534 (nobody)</td></tr>
+          <tr><td>No network</td><td>Prevents internet access, data exfil</td><td><code>--iface_no_lo</code> in nsjail</td></tr>
+          <tr><td>Read-only rootfs</td><td>Cannot modify system files</td><td>Bind-mount read-only chroot</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Firecracker Upgrade Path</h3>
+    <p>For Phase 2+ (hostile code, enterprise SLAs), migrate execution from bare nsjail on EC2 to <strong>nsjail inside Firecracker microVMs</strong>. Firecracker provides a separate guest kernel per submission, eliminating kernel-level side-channel attacks. Each VM boots in ~125ms; with snapshot pre-warming per language, this drops to &lt;30ms. The judge worker API stays identical — only the sandbox driver changes.</p>
+
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>go — judge worker interface (stable across nsjail / Firecracker)</span></div>
+      <div class="code-body"><pre><span class="kw">type</span> <span class="fn">SandboxDriver</span> <span class="kw">interface</span> {
+  <span class="fn">Execute</span>(ctx context.Context, req <span class="fn">ExecRequest</span>) (<span class="fn">ExecResult</span>, error)
+}
+
+<span class="kw">type</span> <span class="fn">ExecRequest</span> <span class="kw">struct</span> {
+  Binary       []<span class="typ">byte</span>
+  Stdin        []<span class="typ">byte</span>
+  TimeLimitMs  <span class="typ">int</span>
+  MemLimitMb   <span class="typ">int</span>
+}
+
+<span class="kw">type</span> <span class="fn">ExecResult</span> <span class="kw">struct</span> {
+  Stdout    []<span class="typ">byte</span>
+  Stderr    []<span class="typ">byte</span>
+  TimeMs    <span class="typ">int64</span>
+  MemoryKb  <span class="typ">int64</span>
+  ExitCode  <span class="typ">int</span>
+  Verdict   <span class="typ">string</span>   <span class="cmt">// "AC" | "TLE" | "MLE" | "RE" | "RTE"</span>
+}
+
+<span class="cmt">// Phase 1: var driver SandboxDriver = &amp;NsjailDriver{}</span>
+<span class="cmt">// Phase 2: var driver SandboxDriver = &amp;FirecrackerDriver{SnapshotPool: pool}</span></pre></div>
+    </div>
+
+    <h3>Autoscaling Strategy</h3>
+    <p>Judge nodes run as an EC2 Auto Scaling Group on <strong>Spot instances</strong> (<code>c6i.xlarge</code> or <code>c7i.xlarge</code>). The ASG scales based on a custom CloudWatch metric: <strong>SQS ApproximateNumberOfMessagesVisible / target messages-per-node</strong>. Target: each node processes 1 submission per 3 seconds with one worker thread (serial per node to avoid noisy-neighbor inside sandbox).</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Phase</th><th>Load</th><th>Judge nodes</th><th>Instance type</th><th>Spot savings</th></tr></thead>
+        <tbody>
+          <tr><td>Idle (non-contest)</td><td>&lt;5 subs/min</td><td>1–2 (on-demand)</td><td>t3.medium</td><td>—</td></tr>
+          <tr><td>Pre-contest warmup</td><td>Ramp up</td><td>4–8 (spot)</td><td>c6i.xlarge</td><td>~65%</td></tr>
+          <tr><td>Peak contest (10k users)</td><td>~500 subs/min</td><td>12–20 (spot)</td><td>c6i.xlarge</td><td>~65%</td></tr>
+          <tr><td>Post-contest drain</td><td>Falling</td><td>Scale-in after 5 min cool-down</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <strong>Spot interruption handling:</strong> Judge workers must handle SIGTERM gracefully. On SIGTERM (2-minute Spot notice), the worker stops pulling new jobs, finishes the current submission (typically &lt;30s), and returns the SQS message visibility. SQS will re-deliver it to another node within the visibility timeout. Never commit a verdict until the sandbox exits cleanly.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       E. REALTIME LAYER
+  ═══════════════════════════════════ -->
+  <section class="section" id="realtime">
+    <div class="section-header">
+      <span class="sid">E</span>
+      <h2>Realtime Layer</h2>
+    </div>
+
+    <p>Supabase Realtime replaces a custom WebSocket broadcast server. It exposes Postgres change streams over WebSocket channels with row-level filtering. Contestants subscribe to their own submission channel and the contest leaderboard channel. The Go API's Ranking Updater writes verdict results directly to the <code>submissions</code> and <code>leaderboard</code> tables, and Supabase Realtime broadcasts the change to all subscribers automatically.</p>
+
+    <div class="code-block">
+      <div class="code-header"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div> <span>typescript — frontend Supabase Realtime subscription</span></div>
+      <div class="code-body"><pre><span class="kw">import</span> { createClient } <span class="kw">from</span> <span class="str">'@supabase/supabase-js'</span>
+
+<span class="kw">const</span> supabase = <span class="fn">createClient</span>(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+<span class="cmt">// Subscribe to own submission verdicts</span>
+supabase
+  .channel(<span class="str">`submissions:${userId}`</span>)
+  .on(<span class="str">'postgres_changes'</span>, {
+    event: <span class="str">'UPDATE'</span>,
+    schema: <span class="str">'public'</span>,
+    table: <span class="str">'submissions'</span>,
+    filter: <span class="str">`user_id=eq.${userId}`</span>
+  }, (payload) =&gt; {
+    <span class="fn">updateSubmissionStatus</span>(payload.new)
+  })
+  .subscribe()
+
+<span class="cmt">// Subscribe to live leaderboard updates</span>
+supabase
+  .channel(<span class="str">`leaderboard:${contestId}`</span>)
+  .on(<span class="str">'postgres_changes'</span>, {
+    event: <span class="str">'*'</span>,
+    schema: <span class="str">'public'</span>,
+    table: <span class="str">'leaderboard'</span>,
+    filter: <span class="str">`contest_id=eq.${contestId}`</span>
+  }, (payload) =&gt; {
+    <span class="fn">updateLeaderboard</span>(payload.new)
+  })
+  .subscribe()</pre></div>
+    </div>
+
+    <div class="callout info">
+      <strong>Scale ceiling:</strong> Supabase Realtime supports ~500 concurrent connections per channel on the managed platform. For a 10k-contestant contest all subscribing to the same leaderboard channel, this requires either: (a) self-hosted Supabase Realtime scaled horizontally, or (b) a fan-out architecture where the Go API aggregates rank updates and pushes to a Redis Pub/Sub → custom WebSocket gateway. Implement (b) at the 5k+ contestant scale. Below that, Supabase managed handles it cleanly.
+    </div>
+
+    <h3>Realtime Features</h3>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Live Verdicts</h4></div>
+        <p>Contestant sees their submission status change from Pending → Judging → AC/WA within ~1.5s of judge completing. No polling needed.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Live Leaderboard</h4></div>
+        <p>Rank updates pushed on every accepted submission. Frozen at configured freeze_time. Post-contest reveal mode supported via <code>is_frozen</code> flag.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Clarifications</h4></div>
+        <p>Admin broadcasts <code>contest_announcements</code> channel. All contestants receive the message instantly without refresh.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag ext">EXTENDED</span><h4>Admin Monitor</h4></div>
+        <p>Live view of submission rate, queue depth, and judge fleet health. Push-based from CloudWatch metrics via Lambda → Supabase Broadcast channel.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       F. CONTEST ENGINE
+  ═══════════════════════════════════ -->
+  <section class="section" id="contest">
+    <div class="section-header">
+      <span class="sid">F</span>
+      <h2>Contest Engine</h2>
+    </div>
+
+    <h3>Contest Lifecycle</h3>
+    <div class="arch">
+      <div class="arch-row">
+        <div class="abox p">Draft<small>problem setter</small></div>
+        <div class="arr">→</div>
+        <div class="abox o">Review<small>reviewer approves</small></div>
+        <div class="arr">→</div>
+        <div class="abox y">Scheduled<small>start_time set</small></div>
+        <div class="arr">→</div>
+        <div class="abox g">Live<small>submissions open</small></div>
+        <div class="arr">→</div>
+        <div class="abox b">Frozen<small>freeze_time hit</small></div>
+        <div class="arr">→</div>
+        <div class="abox r">Ended<small>final rankings</small></div>
+      </div>
+    </div>
+
+    <p>A background Go service (<strong>Contest Scheduler</strong>) polls the <code>contests</code> table every 30 seconds. On transition triggers (start_time reached, end_time reached, freeze_time reached), it emits state change events to SQS, which the Go API consumes to flip the <code>status</code> column and broadcast the transition via Supabase Realtime.</p>
+
+    <h3>Scoring Modes</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Score basis</th><th>Tiebreak</th><th>Use case</th></tr></thead>
+        <tbody>
+          <tr><td>icpc</td><td>Solved count, then penalty time</td><td>Earlier last-accept time</td><td>ICPC-style marathons</td></tr>
+          <tr><td>ioi</td><td>Subtask points, best attempt per problem</td><td>Total points</td><td>IOI-style partial credit</td></tr>
+          <tr><td>codeforces</td><td>Decaying points per problem over time</td><td>Sum of max scores</td><td>Codeforces-style rounds</td></tr>
+          <tr><td>custom</td><td>Defined in <code>config.scoring_fn</code> (JSON formula)</td><td>Configurable</td><td>Hiring assessments, hackathons</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Problem Pipeline (Problemsetting Workflow)</h3>
+    <ol class="list">
+      <li><strong>Create:</strong> Problem setter creates problem via CMS UI. Statement in Markdown, renders with KaTeX for math. Sample I/O attached.</li>
+      <li><strong>Upload testcases:</strong> Uploaded via signed S3 presigned URL. Go API validates format (input/output pairs). Stored at <code>problems/{problem_id}/testcases/{n}.{in,out}</code>.</li>
+      <li><strong>Checker:</strong> For problems requiring custom comparison (e.g. "any valid permutation"), attach a checker binary or select a built-in (exact, token, float-eps).</li>
+      <li><strong>Stress test:</strong> Problem setter submits a reference solution. The judge runs it against all testcases; if all pass, problem is marked ready for review.</li>
+      <li><strong>Review:</strong> Reviewer verifies problem statement clarity, testcase coverage, constraints. Approves or sends back with comments.</li>
+      <li><strong>Attach to contest:</strong> Approved problem is attached to a contest with a label (A, B, C...) and point value. Invisible to participants until contest goes live.</li>
+    </ol>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       G. SECURITY
+  ═══════════════════════════════════ -->
+  <section class="section" id="security">
+    <div class="section-header">
+      <span class="sid">G</span>
+      <h2>Security Model</h2>
+    </div>
+
+    <h3>Network Architecture</h3>
+    <div class="arch">
+      <div class="arch-group">
+        <div class="arch-group-label">Public Subnet</div>
+        <div class="arch-row">
+          <div class="abox b">CloudFront + ALB<small>HTTPS only · WAF</small></div>
+          <div class="arr">→</div>
+          <div class="abox g">ECS Fargate (Go API)<small>no public IP</small></div>
+        </div>
+      </div>
+      <div class="arch-group">
+        <div class="arch-group-label">Private Subnet A — Application</div>
+        <div class="arch-row">
+          <div class="abox g">Go API</div>
+          <div class="arr">→</div>
+          <div class="abox y">Supabase (VPC endpoint / self-hosted)</div>
+          <div class="arr">→</div>
+          <div class="abox p">ElastiCache Redis</div>
+        </div>
+      </div>
+      <div class="arch-group">
+        <div class="arch-group-label">Private Subnet B — Execution (NO internet egress)</div>
+        <div class="arch-row">
+          <div class="abox r">Judge EC2 Spot ASG</div>
+          <div class="arr">→</div>
+          <div class="abox o">SQS VPC Endpoint</div>
+          <div class="arr">+</div>
+          <div class="abox y">S3 VPC Endpoint</div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Application Security</h3>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>JWT Auth via Supabase</h4></div>
+        <p>Every API request carries a Supabase-signed JWT. Go API verifies signature locally (RS256, public key fetched from Supabase JWKs endpoint at startup).</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Rate Limiting</h4></div>
+        <p>Submission throttle: 1 submission per 5s per user per problem. Login attempts: 5/min per IP via Supabase Auth. Global API rate-limit via AWS WAF rules on ALB.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Input Validation</h4></div>
+        <p>All API inputs validated with strict JSON schemas before DB writes. Code submissions size-limited to 100KB. Language allowlist enforced server-side (never trust client).</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag core">CORE</span><h4>Audit Logging</h4></div>
+        <p>All admin actions logged to <code>audit_log</code> table with actor, action, target, and IP. Immutable (no DELETE policy). Retained 90 days in S3 via CloudWatch Logs export.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag ext">EXTENDED</span><h4>Secrets Management</h4></div>
+        <p>All credentials (Supabase service role key, S3 keys, SQS URLs) in AWS Secrets Manager. ECS tasks and EC2 judge nodes use IAM roles; no static credentials in environment variables.</p>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="tag ext">EXTENDED</span><h4>Plagiarism Detection</h4></div>
+        <p>Post-contest async job: compare all accepted submissions per problem using MOSS-style token fingerprinting. Flags suspicious pairs to org admin. Does not affect live verdicts.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       H. COST BREAKDOWN
+  ═══════════════════════════════════ -->
+  <section class="section" id="cost">
+    <div class="section-header">
+      <span class="sid">H</span>
+      <h2>AWS Cost Breakdown</h2>
+    </div>
+
+    <p>Estimates based on a single large contest: <strong>10,000 participants, 3-hour duration, ~150,000 total submissions</strong>. INR costs at 1 USD ≈ 83 INR. Supabase costs are separate (see below).</p>
+
+    <h3>Monthly Base Infrastructure (Always-On)</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Component</th><th>AWS Service</th><th>Spec</th><th>Est. Cost (INR/month)</th></tr></thead>
+        <tbody>
+          <tr><td>Frontend CDN</td><td>CloudFront + S3</td><td>Static assets, ~100 GB transfer</td><td>800 – 2,000</td></tr>
+          <tr><td>API Servers</td><td>ECS Fargate</td><td>2× 1 vCPU / 2GB tasks (autoscaled)</td><td>4,000 – 9,000</td></tr>
+          <tr><td>Load Balancer</td><td>ALB</td><td>1 ALB + WAF basic rules</td><td>2,500 – 4,000</td></tr>
+          <tr><td>Queue</td><td>SQS Standard</td><td>~10M requests/month</td><td>300 – 800</td></tr>
+          <tr><td>Cache</td><td>ElastiCache Redis</td><td>cache.t3.micro (HA pair)</td><td>3,500 – 6,000</td></tr>
+          <tr><td>Object Storage</td><td>S3</td><td>Testcases + logs + code (~50GB)</td><td>400 – 1,200</td></tr>
+          <tr><td>Monitoring</td><td>CloudWatch + Grafana</td><td>Metrics, logs, dashboards</td><td>1,200 – 3,500</td></tr>
+          <tr><td>Idle Judge Fleet</td><td>EC2 on-demand</td><td>1× t3.medium (always on)</td><td>1,500 – 2,500</td></tr>
+          <tr><td>Supabase</td><td>Supabase Pro</td><td>8 GB DB, unlimited auth, Realtime</td><td>~2,000 (USD 25/mo)</td></tr>
+          <tr class="cost-total"><td><strong>Total Base</strong></td><td></td><td></td><td><strong>16,200 – 31,000 INR/month</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Per-Contest Burst Costs</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Resource</th><th>Scale</th><th>Duration</th><th>Est. Cost (INR/contest)</th></tr></thead>
+        <tbody>
+          <tr><td>Judge Spot fleet</td><td>12–20 × c6i.xlarge Spot</td><td>4h (inc. warmup/drain)</td><td>700 – 3,500</td></tr>
+          <tr><td>ECS API scale-out</td><td>+4 Fargate tasks</td><td>3h</td><td>200 – 600</td></tr>
+          <tr><td>ALB/WAF extra reqs</td><td>~5M contest requests</td><td>Contest window</td><td>150 – 400</td></tr>
+          <tr><td>S3 code storage</td><td>150k submissions × ~10KB</td><td>Permanent</td><td>120 – 300</td></tr>
+          <tr><td>CloudWatch extra logs</td><td>~10GB contest logs</td><td>Per contest</td><td>80 – 200</td></tr>
+          <tr class="cost-total"><td><strong>Per Large Contest</strong></td><td></td><td></td><td><strong>1,250 – 5,000 INR/contest</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout success">
+      <strong>Cost optimization wins:</strong> (1) EC2 Spot instances give 60–70% savings on judge compute — the single largest variable cost. (2) Code is stored in S3 and deleted after 30 days to control storage growth. (3) ECS Fargate scales to 0 tasks on non-contest days — run a single t3.small on-demand for API health-check only. (4) Supabase managed eliminates a dedicated RDS instance (~₹8,000–20,000/mo), a Supabase Auth replacement, and a custom WebSocket server.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       I. ROADMAP
+  ═══════════════════════════════════ -->
+  <section class="section" id="roadmap">
+    <div class="section-header">
+      <span class="sid">I</span>
+      <h2>Development Roadmap</h2>
+    </div>
+
+    <div class="timeline">
+      <div class="phase p1" data-n="1">
+        <h4>Phase 1 — Working Contest Platform</h4>
+        <div class="phase-dur">Months 1–3 · 2–3 engineers · Target: run real contests</div>
+        <ul class="list">
+          <li><strong>Auth + Orgs:</strong> Supabase Auth (email + GitHub OAuth), org creation, invite-based membership, RBAC middleware in Go.</li>
+          <li><strong>Problem CMS:</strong> Markdown editor, testcase upload to S3, exact/token checkers, problem approval flow.</li>
+          <li><strong>Judge v1:</strong> nsjail on a single EC2 instance, SQS-based job queue, Go judge worker, C++/Python/Java support.</li>
+          <li><strong>Contest engine:</strong> Schedule contests, ICPC scoring, submission pipeline, manual ranking page (polling, not realtime yet).</li>
+          <li><strong>Frontend:</strong> Next.js, Monaco Editor, contestant dashboard, basic admin UI.</li>
+          <li><strong>Skip:</strong> Supabase Realtime (polling is fine for Phase 1), autoscaling, Firecracker, plagiarism detection, proctoring.</li>
+        </ul>
+      </div>
+
+      <div class="phase p2" data-n="2">
+        <h4>Phase 2 — Realtime, Scale, Multi-org</h4>
+        <div class="phase-dur">Months 4–7 · add 1–2 engineers · Target: 5k concurrent users</div>
+        <ul class="list">
+          <li><strong>Supabase Realtime:</strong> Live verdicts and leaderboard via Postgres change events. Replace all polling.</li>
+          <li><strong>Autoscaling judges:</strong> EC2 Spot ASG with CloudWatch SQS metric scaling. Pre-warming on contest start. Spot interruption handling.</li>
+          <li><strong>Ranking Updater:</strong> Dedicated Go process, Redis sorted set for leaderboard, freeze/unfreeze logic.</li>
+          <li><strong>IOI + CF scoring modes:</strong> Extend scoring engine with subtask partial credit and time-decay scoring.</li>
+          <li><strong>Self-hosted Supabase (optional):</strong> Migrate if Postgres connection counts or Realtime limits become binding constraints.</li>
+          <li><strong>Billing:</strong> Stripe integration, per-org subscription plans, contest capacity limits per plan.</li>
+          <li><strong>Monitoring:</strong> Grafana dashboard (CloudWatch source), PagerDuty/Opsgenie alerts for judge queue depth and API error rate.</li>
+        </ul>
+      </div>
+
+      <div class="phase p3" data-n="3">
+        <h4>Phase 3 — Assessment Platform + Advanced Features</h4>
+        <div class="phase-dur">Months 8–18 · add platform engineer + ML eng · Target: 50k concurrent, enterprise</div>
+        <ul class="list">
+          <li><strong>Firecracker microVMs:</strong> Replace nsjail with nsjail-in-Firecracker for kernel isolation. Pre-warmed VM snapshot pool per language.</li>
+          <li><strong>Assessment modes:</strong> MCQ renderer, time-boxed open-ended questions, hybrid assessments. AI-assisted rubric scoring via Anthropic API (async, post-exam).</li>
+          <li><strong>Proctoring (async):</strong> Webcam/screen capture to S3, event log, tab-switch detection. No live monitoring yet — async review UI for admins.</li>
+          <li><strong>Plagiarism detection:</strong> Post-contest MOSS-style analysis job on accepted submissions. Similarity matrix report to org admin.</li>
+          <li><strong>EKS migration:</strong> Move from ECS Fargate to EKS for cost efficiency at scale. Kafka MSK for event durability on anti-cheat pipeline.</li>
+          <li><strong>SSO/SAML:</strong> Enterprise org SSO via Supabase SAML or Okta proxy. Required for university and enterprise customers.</li>
+          <li><strong>Multi-region:</strong> US + EU deployment for GDPR compliance. Route53 latency routing. Separate Supabase projects per region.</li>
+          <li><strong>SOC 2 Type II:</strong> Begin audit process. Required for enterprise SLAs. Implement audit log completeness, access reviews, and change management.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════
+       J. FINAL STACK
+  ═══════════════════════════════════ -->
+  <section class="section" id="stack">
+    <div class="section-header">
+      <span class="sid">J</span>
+      <h2>Final Recommended Stack</h2>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Technology</th><th>Rationale</th></tr></thead>
+        <tbody>
+          <tr><td>Frontend</td><td>Next.js 14 (App Router) + TailwindCSS + Monaco</td><td>SSR for SEO on public pages; Monaco for code editing; well-supported ecosystem</td></tr>
+          <tr><td>CDN</td><td>CloudFront</td><td>Global edge, S3 origin, WAF integration, signed URLs for S3 assets</td></tr>
+          <tr><td>Backend API</td><td>Go + Chi router (ECS Fargate)</td><td>Low latency, minimal resource overhead, strong concurrency, easy deployment</td></tr>
+          <tr><td>Auth</td><td>Supabase Auth</td><td>JWT, OAuth, magic links, SAML (Enterprise), MFA — zero custom auth code</td></tr>
+          <tr><td>Database</td><td>Supabase Postgres + RLS</td><td>Postgres with built-in RLS eliminates most authorization code; pgvector ready for future ML features</td></tr>
+          <tr><td>Realtime</td><td>Supabase Realtime</td><td>Postgres change streams over WebSockets; replaces custom WebSocket broadcast server</td></tr>
+          <tr><td>Cache / Leaderboard</td><td>ElastiCache Redis</td><td>Sorted sets for live rankings; session state; rate-limit counters</td></tr>
+          <tr><td>Job Queue</td><td>AWS SQS Standard</td><td>Reliable at-least-once delivery; visibility timeout for Spot interruption safety; dead-letter queue for failed jobs</td></tr>
+          <tr><td>Object Storage</td><td>AWS S3</td><td>Testcases, submission code, logs, contest assets; lifecycle rules for cost control</td></tr>
+          <tr><td>Judge Runtime</td><td>Go worker binary</td><td>Same language as API; single binary deployment; clean SandboxDriver interface</td></tr>
+          <tr><td>Sandbox (Phase 1)</td><td>nsjail</td><td>Fast startup (&lt;50ms), namespaces + cgroups + seccomp, no VM overhead</td></tr>
+          <tr><td>Sandbox (Phase 2+)</td><td>Firecracker + nsjail</td><td>Guest-kernel isolation, snapshot pre-warming, &lt;150ms cold start</td></tr>
+          <tr><td>Judge Infra</td><td>EC2 Spot ASG (c6i.xlarge)</td><td>60–70% compute savings; ASG handles interruptions; size is right for 1 concurrent sandbox</td></tr>
+          <tr><td>Monitoring</td><td>CloudWatch + Grafana Cloud</td><td>CloudWatch for AWS metrics; Grafana for unified dashboards and alerting</td></tr>
+          <tr><td>Secrets</td><td>AWS Secrets Manager</td><td>No static credentials; automatic rotation; ECS task role access</td></tr>
+          <tr><td>CI/CD</td><td>GitHub Actions + ECR</td><td>Build Go API → Docker image → push to ECR → ECS rolling deploy</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>What This Architecture Deliberately Avoids</h3>
+    <ul class="list">
+      <li><strong>Kubernetes (Phase 1–2):</strong> ECS Fargate provides enough orchestration without the operational overhead of EKS. Migrate in Phase 3 when cost optimization at scale justifies it.</li>
+      <li><strong>Kafka (Phase 1–2):</strong> SQS is sufficient for the submission pipeline. Add Kafka MSK only when event durability requirements for anti-cheat/proctoring pipelines demand it.</li>
+      <li><strong>Custom WebSocket server:</strong> Supabase Realtime handles verdict and leaderboard broadcasting. The only custom WebSocket code needed is a fan-out gateway for &gt;5k concurrent leaderboard subscribers.</li>
+      <li><strong>Separate auth service:</strong> Supabase Auth eliminates the need for a custom auth microservice. The Go API enforces RBAC using the JWT claims issued by Supabase.</li>
+      <li><strong>Microservices from day one:</strong> Start as a modular monolith. Extract the Judge Service in week 8, Media Ingestion in week 16. Everything else stays in the Go monolith until a concrete bottleneck forces a split.</li>
+    </ul>
+  </section>
+
+</main>
+</div>
+</body>
+</html>

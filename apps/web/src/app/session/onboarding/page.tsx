@@ -341,14 +341,40 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    let progressed = false;
+
+    const progress = () => {
+      if (cancelled || progressed) return;
+      progressed = true;
+      setDone(true);
+      setTimeout(() => {
+        if (!cancelled) onPass();
+      }, 1200);
+    };
+
     async function go() {
-      const win = await tauriWindow();
-      const mons = win
-        ? await Promise.race([
-            win.availableMonitors(),
+      let mons: MonitorInfo[] = [];
+      try {
+        const win = await tauriWindow();
+        if (win) {
+          let monitorsPromise: Promise<MonitorInfo[]>;
+          try {
+            monitorsPromise = win.availableMonitors();
+          } catch {
+            monitorsPromise = Promise.resolve([]);
+          }
+          mons = await Promise.race([
+            monitorsPromise,
             new Promise<MonitorInfo[]>((resolve) => setTimeout(() => resolve([]), 2000)),
-          ]).catch(() => [] as MonitorInfo[])
-        : [];
+          ]).catch(() => [] as MonitorInfo[]);
+        }
+      } catch {
+        mons = [];
+      }
+
+      if (cancelled) return;
+
       // Browser fallback
       const list = mons.length
         ? mons
@@ -361,12 +387,16 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
             },
           ];
       setMonitors(list);
-      setTimeout(() => {
-        setDone(true);
-        setTimeout(onPass, 1200);
-      }, 900);
+      setTimeout(progress, 900);
     }
+
+    // Hard fallback so this stage can never deadlock due to platform API issues.
+    const failSafe = setTimeout(progress, 3500);
     void go();
+    return () => {
+      cancelled = true;
+      clearTimeout(failSafe);
+    };
   }, [onPass]);
 
   return (
@@ -844,18 +874,31 @@ function Stage9_FaceCalibration({
   stream: MediaStream | null;
   onPass(): void;
 }) {
-  // Minimal type shim — avoids module-level import before install
+  type FaceKeypointLike = { x: number; y: number; label?: string };
+  type FacePredictionLike = {
+    topLeft: [number, number];
+    bottomRight: [number, number];
+    landmarks?: number[][];
+    probability?: number | number[];
+  };
   type DetectorLike = {
-    detectForVideo(
-      video: HTMLVideoElement,
-      ts: number
-    ): {
-      detections: Array<{
-        boundingBox?: { originX: number; originY: number; width: number; height: number };
-        score?: number[];
-      }>;
-    };
-    close(): void;
+    estimateFaces(
+      input: HTMLCanvasElement,
+      returnTensors?: boolean,
+      flipHorizontal?: boolean,
+      annotateBoxes?: boolean
+    ): Promise<FacePredictionLike[]>;
+    dispose(): void;
+  };
+  type BlazeFaceModuleLike = {
+    load(config?: {
+      maxFaces?: number;
+      inputWidth?: number;
+      inputHeight?: number;
+      iouThreshold?: number;
+      scoreThreshold?: number;
+      modelUrl?: string;
+    }): Promise<DetectorLike>;
   };
 
   const PHASES = [
@@ -872,16 +915,21 @@ function Stage9_FaceCalibration({
   const onPassRef = useRef(onPass);
   onPassRef.current = onPass;
 
-  // EMA-smoothed bbox — detection coordinate space (not mirrored)
+  const keypointsRef = useRef<FaceKeypointLike[] | null>(null);
   const smooth = useRef({ cx: 0.5, cy: 0.5, w: 0.0, h: 0.0 });
+  const poseRef = useRef({ yaw: 0, pitch: 0, roll: 0 });
   const lastDetectMs = useRef(0);
-  const lockProgress = useRef(0); // 0–100
+  const holdMsRef = useRef(0);
   const facePresentRef = useRef(false);
   const qualityOkRef = useRef(false);
   const capturingRef = useRef(false);
   const phaseIdxRef = useRef(0);
   const rafRef = useRef(0);
   const detectCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastVideoTimeRef = useRef(-1);
+  const detectionErrorsRef = useRef(0);
+  const fallbackStartedRef = useRef(false);
+  const detectionBusyRef = useRef(false);
 
   // ── React state (display only) ─────────────────────────────────
   const [detectorReady, setDetectorReady] = useState(false);
@@ -891,11 +939,14 @@ function Stage9_FaceCalibration({
   const [facePresent, setFacePresent] = useState(false);
   const [qualityOk, setQualityOk] = useState(false);
   const [lockPct, setLockPct] = useState(0);
+  const [poseLabel, setPoseLabel] = useState("SCANNING");
   const [captured, setCaptured] = useState([false, false, false]);
   const [flash, setFlash] = useState(false);
   const [done, setDone] = useState(false);
+  const [runtimeNote, setRuntimeNote] = useState<string | null>(null);
+  const [lostTracking, setLostTracking] = useState(false);
 
-  phaseIdxRef.current = phaseIdx;
+  const PHASE_HOLD_MS = 3000;
 
   // ── Capture (ref-assigned so detection loop always gets latest) ─
   const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
@@ -930,83 +981,210 @@ function Stage9_FaceCalibration({
     await new Promise<void>((r) => setTimeout(r, 380));
     setFlash(false);
 
-    if (idx < 2) {
-      const next = idx + 1;
-      lockProgress.current = 0;
-      facePresentRef.current = false;
-      qualityOkRef.current = false;
-      smooth.current = { cx: 0.5, cy: 0.5, w: 0, h: 0 };
-      phaseIdxRef.current = next;
-      setPhaseIdx(next);
-      setFacePresent(false);
-      setQualityOk(false);
-      setLockPct(0);
-      setGuidance(PHASES[next].instruction);
-      await new Promise<void>((r) => setTimeout(r, 600));
-      capturingRef.current = false;
-    } else {
+    const nextCaptured = (() => {
+      const updated = [...capturedRef.current];
+      updated[idx] = true;
+      return updated;
+    })();
+    capturedRef.current = nextCaptured;
+
+    const nextPhase = nextCaptured.findIndex((value) => !value);
+    holdMsRef.current = 0;
+    facePresentRef.current = false;
+    qualityOkRef.current = false;
+    smooth.current = { cx: 0.5, cy: 0.5, w: 0, h: 0 };
+    setFacePresent(false);
+    setQualityOk(false);
+    setLockPct(0);
+
+    if (nextPhase === -1) {
       setDone(true);
       setGuidance("Identity verification complete");
       setTimeout(() => onPassRef.current(), 1400);
+    } else {
+      phaseIdxRef.current = nextPhase;
+      setPhaseIdx(nextPhase);
+      setGuidance(PHASES[nextPhase].instruction);
+      await new Promise<void>((r) => setTimeout(r, 600));
+      capturingRef.current = false;
     }
   };
 
-  // ── Init: camera + MediaPipe BlazeFace ────────────────────────
+  function keypointAt(keypoints: FaceKeypointLike[], index: number, label?: string) {
+    if (label) {
+      const labeled = keypoints.find((point) => point.label === label);
+      if (labeled) return labeled;
+    }
+    return keypoints[index] ?? null;
+  }
+
+  function estimatePose(keypoints: FaceKeypointLike[], box: { h: number }) {
+    const rightEye = keypointAt(keypoints, 0, "rightEye");
+    const leftEye = keypointAt(keypoints, 1, "leftEye");
+    const nose = keypointAt(keypoints, 2, "noseTip");
+    const mouth = keypointAt(keypoints, 3, "mouthCenter");
+    const rightEar = keypointAt(keypoints, 4, "rightEarTragion");
+    const leftEar = keypointAt(keypoints, 5, "leftEarTragion");
+
+    if (!leftEye || !rightEye || !nose || !mouth) {
+      return { yaw: 0, pitch: 0, roll: 0 };
+    }
+
+    const eyeMidX = (leftEye.x + rightEye.x) / 2;
+    const eyeMidY = (leftEye.y + rightEye.y) / 2;
+    const eyeSpan = Math.max(0.001, Math.abs(rightEye.x - leftEye.x));
+    const leftEarSpan = leftEar ? Math.abs(leftEar.x - leftEye.x) : 0;
+    const rightEarSpan = rightEar ? Math.abs(rightEar.x - rightEye.x) : 0;
+    const earBalance =
+      (leftEarSpan - rightEarSpan) / Math.max(0.001, leftEarSpan + rightEarSpan || eyeSpan);
+    const rawYaw = (((nose.x - eyeMidX) / eyeSpan) * 85 + earBalance * 22) * -1;
+    const yaw = Math.max(-32, Math.min(32, rawYaw));
+    const pitch = Math.max(
+      -24,
+      Math.min(24, ((nose.y - eyeMidY) / Math.max(0.001, box.h) - 0.04) * 140)
+    );
+    const roll = (Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * 180) / Math.PI;
+
+    return { yaw, pitch, roll };
+  }
+
+  function isInsideGuide(box: { cx: number; cy: number; w: number; h: number }) {
+    const gx = 0.5;
+    const gy = 0.48;
+    const rx = 0.22;
+    const ry = 0.37;
+    const dx = 1 - box.cx - gx;
+    const dy = box.cy - gy;
+
+    const centerInside = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.02;
+    const sizeOk = box.w >= 0.16 && box.w <= 0.58 && box.h >= 0.22 && box.h <= 0.82;
+    return centerInside && sizeOk;
+  }
+
+  function getPoseLabel(pose: { yaw: number }) {
+    if (pose.yaw > 12) return "LEFT PROFILE DETECTED";
+    if (pose.yaw < -12) return "RIGHT PROFILE DETECTED";
+    return "FRONT DETECTED";
+  }
+
+  function getPoseIndex(pose: { yaw: number }) {
+    if (pose.yaw > 12) return 1;
+    if (pose.yaw < -12) return 2;
+    return 0;
+  }
+
+  function beginTimedFallback() {
+    if (fallbackStartedRef.current) return;
+    fallbackStartedRef.current = true;
+    setDetectorFailed(true);
+    setRuntimeNote(
+      (prev) =>
+        prev ?? "Live face inference unavailable in this runtime. Continuing with timed capture."
+    );
+    setGuidance(PHASES[0].instruction);
+
+    void (async () => {
+      for (let i = 0; i < 3; i++) {
+        phaseIdxRef.current = i;
+        setPhaseIdx(i);
+        setGuidance(PHASES[i].instruction);
+        await new Promise<void>((r) => setTimeout(r, i === 0 ? 2200 : 3000));
+        capturingRef.current = true;
+        await capturePhaseRef.current(i);
+      }
+    })();
+  }
+
+  function setTrackingLost(next: boolean) {
+    setLostTracking((prev) => (prev === next ? prev : next));
+  }
+
+  const capturedRef = useRef([false, false, false]);
+  useEffect(() => {
+    capturedRef.current = captured;
+    const nextPhase = captured.findIndex((value) => !value);
+    if (nextPhase !== -1 && nextPhase !== phaseIdxRef.current) {
+      phaseIdxRef.current = nextPhase;
+      setPhaseIdx(nextPhase);
+    }
+  }, [captured]);
+
+  // ── Init: camera + TensorFlow.js BlazeFace ───────────────────
   useEffect(() => {
     let cancelled = false;
 
     async function init() {
-      if (stream && videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => {});
+      if (videoRef.current) {
+        const activeStream =
+          stream ??
+          (await navigator.mediaDevices
+            ?.getUserMedia?.({
+              video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+            })
+            .catch(() => null));
+
+        if (activeStream) {
+          videoRef.current.srcObject = activeStream;
+          await videoRef.current.play().catch(() => {});
+          if (videoRef.current.readyState < 2) {
+            await new Promise<void>((resolve) => {
+              const video = videoRef.current;
+              if (!video) {
+                resolve();
+                return;
+              }
+
+              const onReady = () => {
+                video.removeEventListener("loadeddata", onReady);
+                video.removeEventListener("canplay", onReady);
+                resolve();
+              };
+
+              video.addEventListener("loadeddata", onReady, { once: true });
+              video.addEventListener("canplay", onReady, { once: true });
+              setTimeout(onReady, 1200);
+            });
+          }
+        }
       }
 
       try {
-        const { FaceDetector, FilesetResolver } = await import("@mediapipe/tasks-vision");
-        const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
-        const det = await FaceDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "/mediapipe/blaze_face_short_range.tflite",
-            delegate: "CPU",
-          },
-          runningMode: "VIDEO",
-          minDetectionConfidence: 0.3,
-          minSuppressionThreshold: 0.3,
+        const tf = await import("@tensorflow/tfjs-core");
+        await import("@tensorflow/tfjs-backend-cpu");
+        await tf.setBackend("cpu");
+        await tf.ready();
+        const blazeface = (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike;
+        const det = await blazeface.load({
+          maxFaces: 1,
+          inputWidth: 128,
+          inputHeight: 128,
+          scoreThreshold: 0.75,
         });
         if (cancelled) {
-          det.close();
+          det.dispose();
           return;
         }
-        detectorRef.current = det as unknown as DetectorLike;
-        // Pre-create detection canvas for webkit2gtk compatibility
+        detectorRef.current = det;
         detectCanvasRef.current = document.createElement("canvas");
         setDetectorReady(true);
+        setRuntimeNote(null);
         setGuidance(PHASES[0].instruction);
-      } catch {
+      } catch (error) {
         if (cancelled) return;
-        setDetectorFailed(true);
         setDetectorReady(true);
-        setGuidance(PHASES[0].instruction);
-        // Timer-based fallback when model unavailable
-        void (async () => {
-          for (let i = 0; i < 3; i++) {
-            if (cancelled) return;
-            phaseIdxRef.current = i;
-            setPhaseIdx(i);
-            setGuidance(PHASES[i].instruction);
-            await new Promise<void>((r) => setTimeout(r, i === 0 ? 2200 : 3000));
-            if (cancelled) return;
-            capturingRef.current = true;
-            await capturePhaseRef.current(i);
-          }
-        })();
+        setRuntimeNote(
+          error instanceof Error
+            ? `Detector init failed: ${error.message}`
+            : "Detector init failed in this runtime."
+        );
+        beginTimedFallback();
       }
     }
 
     void init();
     return () => {
       cancelled = true;
-      detectorRef.current?.close();
+      detectorRef.current?.dispose();
       detectorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1015,28 +1193,169 @@ function Stage9_FaceCalibration({
   // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
     const EMA = 0.3;
-    const DETECT_INTERVAL = 100; // 10 FPS
-    const FILL = 2.2; // progress per detection frame when quality ok
-    const DRAIN = 5.0; // drain rate when quality fails
-    const LOCK_MAX = 100;
+    const DETECT_INTERVAL = 120;
 
     let prevFP = false;
     let prevQK = false;
+    let prevGuidance = "";
+    let prevPoseLabel = "";
 
-    function getQuality(s: typeof smooth.current, phase: number) {
-      if (s.w < 0.14) return { ok: false, hint: "Move closer" };
-      if (s.w > 0.65) return { ok: false, hint: "Move back" };
+    function getQuality(s: typeof smooth.current, phase: number, pose: typeof poseRef.current) {
+      if (s.w < 0.16) return { ok: false, hint: "Move closer" };
+      if (s.w > 0.58) return { ok: false, hint: "Move back" };
+      if (Math.abs(pose.roll) > 14) return { ok: false, hint: "Keep your head level" };
+      if (pose.pitch < -16) return { ok: false, hint: "Tilt slightly down" };
+      if (pose.pitch > 18) return { ok: false, hint: "Lift your chin slightly" };
+
+      const sx = 1 - s.cx;
       if (phase === 0) {
-        // Front: check centering in screen space (video is mirrored)
-        const sx = 1 - s.cx;
-        if (sx < 0.3) return { ok: false, hint: "Move right" };
-        if (sx > 0.7) return { ok: false, hint: "Move left" };
-        if (s.cy < 0.22) return { ok: false, hint: "Move down" };
-        if (s.cy > 0.78) return { ok: false, hint: "Move up" };
+        if (sx < 0.37) return { ok: false, hint: "Move right" };
+        if (sx > 0.63) return { ok: false, hint: "Move left" };
+        if (s.cy < 0.28) return { ok: false, hint: "Move down" };
+        if (s.cy > 0.7) return { ok: false, hint: "Move up" };
+        if (Math.abs(pose.yaw) > 12) return { ok: false, hint: "Face the camera directly" };
         return { ok: true, hint: "Hold still…" };
       }
-      // Side profiles: any presence counts
-      return { ok: true, hint: PHASES[phase].instruction };
+
+      if (sx < 0.32 || sx > 0.68 || s.cy < 0.24 || s.cy > 0.74) {
+        return { ok: false, hint: "Keep your face inside the frame" };
+      }
+
+      if (phase === 1) {
+        if (pose.yaw < -8) return { ok: false, hint: "Turn the other direction" };
+        if (pose.yaw < 13) return { ok: false, hint: "Turn further left" };
+        return { ok: true, hint: "Hold that left profile…" };
+      }
+
+      if (pose.yaw > 8) return { ok: false, hint: "Turn the other direction" };
+      if (pose.yaw > -13) return { ok: false, hint: "Turn further right" };
+      return { ok: true, hint: "Hold that right profile…" };
+    }
+
+    function processDetection(video: HTMLVideoElement) {
+      const det = detectorRef.current;
+      const dc = detectCanvasRef.current;
+      if (!det || !dc || detectionBusyRef.current) return;
+      detectionBusyRef.current = true;
+
+      void (async () => {
+        try {
+          let res: FacePredictionLike[] = [];
+          if (dc.width !== video.videoWidth || dc.height !== video.videoHeight) {
+            dc.width = video.videoWidth;
+            dc.height = video.videoHeight;
+          }
+          const dctx = dc.getContext("2d", { willReadFrequently: true });
+          if (!dctx) return;
+          dctx.drawImage(video, 0, 0);
+          res = await det.estimateFaces(dc, false, false, true);
+
+          detectionErrorsRef.current = 0;
+          const detection = res[0];
+
+          if (detection?.topLeft && detection?.bottomRight) {
+            const [x1, y1] = detection.topLeft;
+            const [x2, y2] = detection.bottomRight;
+            const raw = {
+              cx: (x1 + x2) / 2 / video.videoWidth,
+              cy: (y1 + y2) / 2 / video.videoHeight,
+              w: Math.abs(x2 - x1) / video.videoWidth,
+              h: Math.abs(y2 - y1) / video.videoHeight,
+            };
+            if (isInsideGuide(raw)) {
+              const s = smooth.current;
+              if (!facePresentRef.current) {
+                s.cx = raw.cx;
+                s.cy = raw.cy;
+                s.w = raw.w;
+                s.h = raw.h;
+              } else {
+                s.cx = EMA * raw.cx + (1 - EMA) * s.cx;
+                s.cy = EMA * raw.cy + (1 - EMA) * s.cy;
+                s.w = EMA * raw.w + (1 - EMA) * s.w;
+                s.h = EMA * raw.h + (1 - EMA) * s.h;
+              }
+              keypointsRef.current = (detection.landmarks ?? []).map(([x, y]) => ({
+                x: x / video.videoWidth,
+                y: y / video.videoHeight,
+              }));
+              poseRef.current = estimatePose(keypointsRef.current, raw);
+              facePresentRef.current = true;
+            } else {
+              facePresentRef.current = false;
+              keypointsRef.current = null;
+              smooth.current.w *= 0.8;
+              smooth.current.h *= 0.8;
+            }
+          } else {
+            facePresentRef.current = false;
+            keypointsRef.current = null;
+            smooth.current.w *= 0.92;
+            smooth.current.h *= 0.92;
+          }
+
+          const activePhase = phaseIdxRef.current;
+          const { ok, hint } = getQuality(smooth.current, activePhase, poseRef.current);
+          qualityOkRef.current = facePresentRef.current && ok;
+          const nextPoseLabel = facePresentRef.current ? getPoseLabel(poseRef.current) : "SCANNING";
+
+          if (
+            facePresentRef.current !== prevFP ||
+            ok !== prevQK ||
+            hint !== prevGuidance ||
+            nextPoseLabel !== prevPoseLabel
+          ) {
+            prevFP = facePresentRef.current;
+            prevQK = ok;
+            prevGuidance = hint;
+            prevPoseLabel = nextPoseLabel;
+            setFacePresent(facePresentRef.current);
+            setQualityOk(qualityOkRef.current);
+            setPoseLabel(nextPoseLabel);
+            if (!facePresentRef.current) {
+              setTrackingLost(true);
+              setPoseLabel("SCANNING");
+              setGuidance("Face lost. Return to the frame.");
+            } else {
+              setTrackingLost(false);
+              setGuidance(hint);
+            }
+          }
+
+          const detectedPoseIdx = getPoseIndex(poseRef.current);
+          const requiredPoseIdx = phaseIdxRef.current;
+          const phasePoseMatch =
+            facePresentRef.current &&
+            !capturedRef.current[detectedPoseIdx] &&
+            detectedPoseIdx === requiredPoseIdx;
+
+          if (qualityOkRef.current && phasePoseMatch && !capturingRef.current) {
+            holdMsRef.current = Math.min(PHASE_HOLD_MS, holdMsRef.current + DETECT_INTERVAL);
+          } else {
+            holdMsRef.current = 0;
+          }
+          setLockPct(Math.round((holdMsRef.current / PHASE_HOLD_MS) * 100));
+
+          if (holdMsRef.current >= PHASE_HOLD_MS && !capturingRef.current) {
+            capturingRef.current = true;
+            void capturePhaseRef.current(requiredPoseIdx);
+          }
+        } catch (error) {
+          detectionErrorsRef.current += 1;
+          if (detectionErrorsRef.current >= 2) {
+            setRuntimeNote(
+              error instanceof Error
+                ? `Detector inference failed: ${error.message}`
+                : "Detector inference failed in this runtime."
+            );
+          }
+          if (detectionErrorsRef.current >= 5) {
+            beginTimedFallback();
+          }
+        } finally {
+          detectionBusyRef.current = false;
+        }
+      })();
     }
 
     function loop(ts: number) {
@@ -1050,99 +1369,18 @@ function Stage9_FaceCalibration({
       const t = ts / 1000;
 
       // ── Run detection at 10 FPS ────────────────────────────
-      const det = detectorRef.current;
       const video = videoRef.current;
       if (
-        det &&
+        detectorRef.current &&
         video &&
         video.readyState >= 2 &&
         video.videoWidth > 0 &&
+        video.currentTime !== lastVideoTimeRef.current &&
         ts - lastDetectMs.current >= DETECT_INTERVAL
       ) {
         lastDetectMs.current = ts;
-        try {
-          // Draw to offscreen canvas first — webkit2gtk compat for direct video reads
-          const dc = detectCanvasRef.current;
-          let inputSource: HTMLVideoElement | HTMLCanvasElement = video;
-          if (dc) {
-            if (dc.width !== video.videoWidth || dc.height !== video.videoHeight) {
-              dc.width = video.videoWidth;
-              dc.height = video.videoHeight;
-            }
-            const dctx = dc.getContext("2d", { willReadFrequently: true });
-            if (dctx) {
-              dctx.drawImage(video, 0, 0);
-              inputSource = dc;
-            }
-          }
-          const res = det.detectForVideo(inputSource as HTMLVideoElement, ts);
-          const dets = (res.detections ?? [])
-            .slice()
-            .sort((a, b) => (b.score?.[0] ?? 0) - (a.score?.[0] ?? 0));
-          const best = dets[0];
-
-          if (best?.boundingBox) {
-            const vW = video.videoWidth;
-            const vH = video.videoHeight;
-            const bb = best.boundingBox;
-            const raw = {
-              cx: (bb.originX + bb.width / 2) / vW,
-              cy: (bb.originY + bb.height / 2) / vH,
-              w: bb.width / vW,
-              h: bb.height / vH,
-            };
-            const s = smooth.current;
-            if (!facePresentRef.current) {
-              // Warm-start: skip EMA ramp-up so quality check fires immediately
-              s.cx = raw.cx;
-              s.cy = raw.cy;
-              s.w = raw.w;
-              s.h = raw.h;
-            } else {
-              s.cx = EMA * raw.cx + (1 - EMA) * s.cx;
-              s.cy = EMA * raw.cy + (1 - EMA) * s.cy;
-              s.w = EMA * raw.w + (1 - EMA) * s.w;
-              s.h = EMA * raw.h + (1 - EMA) * s.h;
-            }
-            facePresentRef.current = true;
-          } else {
-            facePresentRef.current = false;
-            smooth.current.w *= 0.92;
-            smooth.current.h *= 0.92;
-          }
-
-          const { ok, hint } = getQuality(smooth.current, phaseIdxRef.current);
-          qualityOkRef.current = facePresentRef.current && ok;
-
-          // Update React state only on change to avoid re-render storm
-          if (facePresentRef.current !== prevFP || ok !== prevQK) {
-            prevFP = facePresentRef.current;
-            prevQK = ok;
-            setFacePresent(facePresentRef.current);
-            setQualityOk(qualityOkRef.current);
-            if (!facePresentRef.current) {
-              setGuidance(PHASES[phaseIdxRef.current].instruction);
-            } else if (!ok) {
-              setGuidance(hint);
-            } else {
-              setGuidance("Hold still…");
-            }
-          }
-
-          // Drive lock progress
-          if (qualityOkRef.current && !capturingRef.current) {
-            lockProgress.current = Math.min(LOCK_MAX, lockProgress.current + FILL);
-          } else {
-            lockProgress.current = Math.max(0, lockProgress.current - DRAIN);
-          }
-          setLockPct(Math.round(lockProgress.current));
-
-          // Trigger capture when filled
-          if (lockProgress.current >= LOCK_MAX && !capturingRef.current) {
-            capturingRef.current = true;
-            void capturePhaseRef.current(phaseIdxRef.current);
-          }
-        } catch {}
+        lastVideoTimeRef.current = video.currentTime;
+        processDetection(video);
       }
 
       // ── Canvas draw (60 FPS) ───────────────────────────────
@@ -1150,9 +1388,10 @@ function Stage9_FaceCalibration({
       const s = smooth.current;
       const fp = facePresentRef.current;
       const qk = qualityOkRef.current;
-      const lp = lockProgress.current / LOCK_MAX;
+      const lp = lockPct / 100;
+      const pose = poseRef.current;
+      const keypoints = keypointsRef.current;
 
-      // Mirror x for display (detection is in unmirrored frame)
       const dCX = (1 - s.cx) * W;
       const dCY = s.cy * H;
       const dW = s.w * W;
@@ -1168,9 +1407,11 @@ function Stage9_FaceCalibration({
         ? [34, 197, 94]
         : qk
           ? [34, 197, 94]
-          : fp
-            ? [168, 85, 247]
-            : [100, 116, 139];
+          : lostTracking
+            ? [239, 68, 68]
+            : fp
+              ? [168, 85, 247]
+              : [100, 116, 139];
       const rgb = color.join(",");
 
       // Ambient glow
@@ -1182,22 +1423,53 @@ function Stage9_FaceCalibration({
       ctx.ellipse(oCX, oCY, oRX * 2, oRY * 1.8, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Detected bbox (subtle dashed rect, mirrors correctly)
-      if (fp && dW > 20) {
+      if (keypoints?.length) {
         ctx.save();
-        ctx.strokeStyle = `rgba(${rgb},0.28)`;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 4]);
-        ctx.strokeRect(dCX - dW / 2, dCY - dH / 2, dW, dH);
+        const boxGrad = ctx.createLinearGradient(
+          dCX - dW / 2,
+          dCY - dH / 2,
+          dCX + dW / 2,
+          dCY + dH / 2
+        );
+        boxGrad.addColorStop(0, `rgba(${rgb},${qk ? 0.95 : 0.62})`);
+        boxGrad.addColorStop(1, `rgba(255,255,255,${qk ? 0.18 : 0.06})`);
+        ctx.strokeStyle = boxGrad;
+        ctx.lineWidth = qk ? 2.4 : 1.4;
+        ctx.setLineDash(qk ? [] : [6, 4]);
+        (
+          [
+            [dCX - dW / 2, dCY - dH / 2, 1, 1],
+            [dCX + dW / 2, dCY - dH / 2, -1, 1],
+            [dCX - dW / 2, dCY + dH / 2, 1, -1],
+            [dCX + dW / 2, dCY + dH / 2, -1, -1],
+          ] as [number, number, number, number][]
+        ).forEach(([x, y, dx, dy]) => {
+          const arm = Math.min(20, dW * 0.24, dH * 0.24);
+          ctx.beginPath();
+          ctx.moveTo(x + dx * arm, y);
+          ctx.lineTo(x, y);
+          ctx.lineTo(x, y + dy * arm);
+          ctx.stroke();
+        });
+        ctx.setLineDash([]);
+        ctx.fillStyle = `rgba(${rgb},0.78)`;
+        keypoints.forEach((point, idx) => {
+          ctx.beginPath();
+          ctx.arc((1 - point.x) * W, point.y * H, idx < 4 ? 2.8 : 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
         ctx.restore();
       }
 
-      // Oval guide — dashed when searching, solid when locked
       ctx.save();
+      const ringGrad = ctx.createLinearGradient(oCX - oRX, oCY - oRY, oCX + oRX, oCY + oRY);
+      ringGrad.addColorStop(0, `rgba(${rgb},${fp ? 0.8 : 0.28})`);
+      ringGrad.addColorStop(0.5, `rgba(255,255,255,${qk ? 0.18 : 0.06})`);
+      ringGrad.addColorStop(1, `rgba(${rgb},${fp ? 0.95 : 0.34})`);
       ctx.setLineDash(qk ? [] : [8, 5]);
       ctx.lineDashOffset = -t * 18;
-      ctx.strokeStyle = `rgba(${rgb},${fp ? 0.88 : 0.4})`;
-      ctx.lineWidth = qk ? 2.8 : 1.8;
+      ctx.strokeStyle = ringGrad;
+      ctx.lineWidth = qk ? 3.2 : 1.9;
       ctx.beginPath();
       ctx.ellipse(oCX, oCY, oRX, oRY, 0, 0, Math.PI * 2);
       ctx.stroke();
@@ -1217,15 +1489,14 @@ function Stage9_FaceCalibration({
       ctx.fillRect(oCX - oRX, scanY - 10, oRX * 2, 20);
       ctx.restore();
 
-      // Corner brackets
-      const bS = 20;
+      const bS = 24;
       const mg = 10;
       const bx1 = oCX - oRX - mg;
       const bx2 = oCX + oRX + mg;
       const by1 = oCY - oRY - mg;
       const by2 = oCY + oRY + mg;
-      ctx.strokeStyle = `rgba(${rgb},${qk ? 1 : 0.55})`;
-      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = `rgba(${rgb},${qk ? 1 : 0.65})`;
+      ctx.lineWidth = qk ? 3 : 2.2;
       ctx.setLineDash([]);
       (
         [
@@ -1242,7 +1513,6 @@ function Stage9_FaceCalibration({
         ctx.stroke();
       });
 
-      // Lock progress arc around oval
       if (fp && lp > 0) {
         ctx.save();
         ctx.strokeStyle = qk ? "rgba(34,197,94,0.8)" : "rgba(168,85,247,0.5)";
@@ -1253,7 +1523,6 @@ function Stage9_FaceCalibration({
         ctx.restore();
       }
 
-      // Orbiting particles when quality locked
       if (qk) {
         for (let i = 0; i < 6; i++) {
           const angle = t * 1.1 + (i * Math.PI * 2) / 6;
@@ -1267,7 +1536,6 @@ function Stage9_FaceCalibration({
         }
       }
 
-      // Phase direction arrows
       if (phaseIdxRef.current === 1) {
         ctx.font = "bold 26px system-ui";
         ctx.fillStyle = "rgba(168,85,247,0.75)";
@@ -1278,15 +1546,29 @@ function Stage9_FaceCalibration({
         ctx.fillText("→", bx2 + 8, oCY + 9);
       }
 
-      // Position nudge arrows for front phase (screen-space corrected)
       if (fp && phaseIdxRef.current === 0 && s.w > 0.12) {
         const sx = 1 - s.cx;
         ctx.font = "16px system-ui";
         ctx.fillStyle = "rgba(245,158,11,0.9)";
-        if (sx < 0.3) ctx.fillText("→", W - 28, H / 2);
-        if (sx > 0.7) ctx.fillText("←", 8, H / 2);
+        if (sx < 0.34) ctx.fillText("→", W - 28, H / 2);
+        if (sx > 0.66) ctx.fillText("←", 8, H / 2);
         if (s.cy < 0.25) ctx.fillText("↓", W / 2 - 8, H - 14);
         if (s.cy > 0.75) ctx.fillText("↑", W / 2 - 8, 18);
+      }
+
+      if (fp) {
+        ctx.save();
+        const hudGrad = ctx.createLinearGradient(10, 10, 132, 44);
+        hudGrad.addColorStop(0, "rgba(3,8,22,0.84)");
+        hudGrad.addColorStop(1, "rgba(14,20,40,0.66)");
+        ctx.fillStyle = hudGrad;
+        ctx.fillRect(10, 10, 122, 34);
+        ctx.strokeStyle = `rgba(${rgb},0.42)`;
+        ctx.strokeRect(10, 10, 122, 34);
+        ctx.fillStyle = qk ? "#86efac" : "#c4b5fd";
+        ctx.font = "600 10px system-ui";
+        ctx.fillText(`YAW ${pose.yaw >= 0 ? "+" : ""}${pose.yaw.toFixed(0)}°`, 18, 31);
+        ctx.restore();
       }
     }
 
@@ -1342,8 +1624,8 @@ function Stage9_FaceCalibration({
             position: "absolute",
             inset: "-1px",
             borderRadius: "17px",
-            border: `1px solid ${done ? "rgba(34,197,94,0.6)" : qualityOk ? "rgba(34,197,94,0.5)" : facePresent ? "rgba(168,85,247,0.6)" : "rgba(168,85,247,0.2)"}`,
-            boxShadow: `0 0 ${facePresent ? 28 : 12}px ${done ? "rgba(34,197,94,0.2)" : "rgba(168,85,247,0.15)"}`,
+            border: `1px solid ${done ? "rgba(34,197,94,0.6)" : qualityOk ? "rgba(34,197,94,0.5)" : lostTracking ? "rgba(239,68,68,0.7)" : facePresent ? "rgba(168,85,247,0.6)" : "rgba(168,85,247,0.2)"}`,
+            boxShadow: `0 0 ${facePresent || lostTracking ? 28 : 12}px ${done ? "rgba(34,197,94,0.2)" : lostTracking ? "rgba(239,68,68,0.22)" : "rgba(168,85,247,0.15)"}`,
             pointerEvents: "none",
             transition: "border-color 400ms, box-shadow 400ms",
           }}
@@ -1385,7 +1667,7 @@ function Stage9_FaceCalibration({
         style={{
           padding: "3px 12px",
           borderRadius: "6px",
-          marginBottom: "10px",
+          marginBottom: "8px",
           background: "rgba(168,85,247,0.1)",
           border: "1px solid rgba(168,85,247,0.25)",
         }}
@@ -1397,11 +1679,48 @@ function Stage9_FaceCalibration({
         </span>
       </div>
 
+      <div
+        style={{
+          padding: "4px 10px",
+          borderRadius: "999px",
+          marginBottom: "12px",
+          background: qualityOk
+            ? "rgba(34,197,94,0.12)"
+            : lostTracking
+              ? "rgba(239,68,68,0.12)"
+              : "rgba(148,163,184,0.08)",
+          border: `1px solid ${qualityOk ? "rgba(34,197,94,0.24)" : lostTracking ? "rgba(239,68,68,0.28)" : "rgba(148,163,184,0.15)"}`,
+        }}
+      >
+        <span
+          style={{
+            fontSize: "10px",
+            fontWeight: 600,
+            color: qualityOk
+              ? "#86efac"
+              : lostTracking
+                ? "#fca5a5"
+                : facePresent
+                  ? "#c4b5fd"
+                  : "#64748b",
+            letterSpacing: "0.12em",
+          }}
+        >
+          {lostTracking ? "RETURN TO FRAME" : poseLabel}
+        </span>
+      </div>
+
       {/* Guidance text */}
       <p
         style={{
           fontSize: "13px",
-          color: qualityOk ? "#e2e8f0" : facePresent ? "#a855f7" : "#64748b",
+          color: qualityOk
+            ? "#e2e8f0"
+            : lostTracking
+              ? "#f87171"
+              : facePresent
+                ? "#a855f7"
+                : "#64748b",
           fontWeight: 300,
           marginBottom: "12px",
           textAlign: "center",
@@ -1411,6 +1730,21 @@ function Stage9_FaceCalibration({
       >
         {guidance}
       </p>
+
+      {runtimeNote && (
+        <p
+          style={{
+            fontSize: "11px",
+            color: "#f59e0b",
+            marginBottom: "10px",
+            textAlign: "center",
+            maxWidth: "280px",
+            lineHeight: 1.5,
+          }}
+        >
+          {runtimeNote}
+        </p>
+      )}
 
       {/* Lock progress bar */}
       {facePresent && !done && (
