@@ -881,6 +881,7 @@ function Stage9_FaceCalibration({
   const capturingRef = useRef(false);
   const phaseIdxRef = useRef(0);
   const rafRef = useRef(0);
+  const detectCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // ── React state (display only) ─────────────────────────────────
   const [detectorReady, setDetectorReady] = useState(false);
@@ -969,7 +970,7 @@ function Stage9_FaceCalibration({
             delegate: "CPU",
           },
           runningMode: "VIDEO",
-          minDetectionConfidence: 0.45,
+          minDetectionConfidence: 0.3,
           minSuppressionThreshold: 0.3,
         });
         if (cancelled) {
@@ -977,6 +978,8 @@ function Stage9_FaceCalibration({
           return;
         }
         detectorRef.current = det as unknown as DetectorLike;
+        // Pre-create detection canvas for webkit2gtk compatibility
+        detectCanvasRef.current = document.createElement("canvas");
         setDetectorReady(true);
         setGuidance(PHASES[0].instruction);
       } catch {
@@ -1049,18 +1052,38 @@ function Stage9_FaceCalibration({
       // ── Run detection at 10 FPS ────────────────────────────
       const det = detectorRef.current;
       const video = videoRef.current;
-      if (det && video && video.readyState >= 2 && ts - lastDetectMs.current >= DETECT_INTERVAL) {
+      if (
+        det &&
+        video &&
+        video.readyState >= 2 &&
+        video.videoWidth > 0 &&
+        ts - lastDetectMs.current >= DETECT_INTERVAL
+      ) {
         lastDetectMs.current = ts;
         try {
-          const res = det.detectForVideo(video, ts);
+          // Draw to offscreen canvas first — webkit2gtk compat for direct video reads
+          const dc = detectCanvasRef.current;
+          let inputSource: HTMLVideoElement | HTMLCanvasElement = video;
+          if (dc) {
+            if (dc.width !== video.videoWidth || dc.height !== video.videoHeight) {
+              dc.width = video.videoWidth;
+              dc.height = video.videoHeight;
+            }
+            const dctx = dc.getContext("2d", { willReadFrequently: true });
+            if (dctx) {
+              dctx.drawImage(video, 0, 0);
+              inputSource = dc;
+            }
+          }
+          const res = det.detectForVideo(inputSource as HTMLVideoElement, ts);
           const dets = (res.detections ?? [])
             .slice()
             .sort((a, b) => (b.score?.[0] ?? 0) - (a.score?.[0] ?? 0));
           const best = dets[0];
 
           if (best?.boundingBox) {
-            const vW = video.videoWidth || W;
-            const vH = video.videoHeight || H;
+            const vW = video.videoWidth;
+            const vH = video.videoHeight;
             const bb = best.boundingBox;
             const raw = {
               cx: (bb.originX + bb.width / 2) / vW,
@@ -1069,10 +1092,18 @@ function Stage9_FaceCalibration({
               h: bb.height / vH,
             };
             const s = smooth.current;
-            s.cx = EMA * raw.cx + (1 - EMA) * s.cx;
-            s.cy = EMA * raw.cy + (1 - EMA) * s.cy;
-            s.w = EMA * raw.w + (1 - EMA) * s.w;
-            s.h = EMA * raw.h + (1 - EMA) * s.h;
+            if (!facePresentRef.current) {
+              // Warm-start: skip EMA ramp-up so quality check fires immediately
+              s.cx = raw.cx;
+              s.cy = raw.cy;
+              s.w = raw.w;
+              s.h = raw.h;
+            } else {
+              s.cx = EMA * raw.cx + (1 - EMA) * s.cx;
+              s.cy = EMA * raw.cy + (1 - EMA) * s.cy;
+              s.w = EMA * raw.w + (1 - EMA) * s.w;
+              s.h = EMA * raw.h + (1 - EMA) * s.h;
+            }
             facePresentRef.current = true;
           } else {
             facePresentRef.current = false;
