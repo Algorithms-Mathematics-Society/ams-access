@@ -343,7 +343,12 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
   useEffect(() => {
     async function go() {
       const win = await tauriWindow();
-      const mons = win ? await win.availableMonitors().catch(() => [] as MonitorInfo[]) : [];
+      const mons = win
+        ? await Promise.race([
+            win.availableMonitors(),
+            new Promise<MonitorInfo[]>((resolve) => setTimeout(() => resolve([]), 2000)),
+          ]).catch(() => [] as MonitorInfo[])
+        : [];
       // Browser fallback
       const list = mons.length
         ? mons
@@ -839,259 +844,424 @@ function Stage9_FaceCalibration({
   stream: MediaStream | null;
   onPass(): void;
 }) {
+  // Minimal type shim — avoids module-level import before install
+  type DetectorLike = {
+    detectForVideo(
+      video: HTMLVideoElement,
+      ts: number
+    ): {
+      detections: Array<{
+        boundingBox?: { originX: number; originY: number; width: number; height: number };
+        score?: number[];
+      }>;
+    };
+    close(): void;
+  };
+
+  const PHASES = [
+    { key: "front" as const, label: "FRONT VIEW", instruction: "Look directly at camera" },
+    { key: "left" as const, label: "LEFT PROFILE", instruction: "Slowly turn head left ~25°" },
+    { key: "right" as const, label: "RIGHT PROFILE", instruction: "Slowly turn head right ~25°" },
+  ];
+
+  // ── Hot-path refs (no re-render on change) ─────────────────────
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
+  const detectorRef = useRef<DetectorLike | null>(null);
+  const onPassRef = useRef(onPass);
+  onPassRef.current = onPass;
 
-  type Phase = "front" | "left" | "right";
-  const PHASES: { key: Phase; label: string; instruction: string; angle: string }[] = [
-    { key: "front", label: "FRONT", instruction: "Look directly at the camera", angle: "straight" },
-    {
-      key: "left",
-      label: "LEFT PROFILE",
-      instruction: "Slowly turn your head left ~30°",
-      angle: "left",
-    },
-    {
-      key: "right",
-      label: "RIGHT PROFILE",
-      instruction: "Slowly turn your head right ~30°",
-      angle: "right",
-    },
-  ];
-
-  const [phaseIdx, setPhaseIdx] = useState(0);
-  const [scanning, setScanning] = useState(false);
-  const [captured, setCaptured] = useState<boolean[]>([false, false, false]);
-  const [flash, setFlash] = useState(false);
-  const [scanLine, setScanLine] = useState(0);
-  const [guidance, setGuidance] = useState("Preparing camera…");
-  const [faceDetected, setFaceDetected] = useState(false);
-  const [done, setDone] = useState(false);
+  // EMA-smoothed bbox — detection coordinate space (not mirrored)
+  const smooth = useRef({ cx: 0.5, cy: 0.5, w: 0.0, h: 0.0 });
+  const lastDetectMs = useRef(0);
+  const lockProgress = useRef(0); // 0–100
+  const facePresentRef = useRef(false);
+  const qualityOkRef = useRef(false);
+  const capturingRef = useRef(false);
   const phaseIdxRef = useRef(0);
+  const rafRef = useRef(0);
+
+  // ── React state (display only) ─────────────────────────────────
+  const [detectorReady, setDetectorReady] = useState(false);
+  const [detectorFailed, setDetectorFailed] = useState(false);
+  const [phaseIdx, setPhaseIdx] = useState(0);
+  const [guidance, setGuidance] = useState("Loading face detection…");
+  const [facePresent, setFacePresent] = useState(false);
+  const [qualityOk, setQualityOk] = useState(false);
+  const [lockPct, setLockPct] = useState(0);
+  const [captured, setCaptured] = useState([false, false, false]);
+  const [flash, setFlash] = useState(false);
+  const [done, setDone] = useState(false);
+
   phaseIdxRef.current = phaseIdx;
 
-  // Attach stream to video
+  // ── Capture (ref-assigned so detection loop always gets latest) ─
+  const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
+  capturePhaseRef.current = async (idx: number) => {
+    const video = videoRef.current;
+    const cap = captureCanvasRef.current;
+    if (video && cap) {
+      const ctx = cap.getContext("2d");
+      if (ctx) {
+        ctx.save();
+        ctx.translate(cap.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0, cap.width, cap.height);
+        ctx.restore();
+        const dataUrl = cap.toDataURL("image/png");
+        try {
+          await window.__TAURI__?.core.invoke("save_face_image", {
+            imageData: dataUrl,
+            index: idx,
+          });
+        } catch {}
+      }
+    }
+
+    setFlash(true);
+    setCaptured((prev) => {
+      const n = [...prev];
+      n[idx] = true;
+      return n;
+    });
+    setGuidance("✓ Captured");
+    await new Promise<void>((r) => setTimeout(r, 380));
+    setFlash(false);
+
+    if (idx < 2) {
+      const next = idx + 1;
+      lockProgress.current = 0;
+      facePresentRef.current = false;
+      qualityOkRef.current = false;
+      smooth.current = { cx: 0.5, cy: 0.5, w: 0, h: 0 };
+      phaseIdxRef.current = next;
+      setPhaseIdx(next);
+      setFacePresent(false);
+      setQualityOk(false);
+      setLockPct(0);
+      setGuidance(PHASES[next].instruction);
+      await new Promise<void>((r) => setTimeout(r, 600));
+      capturingRef.current = false;
+    } else {
+      setDone(true);
+      setGuidance("Identity verification complete");
+      setTimeout(() => onPassRef.current(), 1400);
+    }
+  };
+
+  // ── Init: camera + MediaPipe BlazeFace ────────────────────────
   useEffect(() => {
-    if (!stream || !videoRef.current) return;
-    videoRef.current.srcObject = stream;
-    videoRef.current.play().catch(() => {});
+    let cancelled = false;
+
+    async function init() {
+      if (stream && videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+
+      try {
+        const { FaceDetector, FilesetResolver } = await import("@mediapipe/tasks-vision");
+        const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
+        const det = await FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "/mediapipe/blaze_face_short_range.tflite",
+            delegate: "CPU",
+          },
+          runningMode: "VIDEO",
+          minDetectionConfidence: 0.45,
+          minSuppressionThreshold: 0.3,
+        });
+        if (cancelled) {
+          det.close();
+          return;
+        }
+        detectorRef.current = det as unknown as DetectorLike;
+        setDetectorReady(true);
+        setGuidance(PHASES[0].instruction);
+      } catch {
+        if (cancelled) return;
+        setDetectorFailed(true);
+        setDetectorReady(true);
+        setGuidance(PHASES[0].instruction);
+        // Timer-based fallback when model unavailable
+        void (async () => {
+          for (let i = 0; i < 3; i++) {
+            if (cancelled) return;
+            phaseIdxRef.current = i;
+            setPhaseIdx(i);
+            setGuidance(PHASES[i].instruction);
+            await new Promise<void>((r) => setTimeout(r, i === 0 ? 2200 : 3000));
+            if (cancelled) return;
+            capturingRef.current = true;
+            await capturePhaseRef.current(i);
+          }
+        })();
+      }
+    }
+
+    void init();
+    return () => {
+      cancelled = true;
+      detectorRef.current?.close();
+      detectorRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream]);
 
-  // Scanline animation
+  // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
-    let raf: number;
-    let start: number | null = null;
-    function tick(ts: number) {
-      if (!start) start = ts;
-      const elapsed = (ts - start) % 2000;
-      setScanLine(elapsed / 2000);
-      raf = requestAnimationFrame(tick);
+    const EMA = 0.3;
+    const DETECT_INTERVAL = 100; // 10 FPS
+    const FILL = 2.2; // progress per detection frame when quality ok
+    const DRAIN = 5.0; // drain rate when quality fails
+    const LOCK_MAX = 100;
+
+    let prevFP = false;
+    let prevQK = false;
+
+    function getQuality(s: typeof smooth.current, phase: number) {
+      if (s.w < 0.14) return { ok: false, hint: "Move closer" };
+      if (s.w > 0.65) return { ok: false, hint: "Move back" };
+      if (phase === 0) {
+        // Front: check centering in screen space (video is mirrored)
+        const sx = 1 - s.cx;
+        if (sx < 0.3) return { ok: false, hint: "Move right" };
+        if (sx > 0.7) return { ok: false, hint: "Move left" };
+        if (s.cy < 0.22) return { ok: false, hint: "Move down" };
+        if (s.cy > 0.78) return { ok: false, hint: "Move up" };
+        return { ok: true, hint: "Hold still…" };
+      }
+      // Side profiles: any presence counts
+      return { ok: true, hint: PHASES[phase].instruction };
     }
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
-  // Overlay canvas drawing
-  useEffect(() => {
-    let raf: number;
-    const t0 = Date.now();
-
-    function draw() {
+    function loop(ts: number) {
+      rafRef.current = requestAnimationFrame(loop);
       const canvas = overlayCanvasRef.current;
-      if (!canvas) {
-        raf = requestAnimationFrame(draw);
-        return;
-      }
+      if (!canvas) return;
       const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        raf = requestAnimationFrame(draw);
-        return;
-      }
+      if (!ctx) return;
       const W = canvas.width;
       const H = canvas.height;
+      const t = ts / 1000;
+
+      // ── Run detection at 10 FPS ────────────────────────────
+      const det = detectorRef.current;
+      const video = videoRef.current;
+      if (det && video && video.readyState >= 2 && ts - lastDetectMs.current >= DETECT_INTERVAL) {
+        lastDetectMs.current = ts;
+        try {
+          const res = det.detectForVideo(video, ts);
+          const dets = (res.detections ?? [])
+            .slice()
+            .sort((a, b) => (b.score?.[0] ?? 0) - (a.score?.[0] ?? 0));
+          const best = dets[0];
+
+          if (best?.boundingBox) {
+            const vW = video.videoWidth || W;
+            const vH = video.videoHeight || H;
+            const bb = best.boundingBox;
+            const raw = {
+              cx: (bb.originX + bb.width / 2) / vW,
+              cy: (bb.originY + bb.height / 2) / vH,
+              w: bb.width / vW,
+              h: bb.height / vH,
+            };
+            const s = smooth.current;
+            s.cx = EMA * raw.cx + (1 - EMA) * s.cx;
+            s.cy = EMA * raw.cy + (1 - EMA) * s.cy;
+            s.w = EMA * raw.w + (1 - EMA) * s.w;
+            s.h = EMA * raw.h + (1 - EMA) * s.h;
+            facePresentRef.current = true;
+          } else {
+            facePresentRef.current = false;
+            smooth.current.w *= 0.92;
+            smooth.current.h *= 0.92;
+          }
+
+          const { ok, hint } = getQuality(smooth.current, phaseIdxRef.current);
+          qualityOkRef.current = facePresentRef.current && ok;
+
+          // Update React state only on change to avoid re-render storm
+          if (facePresentRef.current !== prevFP || ok !== prevQK) {
+            prevFP = facePresentRef.current;
+            prevQK = ok;
+            setFacePresent(facePresentRef.current);
+            setQualityOk(qualityOkRef.current);
+            if (!facePresentRef.current) {
+              setGuidance(PHASES[phaseIdxRef.current].instruction);
+            } else if (!ok) {
+              setGuidance(hint);
+            } else {
+              setGuidance("Hold still…");
+            }
+          }
+
+          // Drive lock progress
+          if (qualityOkRef.current && !capturingRef.current) {
+            lockProgress.current = Math.min(LOCK_MAX, lockProgress.current + FILL);
+          } else {
+            lockProgress.current = Math.max(0, lockProgress.current - DRAIN);
+          }
+          setLockPct(Math.round(lockProgress.current));
+
+          // Trigger capture when filled
+          if (lockProgress.current >= LOCK_MAX && !capturingRef.current) {
+            capturingRef.current = true;
+            void capturePhaseRef.current(phaseIdxRef.current);
+          }
+        } catch {}
+      }
+
+      // ── Canvas draw (60 FPS) ───────────────────────────────
       ctx.clearRect(0, 0, W, H);
+      const s = smooth.current;
+      const fp = facePresentRef.current;
+      const qk = qualityOkRef.current;
+      const lp = lockProgress.current / LOCK_MAX;
 
-      const cx = W / 2;
-      const cy = H / 2;
-      const rx = W * 0.26;
-      const ry = H * 0.4;
-      const t = (Date.now() - t0) / 1000;
-      const phase = PHASES[phaseIdxRef.current];
-      const isCapturing = captured[phaseIdxRef.current];
-      const baseColor = isCapturing
+      // Mirror x for display (detection is in unmirrored frame)
+      const dCX = (1 - s.cx) * W;
+      const dCY = s.cy * H;
+      const dW = s.w * W;
+      const dH = s.h * H;
+
+      // Fixed oval guide (symmetric — same mirrored or not)
+      const oCX = W / 2;
+      const oCY = H * 0.48;
+      const oRX = W * 0.22;
+      const oRY = H * 0.37;
+
+      const color = done
         ? [34, 197, 94]
-        : faceDetected
-          ? [168, 85, 247]
-          : [100, 116, 139];
-      const alpha = faceDetected ? 0.85 : 0.4;
+        : qk
+          ? [34, 197, 94]
+          : fp
+            ? [168, 85, 247]
+            : [100, 116, 139];
+      const rgb = color.join(",");
 
-      // Glow behind oval
-      const grd = ctx.createRadialGradient(cx, cy, rx * 0.5, cx, cy, rx * 1.5);
-      grd.addColorStop(0, `rgba(${baseColor.join(",")},0.06)`);
+      // Ambient glow
+      const grd = ctx.createRadialGradient(oCX, oCY, 0, oCX, oCY, oRX * 2);
+      grd.addColorStop(0, `rgba(${rgb},0.09)`);
       grd.addColorStop(1, "transparent");
       ctx.fillStyle = grd;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx * 1.6, ry * 1.4, 0, 0, Math.PI * 2);
+      ctx.ellipse(oCX, oCY, oRX * 2, oRY * 1.8, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Oval outline with dash animation
+      // Detected bbox (subtle dashed rect, mirrors correctly)
+      if (fp && dW > 20) {
+        ctx.save();
+        ctx.strokeStyle = `rgba(${rgb},0.28)`;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.strokeRect(dCX - dW / 2, dCY - dH / 2, dW, dH);
+        ctx.restore();
+      }
+
+      // Oval guide — dashed when searching, solid when locked
       ctx.save();
-      const dashLen = faceDetected ? 0 : 8;
-      const dashOffset = -t * 20;
-      ctx.setLineDash(faceDetected ? [] : [dashLen, 5]);
-      ctx.lineDashOffset = dashOffset;
-      ctx.strokeStyle = `rgba(${baseColor.join(",")},${alpha})`;
-      ctx.lineWidth = faceDetected ? 2.5 : 1.5;
+      ctx.setLineDash(qk ? [] : [8, 5]);
+      ctx.lineDashOffset = -t * 18;
+      ctx.strokeStyle = `rgba(${rgb},${fp ? 0.88 : 0.4})`;
+      ctx.lineWidth = qk ? 2.8 : 1.8;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.ellipse(oCX, oCY, oRX, oRY, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
 
-      // Scanline sweep
-      const scanY = cy - ry + scanLine * ry * 2;
-      const scanGrd = ctx.createLinearGradient(0, scanY - 12, 0, scanY + 12);
-      scanGrd.addColorStop(0, "transparent");
-      scanGrd.addColorStop(0.5, `rgba(${baseColor.join(",")},0.25)`);
-      scanGrd.addColorStop(1, "transparent");
+      // Scanline sweep clipped to oval
+      const scanY = oCY - oRY + ((t * 0.55) % 1) * oRY * 2;
+      const sGrd = ctx.createLinearGradient(0, scanY - 10, 0, scanY + 10);
+      sGrd.addColorStop(0, "transparent");
+      sGrd.addColorStop(0.5, `rgba(${rgb},0.18)`);
+      sGrd.addColorStop(1, "transparent");
       ctx.save();
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.ellipse(oCX, oCY, oRX, oRY, 0, 0, Math.PI * 2);
       ctx.clip();
-      ctx.fillStyle = scanGrd;
-      ctx.fillRect(cx - rx, scanY - 12, rx * 2, 24);
+      ctx.fillStyle = sGrd;
+      ctx.fillRect(oCX - oRX, scanY - 10, oRX * 2, 20);
       ctx.restore();
 
       // Corner brackets
-      const bSize = 22;
-      const margin = 10;
-      const bx1 = cx - rx - margin;
-      const bx2 = cx + rx + margin;
-      const by1 = cy - ry - margin;
-      const by2 = cy + ry + margin;
-      ctx.strokeStyle = `rgba(${baseColor.join(",")},${faceDetected ? 1 : 0.6})`;
+      const bS = 20;
+      const mg = 10;
+      const bx1 = oCX - oRX - mg;
+      const bx2 = oCX + oRX + mg;
+      const by1 = oCY - oRY - mg;
+      const by2 = oCY + oRY + mg;
+      ctx.strokeStyle = `rgba(${rgb},${qk ? 1 : 0.55})`;
       ctx.lineWidth = 2.5;
       ctx.setLineDash([]);
-      [
-        [bx1, by1, 1, 1],
-        [bx2, by1, -1, 1],
-        [bx1, by2, 1, -1],
-        [bx2, by2, -1, -1],
-      ].forEach(([x, y, dx, dy]) => {
+      (
+        [
+          [bx1, by1, 1, 1],
+          [bx2, by1, -1, 1],
+          [bx1, by2, 1, -1],
+          [bx2, by2, -1, -1],
+        ] as [number, number, number, number][]
+      ).forEach(([x, y, dx, dy]) => {
         ctx.beginPath();
-        ctx.moveTo(x + dx * bSize, y);
+        ctx.moveTo(x + dx * bS, y);
         ctx.lineTo(x, y);
-        ctx.lineTo(x, y + dy * bSize);
+        ctx.lineTo(x, y + dy * bS);
         ctx.stroke();
       });
 
-      // Orbiting particles when face detected
-      if (faceDetected) {
+      // Lock progress arc around oval
+      if (fp && lp > 0) {
+        ctx.save();
+        ctx.strokeStyle = qk ? "rgba(34,197,94,0.8)" : "rgba(168,85,247,0.5)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(oCX, oCY, oRX + 9, oRY + 9, -Math.PI / 2, 0, lp * Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Orbiting particles when quality locked
+      if (qk) {
         for (let i = 0; i < 6; i++) {
-          const angle = t * 1.2 + (i * Math.PI * 2) / 6;
-          const px = cx + (rx + 16) * Math.cos(angle);
-          const py = cy + (ry + 10) * Math.sin(angle);
-          const size = 2.5 + Math.sin(t * 3 + i) * 1.5;
+          const angle = t * 1.1 + (i * Math.PI * 2) / 6;
+          const px = oCX + (oRX + 13) * Math.cos(angle);
+          const py = oCY + (oRY + 8) * Math.sin(angle);
+          const sz = 2.5 + Math.sin(t * 3 + i) * 1.2;
           ctx.beginPath();
-          ctx.arc(px, py, size, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(${baseColor.join(",")},${0.5 + Math.sin(t * 2 + i) * 0.3})`;
+          ctx.arc(px, py, sz, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(34,197,94,${0.5 + Math.sin(t * 2 + i) * 0.3})`;
           ctx.fill();
         }
       }
 
-      // Direction arrow hint
-      if (phase.key === "left") {
-        ctx.font = "bold 28px system-ui";
-        ctx.fillStyle = `rgba(168,85,247,0.6)`;
-        ctx.fillText("←", cx - rx - 50, cy + 8);
-      } else if (phase.key === "right") {
-        ctx.font = "bold 28px system-ui";
-        ctx.fillStyle = `rgba(168,85,247,0.6)`;
-        ctx.fillText("→", cx + rx + 20, cy + 8);
+      // Phase direction arrows
+      if (phaseIdxRef.current === 1) {
+        ctx.font = "bold 26px system-ui";
+        ctx.fillStyle = "rgba(168,85,247,0.75)";
+        ctx.fillText("←", bx1 - 34, oCY + 9);
+      } else if (phaseIdxRef.current === 2) {
+        ctx.font = "bold 26px system-ui";
+        ctx.fillStyle = "rgba(168,85,247,0.75)";
+        ctx.fillText("→", bx2 + 8, oCY + 9);
       }
 
-      raf = requestAnimationFrame(draw);
-    }
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
-  }, [faceDetected, captured, scanLine]);
-
-  // Phase sequencer
-  useEffect(() => {
-    let cancelled = false;
-
-    async function runPhase(idx: number) {
-      if (cancelled || idx >= 3) return;
-
-      setPhaseIdx(idx);
-      setFaceDetected(false);
-      setScanning(false);
-      setGuidance(PHASES[idx].instruction);
-
-      // Simulate face detection delay
-      await new Promise((r) => setTimeout(r, idx === 0 ? 1800 : 2400));
-      if (cancelled) return;
-
-      setFaceDetected(true);
-      setGuidance("Face locked — hold position…");
-      await new Promise((r) => setTimeout(r, 1600));
-      if (cancelled) return;
-
-      setScanning(true);
-      setGuidance("Scanning…");
-      await new Promise((r) => setTimeout(r, 2200));
-      if (cancelled) return;
-
-      // Capture frame
-      const video = videoRef.current;
-      const captureCanvas = captureCanvasRef.current;
-      if (video && captureCanvas) {
-        const cctx = captureCanvas.getContext("2d");
-        if (cctx) {
-          cctx.save();
-          cctx.translate(captureCanvas.width, 0);
-          cctx.scale(-1, 1);
-          cctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
-          cctx.restore();
-          const dataUrl = captureCanvas.toDataURL("image/png");
-          try {
-            await window.__TAURI__?.core.invoke("save_face_image", {
-              imageData: dataUrl,
-              index: idx,
-            });
-          } catch {}
-        }
-      }
-
-      setFlash(true);
-      setCaptured((prev) => {
-        const n = [...prev];
-        n[idx] = true;
-        return n;
-      });
-      setGuidance("✓ Captured");
-      await new Promise((r) => setTimeout(r, 400));
-      if (cancelled) return;
-      setFlash(false);
-
-      await new Promise((r) => setTimeout(r, 600));
-      if (cancelled) return;
-
-      if (idx < 2) {
-        await runPhase(idx + 1);
-      } else {
-        setDone(true);
-        setGuidance("Identity verification complete");
-        setTimeout(onPass, 1200);
+      // Position nudge arrows for front phase (screen-space corrected)
+      if (fp && phaseIdxRef.current === 0 && s.w > 0.12) {
+        const sx = 1 - s.cx;
+        ctx.font = "16px system-ui";
+        ctx.fillStyle = "rgba(245,158,11,0.9)";
+        if (sx < 0.3) ctx.fillText("→", W - 28, H / 2);
+        if (sx > 0.7) ctx.fillText("←", 8, H / 2);
+        if (s.cy < 0.25) ctx.fillText("↓", W / 2 - 8, H - 14);
+        if (s.cy > 0.75) ctx.fillText("↑", W / 2 - 8, 18);
       }
     }
 
-    runPhase(0);
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onPass]);
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const phase = PHASES[phaseIdx];
 
@@ -1099,9 +1269,7 @@ function Stage9_FaceCalibration({
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <StageHeader id={9} label="Biometric Face Scan" />
 
-      {/* Video + overlay */}
       <div style={{ position: "relative", width: 320, height: 240, marginBottom: "20px" }}>
-        {/* Flash overlay */}
         {flash && (
           <div
             style={{
@@ -1128,7 +1296,6 @@ function Stage9_FaceCalibration({
           }}
         />
 
-        {/* Overlay canvas */}
         <canvas
           ref={overlayCanvasRef}
           width={320}
@@ -1136,41 +1303,53 @@ function Stage9_FaceCalibration({
           style={{ position: "absolute", inset: 0, borderRadius: "16px", pointerEvents: "none" }}
         />
 
-        {/* Hidden capture canvas */}
         <canvas ref={captureCanvasRef} width={320} height={240} style={{ display: "none" }} />
 
-        {/* Scanning bar */}
-        {scanning && (
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              zIndex: 10,
-              height: "2px",
-              background: "linear-gradient(90deg, transparent, #a855f7, #c084fc, transparent)",
-              animation: "scan-sweep 1.8s ease-in-out infinite",
-              boxShadow: "0 0 12px rgba(168,85,247,0.6)",
-              top: "50%",
-            }}
-          />
-        )}
-
-        {/* Ambient border */}
+        {/* Ambient border — color-codes detection state */}
         <div
           style={{
             position: "absolute",
             inset: "-1px",
             borderRadius: "17px",
-            border: `1px solid ${done ? "rgba(34,197,94,0.6)" : faceDetected ? "rgba(168,85,247,0.6)" : "rgba(168,85,247,0.2)"}`,
-            boxShadow: `0 0 ${faceDetected ? 28 : 12}px ${done ? "rgba(34,197,94,0.2)" : "rgba(168,85,247,0.15)"}`,
+            border: `1px solid ${done ? "rgba(34,197,94,0.6)" : qualityOk ? "rgba(34,197,94,0.5)" : facePresent ? "rgba(168,85,247,0.6)" : "rgba(168,85,247,0.2)"}`,
+            boxShadow: `0 0 ${facePresent ? 28 : 12}px ${done ? "rgba(34,197,94,0.2)" : "rgba(168,85,247,0.15)"}`,
             pointerEvents: "none",
-            transition: "border-color 500ms, box-shadow 500ms",
+            transition: "border-color 400ms, box-shadow 400ms",
           }}
         />
+
+        {/* Model loading overlay */}
+        {!detectorReady && !detectorFailed && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 5,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(3,8,22,0.6)",
+              borderRadius: "16px",
+              gap: "10px",
+            }}
+          >
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                border: "2px solid rgba(168,85,247,0.3)",
+                borderTopColor: "#a855f7",
+                borderRadius: "50%",
+                animation: "spin 0.9s linear infinite",
+              }}
+            />
+            <span style={{ fontSize: "11px", color: "#64748b" }}>Loading model…</span>
+          </div>
+        )}
       </div>
 
-      {/* Phase label */}
+      {/* Phase badge */}
       <div
         style={{
           padding: "3px 12px",
@@ -1191,18 +1370,44 @@ function Stage9_FaceCalibration({
       <p
         style={{
           fontSize: "13px",
-          color: faceDetected ? "#e2e8f0" : "#64748b",
+          color: qualityOk ? "#e2e8f0" : facePresent ? "#a855f7" : "#64748b",
           fontWeight: 300,
-          marginBottom: "20px",
+          marginBottom: "12px",
           textAlign: "center",
           minHeight: "20px",
-          transition: "color 400ms",
+          transition: "color 300ms",
         }}
       >
         {guidance}
       </p>
 
-      {/* Capture progress dots */}
+      {/* Lock progress bar */}
+      {facePresent && !done && (
+        <div
+          style={{
+            width: 200,
+            height: 3,
+            background: "rgba(255,255,255,0.08)",
+            borderRadius: 2,
+            marginBottom: "16px",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: `${lockPct}%`,
+              background: qualityOk
+                ? "linear-gradient(90deg,#22c55e,#4ade80)"
+                : "linear-gradient(90deg,#7e22ce,#a855f7)",
+              borderRadius: 2,
+              transition: "width 80ms linear, background 400ms",
+            }}
+          />
+        </div>
+      )}
+
+      {/* Phase capture dots */}
       <div style={{ display: "flex", gap: "20px", alignItems: "center" }}>
         {PHASES.map((p, i) => (
           <div
@@ -1232,7 +1437,7 @@ function Stage9_FaceCalibration({
                 fontSize: "9px",
                 color: captured[i] ? "#22c55e" : phaseIdx === i ? "#a855f7" : "#3f3f46",
                 letterSpacing: "0.1em",
-                textTransform: "uppercase",
+                textTransform: "uppercase" as const,
               }}
             >
               {p.label}
@@ -1242,15 +1447,7 @@ function Stage9_FaceCalibration({
       </div>
 
       <style>{`
-        @keyframes face-flash {
-          0% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-        @keyframes scan-sweep {
-          0% { top: 15%; }
-          50% { top: 85%; }
-          100% { top: 15%; }
-        }
+        @keyframes face-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
       `}</style>
     </div>
   );

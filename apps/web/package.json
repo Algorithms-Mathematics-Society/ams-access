@@ -4,26 +4,28 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/setup-mediapipe.mjs",
     "build": "next build",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .next out"
   },
   "dependencies": {
-    "next": "^15.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
     "@ams/api-client": "workspace:*",
     "@ams/shared-ui": "workspace:*",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "@supabase/supabase-js": "^2.45.4",
-    "framer-motion": "^11.0.0"
+    "framer-motion": "^11.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.0.0",
     "tailwindcss": "^4.0.0",
-    "@tailwindcss/postcss": "^4.0.0"
+    "typescript": "^5.0.0"
   }
 }
