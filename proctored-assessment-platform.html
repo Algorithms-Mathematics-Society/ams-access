@@ -1,0 +1,1722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proctored Assessment Platform — Architecture Deep Dive</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0f12;
+    --bg2: #131619;
+    --bg3: #181c21;
+    --surface: #1e2328;
+    --surface2: #252b32;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #e8eaed;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #f78166;
+    --accent4: #d2a8ff;
+    --accent5: #ffa657;
+    --accent6: #39d0d8;
+    --warn: #e3b341;
+    --danger: #f85149;
+    --mono: 'JetBrains Mono', monospace;
+    --serif: 'DM Serif Display', serif;
+    --sans: 'Inter', system-ui, sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.75;
+    min-height: 100vh;
+  }
+
+  /* ── LAYOUT ── */
+  .page { display: flex; min-height: 100vh; }
+
+  .sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2rem 0;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    padding: 0 1.5rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+  }
+
+  .sidebar-logo .badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    background: rgba(88,166,255,0.15);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    border: 1px solid rgba(88,166,255,0.25);
+  }
+
+  .sidebar-logo h2 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-top: 8px;
+    line-height: 1.4;
+  }
+
+  .sidebar nav ul { list-style: none; }
+
+  .sidebar nav > ul > li { margin-bottom: 2px; }
+
+  .sidebar nav a {
+    display: block;
+    padding: 5px 1.5rem;
+    font-size: 12.5px;
+    color: var(--muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    line-height: 1.5;
+  }
+
+  .sidebar nav a:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+
+  .sidebar nav .nav-section {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding: 12px 1.5rem 4px;
+    font-weight: 500;
+  }
+
+  .sidebar nav .nav-sub { padding-left: 2.5rem; font-size: 12px; color: #5d6673; }
+  .sidebar nav .nav-sub:hover { color: var(--muted); }
+
+  .main {
+    flex: 1;
+    max-width: 900px;
+    padding: 3rem 3.5rem;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    margin-bottom: 4rem;
+    padding-bottom: 3rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .hero .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1rem;
+  }
+
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: 2.8rem;
+    line-height: 1.15;
+    color: var(--text);
+    margin-bottom: 1.25rem;
+    letter-spacing: -0.01em;
+  }
+
+  .hero p {
+    font-size: 16px;
+    color: var(--muted);
+    max-width: 640px;
+    line-height: 1.8;
+    margin-bottom: 1.5rem;
+  }
+
+  .meta-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .meta-pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    background: var(--surface);
+  }
+
+  /* ── SECTIONS ── */
+  .section {
+    margin-bottom: 4rem;
+    padding-bottom: 3rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section:last-child { border-bottom: none; }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 2rem;
+  }
+
+  .section-id {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(88,166,255,0.1);
+    border: 1px solid rgba(88,166,255,0.2);
+    padding: 3px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .section h2 {
+    font-family: var(--serif);
+    font-size: 1.8rem;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent4);
+    margin: 2rem 0 0.75rem;
+    font-family: var(--mono);
+  }
+
+  h4 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 1.5rem 0 0.5rem;
+  }
+
+  p { margin-bottom: 1rem; color: var(--muted); }
+
+  strong { color: var(--text); font-weight: 500; }
+
+  /* ── CALLOUTS ── */
+  .callout {
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+    border-left: 3px solid;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  .callout.info { background: rgba(88,166,255,0.07); border-color: var(--accent); color: #9ec5f5; }
+  .callout.warn { background: rgba(227,179,65,0.07); border-color: var(--warn); color: #d4b96b; }
+  .callout.danger { background: rgba(248,81,73,0.07); border-color: var(--danger); color: #f08080; }
+  .callout.success { background: rgba(63,185,80,0.07); border-color: var(--accent2); color: #7dbe8a; }
+
+  .callout strong { color: inherit; font-weight: 600; }
+
+  /* ── FEATURE GRID ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 1rem 0 1.5rem;
+  }
+
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+  }
+
+  .feature-card .card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0.6rem;
+  }
+
+  .feature-card .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+
+  .tag.must { background: rgba(63,185,80,0.15); color: var(--accent2); border: 1px solid rgba(63,185,80,0.25); }
+  .tag.advanced { background: rgba(210,168,255,0.15); color: var(--accent4); border: 1px solid rgba(210,168,255,0.25); }
+  .tag.optional { background: rgba(255,166,87,0.15); color: var(--accent5); border: 1px solid rgba(255,166,87,0.25); }
+
+  .feature-card h4 { margin: 0 0 0.4rem; font-size: 14px; }
+  .feature-card p { font-size: 13px; margin: 0; }
+
+  /* ── LISTS ── */
+  ul.list, ol.list {
+    margin: 0.75rem 0 1rem 1.25rem;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  ul.list li, ol.list li { margin-bottom: 0.4rem; padding-left: 4px; }
+  ul.list li strong, ol.list li strong { color: var(--text); }
+
+  /* ── CODE BLOCKS ── */
+  .code-block {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 1rem 0 1.5rem;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
+  .code-header {
+    background: var(--surface);
+    padding: 6px 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .code-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .code-dot.r { background: #ff5f56; }
+  .code-dot.y { background: #ffbd2e; }
+  .code-dot.g { background: #27c93f; }
+
+  .code-content { padding: 1rem 1.25rem; overflow-x: auto; }
+
+  pre { white-space: pre; }
+
+  .kw { color: #ff7b72; }
+  .str { color: #a5d6ff; }
+  .cmt { color: #5d6673; font-style: italic; }
+  .fn { color: #d2a8ff; }
+  .num { color: #f0883e; }
+  .key { color: #79c0ff; }
+  .val { color: #a5d6ff; }
+
+  /* ── ARCH DIAGRAM ── */
+  .arch-diagram {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+  }
+
+  .arch-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .arch-box {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--text);
+    text-align: center;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .arch-box.blue { border-color: rgba(88,166,255,0.4); background: rgba(88,166,255,0.08); color: var(--accent); }
+  .arch-box.green { border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.08); color: var(--accent2); }
+  .arch-box.purple { border-color: rgba(210,168,255,0.4); background: rgba(210,168,255,0.08); color: var(--accent4); }
+  .arch-box.orange { border-color: rgba(255,166,87,0.4); background: rgba(255,166,87,0.08); color: var(--accent5); }
+  .arch-box.red { border-color: rgba(248,81,73,0.4); background: rgba(248,81,73,0.08); color: var(--danger); }
+  .arch-box.cyan { border-color: rgba(57,208,216,0.4); background: rgba(57,208,216,0.08); color: var(--accent6); }
+
+  .arch-arrow {
+    font-size: 16px;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+
+  .arch-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 6px;
+  }
+
+  .arch-sep {
+    width: 100%;
+    border: none;
+    border-top: 1px dashed var(--border);
+    margin: 10px 0;
+  }
+
+  .arch-group {
+    border: 1px dashed var(--border2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+  }
+
+  .arch-group-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── COMPARISON TABLE ── */
+  .comp-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 13.5px;
+  }
+
+  .comp-table th {
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 500;
+    font-size: 12px;
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    letter-spacing: 0.05em;
+  }
+
+  .comp-table td {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+
+  .comp-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .yes { color: var(--accent2); font-weight: 500; }
+  .no { color: var(--danger); font-weight: 500; }
+  .partial { color: var(--warn); font-weight: 500; }
+
+  /* ── STACK CARDS ── */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 1rem 0 1.5rem;
+  }
+
+  .stack-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+  }
+
+  .stack-card .layer {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+
+  .stack-card h4 { margin: 0 0 6px; font-size: 15px; }
+
+  .stack-card .choice {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .stack-card p { font-size: 13px; color: var(--muted); margin: 0; }
+
+  /* ── COST TABLE ── */
+  .cost-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+
+  .cost-row:last-child { border-bottom: none; }
+  .cost-row .cost-item { color: var(--muted); }
+  .cost-row .cost-val { font-family: var(--mono); color: var(--text); font-size: 13px; }
+  .cost-row .cost-val.big { color: var(--accent5); font-size: 15px; font-weight: 500; }
+
+  .cost-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+  }
+
+  .cost-box h4 { font-size: 14px; margin-bottom: 8px; }
+
+  /* ── PHASE TIMELINE ── */
+  .timeline { margin: 1.5rem 0; }
+
+  .phase {
+    display: flex;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+    position: relative;
+  }
+
+  .phase::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 36px;
+    bottom: -16px;
+    width: 1px;
+    background: var(--border2);
+  }
+
+  .phase:last-child::before { display: none; }
+
+  .phase-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .phase-num.p1 { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+  .phase-num.p2 { background: rgba(63,185,80,0.15); color: var(--accent2); border: 1px solid rgba(63,185,80,0.3); }
+  .phase-num.p3 { background: rgba(210,168,255,0.15); color: var(--accent4); border: 1px solid rgba(210,168,255,0.3); }
+
+  .phase-content h4 { font-size: 15px; margin-bottom: 6px; color: var(--text); }
+  .phase-duration {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .phase-content p { font-size: 13.5px; color: var(--muted); margin: 0 0 6px; }
+
+  /* ── CHALLENGE CARDS ── */
+  .challenge-list { margin: 1rem 0; }
+
+  .challenge {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .challenge:last-child { border-bottom: none; }
+
+  .challenge-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .challenge h4 { font-size: 14px; margin-bottom: 4px; }
+  .challenge p { font-size: 13px; color: var(--muted); margin: 0; }
+
+  /* ── INLINE CODE ── */
+  code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--surface);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    color: var(--accent4);
+  }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 1.5rem 0;
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  /* ── THREAT MODEL ── */
+  .threat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 1rem 0 1.5rem;
+  }
+
+  .threat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+  }
+
+  .threat-card .severity {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin-bottom: 6px;
+    display: inline-block;
+  }
+
+  .sev-high { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.2); }
+  .sev-med { background: rgba(227,179,65,0.15); color: var(--warn); border: 1px solid rgba(227,179,65,0.2); }
+  .sev-low { background: rgba(63,185,80,0.15); color: var(--accent2); border: 1px solid rgba(63,185,80,0.2); }
+
+  .threat-card h4 { font-size: 13px; margin-bottom: 4px; }
+  .threat-card p { font-size: 12px; margin-bottom: 4px; }
+  .threat-card .mitigate { font-size: 11px; color: var(--accent2); font-family: var(--mono); }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { padding: 2rem 1.5rem; }
+    .feature-grid, .stack-grid, .threat-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="badge">ARCH DOC v1.0</div>
+    <h2>Proctored Assessment Platform</h2>
+  </div>
+  <nav>
+    <ul>
+      <li><div class="nav-section">Overview</div></li>
+      <li><a href="#intro">Introduction & Goals</a></li>
+
+      <li><div class="nav-section">Architecture</div></li>
+      <li><a href="#features">A — Feature Set</a></li>
+      <li><a class="nav-sub" href="#candidate-features">Candidate-side</a></li>
+      <li><a class="nav-sub" href="#admin-features">Admin Dashboard</a></li>
+      <li><a class="nav-sub" href="#proctoring-caps">Proctoring Capabilities</a></li>
+      <li><a href="#architecture">B — System Architecture</a></li>
+      <li><a class="nav-sub" href="#high-level">High-level Diagram</a></li>
+      <li><a class="nav-sub" href="#realtime-pipeline">Real-time Pipeline</a></li>
+      <li><a class="nav-sub" href="#data-flow">Data Flow</a></li>
+      <li><a href="#client">C — Client App Design</a></li>
+      <li><a href="#techstack">D — Tech Stack</a></li>
+      <li><a href="#scalability">E — Scalability & Infra</a></li>
+      <li><a href="#security">F — Security Model</a></li>
+      <li><a href="#cost">G — Cost Estimation</a></li>
+      <li><a href="#roadmap">H — Development Roadmap</a></li>
+      <li><a href="#pitfalls">I — Key Pitfalls</a></li>
+    </ul>
+  </nav>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="main">
+
+  <!-- HERO -->
+  <div class="hero" id="intro">
+    <div class="eyebrow">Systems Architecture · Security Engineering · Product Design</div>
+    <h1>Production-Grade Proctored Assessment Platform</h1>
+    <p>A complete engineering breakdown of building a secure online assessment system competitive with HackerRank and CodeSignal — covering architecture, security threat modelling, client-side enforcement, infra scaling, and go-to-market roadmap.</p>
+    <div class="meta-row">
+      <div class="meta-pill">10k–100k concurrent users</div>
+      <div class="meta-pill">Windows · macOS · Linux</div>
+      <div class="meta-pill">Coding + MCQ assessments</div>
+      <div class="meta-pill">Anti-cheat + AI proctoring</div>
+      <div class="meta-pill">Startup-grade</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       A. FEATURE SET
+       ═══════════════════════════════════════ -->
+  <section class="section" id="features">
+    <div class="section-header">
+      <span class="section-id">A</span>
+      <h2>Feature Set</h2>
+    </div>
+
+    <h3 id="candidate-features">Candidate-Side Features</h3>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Secure browser / lockdown shell</h4>
+        </div>
+        <p>A native wrapper or browser extension that prevents multi-tab access, disables F12/DevTools, and enforces single-window mode. This is your first line of defense.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Identity verification (pre-exam)</h4>
+        </div>
+        <p>Government ID capture + real-time facial comparison before test begins. Passive face matching continues throughout. Liveness detection prevents photo spoofing.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Webcam + microphone stream</h4>
+        </div>
+        <p>Continuous 720p webcam capture. Audio stream for ambient noise detection. Stored to S3 with timestamps correlated to exam events.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Screen recording</h4>
+        </div>
+        <p>Full display capture at 5–10fps (not 30fps — storage/bandwidth tradeoff). Periodic screenshots for AI analysis pipeline. Suspicious segments flagged for review.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Clipboard restriction</h4>
+        </div>
+        <p>Block copy-paste from external sources. Track paste events with clipboard content hash. Detect if content entered via paste differs from what was typed.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Code execution sandbox</h4>
+        </div>
+        <p>gVisor or Firecracker MicroVM per submission. 15+ language support. Time and memory limits enforced per testcase. Side-channel prevention (no internet access).</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag advanced">ADVANCED</span>
+          <h4>Focus / tab-switch detection</h4>
+        </div>
+        <p>Page Visibility API + native OS-level foreground window tracking. Log every focus loss with timestamp. Configurable threshold before auto-flagging (3 switches = flag).</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag advanced">ADVANCED</span>
+          <h4>Process monitoring</h4>
+        </div>
+        <p>Native agent enumerates running processes every 15s. Blocklist of known cheating tools (TeamViewer, AnyDesk, VMs, Cheat Engine, browser devtools). Configurable by exam creator.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag advanced">ADVANCED</span>
+          <h4>Network anomaly detection</h4>
+        </div>
+        <p>Track DNS queries during exam. Flag TLDs commonly associated with answer sites (Stack Overflow, GitHub, Chegg). Not blockable without compromising user trust — detect instead.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag advanced">ADVANCED</span>
+          <h4>Multiple display detection</h4>
+        </div>
+        <p>Native APIs (Win32 <code>EnumDisplayMonitors</code>, macOS <code>NSScreen.screens</code>) detect secondary screens. Prompt or block if candidate has more monitors than expected.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag optional">OPTIONAL</span>
+          <h4>AI gaze tracking</h4>
+        </div>
+        <p>MediaPipe or WebGazer.js for browser-based eye tracking. Detect if candidate is consistently looking off-screen. High false-positive rate — use as signal, not proof.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag optional">OPTIONAL</span>
+          <h4>Typing pattern biometrics</h4>
+        </div>
+        <p>Keystroke dynamics (dwell time, flight time) as a passive identity signal. Catches cases where someone starts but hands off. Requires enrollment session.</p>
+      </div>
+    </div>
+
+    <h3 id="admin-features">Admin / Recruiter Dashboard</h3>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Exam builder</h4>
+        </div>
+        <p>Drag-drop question composer. Question bank with tagging (topic, difficulty, company). Test variants with randomized ordering. Time limits per section or global.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Proctor review UI</h4>
+        </div>
+        <p>Synchronized video + screen timeline. Click-to-seek to flagged events. Flag and annotate incidents. Batch review mode for high-volume exams.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag must">MUST-HAVE</span>
+          <h4>Violation dashboard</h4>
+        </div>
+        <p>Per-candidate integrity score. Event log with severity. Export to PDF report. Integrates with ATS (Lever, Greenhouse, Workday) via webhook + API.</p>
+      </div>
+      <div class="feature-card">
+        <div class="card-header">
+          <span class="tag advanced">ADVANCED</span>
+          <h4>Live monitoring (active exams)</h4>
+        </div>
+        <p>Grid view of live webcam feeds. Real-time alerts on flagged events. Proctor can terminate exam, send message, or initiate video call for verification.</p>
+      </div>
+    </div>
+
+    <h3>Browser-Based vs Native App — The Critical Decision</h3>
+
+    <p>This is the most consequential architectural choice you make. It affects security depth, OS permissions, distribution friction, and maintenance burden.</p>
+
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Browser (Extension)</th>
+          <th>Native App (Electron/Tauri/C++)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Process enumeration</td>
+          <td><span class="no">Not possible</span></td>
+          <td><span class="yes">Full access</span></td>
+        </tr>
+        <tr>
+          <td>Clipboard lock (read + write)</td>
+          <td><span class="partial">Write only</span></td>
+          <td><span class="yes">Full control</span></td>
+        </tr>
+        <tr>
+          <td>Screen capture prevention</td>
+          <td><span class="no">Cannot prevent</span></td>
+          <td><span class="partial">macOS: partial; Win: DRM possible</span></td>
+        </tr>
+        <tr>
+          <td>Multi-display detection</td>
+          <td><span class="no">No</span></td>
+          <td><span class="yes">Yes</span></td>
+        </tr>
+        <tr>
+          <td>System-wide keyboard hooks</td>
+          <td><span class="no">No</span></td>
+          <td><span class="yes">Yes (with permissions)</span></td>
+        </tr>
+        <tr>
+          <td>Installation friction</td>
+          <td><span class="yes">Low (extension)</span></td>
+          <td><span class="partial">Medium (download + install)</span></td>
+        </tr>
+        <tr>
+          <td>macOS Gatekeeper friction</td>
+          <td><span class="yes">Low</span></td>
+          <td><span class="partial">Requires notarization + signing</span></td>
+        </tr>
+        <tr>
+          <td>Cross-platform parity</td>
+          <td><span class="yes">High</span></td>
+          <td><span class="partial">Needs per-OS native layers</span></td>
+        </tr>
+        <tr>
+          <td>Bypass surface</td>
+          <td><span class="no">Large (DevTools, other browsers)</span></td>
+          <td><span class="partial">Smaller (still bypassable)</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <strong>Recommendation:</strong> Build a hybrid. Use a <strong>native Electron/Tauri app</strong> as the exam shell — it provides the process monitoring, clipboard control, and OS hooks you need. The actual exam content (code editor, MCQ renderer) is a sandboxed web view within the app. This gives you native security depth with web-based content flexibility.
+    </div>
+
+    <h3>Online vs Offline Proctoring Tradeoffs</h3>
+
+    <p><strong>Online (AI-assisted)</strong> — your recordings are analyzed asynchronously by CV models. Cheaper at scale, no human labor, but higher false-positive rates. Works for mass-hiring (500+ candidates). Candidates need only be told "recorded and reviewed" which sets behavioral expectations.</p>
+    <p><strong>Live human proctoring</strong> — a proctor watches a 1:N grid of candidates in real time. Higher integrity signal, immediate intervention capability. Costs scale linearly with candidates (~1 proctor per 15–30 candidates). Required for high-stakes exams (bar exams, certifications).</p>
+    <p>For a startup: launch with async AI proctoring, offer live proctoring as a premium SKU routed through a third-party proctoring pool (Proctor U, Honorlock, etc.) via API integration.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       B. SYSTEM ARCHITECTURE
+       ═══════════════════════════════════════ -->
+  <section class="section" id="architecture">
+    <div class="section-header">
+      <span class="section-id">B</span>
+      <h2>System Architecture</h2>
+    </div>
+
+    <h3 id="high-level">High-Level Architecture</h3>
+
+    <div class="arch-diagram">
+      <div class="arch-label">CANDIDATE SIDE</div>
+      <div class="arch-row">
+        <div class="arch-box blue">Electron App Shell</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box blue">WebView (Exam UI)</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box green">Native Agent (C++ / Rust)</div>
+      </div>
+      <div class="arch-row">
+        <div class="arch-arrow" style="transform: rotate(90deg);">↓</div>
+      </div>
+      <div class="arch-label">EDGE / CDN LAYER</div>
+      <div class="arch-row">
+        <div class="arch-box orange">Cloudflare / CloudFront (Static Assets + WAF)</div>
+      </div>
+      <div class="arch-row">
+        <div class="arch-arrow" style="transform: rotate(90deg);">↓</div>
+      </div>
+
+      <hr class="arch-sep">
+      <div class="arch-label">API GATEWAY</div>
+      <div class="arch-row">
+        <div class="arch-box cyan">Kong / AWS API Gateway</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box cyan">JWT Auth Middleware</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box cyan">Rate Limiter</div>
+      </div>
+      <hr class="arch-sep">
+
+      <div class="arch-label">CORE MICROSERVICES</div>
+      <div class="arch-row">
+        <div class="arch-box purple">Exam Service</div>
+        <div class="arch-box purple">Submission Service</div>
+        <div class="arch-box purple">Proctoring Service</div>
+        <div class="arch-box purple">User Service</div>
+        <div class="arch-box purple">Notification Service</div>
+      </div>
+      <hr class="arch-sep">
+
+      <div class="arch-label">REAL-TIME LAYER</div>
+      <div class="arch-row">
+        <div class="arch-box red">WebSocket Gateway (Socket.io / uWebSockets)</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box red">Kafka Event Bus</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box red">Anti-cheat Signal Consumers</div>
+      </div>
+      <hr class="arch-sep">
+
+      <div class="arch-label">EXECUTION LAYER</div>
+      <div class="arch-row">
+        <div class="arch-box orange">Judge Orchestrator</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box orange">MicroVM Pool (Firecracker)</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box orange">Result Aggregator</div>
+      </div>
+      <hr class="arch-sep">
+
+      <div class="arch-label">MEDIA PIPELINE</div>
+      <div class="arch-row">
+        <div class="arch-box green">WebRTC Media Server (mediasoup)</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box green">Transcoder (FFmpeg cluster)</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box green">S3 Object Storage</div>
+      </div>
+      <hr class="arch-sep">
+
+      <div class="arch-label">DATA STORES</div>
+      <div class="arch-row">
+        <div class="arch-box blue">PostgreSQL (primary)</div>
+        <div class="arch-box blue">Redis (sessions/cache)</div>
+        <div class="arch-box blue">TimescaleDB (events)</div>
+        <div class="arch-box blue">Elasticsearch (logs)</div>
+      </div>
+    </div>
+
+    <h3>Microservices vs Monolith Decision</h3>
+    <p><strong>Don't start with microservices.</strong> The overhead of distributed transactions, service discovery, and inter-service auth is enormous at MVP stage. Start with a <strong>modular monolith</strong> — clean domain boundaries (Exam, User, Submission, Proctor) enforced by module boundaries in code, but deployed as one binary.</p>
+    <p>Carve out services only when you hit scaling boundaries. The code execution judge is the first to split — it's the highest CPU consumer with different scaling patterns than the web tier. Media ingestion (webcam streams) is the second — it needs SFU-style architecture that doesn't fit the HTTP request/response model.</p>
+
+    <div class="callout info">
+      <strong>Realistic extraction order:</strong> Monolith → extract Judge Service (week 8) → extract Media Ingestion (week 12) → extract Proctoring AI pipeline (week 20). Everything else can stay in the monolith until you hit actual bottlenecks.
+    </div>
+
+    <h3 id="realtime-pipeline">Real-Time Monitoring Pipeline</h3>
+
+    <p>Every anti-cheat event (tab switch, focus loss, clipboard paste, process detection, gaze deviation) must be:</p>
+    <ol class="list">
+      <li><strong>Timestamped</strong> with client-side and server-side timestamps (to detect clock manipulation).</li>
+      <li><strong>Persisted durably</strong> — if the WebSocket drops, events buffer locally and flush on reconnect. Never lose an event.</li>
+      <li><strong>Correlated</strong> with the video timeline so reviewers can seek to the exact moment.</li>
+      <li><strong>Aggregated</strong> into a per-candidate integrity score in near-real-time.</li>
+    </ol>
+
+    <div class="code-block">
+      <div class="code-header">
+        <div class="code-dot r"></div><div class="code-dot y"></div><div class="code-dot g"></div>
+        <span>anti-cheat event schema (TypeScript)</span>
+      </div>
+      <div class="code-content"><pre><span class="kw">interface</span> <span class="fn">ProctoringEvent</span> {
+  <span class="key">eventId</span>:       <span class="str">string</span>;        <span class="cmt">// UUIDv7 — monotonic, time-ordered</span>
+  <span class="key">candidateId</span>:   <span class="str">string</span>;
+  <span class="key">examSessionId</span>: <span class="str">string</span>;
+  <span class="key">eventType</span>:     <span class="fn">EventType</span>;     <span class="cmt">// enum: TAB_SWITCH | FOCUS_LOST | PASTE | PROCESS_DETECTED | ...</span>
+  <span class="key">severity</span>:      <span class="str">'low'</span> | <span class="str">'medium'</span> | <span class="str">'high'</span>;
+  <span class="key">clientTs</span>:      <span class="str">number</span>;        <span class="cmt">// client performance.now() + epoch</span>
+  <span class="key">serverTs</span>:      <span class="str">number</span>;        <span class="cmt">// set by server on receive</span>
+  <span class="key">videoOffsetMs</span>: <span class="str">number</span>;        <span class="cmt">// ms since recording started (correlation key)</span>
+  <span class="key">metadata</span>:      <span class="fn">Record</span>&lt;<span class="str">string</span>, <span class="str">unknown</span>&gt;;  <span class="cmt">// type-specific payload</span>
+  <span class="key">sequence</span>:      <span class="str">number</span>;        <span class="cmt">// monotonic counter per session, for gap detection</span>
+}
+
+<span class="cmt">// Events flow: Client → WebSocket → Kafka → TimescaleDB + Redis (live score)</span>
+<span class="cmt">// Async: Kafka → AI pipeline → violation classifier → integrity score update</span></pre></div>
+    </div>
+
+    <h3>Video/Audio Streaming Architecture</h3>
+
+    <p><strong>WebRTC (mediasoup SFU)</strong> is the right choice for live proctoring. Each candidate's webcam + screen feed goes to a Selective Forwarding Unit (SFU) rather than mesh or MCU. The SFU forwards raw streams to the proctor's browser without transcoding, minimizing latency and server CPU. For async proctoring, you don't need WebRTC at all — use periodic JPEG snapshots (every 5–30s) plus a chunked video upload pipeline (HLS segments every 6s directly to S3).</p>
+
+    <p><strong>Critical design: decouple live viewing from storage.</strong> The SFU handles real-time, but simultaneously the client sends chunked video segments to a media ingestion endpoint that stores to S3. If the live stream drops, you still have the recordings. These are separate concerns — don't try to record from the SFU; it introduces transcoding latency and a single point of failure.</p>
+
+    <div class="callout warn">
+      <strong>Bandwidth budget per candidate:</strong> Webcam at 720p = ~800 kbps. Screen capture at 5fps = ~200 kbps. Total: ~1 Mbps per candidate. At 10,000 concurrent: 10 Gbps ingress. This is your primary cost driver. Plan TURN server capacity accordingly — assume 20% of candidates are behind symmetric NAT.
+    </div>
+
+    <h3 id="data-flow">Data Flow During an Exam</h3>
+
+    <ol class="list">
+      <li><strong>Pre-exam:</strong> Candidate downloads + installs native agent. System check runs (browser, camera, mic, OS version, disk space). Identity verification via ID + face capture. Session token issued, tied to device fingerprint + IP.</li>
+      <li><strong>Exam start:</strong> Encrypted exam package fetched (questions not in plaintext in memory). Webcam + screen recording begins. WebSocket established for real-time events. Judge service pre-warms MicroVM pool for this exam session.</li>
+      <li><strong>During exam:</strong> Every keystroke logged with timestamp (for behavioral analysis). Code submissions go to Judge Service → MicroVM → results returned in &lt;3s. Anti-cheat events stream via WebSocket → Kafka. Video segments chunked to S3 every 6 seconds. Redis stores live session state (answers, timer, event count).</li>
+      <li><strong>Exam end:</strong> Final answers persisted to PostgreSQL. Video segments stitched (async job). AI proctoring pipeline processes full recording. Integrity report generated. ATS webhook fired if configured.</li>
+    </ol>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       C. CLIENT APPLICATION DESIGN
+       ═══════════════════════════════════════ -->
+  <section class="section" id="client">
+    <div class="section-header">
+      <span class="section-id">C</span>
+      <h2>Client Application Design</h2>
+    </div>
+
+    <h3>Native App Architecture (Electron + C++ Native Agent)</h3>
+
+    <p>Use <strong>Tauri (Rust)</strong> over Electron if starting fresh. Smaller binary (~5MB vs ~150MB), lower RAM, better security sandbox model. The webview renders your exam UI. A sidecar Rust binary handles OS-level monitoring (process enum, clipboard, screen detection). On Windows, the sidecar needs to run elevated for reliable process enumeration; prompt once at install, not at exam time.</p>
+
+    <div class="code-block">
+      <div class="code-header">
+        <div class="code-dot r"></div><div class="code-dot y"></div><div class="code-dot g"></div>
+        <span>process detection — Windows (Rust / winapi)</span>
+      </div>
+      <div class="code-content"><pre><span class="kw">use</span> <span class="fn">winapi</span>::um::{tlhelp32::*, handleapi::*};
+
+<span class="kw">fn</span> <span class="fn">enumerate_processes</span>() -&gt; <span class="fn">Vec</span>&lt;<span class="fn">String</span>&gt; {
+    <span class="kw">let mut</span> processes = <span class="fn">Vec</span>::new();
+    <span class="kw">unsafe</span> {
+        <span class="kw">let</span> snapshot = <span class="fn">CreateToolhelp32Snapshot</span>(<span class="fn">TH32CS_SNAPPROCESS</span>, <span class="num">0</span>);
+        <span class="kw">let mut</span> entry: <span class="fn">PROCESSENTRY32W</span> = std::mem::<span class="fn">zeroed</span>();
+        entry.dwSize = std::mem::<span class="fn">size_of</span>::&lt;<span class="fn">PROCESSENTRY32W</span>&gt;() <span class="kw">as</span> u32;
+        
+        <span class="kw">if</span> <span class="fn">Process32FirstW</span>(snapshot, &amp;<span class="kw">mut</span> entry) != <span class="num">0</span> {
+            <span class="kw">loop</span> {
+                <span class="kw">let</span> name = <span class="fn">String::from_utf16_lossy</span>(&amp;entry.szExeFile)
+                    .<span class="fn">trim_matches</span>(<span class="str">'\0'</span>).<span class="fn">to_lowercase</span>();
+                processes.<span class="fn">push</span>(name);
+                <span class="kw">if</span> <span class="fn">Process32NextW</span>(snapshot, &amp;<span class="kw">mut</span> entry) == <span class="num">0</span> { <span class="kw">break</span>; }
+            }
+        }
+        <span class="fn">CloseHandle</span>(snapshot);
+    }
+    processes
+}
+
+<span class="cmt">// Compare against blocklist every 15s; emit event on match</span>
+<span class="kw">const</span> BLOCKLIST: &amp;[&amp;str] = &amp;[
+    <span class="str">"teamviewer.exe"</span>, <span class="str">"anydesk.exe"</span>, <span class="str">"obs64.exe"</span>, <span class="str">"cheatenginex86_64.exe"</span>,
+    <span class="str">"vnc"</span>, <span class="str">"wireshark.exe"</span>, <span class="str">"fiddler.exe"</span>, <span class="str">"charles.exe"</span>,
+];</pre></div>
+    </div>
+
+    <h3>macOS-Specific Constraints — This Will Be Your Hardest Platform</h3>
+
+    <p>macOS enforces strict entitlements for:</p>
+    <ul class="list">
+      <li><strong>Screen Recording:</strong> Requires explicit user consent in System Settings → Privacy. Your app must declare <code>com.apple.security.screen-capture</code> in entitlements. Sandboxed apps cannot capture displays owned by other apps without user grant. You cannot programmatically grant this — the user must do it manually during setup.</li>
+      <li><strong>Process Enumeration:</strong> Post-macOS 11, listing other apps' processes is limited. <code>proc_listallpids()</code> works for PIDs but getting executable paths requires <code>proc_pidpath()</code> which may fail for system processes. You can get meaningful signal for most third-party apps.</li>
+      <li><strong>Accessibility API:</strong> Needed for keyboard hooks and window monitoring. Requires user to grant access in System Settings → Privacy → Accessibility. Without this, you cannot detect active application or intercept keyboard events system-wide.</li>
+      <li><strong>Notarization + Hardened Runtime:</strong> Required for Gatekeeper. You must sign with a Developer ID, submit to Apple notarization. The hardened runtime disables certain powerful APIs unless you explicitly request entitlement exceptions. This means JIT compilation, DTrace, debugging, certain memory mappings all need explicit entitlement requests — which Apple may reject.</li>
+    </ul>
+
+    <div class="callout danger">
+      <strong>What is impossible on macOS (without MDM):</strong> You cannot prevent screen mirroring (AirPlay to Apple TV), cannot block screen recordings made by third-party apps with screen recording permission, cannot force-quit other apps without Root/SIP involvement, and cannot read clipboard content across security contexts if Sandboxed. Accept these limitations and compensate with AI-based behavioral detection.
+    </div>
+
+    <h3>Screen Sharing Prevention — Reality Check</h3>
+
+    <p><strong>Windows:</strong> Use <code>SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)</code> to exclude your window from screen capture APIs (including OBS, Teams screenshare, etc.). This is a legitimate Win32 API used by DRM systems. It won't stop phone cameras pointed at the screen.</p>
+    <p><strong>macOS:</strong> No equivalent API. You can detect if screen recording is active using <code>CGWindowListCopyWindowInfo</code> and checking for screen-recording-capable processes, but you cannot prevent it. Your best option: periodic screenshot hash comparison (if the candidate's screenshot output looks like it's being recorded, the content will appear in mirrored form).</p>
+    <p><strong>Linux:</strong> Wayland compositors (Sway, GNOME Wayland) have per-app capture permissions, X11 does not — anything can capture anything. Treat Linux as minimum security tier.</p>
+
+    <h3>Clipboard Security Implementation</h3>
+
+    <div class="code-block">
+      <div class="code-header">
+        <div class="code-dot r"></div><div class="code-dot y"></div><div class="code-dot g"></div>
+        <span>clipboard monitoring strategy (JavaScript in WebView)</span>
+      </div>
+      <div class="code-content"><pre><span class="cmt">// Strategy: don't block paste — DETECT and RECORD it</span>
+<span class="cmt">// Blocking paste creates a terrible UX and is easily bypassed (right-click menu)</span>
+
+document.<span class="fn">addEventListener</span>(<span class="str">'paste'</span>, (e) =&gt; {
+  <span class="kw">const</span> content = e.clipboardData.<span class="fn">getData</span>(<span class="str">'text/plain'</span>);
+  <span class="kw">const</span> hash = <span class="fn">sha256</span>(content);
+  <span class="kw">const</span> charCount = content.<span class="fn">length</span>;
+  
+  <span class="cmt">// Heuristics for suspicious paste</span>
+  <span class="kw">const</span> isSuspicious = (
+    charCount &gt; <span class="num">50</span> &amp;&amp;                     <span class="cmt">// Not just pasting a variable name</span>
+    <span class="fn">looksLikeCode</span>(content) &amp;&amp;            <span class="cmt">// Contains code-like patterns</span>
+    !<span class="fn">isFromOurPlatform</span>(hash)              <span class="cmt">// Not a paste of our own question text</span>
+  );
+  
+  <span class="fn">emitEvent</span>({
+    type: <span class="str">'CLIPBOARD_PASTE'</span>,
+    severity: isSuspicious ? <span class="str">'high'</span> : <span class="str">'low'</span>,
+    metadata: {
+      contentHash: hash,
+      charCount,
+      targetField: <span class="fn">getActiveFieldId</span>(),
+      isSuspicious,
+    }
+  });
+  
+  <span class="cmt">// Do NOT preventDefault() — that creates UX problems</span>
+  <span class="cmt">// Flagging is sufficient; human review will assess context</span>
+});</pre></div>
+    </div>
+
+    <h3>OS-Level Security: What's Feasible vs Impossible</h3>
+
+    <table class="comp-table">
+      <thead>
+        <tr><th>Action</th><th>Windows</th><th>macOS</th><th>Linux</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Enumerate running processes</td>
+          <td><span class="yes">Yes (with elevation)</span></td>
+          <td><span class="partial">Mostly (no SIP processes)</span></td>
+          <td><span class="yes">Yes (/proc)</span></td>
+        </tr>
+        <tr>
+          <td>Prevent screen capture by apps</td>
+          <td><span class="partial">WDA_EXCLUDEFROMCAPTURE</span></td>
+          <td><span class="no">No</span></td>
+          <td><span class="no">No (X11) / Partial (Wayland)</span></td>
+        </tr>
+        <tr>
+          <td>Disable keyboard shortcuts globally</td>
+          <td><span class="yes">Via low-level keyboard hook</span></td>
+          <td><span class="partial">Accessibility API needed</span></td>
+          <td><span class="partial">X11 grabs only</span></td>
+        </tr>
+        <tr>
+          <td>Detect virtual machine (guest)</td>
+          <td><span class="partial">CPUID, SMBIOS checks</span></td>
+          <td><span class="partial">System Profiler APIs</span></td>
+          <td><span class="partial">DMI/CPUID</span></td>
+        </tr>
+        <tr>
+          <td>Prevent phone camera cheating</td>
+          <td><span class="no">Impossible (physics)</span></td>
+          <td><span class="no">Impossible</span></td>
+          <td><span class="no">Impossible</span></td>
+        </tr>
+        <tr>
+          <td>Detect screen mirroring (AirPlay etc.)</td>
+          <td><span class="partial">Detect display count change</span></td>
+          <td><span class="no">Cannot detect AirPlay</span></td>
+          <td><span class="no">No</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       D. TECH STACK
+       ═══════════════════════════════════════ -->
+  <section class="section" id="techstack">
+    <div class="section-header">
+      <span class="section-id">D</span>
+      <h2>Tech Stack — Justified</h2>
+    </div>
+
+    <div class="stack-grid">
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent);">Frontend — Exam UI</div>
+        <h4>React + Vite + Monaco Editor</h4>
+        <div class="choice">react · monaco-editor · react-query</div>
+        <p>Monaco is VSCode's editor — used by HackerRank, Codeforces, nearly everyone. It provides language servers, syntax highlighting for 50+ languages, and excellent keyboard handling out of the box. The alternative (CodeMirror 6) is lighter but less feature-complete for pro-level code editing. React Query handles exam state synchronization with smart cache invalidation.</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent4);">Frontend — Admin Dashboard</div>
+        <h4>Next.js (App Router) + Tailwind + Radix UI</h4>
+        <div class="choice">next.js · shadcn/ui · tanstack-table</div>
+        <p>Next.js for SSR on the dashboard (data-heavy tables, review UIs). Radix UI primitives give accessibility for free — important for a B2B product. TanStack Table for the violation grid: virtualized rows handle 10k+ event logs without jank. Don't build your own table.</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent2);">Backend — API Layer</div>
+        <h4>Go (Fiber/Gin) + gRPC for internal</h4>
+        <div class="choice">go · fiber · grpc · protobuf</div>
+        <p>Go for the main API layer: excellent concurrency primitives, low memory footprint at scale, fast compile times. At 10k concurrent WebSocket connections, Go's goroutine model handles this trivially; Node.js event loop becomes a bottleneck. Internal service calls use gRPC for type safety and performance. Python only for the ML proctoring pipeline where library support matters more than throughput.</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent5);">Code Execution</div>
+        <h4>Firecracker MicroVMs</h4>
+        <div class="choice">firecracker · containerd · judge0-compatible API</div>
+        <p>Firecracker is what AWS Lambda runs on. MicroVMs boot in ~125ms, provide true kernel isolation (not just container namespaces), and support memory/CPU limits natively. gVisor is an alternative (more compatible, less isolation). Never run untrusted code in plain Docker — a container breakout is game over. Judge0 is open-source and battle-tested; use its API contract, implement your own execution backend.</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent6);">Real-Time</div>
+        <h4>uWebSockets.js + Redis Pub/Sub</h4>
+        <div class="choice">uws · ioredis · kafka</div>
+        <p>uWebSockets.js is 10–20x faster than ws and handles 100k+ concurrent connections per server. Socket.io is friendly but carries overhead; drop it at scale and use raw WS with your own protocol. Redis Pub/Sub for fan-out within a datacenter. Kafka for durable event streaming — if your WebSocket server dies, Kafka retains events so the proctoring consumer doesn't miss signals.</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent3);">Video Pipeline</div>
+        <h4>mediasoup + FFmpeg + S3</h4>
+        <div class="choice">mediasoup · sfuserver · ffmpeg · aws-s3</div>
+        <p>mediasoup is the best open-source SFU — used at scale, supports simulcast, is written in C++ with a Node.js control plane. For async proctoring, skip the SFU entirely: client sends HLS segments (6s chunks) directly to pre-signed S3 URLs. FFmpeg cluster for transcoding and stitching. Cloudflare R2 as an S3-compatible alternative (~50% cheaper egress).</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent);">Primary Database</div>
+        <h4>PostgreSQL + TimescaleDB + Redis</h4>
+        <div class="choice">postgres · timescaledb · ioredis</div>
+        <p>Postgres for everything transactional (users, exams, submissions, results). TimescaleDB extension for the event log — time-series queries (find all events between T1 and T2) are orders of magnitude faster with hypertables. Redis for session state, real-time integrity scores, distributed locks (exam start/end), and WebSocket room membership.</p>
+      </div>
+      <div class="stack-card">
+        <div class="layer" style="color: var(--accent4);">Native Client</div>
+        <h4>Tauri (Rust) + TypeScript WebView</h4>
+        <div class="choice">tauri · rust · @tauri-apps/api</div>
+        <p>Tauri uses the OS-native webview (WebView2 on Windows, WKWebView on macOS) rather than bundling Chromium. This means a 5MB binary instead of 150MB (Electron). Rust handles the native layer (process enum, clipboard hooks, multi-display detection). The webview runs your existing React exam UI unchanged. IPC bridge is typed via Tauri commands — clean, fast, secure.</p>
+      </div>
+    </div>
+
+    <h3>Message Queue Strategy</h3>
+    <p><strong>Kafka</strong> for all anti-cheat events and video upload notifications. Topic-per-exam-session (or shard by candidateId). Retention: 7 days minimum (events needed for dispute resolution). Consumer groups: (1) real-time scoring consumer updates Redis integrity score in &lt;100ms; (2) AI analysis consumer batch-processes events async; (3) storage consumer writes to TimescaleDB.</p>
+    <p><strong>SQS/BullMQ</strong> for job queues: video stitching jobs, report generation, email notifications, AI inference batch jobs. Don't use Kafka for these — SQS FIFO or BullMQ (Redis-backed) is simpler and sufficient.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       E. SCALABILITY & INFRA
+       ═══════════════════════════════════════ -->
+  <section class="section" id="scalability">
+    <div class="section-header">
+      <span class="section-id">E</span>
+      <h2>Scalability &amp; Infrastructure</h2>
+    </div>
+
+    <h3>Scaling Tiers</h3>
+
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th>Concurrent Users</th>
+          <th>Architecture Mode</th>
+          <th>Key Constraint</th>
+          <th>Rough Infra</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>0–500</td>
+          <td>Single region monolith</td>
+          <td>Simplicity over efficiency</td>
+          <td>3x c5.2xlarge ($0.34/hr ea)</td>
+        </tr>
+        <tr>
+          <td>500–5k</td>
+          <td>Separate judge + media services</td>
+          <td>Judge CPU; video bandwidth</td>
+          <td>Auto-scaling groups, ELB, RDS</td>
+        </tr>
+        <tr>
+          <td>5k–30k</td>
+          <td>Multi-AZ, Kafka, Redis Cluster</td>
+          <td>WebSocket state distribution</td>
+          <td>EKS / GKE, MSK, ElastiCache Cluster</td>
+        </tr>
+        <tr>
+          <td>30k–100k</td>
+          <td>Multi-region active-active</td>
+          <td>Video ingress cost; latency</td>
+          <td>Global Accelerator, CDN PoP for TURN</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>WebSocket Scaling — The Hard Problem</h3>
+
+    <p>At 10k concurrent WebSocket connections, you cannot rely on sticky sessions and a single server. Use a shared state model: connection state lives in Redis, not in-process. When a WebSocket server scales down and a client reconnects to a different pod, the new pod fetches session state from Redis and resumes seamlessly.</p>
+    <p>Use <strong>Redis Pub/Sub with a consistent-hash ring</strong> for fan-out: each WebSocket server subscribes to its client's channels. When an admin sends a message to a candidate, it publishes to Redis; the candidate's connected pod receives and forwards. This scales to 50k+ connections across pods without a mesh.</p>
+
+    <h3>Code Execution Scaling</h3>
+    <p>The judge is your spikiest workload. At exam start, everyone submits simultaneously. Design for burst: pre-warm MicroVM pools 5 minutes before exam start (pull exam metadata, know how many candidates). Use a queue (BullMQ) in front of judges — submissions aren't dropped, they queue. Target P99 execution return in under 5 seconds including queue time. Each Firecracker VM uses ~25MB RAM; a c5.4xlarge with 32GB can run 1,000+ concurrent VMs after overhead.</p>
+
+    <h3>Video Storage Cost Optimization</h3>
+    <p>At 1 Mbps per candidate, 10,000 candidates for a 2-hour exam = 10,000 × 2hrs × 1Mbps = 9TB of raw footage per exam event. At S3 standard ($0.023/GB) that's $207 in storage. The bigger cost is ingress from clients (free on AWS but TURN server data transfer isn't) and CPU for any transcoding. Strategies:</p>
+    <ul class="list">
+      <li>Use <strong>720p instead of 1080p</strong> — 95% of proctoring value is in facial recognition, not reading text.</li>
+      <li>Encode on the client (WebM/VP8 at 400kbps) rather than sending raw — reduces server-side transcoding.</li>
+      <li>Store to <strong>S3 Intelligent-Tiering</strong> — recordings older than 30 days move to Glacier automatically.</li>
+      <li>Only store video segments around flagged events at full quality; store other segments at lower quality (3fps instead of 30fps).</li>
+    </ul>
+
+    <h3>Load Balancing Architecture</h3>
+    <p>Two-tier: (1) <strong>Cloudflare / AWS Global Accelerator</strong> for global anycast routing, DDoS protection, and TLS termination. (2) <strong>Internal application LB (ALB)</strong> with path-based routing: <code>/ws/*</code> → WebSocket pods, <code>/api/*</code> → API pods, <code>/judge/*</code> → Judge service. Separate health check endpoints per service class. WebSocket connections require sticky sessions on upgrade path only — after upgrade, the connection is sticky to the pod it landed on.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       F. SECURITY MODEL
+       ═══════════════════════════════════════ -->
+  <section class="section" id="security">
+    <div class="section-header">
+      <span class="section-id">F</span>
+      <h2>Security Model &amp; Threat Model</h2>
+    </div>
+
+    <h3>Who's Cheating and How</h3>
+
+    <div class="threat-grid">
+      <div class="threat-card">
+        <div class="severity sev-high">HIGH</div>
+        <h4>AI Code Assistance (ChatGPT, Copilot)</h4>
+        <p>Candidate uses ChatGPT in a separate browser/phone to generate solutions.</p>
+        <div class="mitigate">→ Detect: gaze off screen, paste events, screen recording via second device</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-high">HIGH</div>
+        <h4>Remote Desktop / Screen Share</h4>
+        <p>Another person does the exam via AnyDesk, TeamViewer, or Discord screenshare.</p>
+        <div class="mitigate">→ Process blocklist, face liveness check, typing biometrics</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-high">HIGH</div>
+        <h4>Question Exfiltration</h4>
+        <p>Candidate screenshots questions and posts them online during exam.</p>
+        <div class="mitigate">→ WDA_EXCLUDEFROMCAPTURE (Win), question watermarking, time-variant display</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-med">MEDIUM</div>
+        <h4>Virtual Machine Usage</h4>
+        <p>Candidate runs exam in VM to snapshot/restore state or run parallel environments.</p>
+        <div class="mitigate">→ CPUID hypervisor bit check, SMBIOS vendor strings, RDTSC timing analysis</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-med">MEDIUM</div>
+        <h4>Multiple Devices</h4>
+        <p>Candidate has a second device (phone or laptop) with reference material.</p>
+        <div class="mitigate">→ Webcam AI: detect additional screens, phones, books in frame</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-med">MEDIUM</div>
+        <h4>Browser DevTools / Console</h4>
+        <p>Inspect element to reveal hidden question data, modify timer, or run JS.</p>
+        <div class="mitigate">→ Don't trust client-side state; F12 hook, debugger detection, devtools open detection</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-med">MEDIUM</div>
+        <h4>Network Interception / Proxy</h4>
+        <p>MITM exam traffic to modify questions received or results sent.</p>
+        <div class="mitigate">→ Certificate pinning in native app, signed question packets, server-side scoring</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-low">LOW</div>
+        <h4>Exam Token Sharing</h4>
+        <p>Candidate shares exam link/token so another person starts the exam.</p>
+        <div class="mitigate">→ Device fingerprint + IP binding at token issue time, face match at start</div>
+      </div>
+      <div class="threat-card">
+        <div class="severity sev-low">LOW</div>
+        <h4>Time Manipulation</h4>
+        <p>Modify system clock or JavaScript timer to get extra time.</p>
+        <div class="mitigate">→ Server-side time authority; NTP drift detection; client clock comparison</div>
+      </div>
+    </div>
+
+    <h3>Prevent vs Detect — Be Realistic</h3>
+
+    <div class="callout danger">
+      <strong>You cannot prevent a determined cheater</strong> — you can only raise the cost and detection probability. Every "prevention" measure has a bypass; the goal is making cheating detectable enough that it creates legal/HR risk for the candidate, which deters rational actors.
+    </div>
+
+    <table class="comp-table">
+      <thead>
+        <tr><th>Threat Vector</th><th>Can Prevent?</th><th>Can Detect?</th><th>Confidence</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>In-app tab switching</td>
+          <td><span class="yes">Yes</span></td>
+          <td><span class="yes">Yes</span></td>
+          <td>High</td>
+        </tr>
+        <tr>
+          <td>Opening other apps</td>
+          <td><span class="partial">Partially (native)</span></td>
+          <td><span class="yes">Yes (process list)</span></td>
+          <td>High (Windows), Medium (macOS)</td>
+        </tr>
+        <tr>
+          <td>Second device (phone)</td>
+          <td><span class="no">No</span></td>
+          <td><span class="partial">Partial (AI webcam)</span></td>
+          <td>Medium (camera angle matters)</td>
+        </tr>
+        <tr>
+          <td>Remote desktop assistance</td>
+          <td><span class="partial">Partial (blocklist)</span></td>
+          <td><span class="yes">Yes (process + gaze)</span></td>
+          <td>High if agent is running</td>
+        </tr>
+        <tr>
+          <td>ChatGPT on other browser</td>
+          <td><span class="no">No</span></td>
+          <td><span class="partial">Partial (gaze, timing)</span></td>
+          <td>Low-Medium</td>
+        </tr>
+        <tr>
+          <td>VM-based attack</td>
+          <td><span class="partial">Partial (CPUID checks)</span></td>
+          <td><span class="yes">Yes</span></td>
+          <td>Medium (nested VM bypasses exist)</td>
+        </tr>
+        <tr>
+          <td>Screen mirroring (external monitor)</td>
+          <td><span class="no">No</span></td>
+          <td><span class="partial">Detect extra displays</span></td>
+          <td>Medium</td>
+        </tr>
+        <tr>
+          <td>Phone camera pointed at screen</td>
+          <td><span class="no">Impossible</span></td>
+          <td><span class="partial">Webcam AI (suspicious motion)</span></td>
+          <td>Low</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>VM Detection</h3>
+    <div class="code-block">
+      <div class="code-header">
+        <div class="code-dot r"></div><div class="code-dot y"></div><div class="code-dot g"></div>
+        <span>VM fingerprinting heuristics (Rust)</span>
+      </div>
+      <div class="code-content"><pre><span class="kw">fn</span> <span class="fn">is_likely_vm</span>() -&gt; (<span class="kw">bool</span>, <span class="fn">Vec</span>&lt;<span class="fn">String</span>&gt;) {
+    <span class="kw">let mut</span> signals: <span class="fn">Vec</span>&lt;<span class="fn">String</span>&gt; = <span class="fn">Vec</span>::new();
+    
+    <span class="cmt">// 1. CPUID hypervisor bit (bit 31 of ECX in leaf 1)</span>
+    <span class="kw">if</span> <span class="fn">cpuid_hypervisor_present</span>() { signals.<span class="fn">push</span>(<span class="str">"cpuid_hv_bit"</span>.<span class="fn">into</span>()); }
+    
+    <span class="cmt">// 2. Known VM vendor strings from CPUID leaf 0x40000000</span>
+    <span class="kw">let</span> vendors = [<span class="str">"KVMKVMKVM"</span>, <span class="str">"VMwareVMware"</span>, <span class="str">"VBoxVBoxVBox"</span>, 
+                   <span class="str">"Microsoft Hv"</span>, <span class="str">"XenVMMXenVMM"</span>];
+    <span class="kw">if let</span> <span class="fn">Some</span>(v) = <span class="fn">get_hypervisor_vendor</span>() {
+        <span class="kw">if</span> vendors.<span class="fn">iter</span>().<span class="fn">any</span>(|&amp;s| v.<span class="fn">contains</span>(s)) { 
+            signals.<span class="fn">push</span>(<span class="fn">format!</span>(<span class="str">"hv_vendor:{}"</span>, v)); 
+        }
+    }
+    
+    <span class="cmt">// 3. SMBIOS/DMI check (on Windows via WMI, macOS via IOKit)</span>
+    <span class="kw">if let</span> <span class="fn">Some</span>(m) = <span class="fn">get_system_manufacturer</span>() {
+        <span class="kw">let</span> vm_mfrs = [<span class="str">"innotek"</span>, <span class="str">"vmware"</span>, <span class="str">"parallels"</span>, <span class="str">"qemu"</span>];
+        <span class="kw">if</span> vm_mfrs.<span class="fn">iter</span>().<span class="fn">any</span>(|&amp;s| m.<span class="fn">to_lowercase</span>().<span class="fn">contains</span>(s)) {
+            signals.<span class="fn">push</span>(<span class="fn">format!</span>(<span class="str">"smbios_mfr:{}"</span>, m));
+        }
+    }
+    
+    <span class="cmt">// 4. RDTSC timing anomaly (VM exits create measurable jitter)</span>
+    <span class="kw">let</span> jitter = <span class="fn">measure_rdtsc_jitter</span>(<span class="num">1000</span>);
+    <span class="kw">if</span> jitter &gt; <span class="num">500</span> { signals.<span class="fn">push</span>(<span class="fn">format!</span>(<span class="str">"rdtsc_jitter:{}"</span>, jitter)); }
+    
+    (!signals.<span class="fn">is_empty</span>(), signals)
+}
+<span class="cmt">// Note: nested VMs and hardened VMs (Parallels with "hide VM") can pass these checks.</span>
+<span class="cmt">// Use as a signal, not a gate. Flag for human review, don't auto-disqualify.</span></pre></div>
+    </div>
+
+    <h3>AI-Assisted Cheating Detection</h3>
+    <p>This is an async ML pipeline, not a real-time gate. Three models run in sequence after exam completion:</p>
+    <ol class="list">
+      <li><strong>Face detection + similarity:</strong> MediaPipe Face Detection across video frames. Compare to enrollment photo. Alert if: face disappears for >30s, face similarity drops (different person), multiple faces visible simultaneously.</li>
+      <li><strong>Object detection in webcam feed:</strong> YOLO-based detection of phones, books, secondary monitors. Books near keyboard during a coding test = suspicious. Flag, don't block.</li>
+      <li><strong>Code originality analysis:</strong> Semantic similarity between submitted code and known online solutions (GitHub, LeetCode). Embed both using a code-specific model (CodeBERT); cosine similarity > 0.92 → flag. Also check for solution structure: solving a "hard" problem in 90 seconds with perfect code is itself a signal.</li>
+    </ol>
+
+    <div class="callout warn">
+      <strong>False positive budget:</strong> If your AI flags 5% of candidates as cheating, and 90% of those are false positives, you have a major business problem. Tune for precision (few false positives) not recall (catch all cheaters). A missed cheater is bad; a wrongly disqualified genuine candidate destroys trust and opens legal liability.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       G. COST ESTIMATION
+       ═══════════════════════════════════════ -->
+  <section class="section" id="cost">
+    <div class="section-header">
+      <span class="section-id">G</span>
+      <h2>Cost Estimation</h2>
+    </div>
+
+    <h3>MVP Cost (0–500 users, single exam)</h3>
+
+    <div class="cost-box">
+      <h4>Monthly Infra (MVP, ~500 candidates/month, 2hr exams)</h4>
+      <div class="cost-row"><span class="cost-item">3× c5.2xlarge (API + Judge + Media) — EC2</span><span class="cost-val">~$490/mo</span></div>
+      <div class="cost-row"><span class="cost-item">RDS PostgreSQL db.t3.large (multi-AZ)</span><span class="cost-val">~$115/mo</span></div>
+      <div class="cost-row"><span class="cost-item">ElastiCache Redis cache.t3.micro</span><span class="cost-val">~$25/mo</span></div>
+      <div class="cost-row"><span class="cost-item">S3 storage (500 candidates × 2hr × ~500MB/ea ≈ 250GB)</span><span class="cost-val">~$6/mo</span></div>
+      <div class="cost-row"><span class="cost-item">CloudFront CDN + egress (~500GB)</span><span class="cost-val">~$45/mo</span></div>
+      <div class="cost-row"><span class="cost-item">TURN server (Coturn on t3.medium) for WebRTC NAT traversal</span><span class="cost-val">~$30/mo</span></div>
+      <div class="cost-row"><span class="cost-item">Domain, cert, misc tooling</span><span class="cost-val">~$50/mo</span></div>
+      <div class="cost-row" style="border-top: 2px solid var(--border2); padding-top: 12px; margin-top: 4px;">
+        <span class="cost-item" style="color: var(--text); font-weight: 500;">Total MVP infra</span>
+        <span class="cost-val big">~$760/mo</span>
+      </div>
+    </div>
+
+    <h3>Per-10k Concurrent User Scaling Cost</h3>
+
+    <div class="cost-box">
+      <h4>Marginal cost per 10,000 concurrent candidates (2hr exam event)</h4>
+      <div class="cost-row"><span class="cost-item">Compute (auto-scaled EC2, ~20 c5.2xlarge for API/WS tier)</span><span class="cost-val">~$340 (burst)</span></div>
+      <div class="cost-row"><span class="cost-item">Judge VMs (20× r5.4xlarge for Firecracker pool)</span><span class="cost-val">~$800 (burst)</span></div>
+      <div class="cost-row"><span class="cost-item">Video ingress: 10k × 1Mbps × 2hr = 9TB. TURN/relay ~30% = 2.7TB egress</span><span class="cost-val">~$240 (egress)</span></div>
+      <div class="cost-row"><span class="cost-item">S3 storage: 10k × 500MB = 5TB. Intelligent-Tiering</span><span class="cost-val">~$115 (storage)</span></div>
+      <div class="cost-row"><span class="cost-item">Kafka MSK (3-broker, kafka.m5.xlarge)</span><span class="cost-val">~$250/mo (amortized)</span></div>
+      <div class="cost-row"><span class="cost-item">AI proctoring inference (batch GPU, p3.2xlarge spot, ~4hr post-exam)</span><span class="cost-val">~$120/event</span></div>
+      <div class="cost-row" style="border-top: 2px solid var(--border2); padding-top: 12px; margin-top: 4px;">
+        <span class="cost-item" style="color: var(--text); font-weight: 500;">Total per 10k-candidate exam event</span>
+        <span class="cost-val big">~$1,900–$2,400</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <strong>Key insight:</strong> At 10k candidates, your cost is roughly <strong>$0.20–$0.24 per candidate per 2-hour exam</strong>. The biggest cost drivers in order are: (1) Video streaming/TURN — 40%, (2) Compute for judge VMs — 35%, (3) AI inference — 15%, (4) Storage + CDN — 10%. If you want to cut costs: reduce webcam resolution, increase keyframe intervals on screen recording, use spot instances for judge VMs.
+    </div>
+
+    <h3>Biggest Cost Driver: Video at Scale</h3>
+    <p>100k concurrent users at 1Mbps = 100Gbps ingress. AWS charges nothing for ingress but TURN relay, transcoding, and storage are expensive. At 100k candidates for a 2hr exam you generate ~50TB of recordings. S3 Intelligent-Tiering: ~$1,150 just for storage. Transcode at even 720p: $0.015 per minute on AWS MediaConvert = $0.015 × 120min × 100k = <strong>$180,000 just for transcoding</strong>. This is why you encode on the client and do minimal server-side processing. Target: zero server-side transcoding at ingestion time.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       H. DEVELOPMENT ROADMAP
+       ═══════════════════════════════════════ -->
+  <section class="section" id="roadmap">
+    <div class="section-header">
+      <span class="section-id">H</span>
+      <h2>Development Roadmap</h2>
+    </div>
+
+    <div class="timeline">
+      <div class="phase">
+        <div class="phase-num p1">1</div>
+        <div class="phase-content">
+          <h4>MVP — Functional Assessment Core</h4>
+          <div class="phase-duration">Months 1–3 (2–3 engineers)</div>
+          <p><strong>Goal:</strong> Run real assessments, charge real money. Basic proctoring is enough to sell.</p>
+          <ul class="list">
+            <li>Browser-based exam UI: Monaco Editor + MCQ renderer + timer</li>
+            <li>Basic auth, organization/candidate user types</li>
+            <li>Code judge (Judge0 open-source or self-hosted) — start with Docker, not MicroVMs</li>
+            <li>Webcam capture via WebRTC → S3 (no live monitoring yet, just store and review)</li>
+            <li>Page visibility / tab-switch detection + basic event log</li>
+            <li>Admin dashboard: create exam, invite candidates, view results + video recordings</li>
+            <li>Identity check: webcam snapshot at start, manual admin review</li>
+            <li>PostgreSQL + Redis + S3 — no Kafka yet, simple HTTP webhooks</li>
+            <li>Basic Stripe integration for billing</li>
+          </ul>
+          <p><strong>What you skip:</strong> Native app (use browser extension or just web), AI proctoring, live monitoring, process detection, VM detection. Ship fast, get paying customers.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-num p2">2</div>
+        <div class="phase-content">
+          <h4>Phase 2 — Native App + Deep Proctoring</h4>
+          <div class="phase-duration">Months 4–8 (add 2 more engineers)</div>
+          <p><strong>Goal:</strong> Native app with real proctoring capabilities. Compete with ProctorU/Honorlock for integration.</p>
+          <ul class="list">
+            <li>Tauri-based native exam shell (Windows + macOS). Electron ok as fallback.</li>
+            <li>Process enumeration + blocklist enforcement</li>
+            <li>Multi-display detection + clipboard paste logging</li>
+            <li>WDA_EXCLUDEFROMCAPTURE on Windows</li>
+            <li>Migrate code execution to Firecracker MicroVMs (kill Docker for execution)</li>
+            <li>WebSocket real-time event streaming: uWebSockets + Redis Pub/Sub</li>
+            <li>Kafka for event durability; TimescaleDB for event storage</li>
+            <li>Live monitoring dashboard: grid of webcam feeds, real-time flags</li>
+            <li>TURN server deployment for WebRTC NAT traversal</li>
+            <li>Question randomization + question bank</li>
+            <li>VM detection (CPUID + SMBIOS checks in native agent)</li>
+            <li>macOS notarization + Apple Developer Program enrollment</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-num p3">3</div>
+        <div class="phase-content">
+          <h4>Phase 3 — AI Proctoring + Analytics + Scale</h4>
+          <div class="phase-duration">Months 9–18 (ML engineer + platform engineer)</div>
+          <p><strong>Goal:</strong> AI-generated integrity reports, enterprise features, 100k user scale.</p>
+          <ul class="list">
+            <li>Async AI proctoring pipeline: face detection, object detection, gaze estimation</li>
+            <li>Code originality detection (CodeBERT embeddings vs solution databases)</li>
+            <li>Typing biometrics enrollment + verification</li>
+            <li>Auto-generated integrity report (PDF) with timestamped evidence</li>
+            <li>ATS integrations: Greenhouse, Lever, Workday via webhooks + OAuth</li>
+            <li>SSO (SAML 2.0 + OIDC) for enterprise customers</li>
+            <li>Multi-region deployment (US + EU for GDPR compliance)</li>
+            <li>Horizontal scaling: EKS + Kafka MSK + Aurora PostgreSQL</li>
+            <li>Analytics dashboard: per-question difficulty analysis, cohort comparisons</li>
+            <li>Live proctoring marketplace: integrate 3rd party proctors via API</li>
+            <li>Linux support (Tauri on Linux, basic level)</li>
+            <li>SOC 2 Type II audit initiation</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       I. KEY CHALLENGES & PITFALLS
+       ═══════════════════════════════════════ -->
+  <section class="section" id="pitfalls">
+    <div class="section-header">
+      <span class="section-id">I</span>
+      <h2>Key Challenges &amp; Pitfalls</h2>
+    </div>
+
+    <div class="challenge-list">
+      <div class="challenge">
+        <div class="challenge-icon">🍎</div>
+        <div>
+          <h4>macOS Entitlement + Notarization Hell</h4>
+          <p>Apple's notarization process takes 24–72 hours and can fail for opaque reasons. The hardened runtime blocks several APIs you'll want (JIT, unsigned dylib injection, task_for_pid). You need a paid Apple Developer account ($99/yr), a code signing certificate, and must submit every build for notarization. Accessibility + Screen Recording permissions require user action in System Preferences — you cannot automate this. Budget 2–4 engineering weeks just for macOS compliance, plus ongoing work every time you update entitlements.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">⚠️</div>
+        <div>
+          <h4>False Positive Rate Is Your Product's Reputation</h4>
+          <p>If your AI says someone cheated and they didn't — you've potentially ended their career opportunity and exposed your customer (the employer) to discrimination claims. Every automated flag must have a human review step before it becomes an "accusation." Build your review queue before you build your ML model. Tune for >95% precision on "definite cheat" classifications. Keep a separate "suspicious" bucket that doesn't get communicated to employers unless they specifically request it.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">🔗</div>
+        <div>
+          <h4>WebSocket Connection Reliability at Scale</h4>
+          <p>A 2-hour exam with 10k candidates means 10k WebSocket connections that must survive NAT timeouts, mobile network switches, hotel wifi hiccups, and server deployments. Implement heartbeat pings every 25 seconds. Buffer events locally on the client with a sequence number. On reconnect, replay missed events from the buffer. The server must handle reconnect as idempotent — re-delivering already-received events (identified by eventId) must not double-count. This is harder than it sounds and is where most real-time systems break.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">🛡️</div>
+        <div>
+          <h4>The UX vs Security Tension Is Constant</h4>
+          <p>Every security measure you add degrades UX. Requiring a native app install will cause ~15–30% of candidates to drop off before starting. Blocking clipboard will make candidates who copy-paste their own notes furious. Restricting secondary monitors will affect candidates with accessibility needs (vision impairments who use screen magnification on a second display). You need configurable security levels (high-stakes vs screening) and a clear appeals process. Design for the honest majority, not just the cheating minority.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">⚡</div>
+        <div>
+          <h4>Code Judge Tail Latency</h4>
+          <p>P99 execution latency matters more than average. A candidate who submits and waits 30 seconds for a result while their timer runs gets a terrible experience. Firecracker VMs have ~125ms boot time but cold-start includes filesystem setup, language runtime init, and your test harness. For Python, this can reach 800ms–2s cold. Pre-warm VMs by keeping a hot pool of initialized, snapshotted VMs per language. Load the snapshot instead of booting from scratch — this gets cold-start to &lt;100ms. Implement a 5-second timeout on the judge client side; show a "running" state and poll rather than holding the WebSocket open.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">🎥</div>
+        <div>
+          <h4>Video Storage at Scale Is a Budget Trap</h4>
+          <p>S3 storage is cheap per GB but the egress cost for reviewers streaming recordings adds up. An admin reviewing a 2hr recording downloads 500MB–1GB of video. At 1000 review sessions/month at $0.09/GB egress = ~$90–$180/mo just in egress for review. Use CloudFront signed URLs for video delivery — CloudFront egress is cheaper than S3 direct egress and caches repeated views. Also: implement video clipping so reviewers only download the 5-minute segments around flagged events, not the full recording.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">⚖️</div>
+        <div>
+          <h4>Legal &amp; Compliance in Multiple Jurisdictions</h4>
+          <p>Recording webcam video of candidates triggers GDPR (EU), CCPA (California), BIPA (Illinois biometric privacy), and various other regulations. You need explicit informed consent before starting any recording. You must disclose retention periods (30/60/90 days is common). GDPR requires data deletion upon request and the ability to export data. Illinois BIPA requires written release for biometric identifiers — facial recognition falls under this in Illinois. Hire a privacy attorney before entering enterprise contracts. SOC 2 Type II certification is required by most enterprise customers — start the audit process in Phase 3.</p>
+        </div>
+      </div>
+      <div class="challenge">
+        <div class="challenge-icon">🤖</div>
+        <div>
+          <h4>AI-Assisted Cheating Is Genuinely Hard to Detect</h4>
+          <p>A candidate using ChatGPT on a phone camera pointed at their screen, wearing an earpiece, and typing the solution themselves will pass most proctoring systems. This is the industry's open problem. Behavioral signals help: abnormal speed (solving hard problems in under 60 seconds), unusual typing patterns (long pauses followed by bursts), off-screen gaze. But these are probabilistic. Your best defense here is assessment design: use problems that are hard to Google (novel, company-specific, contextual), time-box tightly, use follow-up technical interviews. Proctoring deters casual cheating; it doesn't stop sophisticated attacks.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>Summary: The Five Real Engineering Bets</h3>
+    <ol class="list">
+      <li><strong>Client security depth vs. distribution friction tradeoff</strong> — native app gives more hooks but will cost you 20% of candidates. Start web-based, gate native to high-stakes tier.</li>
+      <li><strong>Reliable event delivery</strong> is your core infrastructure challenge — lose an anti-cheat event and your integrity reports are wrong. Build the event pipeline correctly before the ML pipeline.</li>
+      <li><strong>Video is your largest cost and the hardest to optimize</strong> — make client-side encoding a first-class concern from day one.</li>
+      <li><strong>False positive management is a product problem, not a tuning problem</strong> — design human review workflows before shipping AI-driven flags.</li>
+      <li><strong>macOS will take 2x as long as you think</strong> — plan for it explicitly. Don't treat it as a port of Windows; it's a different security model entirely.</li>
+    </ol>
+  </section>
+
+</main>
+</div>
+</body>
+</html>
