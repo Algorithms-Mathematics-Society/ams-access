@@ -303,8 +303,9 @@ export default function ContestPageClient() {
 
   // Periodic process scan — every 5s, log + alert on violation
   useEffect(() => {
-    const tauri = window.__TAURI__?.core;
-    if (!tauri) return;
+    const tauriCore = window.__TAURI__?.core;
+    if (!tauriCore) return;
+    const invoke = tauriCore.invoke.bind(tauriCore);
 
     const prettyName: Record<string, string> = {
       obs: "OBS Studio",
@@ -322,11 +323,11 @@ export default function ContestPageClient() {
 
     async function scan() {
       try {
-        const result = await tauri.invoke<{ found: string[]; clean: boolean }>("scan_processes");
+        const result = await invoke<{ found: string[]; clean: boolean }>("scan_processes");
         if (!result.clean && result.found.length > 0) {
           setBlockedApps(result.found.map((f) => prettyName[f.toLowerCase()] ?? f));
           setProctoringOk(false);
-          await tauri.invoke("log_violation", {
+          await invoke("log_violation", {
             kind: "blocked_app",
             detail: result.found.join(", "),
           });
