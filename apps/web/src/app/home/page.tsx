@@ -125,43 +125,19 @@ export default function HomePage() {
   const [contestsLoading, setContestsLoading] = useState(true);
   const [userEmail, setUserEmail] = useState("tester@ams.local");
 
-  const MOCK_CONTESTS: InvitedContest[] = [
-    {
-      id: "mock-contest-dev",
-      title: "AMS Internal — Dev Test",
-      description: "Active mock contest for onboarding flow testing",
-      start_at: new Date(Date.now() - 3600000).toISOString(),
-      end_at: new Date(Date.now() + 7200000).toISOString(),
-      status: "ACTIVE",
-      org_name: "AMS Internal",
-      question_count: 3,
-    },
-    {
-      id: "mock-contest-scheduled",
-      title: "AMS Internal — Scheduled Test",
-      description: "Scheduled mock — click Join to trigger verification flow",
-      start_at: new Date(Date.now() + 120000).toISOString(),
-      end_at: new Date(Date.now() + 5400000).toISOString(),
-      status: "SCHEDULED",
-      org_name: "AMS Internal",
-      question_count: 3,
-    },
-  ];
-
   useEffect(() => {
     const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
     setUserEmail(email);
 
-    setContests([...MOCK_CONTESTS]);
-
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      setContests([]);
       setContestsLoading(false);
       return;
     }
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    sb.rpc("get_invited_contests", { p_email: email }).then(({ data }) => {
-      setContests([...MOCK_CONTESTS, ...((data as InvitedContest[]) ?? [])]);
+    sb.rpc("get_invited_contests", { p_email: email }).then(({ data, error }) => {
+      if (!error) setContests((data as InvitedContest[]) ?? []);
       setContestsLoading(false);
     });
   }, []);

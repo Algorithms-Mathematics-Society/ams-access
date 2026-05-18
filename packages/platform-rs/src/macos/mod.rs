@@ -81,3 +81,11 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 }
 
 pub fn disable_keyboard_intercept() {}
+
+pub fn lock_desktop() -> bool {
+    enable_keyboard_intercept().active
+}
+
+pub fn unlock_desktop() {
+    disable_keyboard_intercept();
+}

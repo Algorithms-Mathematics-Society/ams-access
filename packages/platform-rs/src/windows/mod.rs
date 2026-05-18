@@ -95,6 +95,32 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     }
 }
 
+/// Prevent display/system sleep during exam.
+fn set_sleep_prevention(enable: bool) {
+    use windows::Win32::System::Power::{
+        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+        EXECUTION_STATE,
+    };
+    unsafe {
+        if enable {
+            SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+        } else {
+            SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    }
+}
+
+pub fn lock_desktop() -> bool {
+    set_sleep_prevention(true);
+    let result = enable_keyboard_intercept();
+    result.active
+}
+
+pub fn unlock_desktop() {
+    set_sleep_prevention(false);
+    disable_keyboard_intercept();
+}
+
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     if HOOK_ACTIVE.load(Ordering::SeqCst) {
         return KeyboardInterceptResult {
@@ -104,6 +130,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         };
     }
     HOOK_ACTIVE.store(true, Ordering::SeqCst);
+    set_sleep_prevention(true);
 
     std::thread::spawn(|| {
         use windows::Win32::Foundation::HWND;
@@ -143,6 +170,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 }
 
 pub fn disable_keyboard_intercept() {
+    set_sleep_prevention(false);
     let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
     if tid != 0 {
         unsafe {

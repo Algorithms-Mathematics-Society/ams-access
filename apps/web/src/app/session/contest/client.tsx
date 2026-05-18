@@ -121,6 +121,7 @@ export default function ContestPageClient() {
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
+  const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -300,6 +301,49 @@ export default function ContestPageClient() {
     return () => clearInterval(interval);
   }, [cameraStream]);
 
+  // Periodic process scan — every 5s, log + alert on violation
+  useEffect(() => {
+    const tauri = window.__TAURI__?.core;
+    if (!tauri) return;
+
+    const prettyName: Record<string, string> = {
+      obs: "OBS Studio",
+      obs64: "OBS Studio",
+      discord: "Discord",
+      teamviewer: "TeamViewer",
+      anydesk: "AnyDesk",
+      wireshark: "Wireshark",
+      "cheat engine": "Cheat Engine",
+      cheatengine: "Cheat Engine",
+      zoom: "Zoom",
+      teams: "Microsoft Teams",
+      mstsc: "Remote Desktop",
+    };
+
+    async function scan() {
+      try {
+        const result = await tauri.invoke<{ found: string[]; clean: boolean }>("scan_processes");
+        if (!result.clean && result.found.length > 0) {
+          setBlockedApps(result.found.map((f) => prettyName[f.toLowerCase()] ?? f));
+          setProctoringOk(false);
+          await tauri.invoke("log_violation", {
+            kind: "blocked_app",
+            detail: result.found.join(", "),
+          });
+        } else {
+          setBlockedApps([]);
+          setProctoringOk(true);
+        }
+      } catch {
+        // Tauri not available (dev browser mode)
+      }
+    }
+
+    void scan();
+    const id = setInterval(() => void scan(), 5000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     function blockShortcuts(e: KeyboardEvent) {
       const blocked =
@@ -375,6 +419,90 @@ export default function ContestPageClient() {
         fontFamily: "Inter, 'IBM Plex Sans', system-ui, sans-serif",
       }}
     >
+      {/* ── Blocked app violation overlay ── */}
+      {blockedApps.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(3,8,22,0.96)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: "440px",
+              width: "100%",
+              borderRadius: "20px",
+              padding: "36px 32px",
+              background: "rgba(239,68,68,0.06)",
+              border: "1px solid rgba(239,68,68,0.3)",
+              boxShadow: "0 0 60px rgba(239,68,68,0.15)",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "50%",
+                background: "rgba(239,68,68,0.1)",
+                border: "1px solid rgba(239,68,68,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 20px",
+                fontSize: "24px",
+              }}
+            >
+              ⚠
+            </div>
+            <p
+              style={{
+                fontSize: "17px",
+                fontWeight: 600,
+                color: "#fca5a5",
+                marginBottom: "8px",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Restricted Application Detected
+            </p>
+            <p
+              style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "24px", lineHeight: 1.6 }}
+            >
+              Close the following apps to continue your exam. This violation has been logged.
+            </p>
+            <div style={{ marginBottom: "24px" }}>
+              {blockedApps.map((app) => (
+                <div
+                  key={app}
+                  style={{
+                    padding: "10px 16px",
+                    marginBottom: "8px",
+                    borderRadius: "10px",
+                    background: "rgba(239,68,68,0.08)",
+                    border: "1px solid rgba(239,68,68,0.2)",
+                    fontSize: "14px",
+                    color: "#f87171",
+                    fontWeight: 500,
+                  }}
+                >
+                  {app}
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: "12px", color: "#475569" }}>
+              This dialog will dismiss automatically once the app is closed.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Top bar ── */}
       <header
         style={{

@@ -172,25 +172,224 @@ pub fn detect_display_server() -> String {
     "unknown".to_string()
 }
 
-/// Install keyboard intercept (best-effort, JS-layer handles most cases in Tauri).
+// ── GSettings keybinding inhibit ─────────────────────────────────────────────
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+static SAVED_BINDINGS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn saved() -> &'static Mutex<HashMap<String, String>> {
+    SAVED_BINDINGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Dock/panel settings to hide during exam. Schema may not exist (silently ignored).
+const GNOME_DOCK_SETTINGS: &[(&str, &str, &str)] = &[
+    // dash-to-dock (common extension on Arch/Ubuntu)
+    (
+        "org.gnome.shell.extensions.dash-to-dock",
+        "dock-fixed",
+        "false",
+    ),
+    (
+        "org.gnome.shell.extensions.dash-to-dock",
+        "autohide",
+        "true",
+    ),
+    (
+        "org.gnome.shell.extensions.dash-to-dock",
+        "intellihide",
+        "false",
+    ),
+    // dash-to-panel (alternative panel extension)
+    (
+        "org.gnome.shell.extensions.dash-to-panel",
+        "panel-position",
+        "'TOP'",
+    ),
+    // Ubuntu dock (ubuntu-dock extension)
+    (
+        "org.gnome.shell.extensions.ubuntu-dock",
+        "dock-fixed",
+        "false",
+    ),
+    ("org.gnome.shell.extensions.ubuntu-dock", "autohide", "true"),
+    (
+        "org.gnome.shell.extensions.ubuntu-dock",
+        "intellihide",
+        "false",
+    ),
+];
+
+/// (schema, key, disable_value)
+/// String keys: disable with ''. Array keys: disable with @as [].
+const GNOME_SHORTCUTS: &[(&str, &str, &str)] = &[
+    // Super key overlay — NOTE: schema is org.gnome.mutter, NOT org.gnome.mutter.keybindings
+    ("org.gnome.mutter", "overlay-key", "''"),
+    // Activities / app grid
+    ("org.gnome.shell.keybindings", "toggle-overview", "@as []"),
+    (
+        "org.gnome.shell.keybindings",
+        "toggle-application-view",
+        "@as []",
+    ),
+    // Window switching
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-windows",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-applications",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-windows-backward",
+        "@as []",
+    ),
+    // Workspace switching
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-left",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-right",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-1",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-2",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-3",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-4",
+        "@as []",
+    ),
+    // Close / minimize / show-desktop
+    ("org.gnome.desktop.wm.keybindings", "close", "@as []"),
+    ("org.gnome.desktop.wm.keybindings", "minimize", "@as []"),
+    ("org.gnome.desktop.wm.keybindings", "show-desktop", "@as []"),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "panel-run-dialog",
+        "@as []",
+    ),
+    // Screenshot / screen recording
+    ("org.gnome.shell.keybindings", "screenshot", "@as []"),
+    ("org.gnome.shell.keybindings", "screenshot-window", "@as []"),
+    (
+        "org.gnome.shell.keybindings",
+        "show-screen-recording-ui",
+        "@as []",
+    ),
+    // Wayland restore-shortcuts inhibit
+    (
+        "org.gnome.mutter.wayland.keybindings",
+        "restore-shortcuts",
+        "@as []",
+    ),
+];
+
+fn gsettings_get(schema: &str, key: &str) -> Option<String> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", schema, key])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn gsettings_set(schema: &str, key: &str, value: &str) {
+    let _ = std::process::Command::new("gsettings")
+        .args(["set", schema, key, value])
+        .status();
+}
+
+/// Disable GNOME compositor shortcuts (Super, Alt+Tab, Alt+F4, etc.)
+/// by saving current values then setting each to empty/disabled.
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
-    // Deep keyboard grab requires x11 feature and active X display.
-    // For Tauri webview, the JS layer intercepts key events; this sets
-    // the process-level flag and optionally attempts X grab.
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+    let is_gnome = std::env::var("XDG_SESSION_DESKTOP")
+        .or_else(|_| std::env::var("GDMSESSION"))
+        .map(|s| s.to_lowercase().contains("gnome"))
+        .unwrap_or(false);
+
+    if is_gnome {
+        let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
+
+        let all_settings = GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter());
+
+        for &(schema, key, disable_val) in all_settings {
+            let map_key = format!("{schema}/{key}");
+            // Only save once (idempotent re-enable calls)
+            if !saved.contains_key(&map_key) {
+                if let Some(current) = gsettings_get(schema, key) {
+                    saved.insert(map_key.clone(), current);
+                }
+            }
+            gsettings_set(schema, key, disable_val);
+        }
+
+        let method = if is_wayland {
+            "gsettings/wayland"
+        } else {
+            "gsettings/x11"
+        };
+        return KeyboardInterceptResult {
+            active: true,
+            method,
+            platform: "linux",
+        };
+    }
+
     #[cfg(feature = "linux-x11")]
     {
-        // x11 grab would go here
+        // X11 XGrabKeyboard would go here for non-GNOME X11 setups
     }
 
     KeyboardInterceptResult {
-        active: true,
-        method: "tauri-webview-intercept",
+        active: false,
+        method: "unsupported",
         platform: "linux",
     }
 }
 
+/// Restore all GNOME keybindings to their pre-exam values.
+pub fn lock_desktop() -> bool {
+    enable_keyboard_intercept().active
+}
+
+pub fn unlock_desktop() {
+    disable_keyboard_intercept();
+}
+
 pub fn disable_keyboard_intercept() {
-    // Release any OS-level grabs here
+    let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
+    let all_settings = GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter());
+    for &(schema, key, _) in all_settings {
+        let map_key = format!("{schema}/{key}");
+        if let Some(original) = saved.remove(&map_key) {
+            gsettings_set(schema, key, &original);
+        }
+    }
 }
 
 /// Check for LD_PRELOAD injection (security risk indicator).

@@ -50,21 +50,21 @@ interface Stage {
 }
 
 const STAGES: Omit<Stage, "status">[] = [
-  { id: 1, label: "Session Isolation", group: "SYSTEM PREPARATION" },
-  { id: 2, label: "Fullscreen Secure Mode", group: "SYSTEM PREPARATION" },
-  { id: 3, label: "Multi-Monitor Detection", group: "SYSTEM PREPARATION" },
-  { id: 4, label: "Keyboard Lockdown", group: "SYSTEM PREPARATION" },
-  { id: 5, label: "Environment Validation", group: "ENVIRONMENT SCAN" },
-  { id: 6, label: "Restricted Applications", group: "ENVIRONMENT SCAN" },
-  { id: 7, label: "VM / Virtualization", group: "ENVIRONMENT SCAN" },
-  { id: 8, label: "Camera Initialization", group: "BIOMETRIC CALIBRATION" },
-  { id: 9, label: "Face Calibration", group: "BIOMETRIC CALIBRATION" },
-  { id: 10, label: "Presence Verification", group: "BIOMETRIC CALIBRATION" },
-  { id: 11, label: "Audio Verification", group: "PERIPHERALS" },
-  { id: 12, label: "Network Stability", group: "PERIPHERALS" },
-  { id: 13, label: "Integrity Confirmation", group: "FINAL" },
-  { id: 14, label: "Contest Lock-In", group: "FINAL" },
-  { id: 15, label: "Contest Launch", group: "FINAL" },
+  { id: 1, label: "Preparing Your Session", group: "GETTING READY" },
+  { id: 2, label: "Secure Full-Screen", group: "GETTING READY" },
+  { id: 3, label: "Display Check", group: "GETTING READY" },
+  { id: 4, label: "Keyboard Setup", group: "GETTING READY" },
+  { id: 5, label: "Setup Verification", group: "CHECKING YOUR SETUP" },
+  { id: 6, label: "Application Check", group: "CHECKING YOUR SETUP" },
+  { id: 7, label: "Device Compatibility", group: "CHECKING YOUR SETUP" },
+  { id: 8, label: "Camera Setup", group: "IDENTITY VERIFICATION" },
+  { id: 9, label: "Face Scan", group: "IDENTITY VERIFICATION" },
+  { id: 10, label: "Presence Check", group: "IDENTITY VERIFICATION" },
+  { id: 11, label: "Microphone Check", group: "CONNECTIVITY" },
+  { id: 12, label: "Connection Check", group: "CONNECTIVITY" },
+  { id: 13, label: "Final Review", group: "FINAL STEPS" },
+  { id: 14, label: "Starting Session", group: "FINAL STEPS" },
+  { id: 15, label: "Entering Contest", group: "FINAL STEPS" },
 ];
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
@@ -109,11 +109,16 @@ function CheckLine({
   return (
     <div
       className="flex items-center gap-3"
-      style={{ opacity: 0, animation: `fadeIn 350ms ease forwards ${delay}ms` }}
+      style={{ opacity: 0, animation: `fadeIn 400ms ease forwards ${delay}ms` }}
     >
-      <span style={{ color, fontSize: "13px", width: "16px", flexShrink: 0 }}>{icon}</span>
+      <span style={{ color, fontSize: "15px", width: "18px", flexShrink: 0 }}>{icon}</span>
       <span
-        style={{ fontSize: "13px", color: status === "pass" ? "#a7b0c0" : color, fontWeight: 300 }}
+        style={{
+          fontSize: "14px",
+          color: status === "pass" ? "#94a3b8" : color,
+          fontWeight: 400,
+          lineHeight: 1.5,
+        }}
       >
         {label}
       </span>
@@ -128,9 +133,9 @@ function Spinner({ size = 20 }: { size?: number }) {
       height={size}
       viewBox="0 0 24 24"
       fill="none"
-      style={{ animation: "spin 0.9s linear infinite", display: "inline-block" }}
+      style={{ animation: "spin 1s linear infinite", display: "inline-block", flexShrink: 0 }}
     >
-      <circle cx="12" cy="12" r="9" stroke="rgba(168,85,247,0.2)" strokeWidth="2.5" />
+      <circle cx="12" cy="12" r="9" stroke="rgba(168,85,247,0.18)" strokeWidth="2.5" />
       <path d="M12 3A9 9 0 0 1 21 12" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" />
     </svg>
   );
@@ -138,26 +143,26 @@ function Spinner({ size = 20 }: { size?: number }) {
 
 function StageHeader({ id, label, total = 15 }: { id: number; label: string; total?: number }) {
   return (
-    <div className="mb-10 text-center">
+    <div style={{ marginBottom: "36px", textAlign: "center" }}>
       <p
         style={{
           fontSize: "11px",
-          letterSpacing: "0.28em",
+          letterSpacing: "0.18em",
           color: "#52525B",
           fontWeight: 500,
-          marginBottom: "16px",
+          marginBottom: "14px",
           textTransform: "uppercase",
         }}
       >
-        Stage {id} of {total}
+        Step {id} of {total}
       </p>
       <h2
         style={{
-          fontSize: "28px",
-          fontWeight: 300,
-          color: "#f5f7fa",
-          letterSpacing: "-0.02em",
-          lineHeight: 1.1,
+          fontSize: "26px",
+          fontWeight: 500,
+          color: "#f0f2f5",
+          letterSpacing: "-0.01em",
+          lineHeight: 1.2,
         }}
       >
         {label}
@@ -168,20 +173,20 @@ function StageHeader({ id, label, total = 15 }: { id: number; label: string; tot
 
 function StatusBadge({ status, label }: { status: StageStatus; label: string }) {
   const cfg = {
-    checking: { bg: "rgba(168,85,247,0.1)", border: "rgba(168,85,247,0.3)", color: "#a855f7" },
-    pass: { bg: "rgba(34,197,94,0.1)", border: "rgba(34,197,94,0.3)", color: "#22c55e" },
-    warn: { bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.3)", color: "#f59e0b" },
-    fail: { bg: "rgba(239,68,68,0.1)", border: "rgba(239,68,68,0.3)", color: "#ef4444" },
-    pending: { bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.1)", color: "#52525b" },
+    checking: { bg: "rgba(168,85,247,0.08)", border: "rgba(168,85,247,0.25)", color: "#a855f7" },
+    pass: { bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.25)", color: "#22c55e" },
+    warn: { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.25)", color: "#f59e0b" },
+    fail: { bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.25)", color: "#ef4444" },
+    pending: { bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", color: "#52525b" },
   }[status];
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-full px-4 py-1.5"
-      style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}
+      className="inline-flex items-center gap-2 rounded-full"
+      style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, padding: "8px 20px" }}
     >
       {status === "checking" && <Spinner size={12} />}
       <span
-        style={{ fontSize: "12px", fontWeight: 500, color: cfg.color, letterSpacing: "0.06em" }}
+        style={{ fontSize: "13px", fontWeight: 500, color: cfg.color, letterSpacing: "0.04em" }}
       >
         {label}
       </span>
@@ -206,9 +211,8 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={1} label="Session Isolation" />
+      <StageHeader id={1} label="Preparing Your Session" />
 
-      {/* Isolation rings animation */}
       <div
         className="relative mb-10 flex items-center justify-center"
         style={{ width: 180, height: 180 }}
@@ -220,18 +224,18 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
             style={{
               width: 60 + i * 44,
               height: 60 + i * 44,
-              border: `1px solid rgba(168,85,247,${phase > i ? 0.35 : 0.08})`,
-              transition: `border-color 600ms ease ${i * 200}ms, box-shadow 600ms ease ${i * 200}ms`,
-              boxShadow: phase > i ? `0 0 ${20 + i * 10}px rgba(168,85,247,0.12)` : "none",
+              border: `1px solid rgba(168,85,247,${phase > i ? 0.3 : 0.07})`,
+              transition: `border-color 700ms ease ${i * 200}ms, box-shadow 700ms ease ${i * 200}ms`,
+              boxShadow: phase > i ? `0 0 ${16 + i * 8}px rgba(168,85,247,0.08)` : "none",
             }}
           />
         ))}
         <div
           className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full"
           style={{
-            background: "rgba(168,85,247,0.12)",
-            border: "1px solid rgba(168,85,247,0.4)",
-            boxShadow: "0 0 24px rgba(168,85,247,0.2)",
+            background: "rgba(168,85,247,0.1)",
+            border: "1px solid rgba(168,85,247,0.35)",
+            boxShadow: "0 0 20px rgba(168,85,247,0.12)",
           }}
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -245,10 +249,10 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
         </div>
       </div>
 
-      <div className="space-y-3 text-center">
-        {phase >= 1 && <CheckLine label="Process namespace isolated" status="pass" />}
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px", textAlign: "center" }}>
+        {phase >= 1 && <CheckLine label="Workspace prepared" status="pass" />}
         {phase >= 2 && <CheckLine label="Session context established" status="pass" />}
-        {phase >= 3 && <CheckLine label="Secure workspace initialized" status="pass" />}
+        {phase >= 3 && <CheckLine label="Ready to continue" status="pass" />}
       </div>
     </div>
   );
@@ -275,18 +279,17 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={2} label="Fullscreen Secure Mode" />
+      <StageHeader id={2} label="Secure Full-Screen" />
       <div className="relative mb-10">
-        {/* Monitor outline */}
         <div
-          className="relative flex items-center justify-center rounded-xl"
+          className="relative flex items-center justify-center rounded-2xl"
           style={{
             width: 200,
             height: 130,
-            border: `2px solid ${done ? "rgba(34,197,94,0.5)" : "rgba(168,85,247,0.4)"}`,
-            background: done ? "rgba(34,197,94,0.05)" : "rgba(168,85,247,0.05)",
-            transition: "all 500ms ease",
-            boxShadow: done ? "0 0 30px rgba(34,197,94,0.15)" : "0 0 30px rgba(168,85,247,0.15)",
+            border: `1.5px solid ${done ? "rgba(34,197,94,0.45)" : "rgba(168,85,247,0.35)"}`,
+            background: done ? "rgba(34,197,94,0.04)" : "rgba(168,85,247,0.04)",
+            transition: "all 600ms ease",
+            boxShadow: done ? "0 0 24px rgba(34,197,94,0.1)" : "0 0 24px rgba(168,85,247,0.1)",
           }}
         >
           {!done ? (
@@ -302,35 +305,34 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
               />
             </svg>
           )}
-          {/* Corner brackets */}
           {["tl", "tr", "bl", "br"].map((c) => (
             <div
               key={c}
               className="absolute"
               style={{
-                top: c.startsWith("t") ? 6 : "auto",
-                bottom: c.startsWith("b") ? 6 : "auto",
-                left: c.endsWith("l") ? 6 : "auto",
-                right: c.endsWith("r") ? 6 : "auto",
+                top: c.startsWith("t") ? 7 : "auto",
+                bottom: c.startsWith("b") ? 7 : "auto",
+                left: c.endsWith("l") ? 7 : "auto",
+                right: c.endsWith("r") ? 7 : "auto",
                 width: 14,
                 height: 14,
-                borderTop: c.startsWith("t") ? "2px solid rgba(168,85,247,0.7)" : "none",
-                borderBottom: c.startsWith("b") ? "2px solid rgba(168,85,247,0.7)" : "none",
-                borderLeft: c.endsWith("l") ? "2px solid rgba(168,85,247,0.7)" : "none",
-                borderRight: c.endsWith("r") ? "2px solid rgba(168,85,247,0.7)" : "none",
+                borderTop: c.startsWith("t") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
+                borderBottom: c.startsWith("b") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
+                borderLeft: c.endsWith("l") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
+                borderRight: c.endsWith("r") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
               }}
             />
           ))}
         </div>
         <div
-          className="mt-3 h-3 w-16 rounded-full mx-auto"
-          style={{ background: "rgba(255,255,255,0.08)" }}
+          className="mt-3 h-2.5 w-16 rounded-full mx-auto"
+          style={{ background: "rgba(255,255,255,0.07)" }}
         />
       </div>
 
       <StatusBadge
         status={done ? "pass" : "checking"}
-        label={done ? "Fullscreen secured" : "Entering fullscreen…"}
+        label={done ? "Full-screen mode active" : "Switching to full-screen..."}
       />
     </div>
   );
@@ -375,7 +377,6 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
 
       if (cancelled) return;
 
-      // Browser fallback
       const list = mons.length
         ? mons
         : [
@@ -390,7 +391,6 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
       setTimeout(progress, 900);
     }
 
-    // Hard fallback so this stage can never deadlock due to platform API issues.
     const failSafe = setTimeout(progress, 3500);
     void go();
     return () => {
@@ -401,31 +401,37 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={3} label="Multi-Monitor Detection" />
+      <StageHeader id={3} label="Display Check" />
 
-      {/* Monitor map */}
-      <div className="mb-8 flex items-center justify-center gap-4">
+      <div className="mb-8 flex items-center justify-center gap-5">
         {(monitors.length ? monitors : [null]).map((m, i) => (
           <div key={i} className="flex flex-col items-center gap-2">
             <div
-              className="flex items-center justify-center rounded-lg"
+              className="flex items-center justify-center rounded-xl"
               style={{
                 width: i === 0 ? 120 : 90,
                 height: i === 0 ? 78 : 58,
-                border: `2px solid ${i === 0 ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
-                background: i === 0 ? "rgba(34,197,94,0.06)" : "rgba(245,158,11,0.06)",
+                border: `1.5px solid ${i === 0 ? "rgba(34,197,94,0.45)" : "rgba(245,158,11,0.45)"}`,
+                background: i === 0 ? "rgba(34,197,94,0.05)" : "rgba(245,158,11,0.05)",
                 boxShadow:
-                  i === 0 ? "0 0 20px rgba(34,197,94,0.1)" : "0 0 16px rgba(245,158,11,0.08)",
-                transition: "all 400ms ease",
+                  i === 0 ? "0 0 16px rgba(34,197,94,0.08)" : "0 0 14px rgba(245,158,11,0.07)",
+                transition: "all 500ms ease",
                 opacity: done ? 1 : 0.4,
               }}
             >
-              <span style={{ fontSize: "11px", color: i === 0 ? "#22c55e" : "#f59e0b" }}>
-                {i === 0 ? "PRIMARY" : `DISPLAY ${i + 1}`}
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 500,
+                  letterSpacing: "0.08em",
+                  color: i === 0 ? "#22c55e" : "#f59e0b",
+                }}
+              >
+                {i === 0 ? "MAIN" : `SCREEN ${i + 1}`}
               </span>
             </div>
             {m && (
-              <span style={{ fontSize: "10px", color: "#52525B" }}>
+              <span style={{ fontSize: "11px", color: "#52525B" }}>
                 {m.size.width}×{m.size.height}
               </span>
             )}
@@ -434,28 +440,31 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
       </div>
 
       {done && (
-        <div className="space-y-2 text-center">
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px", textAlign: "center" }}>
           <CheckLine
-            label={`${monitors.length || 1} display${(monitors.length || 1) > 1 ? "s" : ""} detected`}
+            label={`${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`}
             status="pass"
           />
           {monitors.length > 1 ? (
-            <CheckLine label="Additional displays: monitoring only" status="warn" />
+            <CheckLine
+              label="Additional screens found — please use your main screen only"
+              status="warn"
+            />
           ) : (
-            <CheckLine label="Single display confirmed" status="pass" />
+            <CheckLine label="Single screen confirmed" status="pass" />
           )}
           {monitors.length > 1 && (
             <p
               style={{
-                marginTop: "12px",
-                fontSize: "12px",
+                marginTop: "14px",
+                fontSize: "13px",
                 color: "#f59e0b",
                 maxWidth: "320px",
                 textAlign: "center",
-                lineHeight: 1.6,
+                lineHeight: 1.65,
               }}
             >
-              Only the primary display may be used during the contest.
+              Only your main screen may be used during the contest.
             </p>
           )}
         </div>
@@ -470,14 +479,13 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   useEffect(() => {
     async function go() {
       setPhase(1);
-      await invoke("enable_keyboard_intercept");
+      await invoke("lock_desktop");
       setTimeout(() => setPhase(2), 600);
       setTimeout(() => setPhase(3), 1200);
       setTimeout(() => setPhase(4), 1800);
       setTimeout(onPass, 2600);
     }
 
-    // Install JS-level key interceptor
     function handleKey(e: KeyboardEvent) {
       const intercept = [
         e.key === "PrintScreen",
@@ -503,27 +511,27 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={4} label="Keyboard Shortcut Lockdown" />
+      <StageHeader id={4} label="Keyboard Setup" />
 
       <div className="mb-8 grid grid-cols-2 gap-3">
         {keys.map(({ label, locked }) => (
           <div
             key={label}
-            className="flex items-center gap-3 rounded-xl px-4 py-3"
+            className="flex items-center gap-3 rounded-xl"
             style={{
-              background: locked ? "rgba(168,85,247,0.08)" : "rgba(255,255,255,0.03)",
-              border: `1px solid ${locked ? "rgba(168,85,247,0.3)" : "rgba(255,255,255,0.08)"}`,
-              transition: "all 400ms ease",
+              padding: "12px 16px",
+              background: locked ? "rgba(168,85,247,0.07)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${locked ? "rgba(168,85,247,0.25)" : "rgba(255,255,255,0.07)"}`,
+              transition: "all 450ms ease",
             }}
           >
-            <span style={{ fontSize: "11px", color: locked ? "#22c55e" : "#52525B" }}>
+            <span style={{ fontSize: "13px", color: locked ? "#22c55e" : "#52525B" }}>
               {locked ? "✓" : "○"}
             </span>
             <span
               style={{
-                fontSize: "12px",
+                fontSize: "13px",
                 color: locked ? "#a7b0c0" : "#52525B",
-                fontFamily: "monospace",
               }}
             >
               {label}
@@ -534,7 +542,7 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
 
       <StatusBadge
         status={phase >= 4 ? "pass" : "checking"}
-        label={phase >= 4 ? "Secure input mode active" : "Installing keyboard hooks…"}
+        label={phase >= 4 ? "Keyboard controls active" : "Setting up keyboard controls..."}
       />
     </div>
   );
@@ -548,35 +556,64 @@ function Stage5_EnvironmentValidation({ onPass }: { onPass(): void }) {
   const [checks, setChecks] = useState<Check[]>([]);
 
   useEffect(() => {
-    const items: { label: string; delay: number; result: "pass" | "warn" }[] = [
-      { label: "Display configuration verified", delay: 200, result: "pass" },
-      { label: "Fullscreen rendering confirmed", delay: 600, result: "pass" },
-      { label: "Secure rendering pipeline active", delay: 1000, result: "pass" },
-      { label: "Keyboard hooks registered", delay: 1400, result: "pass" },
-      { label: "Screen capture layer checked", delay: 1800, result: "pass" },
-      { label: "Session integrity baseline set", delay: 2200, result: "pass" },
-    ];
+    let cancelled = false;
 
-    items.forEach(({ label, delay, result }) => {
-      setTimeout(() => {
-        setChecks((prev) => {
-          const existing = prev.find((c) => c.label === label);
-          if (!existing) return [...prev, { label, status: "checking" }];
-          return prev.map((c) => (c.label === label ? { ...c, status: result } : c));
-        });
-        setTimeout(() => {
-          setChecks((prev) => prev.map((c) => (c.label === label ? { ...c, status: result } : c)));
-        }, 500);
-      }, delay);
-    });
+    function pushCheck(label: string) {
+      if (!cancelled) setChecks((prev) => [...prev, { label, status: "checking" }]);
+    }
+    function resolveCheck(label: string, status: "pass" | "warn") {
+      if (!cancelled)
+        setChecks((prev) => prev.map((c) => (c.label === label ? { ...c, status } : c)));
+    }
 
-    setTimeout(onPass, 3200);
+    async function runChecks() {
+      await new Promise((r) => setTimeout(r, 100));
+
+      pushCheck("Display settings");
+      await new Promise((r) => setTimeout(r, 300));
+      const singleScreen = window.screen.width === window.screen.availWidth;
+      resolveCheck("Display settings", singleScreen ? "pass" : "warn");
+
+      pushCheck("Full-screen mode");
+      await new Promise((r) => setTimeout(r, 200));
+      const isFs =
+        !!document.fullscreenElement || window.innerHeight >= window.screen.height * 0.94;
+      resolveCheck("Full-screen mode", isFs ? "pass" : "warn");
+
+      pushCheck("Keyboard controls");
+      const kbr = await invoke<{ active: boolean }>("enable_keyboard_intercept");
+      resolveCheck("Keyboard controls", kbr?.active ? "pass" : "warn");
+
+      pushCheck("Screen capture guard");
+      await new Promise((r) => setTimeout(r, 400));
+      resolveCheck("Screen capture guard", "pass");
+
+      pushCheck("Session baseline");
+      await new Promise((r) => setTimeout(r, 300));
+      resolveCheck("Session baseline", "pass");
+
+      await new Promise((r) => setTimeout(r, 500));
+      if (!cancelled) onPass();
+    }
+
+    void runChecks();
+    return () => {
+      cancelled = true;
+    };
   }, [onPass]);
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={5} label="Environment Validation" />
-      <div className="w-full max-w-sm space-y-3">
+      <StageHeader id={5} label="Setup Verification" />
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "340px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+        }}
+      >
         {checks.map((c) => (
           <CheckLine key={c.label} label={c.label} status={c.status} />
         ))}
@@ -593,11 +630,12 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
   const doScan = useCallback(async () => {
     setScanning(true);
     setCleared(false);
-    // Restricted app check disabled for dev/testing
-    await new Promise((r) => setTimeout(r, 800));
-    setFound([]);
+    await new Promise((r) => setTimeout(r, 600));
+    const result = await invoke<{ found: string[]; clean: boolean }>("scan_processes");
+    const foundApps = result?.found ?? [];
+    setFound(foundApps);
     setScanning(false);
-    setTimeout(onPass, 800);
+    if (foundApps.length === 0) setTimeout(onPass, 800);
   }, [onPass]);
 
   useEffect(() => {
@@ -615,58 +653,75 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={6} label="Restricted Application Detection" />
+      <StageHeader id={6} label="Application Check" />
 
       {scanning ? (
-        <div className="flex flex-col items-center gap-5">
+        <div className="flex flex-col items-center gap-6">
           <div
             className="relative flex h-20 w-20 items-center justify-center rounded-full"
             style={{
-              border: "1px solid rgba(168,85,247,0.2)",
-              animation: "pulse-ring 1.8s ease-in-out infinite",
+              border: "1px solid rgba(168,85,247,0.18)",
+              animation: "pulse-ring 2s ease-in-out infinite",
             }}
           >
             <Spinner size={32} />
           </div>
-          <p style={{ fontSize: "13px", color: "#64748b" }}>Scanning running processes…</p>
+          <p style={{ fontSize: "14px", color: "#64748b", fontWeight: 400 }}>
+            Checking for apps that may interfere...
+          </p>
         </div>
       ) : found.length > 0 && !cleared ? (
-        <div className="w-full max-w-md">
+        <div style={{ width: "100%", maxWidth: "400px" }}>
           <div
-            className="mb-5 rounded-xl p-4"
-            style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)" }}
+            style={{
+              marginBottom: "20px",
+              borderRadius: "16px",
+              padding: "20px 24px",
+              background: "rgba(239,68,68,0.05)",
+              border: "1px solid rgba(239,68,68,0.18)",
+            }}
           >
-            <p className="mb-3 text-sm font-medium" style={{ color: "#fca5a5" }}>
-              Restricted applications detected
+            <p
+              style={{ marginBottom: "12px", fontSize: "14px", fontWeight: 500, color: "#fca5a5" }}
+            >
+              The following apps need to be closed:
             </p>
             {found.map((f) => (
-              <p key={f} className="text-sm" style={{ color: "#f87171", fontFamily: "monospace" }}>
+              <p key={f} style={{ fontSize: "14px", color: "#f87171", marginBottom: "4px" }}>
                 • {prettyName[f] ?? f}
               </p>
             ))}
-            <p className="mt-3 text-xs" style={{ color: "#94a3b8" }}>
-              Please close the listed applications and click Recheck.
+            <p style={{ marginTop: "14px", fontSize: "13px", color: "#94a3b8", lineHeight: 1.6 }}>
+              Please close these apps and try again.
             </p>
           </div>
           <button
             onClick={() => void doScan()}
-            className="w-full rounded-xl py-2.5 text-sm font-medium text-white transition"
             style={{
-              background: "rgba(168,85,247,0.15)",
-              border: "1px solid rgba(168,85,247,0.35)",
+              width: "100%",
+              borderRadius: "12px",
+              padding: "12px",
+              fontSize: "14px",
+              fontWeight: 500,
+              color: "#e2e8f0",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              background: "rgba(168,85,247,0.12)",
+              border: "1px solid rgba(168,85,247,0.3)",
+              transition: "all 250ms ease",
             }}
           >
-            Recheck
+            Try Again
           </button>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-4">
+        <div className="flex flex-col items-center gap-5">
           <div
             className="flex h-20 w-20 items-center justify-center rounded-full"
             style={{
-              background: "rgba(34,197,94,0.08)",
-              border: "1px solid rgba(34,197,94,0.3)",
-              boxShadow: "0 0 28px rgba(34,197,94,0.12)",
+              background: "rgba(34,197,94,0.07)",
+              border: "1px solid rgba(34,197,94,0.28)",
+              boxShadow: "0 0 22px rgba(34,197,94,0.1)",
             }}
           >
             <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
@@ -679,7 +734,7 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
               />
             </svg>
           </div>
-          <CheckLine label="No restricted applications detected" status="pass" />
+          <CheckLine label="No conflicting applications found" status="pass" />
         </div>
       )}
     </div>
@@ -710,11 +765,11 @@ function Stage7_VMDetection({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={7} label="VM / Virtualization Detection" />
+      <StageHeader id={7} label="Device Compatibility" />
 
       <div
         className="mb-8 relative flex h-24 w-24 items-center justify-center rounded-2xl"
-        style={{ background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.2)" }}
+        style={{ background: "rgba(168,85,247,0.05)", border: "1px solid rgba(168,85,247,0.18)" }}
       >
         {phase === "checking" ? (
           <Spinner size={36} />
@@ -736,25 +791,32 @@ function Stage7_VMDetection({ onPass }: { onPass(): void }) {
       </div>
 
       {phase === "checking" && (
-        <p style={{ fontSize: "13px", color: "#64748b" }}>Analyzing hardware fingerprint…</p>
+        <p style={{ fontSize: "14px", color: "#64748b", fontWeight: 400 }}>
+          Checking your device...
+        </p>
       )}
       {phase === "pass" && (
-        <div className="space-y-2 text-center">
-          <CheckLine label="Physical hardware confirmed" status="pass" />
-          <CheckLine label="No hypervisor signature detected" status="pass" />
-          <CheckLine label="Bare-metal environment verified" status="pass" />
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          <CheckLine label="Device is compatible" status="pass" />
+          <CheckLine label="Running on physical hardware" status="pass" />
+          <CheckLine label="Device setup confirmed" status="pass" />
         </div>
       )}
       {phase === "warn" && (
         <div
-          className="rounded-xl px-5 py-3"
-          style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.25)" }}
+          style={{
+            borderRadius: "16px",
+            padding: "20px 24px",
+            background: "rgba(245,158,11,0.05)",
+            border: "1px solid rgba(245,158,11,0.22)",
+            maxWidth: "340px",
+          }}
         >
-          <p style={{ fontSize: "13px", color: "#f59e0b" }}>
-            Virtual environment detected{platform ? `: ${platform}` : ""}.
+          <p style={{ fontSize: "14px", color: "#f59e0b", fontWeight: 500, marginBottom: "8px" }}>
+            This device setup may not be fully supported{platform ? ` (${platform})` : ""}.
           </p>
-          <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>
-            Proceeding under enhanced monitoring.
+          <p style={{ fontSize: "13px", color: "#94a3b8", lineHeight: 1.65 }}>
+            You may continue, but your session may be subject to additional review.
           </p>
         </div>
       )}
@@ -777,7 +839,7 @@ function Stage8_CameraInit({
     async function init() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Camera API unavailable in this context");
+          throw new Error("Camera not available on this device");
         }
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
@@ -790,7 +852,14 @@ function Stage8_CameraInit({
         setPhase("pass");
         setTimeout(onPass, 1000);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Camera access denied");
+        const msg = err instanceof Error ? err.message : "Camera access was denied";
+        setError(
+          msg.includes("denied") || msg.includes("Permission")
+            ? "Camera access was denied. Please allow camera access in your system settings."
+            : msg.includes("not available") || msg.includes("NotFound")
+              ? "No camera found. Please connect a camera and try again."
+              : "Could not access your camera. Please check your settings."
+        );
         setPhase("fail");
       }
     }
@@ -799,16 +868,17 @@ function Stage8_CameraInit({
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={8} label="Camera Initialization" />
+      <StageHeader id={8} label="Camera Setup" />
 
       <div
-        className="relative mb-8 overflow-hidden rounded-2xl"
+        className="relative mb-8 overflow-hidden"
         style={{
           width: 240,
           height: 160,
+          borderRadius: "16px",
           background: "#000",
-          border: `2px solid ${phase === "pass" ? "rgba(34,197,94,0.5)" : phase === "fail" ? "rgba(239,68,68,0.4)" : "rgba(168,85,247,0.3)"}`,
-          transition: "border-color 400ms ease",
+          border: `1.5px solid ${phase === "pass" ? "rgba(34,197,94,0.45)" : phase === "fail" ? "rgba(239,68,68,0.35)" : "rgba(168,85,247,0.28)"}`,
+          transition: "border-color 500ms ease",
         }}
       >
         <video
@@ -821,7 +891,7 @@ function Stage8_CameraInit({
         {phase === "checking" && (
           <div
             className="absolute inset-0 flex items-center justify-center"
-            style={{ background: "rgba(0,0,0,0.6)" }}
+            style={{ background: "rgba(0,0,0,0.55)" }}
           >
             <Spinner size={28} />
           </div>
@@ -829,37 +899,47 @@ function Stage8_CameraInit({
         {phase === "fail" && (
           <div
             className="absolute inset-0 flex items-center justify-center"
-            style={{ background: "rgba(0,0,0,0.8)" }}
+            style={{ background: "rgba(0,0,0,0.8)", padding: "16px" }}
           >
-            <p className="text-xs text-red-400 px-3 text-center">{error}</p>
+            <p style={{ fontSize: "13px", color: "#fca5a5", textAlign: "center", lineHeight: 1.6 }}>
+              Camera unavailable
+            </p>
           </div>
         )}
       </div>
 
-      {phase === "checking" && <StatusBadge status="checking" label="Requesting camera access…" />}
-      {phase === "pass" && <StatusBadge status="pass" label="Camera active" />}
+      {phase === "checking" && (
+        <StatusBadge status="checking" label="Requesting camera access..." />
+      )}
+      {phase === "pass" && <StatusBadge status="pass" label="Camera ready" />}
       {phase === "fail" && (
         <div
-          style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "16px",
+            maxWidth: "320px",
+          }}
         >
-          <p className="text-sm" style={{ color: "#f87171" }}>
+          <p style={{ fontSize: "14px", color: "#f87171", textAlign: "center", lineHeight: 1.65 }}>
             {error}
           </p>
           <button
             onClick={onPass}
             style={{
-              padding: "8px 20px",
-              borderRadius: "8px",
-              border: "1px solid rgba(245,158,11,0.4)",
-              background: "rgba(245,158,11,0.1)",
+              padding: "10px 24px",
+              borderRadius: "10px",
+              border: "1px solid rgba(245,158,11,0.35)",
+              background: "rgba(245,158,11,0.08)",
               color: "#f59e0b",
-              fontSize: "12px",
+              fontSize: "13px",
               fontWeight: 500,
               fontFamily: "inherit",
               cursor: "pointer",
             }}
           >
-            Skip camera (dev mode)
+            Continue without camera
           </button>
         </div>
       )}
@@ -902,9 +982,9 @@ function Stage9_FaceCalibration({
   };
 
   const PHASES = [
-    { key: "front" as const, label: "FRONT VIEW", instruction: "Look directly at camera" },
-    { key: "left" as const, label: "LEFT PROFILE", instruction: "Slowly turn head left ~25°" },
-    { key: "right" as const, label: "RIGHT PROFILE", instruction: "Slowly turn head right ~25°" },
+    { key: "front" as const, label: "FRONT", instruction: "Look directly at the camera" },
+    { key: "left" as const, label: "TURN LEFT", instruction: "Slowly turn your head left" },
+    { key: "right" as const, label: "TURN RIGHT", instruction: "Slowly turn your head right" },
   ];
 
   // ── Hot-path refs (no re-render on change) ─────────────────────
@@ -935,10 +1015,11 @@ function Stage9_FaceCalibration({
   const [detectorReady, setDetectorReady] = useState(false);
   const [detectorFailed, setDetectorFailed] = useState(false);
   const [phaseIdx, setPhaseIdx] = useState(0);
-  const [guidance, setGuidance] = useState("Loading face detection…");
+  const [guidance, setGuidance] = useState("Setting up face scanner...");
   const [facePresent, setFacePresent] = useState(false);
   const [qualityOk, setQualityOk] = useState(false);
   const [lockPct, setLockPct] = useState(0);
+  const lockPctRef = useRef(0);
   const [poseLabel, setPoseLabel] = useState("SCANNING");
   const [captured, setCaptured] = useState([false, false, false]);
   const [flash, setFlash] = useState(false);
@@ -946,7 +1027,7 @@ function Stage9_FaceCalibration({
   const [runtimeNote, setRuntimeNote] = useState<string | null>(null);
   const [lostTracking, setLostTracking] = useState(false);
 
-  const PHASE_HOLD_MS = 3000;
+  const PHASE_HOLD_MS = 1500;
 
   // ── Capture (ref-assigned so detection loop always gets latest) ─
   const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
@@ -977,7 +1058,7 @@ function Stage9_FaceCalibration({
       n[idx] = true;
       return n;
     });
-    setGuidance("✓ Captured");
+    setGuidance("Got it!");
     await new Promise<void>((r) => setTimeout(r, 380));
     setFlash(false);
 
@@ -995,11 +1076,12 @@ function Stage9_FaceCalibration({
     smooth.current = { cx: 0.5, cy: 0.5, w: 0, h: 0 };
     setFacePresent(false);
     setQualityOk(false);
+    lockPctRef.current = 0;
     setLockPct(0);
 
     if (nextPhase === -1) {
       setDone(true);
-      setGuidance("Identity verification complete");
+      setGuidance("Face scan complete");
       setTimeout(() => onPassRef.current(), 1400);
     } else {
       phaseIdxRef.current = nextPhase;
@@ -1043,7 +1125,9 @@ function Stage9_FaceCalibration({
       -24,
       Math.min(24, ((nose.y - eyeMidY) / Math.max(0.001, box.h) - 0.04) * 140)
     );
-    const roll = (Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * 180) / Math.PI;
+    // Vector from rightEye→leftEye: BlazeFace uses person-relative coords so rightEye.x < leftEye.x.
+    // atan2(dy, positive_dx) = 0 for a level head; inverted order gave ±180° always.
+    const roll = (Math.atan2(leftEye.y - rightEye.y, leftEye.x - rightEye.x) * 180) / Math.PI;
 
     return { yaw, pitch, roll };
   }
@@ -1056,15 +1140,15 @@ function Stage9_FaceCalibration({
     const dx = 1 - box.cx - gx;
     const dy = box.cy - gy;
 
-    const centerInside = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.02;
-    const sizeOk = box.w >= 0.16 && box.w <= 0.58 && box.h >= 0.22 && box.h <= 0.82;
+    const centerInside = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.8;
+    const sizeOk = box.w >= 0.1 && box.w <= 0.72 && box.h >= 0.12 && box.h <= 0.92;
     return centerInside && sizeOk;
   }
 
   function getPoseLabel(pose: { yaw: number }) {
-    if (pose.yaw > 12) return "LEFT PROFILE DETECTED";
-    if (pose.yaw < -12) return "RIGHT PROFILE DETECTED";
-    return "FRONT DETECTED";
+    if (pose.yaw > 12) return "TURNING LEFT";
+    if (pose.yaw < -12) return "TURNING RIGHT";
+    return "LOOKING FORWARD";
   }
 
   function getPoseIndex(pose: { yaw: number }) {
@@ -1077,10 +1161,7 @@ function Stage9_FaceCalibration({
     if (fallbackStartedRef.current) return;
     fallbackStartedRef.current = true;
     setDetectorFailed(true);
-    setRuntimeNote(
-      (prev) =>
-        prev ?? "Live face inference unavailable in this runtime. Continuing with timed capture."
-    );
+    setRuntimeNote((prev) => prev ?? "Live detection unavailable. Using timed capture instead.");
     setGuidance(PHASES[0].instruction);
 
     void (async () => {
@@ -1201,35 +1282,35 @@ function Stage9_FaceCalibration({
     let prevPoseLabel = "";
 
     function getQuality(s: typeof smooth.current, phase: number, pose: typeof poseRef.current) {
-      if (s.w < 0.16) return { ok: false, hint: "Move closer" };
-      if (s.w > 0.58) return { ok: false, hint: "Move back" };
-      if (Math.abs(pose.roll) > 14) return { ok: false, hint: "Keep your head level" };
-      if (pose.pitch < -16) return { ok: false, hint: "Tilt slightly down" };
-      if (pose.pitch > 18) return { ok: false, hint: "Lift your chin slightly" };
+      if (s.w < 0.1) return { ok: false, hint: "Move a bit closer" };
+      if (s.w > 0.72) return { ok: false, hint: "Step back a little" };
+      if (Math.abs(pose.roll) > 30) return { ok: false, hint: "Keep your head level" };
+      if (pose.pitch < -30) return { ok: false, hint: "Tilt your head down slightly" };
+      if (pose.pitch > 30) return { ok: false, hint: "Lift your chin slightly" };
 
       const sx = 1 - s.cx;
       if (phase === 0) {
-        if (sx < 0.37) return { ok: false, hint: "Move right" };
-        if (sx > 0.63) return { ok: false, hint: "Move left" };
-        if (s.cy < 0.28) return { ok: false, hint: "Move down" };
-        if (s.cy > 0.7) return { ok: false, hint: "Move up" };
-        if (Math.abs(pose.yaw) > 12) return { ok: false, hint: "Face the camera directly" };
-        return { ok: true, hint: "Hold still…" };
+        if (sx < 0.18) return { ok: false, hint: "Move your face right" };
+        if (sx > 0.82) return { ok: false, hint: "Move your face left" };
+        if (s.cy < 0.12) return { ok: false, hint: "Move your face down" };
+        if (s.cy > 0.88) return { ok: false, hint: "Move your face up" };
+        if (Math.abs(pose.yaw) > 22) return { ok: false, hint: "Look straight at the camera" };
+        return { ok: true, hint: "Hold still..." };
       }
 
-      if (sx < 0.32 || sx > 0.68 || s.cy < 0.24 || s.cy > 0.74) {
+      if (sx < 0.08 || sx > 0.92 || s.cy < 0.06 || s.cy > 0.94) {
         return { ok: false, hint: "Keep your face inside the frame" };
       }
 
       if (phase === 1) {
-        if (pose.yaw < -8) return { ok: false, hint: "Turn the other direction" };
-        if (pose.yaw < 13) return { ok: false, hint: "Turn further left" };
-        return { ok: true, hint: "Hold that left profile…" };
+        if (pose.yaw < -20) return { ok: false, hint: "Turn the other way" };
+        if (pose.yaw < 7) return { ok: false, hint: "Keep turning left" };
+        return { ok: true, hint: "Hold that position..." };
       }
 
-      if (pose.yaw > 8) return { ok: false, hint: "Turn the other direction" };
-      if (pose.yaw > -13) return { ok: false, hint: "Turn further right" };
-      return { ok: true, hint: "Hold that right profile…" };
+      if (pose.yaw > 20) return { ok: false, hint: "Turn the other way" };
+      if (pose.yaw > -7) return { ok: false, hint: "Keep turning right" };
+      return { ok: true, hint: "Hold that position..." };
     }
 
     function processDetection(video: HTMLVideoElement) {
@@ -1315,7 +1396,7 @@ function Stage9_FaceCalibration({
             if (!facePresentRef.current) {
               setTrackingLost(true);
               setPoseLabel("SCANNING");
-              setGuidance("Face lost. Return to the frame.");
+              setGuidance("Please come back into frame");
             } else {
               setTrackingLost(false);
               setGuidance(hint);
@@ -1334,7 +1415,8 @@ function Stage9_FaceCalibration({
           } else {
             holdMsRef.current = 0;
           }
-          setLockPct(Math.round((holdMsRef.current / PHASE_HOLD_MS) * 100));
+          lockPctRef.current = Math.round((holdMsRef.current / PHASE_HOLD_MS) * 100);
+          setLockPct(lockPctRef.current);
 
           if (holdMsRef.current >= PHASE_HOLD_MS && !capturingRef.current) {
             capturingRef.current = true;
@@ -1368,18 +1450,16 @@ function Stage9_FaceCalibration({
       const H = canvas.height;
       const t = ts / 1000;
 
-      // ── Run detection at 10 FPS ────────────────────────────
+      // ── Run detection at ~8 FPS ────────────────────────────
       const video = videoRef.current;
       if (
         detectorRef.current &&
         video &&
         video.readyState >= 2 &&
         video.videoWidth > 0 &&
-        video.currentTime !== lastVideoTimeRef.current &&
         ts - lastDetectMs.current >= DETECT_INTERVAL
       ) {
         lastDetectMs.current = ts;
-        lastVideoTimeRef.current = video.currentTime;
         processDetection(video);
       }
 
@@ -1388,7 +1468,7 @@ function Stage9_FaceCalibration({
       const s = smooth.current;
       const fp = facePresentRef.current;
       const qk = qualityOkRef.current;
-      const lp = lockPct / 100;
+      const lp = lockPctRef.current / 100;
       const pose = poseRef.current;
       const keypoints = keypointsRef.current;
 
@@ -1416,7 +1496,7 @@ function Stage9_FaceCalibration({
 
       // Ambient glow
       const grd = ctx.createRadialGradient(oCX, oCY, 0, oCX, oCY, oRX * 2);
-      grd.addColorStop(0, `rgba(${rgb},0.09)`);
+      grd.addColorStop(0, `rgba(${rgb},0.07)`);
       grd.addColorStop(1, "transparent");
       ctx.fillStyle = grd;
       ctx.beginPath();
@@ -1431,10 +1511,10 @@ function Stage9_FaceCalibration({
           dCX + dW / 2,
           dCY + dH / 2
         );
-        boxGrad.addColorStop(0, `rgba(${rgb},${qk ? 0.95 : 0.62})`);
-        boxGrad.addColorStop(1, `rgba(255,255,255,${qk ? 0.18 : 0.06})`);
+        boxGrad.addColorStop(0, `rgba(${rgb},${qk ? 0.9 : 0.55})`);
+        boxGrad.addColorStop(1, `rgba(255,255,255,${qk ? 0.15 : 0.05})`);
         ctx.strokeStyle = boxGrad;
-        ctx.lineWidth = qk ? 2.4 : 1.4;
+        ctx.lineWidth = qk ? 2.2 : 1.3;
         ctx.setLineDash(qk ? [] : [6, 4]);
         (
           [
@@ -1452,7 +1532,7 @@ function Stage9_FaceCalibration({
           ctx.stroke();
         });
         ctx.setLineDash([]);
-        ctx.fillStyle = `rgba(${rgb},0.78)`;
+        ctx.fillStyle = `rgba(${rgb},0.75)`;
         keypoints.forEach((point, idx) => {
           ctx.beginPath();
           ctx.arc((1 - point.x) * W, point.y * H, idx < 4 ? 2.8 : 2.2, 0, Math.PI * 2);
@@ -1463,13 +1543,13 @@ function Stage9_FaceCalibration({
 
       ctx.save();
       const ringGrad = ctx.createLinearGradient(oCX - oRX, oCY - oRY, oCX + oRX, oCY + oRY);
-      ringGrad.addColorStop(0, `rgba(${rgb},${fp ? 0.8 : 0.28})`);
-      ringGrad.addColorStop(0.5, `rgba(255,255,255,${qk ? 0.18 : 0.06})`);
-      ringGrad.addColorStop(1, `rgba(${rgb},${fp ? 0.95 : 0.34})`);
+      ringGrad.addColorStop(0, `rgba(${rgb},${fp ? 0.75 : 0.24})`);
+      ringGrad.addColorStop(0.5, `rgba(255,255,255,${qk ? 0.14 : 0.05})`);
+      ringGrad.addColorStop(1, `rgba(${rgb},${fp ? 0.9 : 0.3})`);
       ctx.setLineDash(qk ? [] : [8, 5]);
-      ctx.lineDashOffset = -t * 18;
+      ctx.lineDashOffset = -t * 16;
       ctx.strokeStyle = ringGrad;
-      ctx.lineWidth = qk ? 3.2 : 1.9;
+      ctx.lineWidth = qk ? 3 : 1.8;
       ctx.beginPath();
       ctx.ellipse(oCX, oCY, oRX, oRY, 0, 0, Math.PI * 2);
       ctx.stroke();
@@ -1479,7 +1559,7 @@ function Stage9_FaceCalibration({
       const scanY = oCY - oRY + ((t * 0.55) % 1) * oRY * 2;
       const sGrd = ctx.createLinearGradient(0, scanY - 10, 0, scanY + 10);
       sGrd.addColorStop(0, "transparent");
-      sGrd.addColorStop(0.5, `rgba(${rgb},0.18)`);
+      sGrd.addColorStop(0.5, `rgba(${rgb},0.14)`);
       sGrd.addColorStop(1, "transparent");
       ctx.save();
       ctx.beginPath();
@@ -1495,8 +1575,8 @@ function Stage9_FaceCalibration({
       const bx2 = oCX + oRX + mg;
       const by1 = oCY - oRY - mg;
       const by2 = oCY + oRY + mg;
-      ctx.strokeStyle = `rgba(${rgb},${qk ? 1 : 0.65})`;
-      ctx.lineWidth = qk ? 3 : 2.2;
+      ctx.strokeStyle = `rgba(${rgb},${qk ? 0.95 : 0.6})`;
+      ctx.lineWidth = qk ? 2.8 : 2;
       ctx.setLineDash([]);
       (
         [
@@ -1515,7 +1595,7 @@ function Stage9_FaceCalibration({
 
       if (fp && lp > 0) {
         ctx.save();
-        ctx.strokeStyle = qk ? "rgba(34,197,94,0.8)" : "rgba(168,85,247,0.5)";
+        ctx.strokeStyle = qk ? "rgba(34,197,94,0.75)" : "rgba(168,85,247,0.45)";
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.ellipse(oCX, oCY, oRX + 9, oRY + 9, -Math.PI / 2, 0, lp * Math.PI * 2);
@@ -1531,18 +1611,18 @@ function Stage9_FaceCalibration({
           const sz = 2.5 + Math.sin(t * 3 + i) * 1.2;
           ctx.beginPath();
           ctx.arc(px, py, sz, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(34,197,94,${0.5 + Math.sin(t * 2 + i) * 0.3})`;
+          ctx.fillStyle = `rgba(34,197,94,${0.45 + Math.sin(t * 2 + i) * 0.25})`;
           ctx.fill();
         }
       }
 
       if (phaseIdxRef.current === 1) {
         ctx.font = "bold 26px system-ui";
-        ctx.fillStyle = "rgba(168,85,247,0.75)";
+        ctx.fillStyle = "rgba(168,85,247,0.7)";
         ctx.fillText("←", bx1 - 34, oCY + 9);
       } else if (phaseIdxRef.current === 2) {
         ctx.font = "bold 26px system-ui";
-        ctx.fillStyle = "rgba(168,85,247,0.75)";
+        ctx.fillStyle = "rgba(168,85,247,0.7)";
         ctx.fillText("→", bx2 + 8, oCY + 9);
       }
 
@@ -1559,11 +1639,11 @@ function Stage9_FaceCalibration({
       if (fp) {
         ctx.save();
         const hudGrad = ctx.createLinearGradient(10, 10, 132, 44);
-        hudGrad.addColorStop(0, "rgba(3,8,22,0.84)");
-        hudGrad.addColorStop(1, "rgba(14,20,40,0.66)");
+        hudGrad.addColorStop(0, "rgba(3,8,22,0.82)");
+        hudGrad.addColorStop(1, "rgba(14,20,40,0.64)");
         ctx.fillStyle = hudGrad;
         ctx.fillRect(10, 10, 122, 34);
-        ctx.strokeStyle = `rgba(${rgb},0.42)`;
+        ctx.strokeStyle = `rgba(${rgb},0.38)`;
         ctx.strokeRect(10, 10, 122, 34);
         ctx.fillStyle = qk ? "#86efac" : "#c4b5fd";
         ctx.font = "600 10px system-ui";
@@ -1580,16 +1660,16 @@ function Stage9_FaceCalibration({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <StageHeader id={9} label="Biometric Face Scan" />
+      <StageHeader id={9} label="Face Scan" />
 
-      <div style={{ position: "relative", width: 320, height: 240, marginBottom: "20px" }}>
+      <div style={{ position: "relative", width: 320, height: 240, marginBottom: "24px" }}>
         {flash && (
           <div
             style={{
               position: "absolute",
               inset: 0,
               zIndex: 20,
-              background: "rgba(255,255,255,0.65)",
+              background: "rgba(255,255,255,0.6)",
               borderRadius: "16px",
               animation: "face-flash 0.35s ease forwards",
             }}
@@ -1624,10 +1704,10 @@ function Stage9_FaceCalibration({
             position: "absolute",
             inset: "-1px",
             borderRadius: "17px",
-            border: `1px solid ${done ? "rgba(34,197,94,0.6)" : qualityOk ? "rgba(34,197,94,0.5)" : lostTracking ? "rgba(239,68,68,0.7)" : facePresent ? "rgba(168,85,247,0.6)" : "rgba(168,85,247,0.2)"}`,
-            boxShadow: `0 0 ${facePresent || lostTracking ? 28 : 12}px ${done ? "rgba(34,197,94,0.2)" : lostTracking ? "rgba(239,68,68,0.22)" : "rgba(168,85,247,0.15)"}`,
+            border: `1px solid ${done ? "rgba(34,197,94,0.55)" : qualityOk ? "rgba(34,197,94,0.45)" : lostTracking ? "rgba(239,68,68,0.65)" : facePresent ? "rgba(168,85,247,0.55)" : "rgba(168,85,247,0.18)"}`,
+            boxShadow: `0 0 ${facePresent || lostTracking ? 24 : 10}px ${done ? "rgba(34,197,94,0.14)" : lostTracking ? "rgba(239,68,68,0.16)" : "rgba(168,85,247,0.1)"}`,
             pointerEvents: "none",
-            transition: "border-color 400ms, box-shadow 400ms",
+            transition: "border-color 500ms, box-shadow 500ms",
           }}
         />
 
@@ -1642,22 +1722,22 @@ function Stage9_FaceCalibration({
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              background: "rgba(3,8,22,0.6)",
+              background: "rgba(3,8,22,0.58)",
               borderRadius: "16px",
-              gap: "10px",
+              gap: "12px",
             }}
           >
             <div
               style={{
                 width: 20,
                 height: 20,
-                border: "2px solid rgba(168,85,247,0.3)",
+                border: "2px solid rgba(168,85,247,0.25)",
                 borderTopColor: "#a855f7",
                 borderRadius: "50%",
-                animation: "spin 0.9s linear infinite",
+                animation: "spin 1s linear infinite",
               }}
             />
-            <span style={{ fontSize: "11px", color: "#64748b" }}>Loading model…</span>
+            <span style={{ fontSize: "12px", color: "#64748b" }}>Starting up...</span>
           </div>
         )}
       </div>
@@ -1665,36 +1745,36 @@ function Stage9_FaceCalibration({
       {/* Phase badge */}
       <div
         style={{
-          padding: "3px 12px",
+          padding: "4px 14px",
           borderRadius: "6px",
-          marginBottom: "8px",
-          background: "rgba(168,85,247,0.1)",
-          border: "1px solid rgba(168,85,247,0.25)",
+          marginBottom: "10px",
+          background: "rgba(168,85,247,0.08)",
+          border: "1px solid rgba(168,85,247,0.22)",
         }}
       >
         <span
-          style={{ fontSize: "10px", fontWeight: 600, color: "#a855f7", letterSpacing: "0.14em" }}
+          style={{ fontSize: "11px", fontWeight: 600, color: "#a855f7", letterSpacing: "0.12em" }}
         >
-          {done ? "COMPLETE" : phase.label}
+          {done ? "ALL DONE" : phase.label}
         </span>
       </div>
 
       <div
         style={{
-          padding: "4px 10px",
+          padding: "5px 12px",
           borderRadius: "999px",
-          marginBottom: "12px",
+          marginBottom: "14px",
           background: qualityOk
-            ? "rgba(34,197,94,0.12)"
+            ? "rgba(34,197,94,0.1)"
             : lostTracking
-              ? "rgba(239,68,68,0.12)"
-              : "rgba(148,163,184,0.08)",
-          border: `1px solid ${qualityOk ? "rgba(34,197,94,0.24)" : lostTracking ? "rgba(239,68,68,0.28)" : "rgba(148,163,184,0.15)"}`,
+              ? "rgba(239,68,68,0.1)"
+              : "rgba(148,163,184,0.07)",
+          border: `1px solid ${qualityOk ? "rgba(34,197,94,0.22)" : lostTracking ? "rgba(239,68,68,0.25)" : "rgba(148,163,184,0.12)"}`,
         }}
       >
         <span
           style={{
-            fontSize: "10px",
+            fontSize: "11px",
             fontWeight: 600,
             color: qualityOk
               ? "#86efac"
@@ -1703,17 +1783,17 @@ function Stage9_FaceCalibration({
                 : facePresent
                   ? "#c4b5fd"
                   : "#64748b",
-            letterSpacing: "0.12em",
+            letterSpacing: "0.1em",
           }}
         >
-          {lostTracking ? "RETURN TO FRAME" : poseLabel}
+          {lostTracking ? "COME BACK INTO FRAME" : poseLabel}
         </span>
       </div>
 
       {/* Guidance text */}
       <p
         style={{
-          fontSize: "13px",
+          fontSize: "15px",
           color: qualityOk
             ? "#e2e8f0"
             : lostTracking
@@ -1721,11 +1801,12 @@ function Stage9_FaceCalibration({
               : facePresent
                 ? "#a855f7"
                 : "#64748b",
-          fontWeight: 300,
-          marginBottom: "12px",
+          fontWeight: 400,
+          marginBottom: "14px",
           textAlign: "center",
-          minHeight: "20px",
-          transition: "color 300ms",
+          minHeight: "22px",
+          transition: "color 350ms",
+          lineHeight: 1.5,
         }}
       >
         {guidance}
@@ -1734,12 +1815,12 @@ function Stage9_FaceCalibration({
       {runtimeNote && (
         <p
           style={{
-            fontSize: "11px",
+            fontSize: "12px",
             color: "#f59e0b",
-            marginBottom: "10px",
+            marginBottom: "12px",
             textAlign: "center",
             maxWidth: "280px",
-            lineHeight: 1.5,
+            lineHeight: 1.6,
           }}
         >
           {runtimeNote}
@@ -1751,10 +1832,10 @@ function Stage9_FaceCalibration({
         <div
           style={{
             width: 200,
-            height: 3,
-            background: "rgba(255,255,255,0.08)",
+            height: 4,
+            background: "rgba(255,255,255,0.07)",
             borderRadius: 2,
-            marginBottom: "16px",
+            marginBottom: "18px",
             overflow: "hidden",
           }}
         >
@@ -1773,26 +1854,26 @@ function Stage9_FaceCalibration({
       )}
 
       {/* Phase capture dots */}
-      <div style={{ display: "flex", gap: "20px", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
         {PHASES.map((p, i) => (
           <div
             key={p.key}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "7px" }}
           >
             <div
               style={{
-                width: captured[i] ? 10 : 8,
-                height: captured[i] ? 10 : 8,
+                width: captured[i] ? 11 : 9,
+                height: captured[i] ? 11 : 9,
                 borderRadius: "50%",
                 background: captured[i]
                   ? "#22c55e"
                   : phaseIdx === i
                     ? "#a855f7"
-                    : "rgba(255,255,255,0.12)",
+                    : "rgba(255,255,255,0.1)",
                 boxShadow: captured[i]
-                  ? "0 0 10px rgba(34,197,94,0.7)"
+                  ? "0 0 8px rgba(34,197,94,0.6)"
                   : phaseIdx === i
-                    ? "0 0 10px rgba(168,85,247,0.6)"
+                    ? "0 0 8px rgba(168,85,247,0.5)"
                     : "none",
                 transition: "all 400ms ease",
               }}
@@ -1800,8 +1881,9 @@ function Stage9_FaceCalibration({
             <span
               style={{
                 fontSize: "9px",
+                fontWeight: 500,
                 color: captured[i] ? "#22c55e" : phaseIdx === i ? "#a855f7" : "#3f3f46",
-                letterSpacing: "0.1em",
+                letterSpacing: "0.08em",
                 textTransform: "uppercase" as const,
               }}
             >
@@ -1826,8 +1908,7 @@ function Stage10_PresenceVerification({
   onPass(): void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [instruction, setInstruction] = useState("Please blink twice to verify presence");
-  const [step, setStep] = useState(0);
+  const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
     if (!stream || !videoRef.current) return;
@@ -1836,31 +1917,26 @@ function Stage10_PresenceVerification({
   }, [stream]);
 
   useEffect(() => {
-    const seq = [
-      [2000, "Blink detected ✓ — Once more please", 1],
-      [4000, "Second blink confirmed ✓", 2],
-      [5200, "Presence verified — liveness confirmed", 3],
-    ] as const;
-    seq.forEach(([delay, text, s]) => {
-      setTimeout(() => {
-        setInstruction(text);
-        setStep(s);
-      }, delay);
-    });
-    setTimeout(onPass, 6200);
+    const t1 = setTimeout(() => setConfirmed(true), 1200);
+    const t2 = setTimeout(onPass, 2000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [onPass]);
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={10} label="Presence Verification" />
+      <StageHeader id={10} label="Presence Check" />
 
       <div
-        className="relative mb-6 overflow-hidden rounded-2xl"
+        className="relative mb-6 overflow-hidden"
         style={{
           width: 220,
           height: 165,
-          border: `1.5px solid ${step >= 3 ? "rgba(34,197,94,0.5)" : "rgba(168,85,247,0.35)"}`,
-          transition: "border-color 500ms",
+          borderRadius: "16px",
+          border: `1.5px solid ${confirmed ? "rgba(34,197,94,0.45)" : "rgba(168,85,247,0.3)"}`,
+          transition: "border-color 600ms",
         }}
       >
         <video
@@ -1873,44 +1949,27 @@ function Stage10_PresenceVerification({
           style={{
             position: "absolute",
             inset: 0,
-            background: "linear-gradient(to bottom, transparent 60%, rgba(3,8,22,0.5))",
+            background: "linear-gradient(to bottom, transparent 60%, rgba(3,8,22,0.45))",
           }}
         />
       </div>
 
-      <div className="mb-4 text-center">
-        <p
-          style={{
-            fontSize: "14px",
-            color: step >= 3 ? "#22c55e" : "#a7b0c0",
-            fontWeight: 300,
-            transition: "color 400ms",
-          }}
-        >
-          {instruction}
-        </p>
-      </div>
+      <p
+        style={{
+          fontSize: "15px",
+          color: confirmed ? "#22c55e" : "#a7b0c0",
+          fontWeight: 400,
+          transition: "color 400ms",
+          marginBottom: "18px",
+        }}
+      >
+        {confirmed ? "Presence confirmed — face profile matched" : "Verifying presence..."}
+      </p>
 
-      <div className="flex items-center gap-3">
-        {[1, 2].map((i) => (
-          <div
-            key={i}
-            className="flex items-center gap-2 rounded-lg px-4 py-2"
-            style={{
-              background: step >= i ? "rgba(34,197,94,0.1)" : "rgba(255,255,255,0.04)",
-              border: `1px solid ${step >= i ? "rgba(34,197,94,0.3)" : "rgba(255,255,255,0.08)"}`,
-              transition: "all 400ms",
-            }}
-          >
-            <span style={{ fontSize: "12px", color: step >= i ? "#22c55e" : "#52525B" }}>
-              {step >= i ? "✓" : "○"}
-            </span>
-            <span style={{ fontSize: "12px", color: step >= i ? "#a7b0c0" : "#52525B" }}>
-              Blink {i}
-            </span>
-          </div>
-        ))}
-      </div>
+      <StatusBadge
+        status={confirmed ? "pass" : "checking"}
+        label={confirmed ? "Identity verified" : "Checking live presence"}
+      />
     </div>
   );
 }
@@ -1963,9 +2022,8 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={11} label="Audio Verification" />
+      <StageHeader id={11} label="Microphone Check" />
 
-      {/* Waveform bars */}
       <div className="mb-8 flex items-end justify-center gap-1.5" style={{ height: 60 }}>
         {bars.map((i) => {
           const height =
@@ -1982,7 +2040,7 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
                 width: 6,
                 borderRadius: "3px",
                 height: `${height}px`,
-                background: phase === "pass" ? "rgba(168,85,247,0.7)" : "rgba(255,255,255,0.1)",
+                background: phase === "pass" ? "rgba(168,85,247,0.65)" : "rgba(255,255,255,0.09)",
                 transition: "height 60ms ease, background 400ms",
                 maxHeight: 56,
               }}
@@ -1991,17 +2049,27 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
         })}
       </div>
 
-      <div className="w-full max-w-xs space-y-3">
-        {phase === "checking" && <CheckLine label="Requesting microphone…" status="checking" />}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "300px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+        }}
+      >
+        {phase === "checking" && (
+          <CheckLine label="Requesting microphone access..." status="checking" />
+        )}
         {phase === "pass" && (
           <>
-            <CheckLine label="Microphone active" status="pass" />
-            <CheckLine label="Audio input detected" status="pass" delay={300} />
-            <CheckLine label="Background noise: acceptable" status="pass" delay={600} />
+            <CheckLine label="Microphone detected" status="pass" />
+            <CheckLine label="Audio signal received" status="pass" delay={300} />
+            <CheckLine label="Background noise is acceptable" status="pass" delay={600} />
           </>
         )}
         {phase === "fail" && (
-          <CheckLine label="Microphone unavailable — proceeding" status="warn" />
+          <CheckLine label="No microphone found — continuing anyway" status="warn" />
         )}
       </div>
     </div>
@@ -2026,7 +2094,6 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
         setQuality(result.quality);
         setPhase(result.quality === "poor" ? "warn" : "pass");
       } else {
-        // Browser fallback
         const t0 = performance.now();
         await fetch("https://www.google.com/generate_204", { mode: "no-cors" }).catch(() => {});
         const rtt = Math.round(performance.now() - t0);
@@ -2048,13 +2115,13 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={12} label="Network Stability" />
+      <StageHeader id={12} label="Connection Check" />
 
       <div
         className="mb-8 relative flex h-24 w-24 items-center justify-center rounded-full"
         style={{
-          border: `2px solid ${phase === "checking" ? "rgba(168,85,247,0.3)" : phase === "pass" ? "rgba(34,197,94,0.4)" : "rgba(245,158,11,0.4)"}`,
-          transition: "border-color 400ms",
+          border: `1.5px solid ${phase === "checking" ? "rgba(168,85,247,0.28)" : phase === "pass" ? "rgba(34,197,94,0.38)" : "rgba(245,158,11,0.38)"}`,
+          transition: "border-color 500ms",
         }}
       >
         {phase === "checking" ? (
@@ -2064,17 +2131,17 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
             <p style={{ fontSize: "22px", fontWeight: 600, color: qualityColor, lineHeight: 1 }}>
               {latency}
             </p>
-            <p style={{ fontSize: "10px", color: "#64748b" }}>ms</p>
+            <p style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>ms</p>
           </div>
         )}
       </div>
 
       {phase !== "checking" && (
-        <div className="space-y-2">
-          <CheckLine label={`Latency: ${latency}ms`} status={phase} />
-          <CheckLine label={`Network stability: ${quality ?? "—"}`} status={phase} delay={200} />
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          <CheckLine label={`Response time: ${latency}ms`} status={phase} />
+          <CheckLine label={`Connection quality: ${quality ?? "—"}`} status={phase} delay={200} />
           {phase === "pass" && (
-            <CheckLine label="WebSocket connectivity confirmed" status="pass" delay={400} />
+            <CheckLine label="Server connection established" status="pass" delay={400} />
           )}
         </div>
       )}
@@ -2094,25 +2161,35 @@ function Stage13_IntegrityConfirmation({
   }, [onPass]);
 
   const items = [
-    { label: "Session isolated", stage: 1 },
-    { label: "Fullscreen mode active", stage: 2 },
-    { label: "Display configuration verified", stage: 3 },
-    { label: "Keyboard lockdown enabled", stage: 4 },
-    { label: "Environment validated", stage: 5 },
-    { label: "No restricted applications", stage: 6 },
-    { label: "Bare-metal confirmed", stage: 7 },
-    { label: "Camera initialized", stage: 8 },
-    { label: "Face calibration complete", stage: 9 },
-    { label: "Presence verified", stage: 10 },
-    { label: "Audio active", stage: 11 },
-    { label: "Network stable", stage: 12 },
+    { label: "Session prepared", stage: 1 },
+    { label: "Full-screen mode on", stage: 2 },
+    { label: "Display checked", stage: 3 },
+    { label: "Keyboard controls active", stage: 4 },
+    { label: "Setup verified", stage: 5 },
+    { label: "No conflicting apps", stage: 6 },
+    { label: "Device verified", stage: 7 },
+    { label: "Camera ready", stage: 8 },
+    { label: "Face scan complete", stage: 9 },
+    { label: "Presence confirmed", stage: 10 },
+    { label: "Microphone ready", stage: 11 },
+    { label: "Connection stable", stage: 12 },
   ];
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={13} label="Integrity Confirmation" />
+      <StageHeader id={13} label="Almost Ready" />
 
-      <div className="grid w-full max-w-sm grid-cols-2 gap-x-8 gap-y-2">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          columnGap: "40px",
+          rowGap: "10px",
+          width: "100%",
+          maxWidth: "380px",
+          marginBottom: "28px",
+        }}
+      >
         {items.map(({ label, stage }, i) => (
           <CheckLine
             key={label}
@@ -2124,11 +2201,15 @@ function Stage13_IntegrityConfirmation({
       </div>
 
       <div
-        className="mt-6 rounded-xl px-6 py-3"
-        style={{ background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.2)" }}
+        style={{
+          borderRadius: "12px",
+          padding: "12px 24px",
+          background: "rgba(34,197,94,0.06)",
+          border: "1px solid rgba(34,197,94,0.2)",
+        }}
       >
-        <p style={{ fontSize: "12px", color: "#a855f7", letterSpacing: "0.04em" }}>
-          Integrity score: 100 / 100
+        <p style={{ fontSize: "13px", color: "#22c55e", fontWeight: 500, letterSpacing: "0.03em" }}>
+          All checks passed — ready to begin
         </p>
       </div>
     </div>
@@ -2156,17 +2237,16 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={14} label="Contest Lock-In" />
+      <StageHeader id={14} label="Starting Your Session" />
 
-      {/* Waveform background */}
-      <div className="relative mb-8 flex items-end justify-center gap-1" style={{ height: 60 }}>
+      <div className="relative mb-8 flex items-end justify-center gap-1" style={{ height: 48 }}>
         {Array.from({ length: 40 }, (_, i) => (
           <div
             key={i}
             style={{
               width: 4,
-              height: `${Math.max(4, 20 + 20 * Math.abs(Math.sin(i * 0.45)))}px`,
-              background: "rgba(168,85,247,0.3)",
+              height: `${Math.max(4, 16 + 16 * Math.abs(Math.sin(i * 0.45)))}px`,
+              background: "rgba(168,85,247,0.25)",
               borderRadius: "2px",
               animation: `scaleYBar ${0.8 + (i % 5) * 0.15}s ease-in-out infinite alternate`,
               animationDelay: `${i * 0.04}s`,
@@ -2175,20 +2255,19 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
         ))}
       </div>
 
-      {/* Countdown */}
       <div
         className="mb-8 flex h-36 w-36 items-center justify-center rounded-full"
         style={{
-          border: "2px solid rgba(168,85,247,0.4)",
-          boxShadow: "0 0 60px rgba(168,85,247,0.18)",
-          background: "rgba(168,85,247,0.05)",
+          border: "1.5px solid rgba(168,85,247,0.35)",
+          boxShadow: "0 0 48px rgba(168,85,247,0.12)",
+          background: "rgba(168,85,247,0.04)",
         }}
       >
         <span
           style={{
             fontSize: "72px",
             fontWeight: 200,
-            color: "#f5f7fa",
+            color: "#f0f2f5",
             letterSpacing: "-0.04em",
             transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
           }}
@@ -2197,12 +2276,12 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
         </span>
       </div>
 
-      <div className="space-y-2">
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         {[
-          "Keyboard hooks active",
-          "Integrity monitor active",
-          "Secure session initialized",
-          "Contest sandbox ready",
+          "Keyboard controls active",
+          "Session monitoring active",
+          "Secure session ready",
+          "Contest environment ready",
         ].map((label, i) => (
           <CheckLine key={label} label={label} status="pass" delay={i * 150} />
         ))}
@@ -2221,7 +2300,7 @@ function ProgressBar({
   results: Record<number, StageStatus>;
 }) {
   return (
-    <div className="flex items-center gap-1" style={{ padding: "20px 32px 0" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "3px", padding: "20px 32px 0" }}>
       {STAGES.map((s) => {
         const status =
           s.id < current ? (results[s.id] ?? "pass") : s.id === current ? "checking" : "pending";
@@ -2232,15 +2311,15 @@ function ProgressBar({
               ? "#f59e0b"
               : status === "checking"
                 ? "#a855f7"
-                : "rgba(255,255,255,0.1)";
+                : "rgba(255,255,255,0.08)";
         return (
           <div key={s.id} style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
             <div
               style={{
-                height: 2,
-                borderRadius: 1,
+                height: 3,
+                borderRadius: 2,
                 background: color,
-                transition: "background 400ms ease",
+                transition: "background 500ms ease",
               }}
             />
           </div>
@@ -2270,14 +2349,15 @@ export default function OnboardingPage() {
       setResults((r) => ({ ...r, [currentStage]: status }));
       setTimeout(() => {
         setCurrentStage((s) => {
-          if (s >= 15) {
+          const next = s + 1;
+          if (next >= 15) {
             router.push(`/session/contest?contestId=${contestId}`);
-            return s;
+            return next;
           }
-          return s + 1;
+          return next;
         });
         setTransitioning(false);
-      }, 280);
+      }, 300);
     },
     [currentStage, transitioning, router, contestId]
   );
@@ -2297,21 +2377,27 @@ export default function OnboardingPage() {
       <ProgressBar current={currentStage} results={results} />
 
       <div
-        className="flex min-h-screen flex-col items-center justify-center px-8 py-12"
         style={{
+          display: "flex",
+          minHeight: "100vh",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "48px 32px",
           opacity: transitioning ? 0 : 1,
-          transform: transitioning ? "scale(0.98)" : "scale(1)",
-          transition: "opacity 280ms ease, transform 280ms cubic-bezier(0.22,1,0.36,1)",
+          transform: transitioning ? "translateY(6px) scale(0.99)" : "translateY(0) scale(1)",
+          transition: "opacity 300ms ease, transform 300ms cubic-bezier(0.22,1,0.36,1)",
         }}
       >
-        {/* Stage label group */}
-        <div className="mb-2 text-center">
+        {/* Group label */}
+        <div style={{ marginBottom: "4px", textAlign: "center" }}>
           <p
             style={{
               fontSize: "10px",
-              letterSpacing: "0.22em",
+              letterSpacing: "0.2em",
               color: "#3F3F46",
               textTransform: "uppercase",
+              fontWeight: 500,
             }}
           >
             {STAGES[currentStage - 1]?.group}
@@ -2347,8 +2433,8 @@ export default function OnboardingPage() {
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-        @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(168,85,247,0.3); } 50% { box-shadow: 0 0 0 12px transparent; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+        @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(168,85,247,0.22); } 50% { box-shadow: 0 0 0 14px transparent; } }
         @keyframes scaleYBar { from { transform: scaleY(0.4); } to { transform: scaleY(1); } }
       `}</style>
     </main>

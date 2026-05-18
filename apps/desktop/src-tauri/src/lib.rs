@@ -3,7 +3,37 @@ use core_rs::exam::{
     KeyboardInterceptResult, NetworkCheckResult, ProcessScanResult, VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+
+// ── Violation log ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ViolationEntry {
+    kind: String,
+    detail: String,
+    ts: u64,
+}
+
+static VIOLATION_LOG: OnceLock<Mutex<Vec<ViolationEntry>>> = OnceLock::new();
+
+fn violation_log() -> &'static Mutex<Vec<ViolationEntry>> {
+    VIOLATION_LOG.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn push_violation(kind: &str, detail: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    if let Ok(mut log) = violation_log().lock() {
+        log.push(ViolationEntry {
+            kind: kind.to_string(),
+            detail: detail.to_string(),
+            ts,
+        });
+    }
+}
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
@@ -153,6 +183,56 @@ fn get_security_environment() -> SecurityEnvironment {
     }
 }
 
+/// Full exam lockdown — always-on-top + keyboard intercept + sleep prevention.
+#[tauri::command]
+async fn lock_desktop(app: tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_always_on_top(true);
+        let _ = win.set_fullscreen(true);
+    }
+    #[cfg(target_os = "linux")]
+    return platform_rs::linux::lock_desktop();
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::lock_desktop();
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::lock_desktop();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    false
+}
+
+/// Release full exam lockdown.
+#[tauri::command]
+async fn unlock_desktop(app: tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_always_on_top(false);
+        let _ = win.set_fullscreen(false);
+    }
+    #[cfg(target_os = "linux")]
+    platform_rs::linux::unlock_desktop();
+    #[cfg(target_os = "windows")]
+    platform_rs::windows::unlock_desktop();
+    #[cfg(target_os = "macos")]
+    platform_rs::macos::unlock_desktop();
+}
+
+/// Return all recorded violations for this session.
+#[tauri::command]
+fn get_violation_log() -> Vec<ViolationEntry> {
+    violation_log()
+        .lock()
+        .ok()
+        .map(|v| v.clone())
+        .unwrap_or_default()
+}
+
+/// Record a violation from the frontend (blocked app opened during exam, focus lost, etc).
+#[tauri::command]
+fn log_violation(kind: String, detail: String) {
+    push_violation(&kind, &detail);
+}
+
 /// Save a base64-encoded face image to the faces directory.
 #[tauri::command]
 async fn save_face_image(image_data: String, index: u8) -> Result<String, String> {
@@ -185,6 +265,10 @@ pub fn run() {
             detect_virtualization,
             enable_keyboard_intercept,
             disable_keyboard_intercept,
+            lock_desktop,
+            unlock_desktop,
+            get_violation_log,
+            log_violation,
             check_network_stability,
             get_platform,
             get_security_environment,
@@ -198,7 +282,6 @@ pub fn run() {
                     win.with_webview(|wv| {
                         use webkit2gtk::{PermissionRequestExt, WebViewExt};
                         wv.inner().connect_permission_request(|_, req| {
-                            // Auto-grant camera + microphone for proctoring
                             req.allow();
                             true
                         });
@@ -207,6 +290,16 @@ pub fn run() {
                 }
             }
             Ok(())
+        })
+        .on_window_event(|_win, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                #[cfg(target_os = "linux")]
+                platform_rs::linux::disable_keyboard_intercept();
+                #[cfg(target_os = "windows")]
+                platform_rs::windows::disable_keyboard_intercept();
+                #[cfg(target_os = "macos")]
+                platform_rs::macos::disable_keyboard_intercept();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error running AMS Access");
