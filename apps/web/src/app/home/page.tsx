@@ -32,67 +32,6 @@ const NAV_ITEMS = [
     ),
   },
   {
-    id: "profile",
-    label: "Profile",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.3" />
-        <path
-          d="M2.5 13.5c0-3.038 2.462-5.5 5.5-5.5s5.5 2.462 5.5 5.5"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: "security",
-    label: "Security",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path
-          d="M8 1.5L2.5 3.5v4c0 3 2.5 5.5 5.5 6.5 3-1 5.5-3.5 5.5-6.5v-4L8 1.5z"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: "systemcheck",
-    label: "System Check",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" />
-        <path
-          d="M5 8l2 2 4-4"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: "help",
-    label: "Help & Support",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
-        <path
-          d="M6 6.5a2 2 0 1 1 2 2v1"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-        />
-        <circle cx="8" cy="11.5" r="0.75" fill="currentColor" />
-      </svg>
-    ),
-  },
-  {
     id: "settings",
     label: "Settings",
     icon: (
@@ -107,14 +46,6 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
-];
-
-const HEALTH_CHECKS = [
-  { label: "You're logged in", sub: "Authentication OK" },
-  { label: "Secure connection", sub: "WebSocket active" },
-  { label: "Camera ready", sub: "Capture service OK" },
-  { label: "Monitoring", sub: "Services operational" },
-  { label: "All systems go", sub: "Everything looks good" },
 ];
 
 export default function HomePage() {
@@ -154,19 +85,19 @@ export default function HomePage() {
         display: "flex",
         height: "100vh",
         overflow: "hidden",
-        fontFamily: "var(--font-inter), Inter, 'IBM Plex Sans', system-ui, sans-serif",
-        background: "#030816",
+        fontFamily: "'Geist', 'Inter', system-ui, sans-serif",
+        background: "#000000",
       }}
     >
       {/* ── Sidebar ── */}
       <aside
         style={{
-          width: "188px",
+          width: "224px",
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
-          borderRight: "1px solid rgba(255,255,255,0.05)",
-          background: "rgba(4,10,24,0.7)",
+          borderRight: "1px solid rgba(255,255,255,0.06)",
+          background: "rgb(9 9 11)",
           padding: "28px 0 0",
         }}
       >
@@ -180,7 +111,6 @@ export default function HomePage() {
             padding: "0 20px",
           }}
         >
-          {/* Triangle A */}
           <svg width="52" height="44" viewBox="0 0 172 164" fill="none">
             <path
               d="M2 162L87 2L172 162"
@@ -198,9 +128,9 @@ export default function HomePage() {
                 y2="82"
                 gradientUnits="userSpaceOnUse"
               >
-                <stop stopColor="#7B00FF" />
-                <stop offset="0.5" stopColor="#C649F0" />
-                <stop offset="1" stopColor="#E365FF" />
+                <stop stopColor="#7C3AED" />
+                <stop offset="0.5" stopColor="#8B5CF6" />
+                <stop offset="1" stopColor="#A78BFA" />
               </linearGradient>
             </defs>
           </svg>
@@ -210,7 +140,7 @@ export default function HomePage() {
               fontSize: "11px",
               fontWeight: 400,
               letterSpacing: "0.38em",
-              color: "#EDF0F7",
+              color: "rgba(255,255,255,0.7)",
               textTransform: "uppercase",
             }}
           >
@@ -239,24 +169,23 @@ export default function HomePage() {
                   alignItems: "center",
                   gap: "10px",
                   padding: "9px 12px",
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                   border: "none",
                   cursor: "pointer",
                   fontFamily: "inherit",
                   fontSize: "13px",
                   fontWeight: active ? 500 : 400,
                   letterSpacing: "0.01em",
-                  color: active ? "#ffffff" : "#64748b",
-                  background: active
-                    ? "linear-gradient(135deg, rgba(126,34,206,0.75) 0%, rgba(168,85,247,0.6) 100%)"
-                    : "transparent",
-                  boxShadow: active ? "0 2px 12px rgba(168,85,247,0.2)" : "none",
+                  color: active ? "#ffffff" : "rgba(255,255,255,0.4)",
+                  background: active ? "rgba(139,92,246,0.15)" : "transparent",
                   transition: "all 220ms cubic-bezier(0.22,1,0.36,1)",
                   textAlign: "left",
                   width: "100%",
                 }}
               >
-                <span style={{ color: active ? "#e9d5ff" : "#475569", flexShrink: 0 }}>
+                <span
+                  style={{ color: active ? "#8b5cf6" : "rgba(255,255,255,0.3)", flexShrink: 0 }}
+                >
                   {item.icon}
                 </span>
                 {item.label}
@@ -267,52 +196,6 @@ export default function HomePage() {
 
         {/* Bottom section */}
         <div style={{ padding: "16px 12px 20px" }}>
-          {/* System status */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              padding: "10px 12px",
-              marginBottom: "8px",
-              borderRadius: "10px",
-              background: "rgba(34,197,94,0.06)",
-              border: "1px solid rgba(34,197,94,0.1)",
-            }}
-          >
-            <div
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
-                background: "rgba(34,197,94,0.12)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M8 1.5L2.5 3.5v4c0 3 2.5 5.5 5.5 6.5 3-1 5.5-3.5 5.5-6.5v-4L8 1.5z"
-                  stroke="#22c55e"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            <div>
-              <p
-                style={{ fontSize: "11px", fontWeight: 500, color: "#a7b0c0", marginBottom: "1px" }}
-              >
-                System Status
-              </p>
-              <p style={{ fontSize: "11px", color: "#22c55e", fontWeight: 400 }}>
-                All systems secure
-              </p>
-            </div>
-          </div>
-
           {/* User info */}
           <div
             style={{
@@ -320,10 +203,8 @@ export default function HomePage() {
               alignItems: "center",
               gap: "9px",
               padding: "9px 12px",
-              borderRadius: "10px",
-              cursor: "pointer",
+              borderRadius: "8px",
               marginBottom: "4px",
-              transition: "background 200ms",
             }}
           >
             <div
@@ -331,7 +212,7 @@ export default function HomePage() {
                 width: "28px",
                 height: "28px",
                 borderRadius: "8px",
-                background: "linear-gradient(135deg, #7e22ce, #a855f7)",
+                background: "linear-gradient(135deg, #7c3aed, #8b5cf6)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -341,17 +222,15 @@ export default function HomePage() {
                 color: "white",
               }}
             >
-              T
+              {userEmail[0].toUpperCase()}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: "12px", fontWeight: 500, color: "#e2e8f0", lineHeight: 1.2 }}>
-                {userEmail.split("@")[0]}
-              </p>
               <p
                 style={{
-                  fontSize: "10px",
-                  color: "#64748b",
-                  fontWeight: 300,
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  color: "rgba(255,255,255,0.8)",
+                  lineHeight: 1.2,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -360,15 +239,6 @@ export default function HomePage() {
                 {userEmail}
               </p>
             </div>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0 }}>
-              <path
-                d="M3 4.5l3 3 3-3"
-                stroke="#475569"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
           </div>
 
           {/* Sign out */}
@@ -381,150 +251,30 @@ export default function HomePage() {
         {/* Header */}
         <header
           style={{
-            padding: "28px 36px 24px",
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
+            padding: "32px 40px 24px",
+            borderBottom: "1px solid rgba(255,255,255,0.05)",
             flexShrink: 0,
           }}
         >
-          <div>
-            <h1
-              style={{
-                fontSize: "26px",
-                fontWeight: 600,
-                color: "#f5f7fa",
-                letterSpacing: "-0.01em",
-                marginBottom: "5px",
-              }}
-            >
-              Welcome back! 👋
-            </h1>
-            <p style={{ fontSize: "13px", color: "#64748b", fontWeight: 300 }}>
-              You&apos;re signed in as <span style={{ color: "#a7b0c0" }}>{userEmail}</span>
-            </p>
-          </div>
-
-          {/* Environment badge */}
-          <div
+          <h1
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              padding: "8px 14px",
-              borderRadius: "10px",
-              background: "rgba(168,85,247,0.08)",
-              border: "1px solid rgba(168,85,247,0.2)",
+              fontSize: "22px",
+              fontWeight: 600,
+              color: "#ffffff",
+              letterSpacing: "-0.01em",
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M7 1L1.5 3.5v3.5c0 3 2.5 5 5.5 5.5 3-.5 5.5-2.5 5.5-5.5V3.5L7 1z"
-                stroke="#a855f7"
-                strokeWidth="1.2"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span
-              style={{
-                fontSize: "12px",
-                fontWeight: 500,
-                color: "#a855f7",
-                letterSpacing: "0.01em",
-              }}
-            >
-              Internal Testing Environment
-            </span>
-          </div>
+            Overview
+          </h1>
+          <p style={{ fontSize: "13px", color: "rgba(255,255,255,0.35)", marginTop: "4px" }}>
+            {userEmail}
+          </p>
         </header>
 
         {/* Scrollable content */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "0 36px 0" }}>
-          {/* Environment Health */}
-          <section style={{ marginBottom: "20px" }}>
-            <p
-              style={{
-                fontSize: "12px",
-                fontWeight: 500,
-                color: "#64748b",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                marginBottom: "14px",
-              }}
-            >
-              Environment Health
-            </p>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(5, 1fr)",
-                gap: "12px",
-              }}
-            >
-              {HEALTH_CHECKS.map((check) => (
-                <HealthCard key={check.label} label={check.label} sub={check.sub} />
-              ))}
-            </div>
-          </section>
-
-          {/* Contests panel */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px" }}>
           <ContestsPanel contests={contests} loading={contestsLoading} />
         </div>
-
-        {/* Footer metadata */}
-        <footer
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1px 1fr 1px 1fr",
-            borderTop: "1px solid rgba(255,255,255,0.05)",
-            marginTop: "20px",
-            flexShrink: 0,
-          }}
-        >
-          {[
-            ["Build", "ACCESS Alpha"],
-            null,
-            ["Region", "Mumbai"],
-            null,
-            ["Environment", "Testing"],
-          ].map((item, i) => {
-            if (!item) {
-              return <div key={i} style={{ background: "rgba(255,255,255,0.05)", width: "1px" }} />;
-            }
-            const [k, v] = item;
-            return (
-              <div
-                key={k}
-                style={{
-                  padding: "16px 36px",
-                  textAlign: "center",
-                }}
-              >
-                <p
-                  style={{
-                    fontSize: "10px",
-                    color: "#64748b",
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    marginBottom: "3px",
-                  }}
-                >
-                  {k}
-                </p>
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "#a855f7",
-                    fontWeight: 500,
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  {v}
-                </p>
-              </div>
-            );
-          })}
-        </footer>
       </div>
 
       <style>{`
@@ -533,63 +283,6 @@ export default function HomePage() {
           50% { opacity: 0.35; }
         }
       `}</style>
-    </div>
-  );
-}
-
-function HealthCard({ label, sub }: { label: string; sub: string }) {
-  return (
-    <div
-      style={{
-        background: "linear-gradient(160deg, rgba(10,20,44,0.95) 0%, rgba(6,14,32,0.98) 100%)",
-        border: "1px solid rgba(255,255,255,0.05)",
-        borderRadius: "14px",
-        padding: "20px 16px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "12px",
-        textAlign: "center",
-      }}
-    >
-      {/* Green check circle */}
-      <div
-        style={{
-          width: "36px",
-          height: "36px",
-          borderRadius: "50%",
-          background: "rgba(34,197,94,0.1)",
-          border: "1px solid rgba(34,197,94,0.3)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          boxShadow: "0 0 12px rgba(34,197,94,0.15)",
-        }}
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path
-            d="M2.5 7L5.5 10L11.5 4"
-            stroke="#22c55e"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </div>
-      <div>
-        <p
-          style={{
-            fontSize: "12px",
-            fontWeight: 500,
-            color: "#e2e8f0",
-            marginBottom: "3px",
-            lineHeight: 1.3,
-          }}
-        >
-          {label}
-        </p>
-        <p style={{ fontSize: "11px", color: "#64748b", fontWeight: 300 }}>{sub}</p>
-      </div>
     </div>
   );
 }
@@ -608,10 +301,10 @@ function SignOutButton({ onClick, loading }: { onClick: () => void; loading: boo
         alignItems: "center",
         gap: "10px",
         padding: "9px 12px",
-        borderRadius: "10px",
+        borderRadius: "8px",
         border: "none",
         background: hovered ? "rgba(239,68,68,0.08)" : "transparent",
-        color: hovered ? "#ef4444" : "#64748b",
+        color: hovered ? "#ef4444" : "rgba(255,255,255,0.35)",
         fontSize: "13px",
         fontWeight: 400,
         fontFamily: "inherit",
@@ -646,7 +339,7 @@ function useStartsIn(startAt: string) {
       }
       const m = Math.floor(diff / 60000);
       const s = Math.floor((diff % 60000) / 1000);
-      setLabel(m > 0 ? `Starts in ${m}m ${s}s` : `Starts in ${s}s`);
+      setLabel(m > 0 ? `${m}m ${s}s` : `${s}s`);
     }
     tick();
     const id = setInterval(tick, 1000);
@@ -657,13 +350,12 @@ function useStartsIn(startAt: string) {
 
 function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => void }) {
   const startsIn = useStartsIn(c.start_at);
-  const col = { dot: "#a855f7", bg: "rgba(168,85,247,0.1)", border: "rgba(168,85,247,0.25)" };
   return (
     <div
       style={{
-        background: "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
-        border: "1px solid rgba(168,85,247,0.22)",
-        borderRadius: "14px",
+        background: "#09090b",
+        border: "1px solid rgba(139,92,246,0.2)",
+        borderRadius: "10px",
         padding: "18px 20px",
         transition: "border-color 300ms",
       }}
@@ -682,7 +374,7 @@ function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => 
               style={{
                 fontSize: "14px",
                 fontWeight: 600,
-                color: "#f5f7fa",
+                color: "#ffffff",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -696,21 +388,24 @@ function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => 
                 fontSize: "11px",
                 fontWeight: 500,
                 padding: "2px 8px",
-                borderRadius: "6px",
-                background: col.bg,
-                border: `1px solid ${col.border}`,
-                color: col.dot,
+                borderRadius: "4px",
+                background: "rgba(139,92,246,0.1)",
+                border: "1px solid rgba(139,92,246,0.25)",
+                color: "#8b5cf6",
+                letterSpacing: "0.04em",
               }}
             >
               SCHEDULED
             </span>
           </div>
-          <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "6px" }}>{c.org_name}</p>
+          <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.35)", marginBottom: "6px" }}>
+            {c.org_name}
+          </p>
           {c.description && (
             <p
               style={{
                 fontSize: "12px",
-                color: "#94a3b8",
+                color: "rgba(255,255,255,0.5)",
                 marginBottom: "6px",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -720,14 +415,20 @@ function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => 
               {c.description}
             </p>
           )}
-          <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: "#475569" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "16px",
+              fontSize: "11px",
+              color: "rgba(255,255,255,0.3)",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            }}
+          >
             <span>
-              📅 {new Date(c.start_at).toLocaleDateString()} —{" "}
+              {new Date(c.start_at).toLocaleDateString()} —{" "}
               {new Date(c.end_at).toLocaleDateString()}
             </span>
-            <span>
-              {c.question_count} question{c.question_count !== 1 ? "s" : ""}
-            </span>
+            <span>{c.question_count}Q</span>
           </div>
         </div>
         <div
@@ -741,20 +442,21 @@ function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => 
         >
           <div
             style={{
-              width: "8px",
-              height: "8px",
+              width: "6px",
+              height: "6px",
               borderRadius: "50%",
-              background: "#a855f7",
-              boxShadow: "0 0 8px rgba(168,85,247,0.6)",
+              background: "#8b5cf6",
+              boxShadow: "0 0 8px rgba(139,92,246,0.6)",
               animation: "pulse-dot 1.5s ease-in-out infinite",
             }}
           />
           <span
             style={{
               fontSize: "11px",
-              color: "#a855f7",
+              color: "#8b5cf6",
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
+              fontFamily: "'JetBrains Mono', monospace",
             }}
           >
             {startsIn}
@@ -766,18 +468,17 @@ function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => 
               alignItems: "center",
               gap: "6px",
               padding: "8px 16px",
-              borderRadius: "9px",
-              border: "1px solid rgba(168,85,247,0.45)",
-              background:
-                "linear-gradient(135deg, rgba(126,34,206,0.7) 0%, rgba(168,85,247,0.55) 100%)",
-              color: "#e9d5ff",
+              borderRadius: "8px",
+              border: "1px solid rgba(139,92,246,0.4)",
+              background: "rgba(139,92,246,0.15)",
+              color: "#a78bfa",
               fontSize: "12px",
               fontWeight: 500,
               fontFamily: "inherit",
               cursor: "pointer",
               letterSpacing: "0.02em",
-              boxShadow: "0 0 16px rgba(168,85,247,0.2)",
               whiteSpace: "nowrap",
+              transition: "all 220ms cubic-bezier(0.22,1,0.36,1)",
             }}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -788,7 +489,7 @@ function ScheduledContestCard({ c, onJoin }: { c: InvitedContest; onJoin: () => 
                 strokeLinejoin="round"
               />
             </svg>
-            Join Session
+            Join session
           </button>
         </div>
       </div>
@@ -801,41 +502,39 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
 
   function statusColor(s: string) {
     if (s === "ACTIVE")
-      return { dot: "#22c55e", bg: "rgba(34,197,94,0.1)", border: "rgba(34,197,94,0.25)" };
+      return { dot: "#22c55e", bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.2)" };
     if (s === "SCHEDULED")
-      return { dot: "#a855f7", bg: "rgba(168,85,247,0.1)", border: "rgba(168,85,247,0.25)" };
+      return { dot: "#8b5cf6", bg: "rgba(139,92,246,0.08)", border: "rgba(139,92,246,0.2)" };
     if (s === "ENDED")
-      return { dot: "#94a3b8", bg: "rgba(148,163,184,0.08)", border: "rgba(148,163,184,0.2)" };
+      return {
+        dot: "rgba(255,255,255,0.25)",
+        bg: "rgba(255,255,255,0.04)",
+        border: "rgba(255,255,255,0.1)",
+      };
     return { dot: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)" };
   }
 
   if (loading) {
     return (
-      <div
-        style={{
-          borderRadius: "16px",
-          border: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(10,20,44,0.6)",
-          padding: "24px",
-        }}
-      >
+      <div>
         <p
           style={{
-            fontSize: "12px",
-            color: "#64748b",
-            letterSpacing: "0.08em",
+            fontSize: "11px",
+            color: "rgba(255,255,255,0.3)",
+            letterSpacing: "0.1em",
             textTransform: "uppercase",
-            marginBottom: "14px",
+            marginBottom: "16px",
+            fontWeight: 500,
           }}
         >
-          Your Contests
+          Contests
         </p>
         {[1, 2].map((i) => (
           <div
             key={i}
             style={{
               height: "72px",
-              borderRadius: "12px",
+              borderRadius: "10px",
               background: "rgba(255,255,255,0.03)",
               marginBottom: "8px",
               animation: "pulse-dot 1.5s ease-in-out infinite",
@@ -850,12 +549,10 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
     return (
       <div
         style={{
-          background: "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
-          border: "1px solid rgba(255,255,255,0.05)",
-          borderRadius: "16px",
+          border: "1px dashed rgba(255,255,255,0.08)",
+          borderRadius: "10px",
           padding: "60px 40px",
           textAlign: "center",
-          minHeight: "260px",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -864,65 +561,44 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
       >
         <div
           style={{
-            width: "64px",
-            height: "64px",
-            borderRadius: "18px",
-            background: "rgba(126,34,206,0.15)",
-            border: "1px solid rgba(168,85,247,0.25)",
+            width: "48px",
+            height: "48px",
+            borderRadius: "12px",
+            background: "rgba(139,92,246,0.08)",
+            border: "1px solid rgba(139,92,246,0.2)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            marginBottom: "24px",
-            boxShadow: "0 0 32px rgba(168,85,247,0.1)",
+            marginBottom: "20px",
           }}
         >
-          <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-            <rect x="4" y="7" width="24" height="21" rx="3" stroke="#a855f7" strokeWidth="1.8" />
-            <path d="M10 7V4M22 7V4" stroke="#a855f7" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M4 13h24" stroke="#a855f7" strokeWidth="1.8" />
-            <rect x="10" y="18" width="5" height="5" rx="1" fill="#a855f7" opacity="0.5" />
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+            <rect x="4" y="7" width="24" height="21" rx="3" stroke="#8b5cf6" strokeWidth="1.8" />
+            <path d="M10 7V4M22 7V4" stroke="#8b5cf6" strokeWidth="1.8" strokeLinecap="round" />
+            <path d="M4 13h24" stroke="#8b5cf6" strokeWidth="1.8" />
           </svg>
         </div>
-        <h2 style={{ fontSize: "18px", fontWeight: 600, color: "#f5f7fa", marginBottom: "8px" }}>
-          No contests scheduled yet
+        <h2
+          style={{
+            fontSize: "15px",
+            fontWeight: 600,
+            color: "rgba(255,255,255,0.7)",
+            marginBottom: "6px",
+          }}
+        >
+          No contests scheduled
         </h2>
         <p
           style={{
             fontSize: "13px",
-            color: "#64748b",
+            color: "rgba(255,255,255,0.3)",
             fontWeight: 300,
-            lineHeight: 1.7,
-            maxWidth: "340px",
-            marginBottom: "28px",
+            lineHeight: 1.6,
+            maxWidth: "300px",
           }}
         >
-          Your organiser hasn&apos;t invited you to a contest yet. Check back closer to your event.
+          Check back closer to your event.
         </p>
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "10px 24px",
-            borderRadius: "10px",
-            background: "rgba(245,158,11,0.1)",
-            border: "1px solid rgba(245,158,11,0.25)",
-          }}
-        >
-          <div
-            style={{
-              width: "7px",
-              height: "7px",
-              borderRadius: "50%",
-              background: "#f59e0b",
-              boxShadow: "0 0 8px rgba(245,158,11,0.5)",
-              animation: "pulse-dot 2s ease-in-out infinite",
-            }}
-          />
-          <span style={{ fontSize: "12px", fontWeight: 500, color: "#f59e0b" }}>
-            Waiting for contest
-          </span>
-        </div>
       </div>
     );
   }
@@ -931,17 +607,17 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
     <div>
       <p
         style={{
-          fontSize: "12px",
-          color: "#64748b",
-          letterSpacing: "0.08em",
+          fontSize: "11px",
+          color: "rgba(255,255,255,0.3)",
+          letterSpacing: "0.1em",
           textTransform: "uppercase",
-          marginBottom: "14px",
+          marginBottom: "16px",
           fontWeight: 500,
         }}
       >
-        Your Contests ({contests.length})
+        Contests ({contests.length})
       </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         {contests.map((c) => {
           if (c.status === "SCHEDULED") {
             return (
@@ -958,10 +634,9 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
             <div
               key={c.id}
               style={{
-                background:
-                  "linear-gradient(160deg, rgba(10,20,44,0.96) 0%, rgba(6,14,32,0.98) 100%)",
-                border: `1px solid ${canEnter ? "rgba(168,85,247,0.18)" : "rgba(255,255,255,0.07)"}`,
-                borderRadius: "14px",
+                background: "#09090b",
+                border: `1px solid ${canEnter ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.06)"}`,
+                borderRadius: "10px",
                 padding: "18px 20px",
                 transition: "border-color 300ms",
               }}
@@ -987,7 +662,7 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
                       style={{
                         fontSize: "14px",
                         fontWeight: 600,
-                        color: "#f5f7fa",
+                        color: "#ffffff",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -998,26 +673,33 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
                     <span
                       style={{
                         flexShrink: 0,
-                        fontSize: "11px",
+                        fontSize: "10px",
                         fontWeight: 500,
-                        padding: "2px 8px",
-                        borderRadius: "6px",
+                        padding: "2px 7px",
+                        borderRadius: "4px",
                         background: col.bg,
                         border: `1px solid ${col.border}`,
                         color: col.dot,
+                        letterSpacing: "0.05em",
                       }}
                     >
                       {c.status}
                     </span>
                   </div>
-                  <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "6px" }}>
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      color: "rgba(255,255,255,0.35)",
+                      marginBottom: "6px",
+                    }}
+                  >
                     {c.org_name}
                   </p>
                   {c.description && (
                     <p
                       style={{
                         fontSize: "12px",
-                        color: "#94a3b8",
+                        color: "rgba(255,255,255,0.5)",
                         marginBottom: "6px",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -1027,14 +709,20 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
                       {c.description}
                     </p>
                   )}
-                  <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: "#475569" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "16px",
+                      fontSize: "11px",
+                      color: "rgba(255,255,255,0.3)",
+                      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    }}
+                  >
                     <span>
-                      📅 {new Date(c.start_at).toLocaleDateString()} —{" "}
+                      {new Date(c.start_at).toLocaleDateString()} —{" "}
                       {new Date(c.end_at).toLocaleDateString()}
                     </span>
-                    <span>
-                      {c.question_count} question{c.question_count !== 1 ? "s" : ""}
-                    </span>
+                    <span>{c.question_count}Q</span>
                   </div>
                 </div>
                 <div
@@ -1048,11 +736,11 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
                 >
                   <div
                     style={{
-                      width: "8px",
-                      height: "8px",
+                      width: "6px",
+                      height: "6px",
                       borderRadius: "50%",
                       background: col.dot,
-                      boxShadow: `0 0 8px ${col.dot}88`,
+                      boxShadow: `0 0 6px ${col.dot}`,
                     }}
                   />
                   {canEnter && (
@@ -1063,19 +751,17 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
                         alignItems: "center",
                         gap: "6px",
                         padding: "8px 16px",
-                        borderRadius: "9px",
-                        border: "1px solid rgba(168,85,247,0.45)",
-                        background:
-                          "linear-gradient(135deg, rgba(126,34,206,0.7) 0%, rgba(168,85,247,0.55) 100%)",
-                        color: "#e9d5ff",
+                        borderRadius: "8px",
+                        border: "1px solid rgba(139,92,246,0.4)",
+                        background: "rgba(139,92,246,0.15)",
+                        color: "#a78bfa",
                         fontSize: "12px",
                         fontWeight: 500,
                         fontFamily: "inherit",
                         cursor: "pointer",
                         letterSpacing: "0.02em",
-                        boxShadow: "0 0 16px rgba(168,85,247,0.2)",
-                        transition: "all 220ms cubic-bezier(0.22,1,0.36,1)",
                         whiteSpace: "nowrap",
+                        transition: "all 220ms cubic-bezier(0.22,1,0.36,1)",
                       }}
                     >
                       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -1086,12 +772,17 @@ function ContestsPanel({ contests, loading }: { contests: InvitedContest[]; load
                           strokeLinejoin="round"
                         />
                       </svg>
-                      Enter Secure Session
+                      Enter session
                     </button>
                   )}
                   {c.status === "SCHEDULED" && (
-                    <span style={{ fontSize: "11px", color: "#a855f7", fontWeight: 400 }}>
-                      Starts{" "}
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        color: "#8b5cf6",
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
                       {new Date(c.start_at).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",

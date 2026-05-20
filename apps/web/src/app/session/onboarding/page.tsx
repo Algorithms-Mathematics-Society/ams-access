@@ -475,11 +475,15 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
 
 function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   const [phase, setPhase] = useState(0);
+  const [lockFailed, setLockFailed] = useState(false);
 
   useEffect(() => {
     async function go() {
       setPhase(1);
-      await invoke("lock_desktop");
+      const result = await invoke<boolean>("lock_desktop");
+      if (result === false) {
+        setLockFailed(true);
+      }
       setTimeout(() => setPhase(2), 600);
       setTimeout(() => setPhase(3), 1200);
       setTimeout(() => setPhase(4), 1800);
@@ -541,8 +545,14 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
       </div>
 
       <StatusBadge
-        status={phase >= 4 ? "pass" : "checking"}
-        label={phase >= 4 ? "Keyboard controls active" : "Setting up keyboard controls..."}
+        status={phase >= 4 ? (lockFailed ? "warn" : "pass") : "checking"}
+        label={
+          phase >= 4
+            ? lockFailed
+              ? "Keyboard lock unavailable on this desktop environment"
+              : "Keyboard controls active"
+            : "Setting up keyboard controls..."
+        }
       />
     </div>
   );
@@ -1027,7 +1037,17 @@ function Stage9_FaceCalibration({
   const [runtimeNote, setRuntimeNote] = useState<string | null>(null);
   const [lostTracking, setLostTracking] = useState(false);
 
-  const PHASE_HOLD_MS = 1500;
+  const PHASE_HOLD_MS = 700;
+
+  function speak(text: string) {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = 0.95;
+    utt.pitch = 1;
+    utt.volume = 1;
+    window.speechSynthesis.speak(utt);
+  }
 
   // ── Capture (ref-assigned so detection loop always gets latest) ─
   const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
@@ -1059,7 +1079,8 @@ function Stage9_FaceCalibration({
       return n;
     });
     setGuidance("Got it!");
-    await new Promise<void>((r) => setTimeout(r, 380));
+    speak("Got it!");
+    await new Promise<void>((r) => setTimeout(r, 180));
     setFlash(false);
 
     const nextCaptured = (() => {
@@ -1087,7 +1108,8 @@ function Stage9_FaceCalibration({
       phaseIdxRef.current = nextPhase;
       setPhaseIdx(nextPhase);
       setGuidance(PHASES[nextPhase].instruction);
-      await new Promise<void>((r) => setTimeout(r, 600));
+      speak(PHASES[nextPhase].instruction);
+      await new Promise<void>((r) => setTimeout(r, 300));
       capturingRef.current = false;
     }
   };
@@ -1163,13 +1185,15 @@ function Stage9_FaceCalibration({
     setDetectorFailed(true);
     setRuntimeNote((prev) => prev ?? "Live detection unavailable. Using timed capture instead.");
     setGuidance(PHASES[0].instruction);
+    speak(PHASES[0].instruction);
 
     void (async () => {
       for (let i = 0; i < 3; i++) {
         phaseIdxRef.current = i;
         setPhaseIdx(i);
         setGuidance(PHASES[i].instruction);
-        await new Promise<void>((r) => setTimeout(r, i === 0 ? 2200 : 3000));
+        speak(PHASES[i].instruction);
+        await new Promise<void>((r) => setTimeout(r, i === 0 ? 1200 : 1800));
         capturingRef.current = true;
         await capturePhaseRef.current(i);
       }
@@ -1250,6 +1274,7 @@ function Stage9_FaceCalibration({
         setDetectorReady(true);
         setRuntimeNote(null);
         setGuidance(PHASES[0].instruction);
+        speak(PHASES[0].instruction);
       } catch (error) {
         if (cancelled) return;
         setDetectorReady(true);
@@ -1979,13 +2004,17 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number>(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     async function init() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("unavailable");
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
         const ctx = new AudioContext();
+        audioCtxRef.current = ctx;
         const source = ctx.createMediaStreamSource(stream);
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
@@ -2002,10 +2031,6 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
         rafRef.current = requestAnimationFrame(tick);
 
         setPhase("pass");
-        setTimeout(() => {
-          stream.getTracks().forEach((t) => t.stop());
-          ctx.close().catch(() => {});
-        }, 3000);
         setTimeout(onPass, 3500);
       } catch {
         setPhase("fail");
@@ -2015,6 +2040,10 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
     void init();
     return () => {
       cancelAnimationFrame(rafRef.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      audioCtxRef.current?.close().catch(() => {});
+      audioCtxRef.current = null;
     };
   }, [onPass]);
 
@@ -2351,6 +2380,7 @@ export default function OnboardingPage() {
         setCurrentStage((s) => {
           const next = s + 1;
           if (next >= 15) {
+            cameraStream?.getTracks().forEach((t) => t.stop());
             router.push(`/session/contest?contestId=${contestId}`);
             return next;
           }
@@ -2359,7 +2389,7 @@ export default function OnboardingPage() {
         setTransitioning(false);
       }, 300);
     },
-    [currentStage, transitioning, router, contestId]
+    [currentStage, transitioning, router, contestId, cameraStream]
   );
 
   const advancePass = useCallback(() => advance("pass"), [advance]);

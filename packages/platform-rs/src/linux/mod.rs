@@ -22,7 +22,6 @@ const RESTRICTED: &[&str] = &[
     "gdb",
     "lldb",
     "xdotool",
-    "ydotool",
     "scrcpy",
     "zoom",
     "skype",
@@ -181,6 +180,44 @@ static SAVED_BINDINGS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new(
 
 fn saved() -> &'static Mutex<HashMap<String, String>> {
     SAVED_BINDINGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const BACKUP_PATH: &str = "/tmp/ams_access_kb_backup";
+
+fn write_backup(map: &HashMap<String, String>) {
+    let content: String = map.iter().map(|(k, v)| format!("{}\t{}\n", k, v)).collect();
+    let _ = std::fs::write(BACKUP_PATH, content);
+}
+
+fn read_backup() -> Option<HashMap<String, String>> {
+    let content = std::fs::read_to_string(BACKUP_PATH).ok()?;
+    let mut map = HashMap::new();
+    for line in content.lines() {
+        if let Some((k, v)) = line.split_once('\t') {
+            map.insert(k.to_string(), v.to_string());
+        }
+    }
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
+}
+
+fn delete_backup() {
+    let _ = std::fs::remove_file(BACKUP_PATH);
+}
+
+/// Call on app startup — restores GSettings if a previous run crashed without cleanup.
+pub fn recover_keyboard_if_crashed() {
+    if let Some(backup) = read_backup() {
+        for (map_key, original) in &backup {
+            if let Some((schema, key)) = map_key.split_once('/') {
+                gsettings_set(schema, key, original);
+            }
+        }
+        delete_backup();
+    }
 }
 
 /// Dock/panel settings to hide during exam. Schema may not exist (silently ignored).
@@ -348,6 +385,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             gsettings_set(schema, key, disable_val);
         }
 
+        write_backup(&saved);
+
         let method = if is_wayland {
             "gsettings/wayland"
         } else {
@@ -383,6 +422,20 @@ pub fn unlock_desktop() {
 
 pub fn disable_keyboard_intercept() {
     let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
+
+    // If in-memory map is empty (e.g. called after crash+relaunch), fall back to disk backup.
+    if saved.is_empty() {
+        if let Some(backup) = read_backup() {
+            for (map_key, original) in &backup {
+                if let Some((schema, key)) = map_key.split_once('/') {
+                    gsettings_set(schema, key, original);
+                }
+            }
+        }
+        delete_backup();
+        return;
+    }
+
     let all_settings = GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter());
     for &(schema, key, _) in all_settings {
         let map_key = format!("{schema}/{key}");
@@ -390,6 +443,7 @@ pub fn disable_keyboard_intercept() {
             gsettings_set(schema, key, &original);
         }
     }
+    delete_backup();
 }
 
 /// Check for LD_PRELOAD injection (security risk indicator).
