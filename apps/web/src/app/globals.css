@@ -1,21 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-base: #030816;
-  --color-bg-elevated: #071124;
-  --color-bg-secondary: #0c1830;
-  --color-accent: #a855f7;
-  --color-accent-bright: #c084fc;
-  --color-accent-deep: #7e22ce;
-  --color-text-primary: #f5f7fa;
-  --color-text-secondary: #a7b0c0;
-  --color-text-muted: #64748b;
+  --color-bg-base: #000000;
+  --color-bg-elevated: #09090b;
+  --color-bg-secondary: rgb(14 15 18);
+  --color-accent: #8b5cf6;
+  --color-accent-bright: #a78bfa;
+  --color-accent-deep: #7c3aed;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: rgba(255, 255, 255, 0.6);
+  --color-text-muted: rgba(255, 255, 255, 0.35);
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
   --color-info: #38bdf8;
-
-  --font-sans: "Inter", "IBM Plex Sans", system-ui, sans-serif;
 
   --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -31,9 +29,9 @@
 html,
 body {
   height: 100%;
-  background-color: #030816;
-  color: #f5f7fa;
-  font-family: "Inter", "IBM Plex Sans", system-ui, sans-serif;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
@@ -63,8 +61,8 @@ body::after {
   height: 500px;
   background: radial-gradient(
     ellipse at center,
-    rgba(168, 85, 247, 0.09) 0%,
-    rgba(126, 34, 206, 0.04) 45%,
+    rgba(139, 92, 246, 0.08) 0%,
+    rgba(124, 58, 237, 0.03) 45%,
     transparent 70%
   );
   pointer-events: none;
@@ -91,6 +89,6 @@ input:focus-visible {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(168, 85, 247, 0.3);
+  background: rgba(139, 92, 246, 0.25);
   border-radius: 2px;
 }

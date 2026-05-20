@@ -276,6 +276,9 @@ pub fn run() {
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
+            platform_rs::linux::recover_keyboard_if_crashed();
+
+            #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
                 if let Some(win) = app.get_webview_window("main") {

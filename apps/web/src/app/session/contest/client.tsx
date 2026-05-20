@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
@@ -124,11 +124,12 @@ export default function ContestPageClient() {
   const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { remaining, urgent } = useCountdown(
-    contest?.end_at ?? new Date(Date.now() + 3600000).toISOString()
-  );
+  // stable fallback so useCountdown's effect doesn't restart on every render
+  const fallbackEndAt = useMemo(() => new Date(Date.now() + 3600000).toISOString(), []);
+  const { remaining, urgent } = useCountdown(contest?.end_at ?? fallbackEndAt);
 
   useEffect(() => {
     if (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") {
@@ -180,10 +181,23 @@ export default function ContestPageClient() {
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     Promise.all([
       sb.from("contests").select("id,title,end_at,status").eq("id", contestId).single(),
-      sb.from("contest_questions").select("*").eq("contest_id", contestId).order("order_index"),
+      sb
+        .from("contest_questions")
+        .select(
+          "order_index, questions(id,title,description,html_template,css_template,js_template)"
+        )
+        .eq("contest_id", contestId)
+        .order("order_index"),
     ]).then(([{ data: c }, { data: q }]) => {
       if (c) setContest(c as ContestMeta);
-      const qs = (q as Question[]) ?? [];
+      type JoinRow = { order_index: number; questions: Question | Question[] | null };
+      const rows = (q ?? []) as unknown as JoinRow[];
+      const qs: Question[] = rows
+        .map((r) => {
+          const qt = Array.isArray(r.questions) ? r.questions[0] : r.questions;
+          return qt ? { ...qt, order_index: r.order_index } : null;
+        })
+        .filter((x): x is Question => x !== null);
       setQuestions(qs);
       if (qs.length > 0) loadQuestion(qs[0]);
       setLoading(false);
@@ -261,7 +275,7 @@ export default function ContestPageClient() {
     }
     await handleSave();
     try {
-      await window.__TAURI__?.window.getCurrentWindow().setFullscreen(false);
+      await window.__TAURI__?.core.invoke("unlock_desktop");
     } catch {}
     router.push("/home");
   }
@@ -271,6 +285,7 @@ export default function ContestPageClient() {
     navigator.mediaDevices
       .getUserMedia({ video: { width: 320, height: 240, facingMode: "user" } })
       .then((s) => {
+        cameraStreamRef.current = s;
         setCameraStream(s);
         if (cameraVideoRef.current) {
           cameraVideoRef.current.srcObject = s;
@@ -279,9 +294,9 @@ export default function ContestPageClient() {
       })
       .catch(() => {});
     return () => {
-      cameraStream?.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1055,81 +1070,80 @@ export default function ContestPageClient() {
         </span>
       </footer>
 
-      {/* ── Camera PiP ── */}
-      {cameraStream && (
+      {/* ── Camera PiP ── video always in DOM so ref is available when stream arrives */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: "48px",
+          right: "16px",
+          zIndex: 50,
+          width: "160px",
+          height: "120px",
+          borderRadius: "12px",
+          overflow: "hidden",
+          border: `2px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
+          boxShadow: `0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)"}`,
+          transition: "border-color 600ms, box-shadow 600ms",
+          background: "#000",
+          display: cameraStream ? "block" : "none",
+        }}
+      >
+        <video
+          ref={cameraVideoRef}
+          muted
+          playsInline
+          autoPlay
+          style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
+        />
+        {/* Face status overlay */}
         <div
           style={{
-            position: "fixed",
-            bottom: "48px",
-            right: "16px",
-            zIndex: 50,
-            width: "160px",
-            height: "120px",
-            borderRadius: "12px",
-            overflow: "hidden",
-            border: `2px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
-            boxShadow: `0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)"}`,
-            transition: "border-color 600ms, box-shadow 600ms",
-            background: "#000",
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: "4px 8px",
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            gap: "5px",
           }}
         >
-          <video
-            ref={cameraVideoRef}
-            muted
-            playsInline
-            autoPlay
-            style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
+          <div
+            style={{
+              width: "5px",
+              height: "5px",
+              borderRadius: "50%",
+              background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
+              boxShadow: `0 0 5px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
+              animation: "pulse-preview 2s ease-in-out infinite",
+            }}
           />
-          {/* Face status overlay */}
-          <div
+          <span
             style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              padding: "4px 8px",
-              background: "rgba(0,0,0,0.6)",
-              display: "flex",
-              alignItems: "center",
-              gap: "5px",
+              fontSize: "9px",
+              color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
+              letterSpacing: "0.06em",
             }}
           >
-            <div
-              style={{
-                width: "5px",
-                height: "5px",
-                borderRadius: "50%",
-                background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-                boxShadow: `0 0 5px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
-                animation: "pulse-preview 2s ease-in-out infinite",
-              }}
-            />
-            <span
-              style={{
-                fontSize: "9px",
-                color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {faceStatus === "ok" ? "FACE OK" : "LOOK FORWARD"}
-            </span>
-          </div>
-          {/* PROCTORED label */}
-          <div
-            style={{
-              position: "absolute",
-              top: "5px",
-              left: "6px",
-              fontSize: "8px",
-              color: "rgba(168,85,247,0.8)",
-              letterSpacing: "0.1em",
-              fontWeight: 600,
-            }}
-          >
-            PROCTORED
-          </div>
+            {faceStatus === "ok" ? "FACE OK" : "LOOK FORWARD"}
+          </span>
         </div>
-      )}
+        {/* PROCTORED label */}
+        <div
+          style={{
+            position: "absolute",
+            top: "5px",
+            left: "6px",
+            fontSize: "8px",
+            color: "rgba(168,85,247,0.8)",
+            letterSpacing: "0.1em",
+            fontWeight: 600,
+          }}
+        >
+          PROCTORED
+        </div>
+      </div>
 
       <style>{`
         @keyframes pulse-preview {
