@@ -259,6 +259,14 @@ async fn save_face_image(image_data: String, index: u8) -> Result<String, String
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
+    // Restore keyboard shortcuts left behind by a previous crashed session.
+    // Runs BEFORE Tauri/GTK initializes so it can't block the GTK main thread
+    // (which would delay webkit2gtk's IPC handshake and break camera permissions)
+    // and BEFORE any enable_keyboard_intercept can fire (which would otherwise
+    // race the recovery and undo the lockdown).
+    #[cfg(target_os = "linux")]
+    platform_rs::linux::recover_keyboard_if_crashed();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             scan_processes,
@@ -276,9 +284,6 @@ pub fn run() {
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
-            platform_rs::linux::recover_keyboard_if_crashed();
-
-            #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
                 if let Some(win) = app.get_webview_window("main") {
@@ -289,7 +294,7 @@ pub fn run() {
                             true
                         });
                     })
-                    .ok();
+                    .expect("with_webview failed — camera/mic permission handler not registered");
                 }
             }
             Ok(())
