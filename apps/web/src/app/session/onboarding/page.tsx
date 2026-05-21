@@ -864,7 +864,10 @@ function Stage8_CameraInit({
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Camera access was denied";
         setError(
-          msg.includes("denied") || msg.includes("Permission")
+          msg.includes("denied") ||
+            msg.includes("Permission") ||
+            msg.includes("NotAllowed") ||
+            msg.includes("not allowed")
             ? "Camera access was denied. Please allow camera access in your system settings."
             : msg.includes("not available") || msg.includes("NotFound")
               ? "No camera found. Please connect a camera and try again."
@@ -1041,12 +1044,14 @@ function Stage9_FaceCalibration({
 
   function speak(text: string) {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 0.95;
-    utt.pitch = 1;
-    utt.volume = 1;
-    window.speechSynthesis.speak(utt);
+    try {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.rate = 0.95;
+      utt.pitch = 1;
+      utt.volume = 1;
+      window.speechSynthesis.speak(utt);
+    } catch {}
   }
 
   // ── Capture (ref-assigned so detection loop always gets latest) ─
@@ -2370,6 +2375,21 @@ export default function OnboardingPage() {
   const [results, setResults] = useState<Record<number, StageStatus>>({});
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [transitioning, setTransitioning] = useState(false);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  // Keep ref in sync with state so the unmount cleanup below sees the latest stream.
+  useEffect(() => {
+    cameraStreamRef.current = cameraStream;
+  }, [cameraStream]);
+
+  // Stop camera tracks ONLY when this page unmounts (after router.push to contest).
+  // Stopping on every cameraStream change would kill the active stream mid-flow
+  // if Stage 8 ever re-acquires (e.g. due to StrictMode or unstable callback deps).
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   const advance = useCallback(
     (status: StageStatus = "pass") => {
@@ -2380,7 +2400,6 @@ export default function OnboardingPage() {
         setCurrentStage((s) => {
           const next = s + 1;
           if (next >= 15) {
-            cameraStream?.getTracks().forEach((t) => t.stop());
             router.push(`/session/contest?contestId=${contestId}`);
             return next;
           }
@@ -2389,7 +2408,7 @@ export default function OnboardingPage() {
         setTransitioning(false);
       }, 300);
     },
-    [currentStage, transitioning, router, contestId, cameraStream]
+    [currentStage, transitioning, router, contestId]
   );
 
   const advancePass = useCallback(() => advance("pass"), [advance]);

@@ -125,6 +125,7 @@ export default function ContestPageClient() {
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // stable fallback so useCountdown's effect doesn't restart on every render
@@ -282,18 +283,54 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!navigator.mediaDevices?.getUserMedia) return;
-    navigator.mediaDevices
-      .getUserMedia({ video: { width: 320, height: 240, facingMode: "user" } })
-      .then((s) => {
+    let cancelled = false;
+
+    async function acquire(isRetry = false) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: "user" },
+        });
+        if (cancelled) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
         cameraStreamRef.current = s;
         setCameraStream(s);
+        setCameraError(null);
         if (cameraVideoRef.current) {
           cameraVideoRef.current.srcObject = s;
           cameraVideoRef.current.play().catch(() => {});
         }
-      })
-      .catch(() => {});
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        // NotReadableError / AbortError = device still releasing from onboarding;
+        // retry once after a short delay before surfacing an error.
+        const isRaceError =
+          !isRetry &&
+          (msg.includes("NotReadable") || msg.includes("Abort") || msg.includes("busy"));
+        if (isRaceError) {
+          setTimeout(() => {
+            if (!cancelled) void acquire(true);
+          }, 600);
+        } else {
+          const displayMsg =
+            msg.includes("NotAllowed") ||
+            msg.includes("not allowed") ||
+            msg.includes("denied") ||
+            msg.includes("Permission")
+              ? "Camera access denied"
+              : msg.includes("NotFound") || msg.includes("not found")
+                ? "No camera found"
+                : "Camera unavailable";
+          setCameraError(displayMsg);
+        }
+      }
+    }
+
+    void acquire();
     return () => {
+      cancelled = true;
       cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
       cameraStreamRef.current = null;
     };
@@ -1085,7 +1122,7 @@ export default function ContestPageClient() {
           boxShadow: `0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)"}`,
           transition: "border-color 600ms, box-shadow 600ms",
           background: "#000",
-          display: cameraStream ? "block" : "none",
+          display: (cameraStream ?? cameraError) ? "block" : "none",
         }}
       >
         <video
@@ -1095,6 +1132,23 @@ export default function ContestPageClient() {
           autoPlay
           style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
         />
+        {cameraError && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(0,0,0,0.82)",
+              padding: "8px",
+            }}
+          >
+            <p style={{ fontSize: "11px", color: "#fca5a5", textAlign: "center", lineHeight: 1.5 }}>
+              {cameraError}
+            </p>
+          </div>
+        )}
         {/* Face status overlay */}
         <div
           style={{
