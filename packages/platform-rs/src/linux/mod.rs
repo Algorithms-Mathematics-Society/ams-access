@@ -364,10 +364,15 @@ fn gsettings_set(schema: &str, key: &str, value: &str) {
 /// by saving current values then setting each to empty/disabled.
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-    let is_gnome = std::env::var("XDG_SESSION_DESKTOP")
+    // XDG_CURRENT_DESKTOP is the canonical variable. On Ubuntu both
+    // XDG_SESSION_DESKTOP and GDMSESSION are "ubuntu", not "gnome", so we
+    // must check XDG_CURRENT_DESKTOP first (Ubuntu sets it to "ubuntu:GNOME").
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .or_else(|_| std::env::var("XDG_SESSION_DESKTOP"))
         .or_else(|_| std::env::var("GDMSESSION"))
-        .map(|s| s.to_lowercase().contains("gnome"))
-        .unwrap_or(false);
+        .unwrap_or_default()
+        .to_lowercase();
+    let is_gnome = desktop.contains("gnome") || desktop.contains("ubuntu");
 
     if is_gnome {
         let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());

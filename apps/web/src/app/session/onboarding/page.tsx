@@ -480,8 +480,8 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   useEffect(() => {
     async function go() {
       setPhase(1);
-      const result = await invoke<boolean>("lock_desktop");
-      if (result === false) {
+      const result = await invoke<{ active: boolean }>("enable_keyboard_intercept");
+      if (result?.active !== true) {
         setLockFailed(true);
       }
       setTimeout(() => setPhase(2), 600);
@@ -996,8 +996,6 @@ function Stage9_FaceCalibration({
 
   const PHASES = [
     { key: "front" as const, label: "FRONT", instruction: "Look directly at the camera" },
-    { key: "left" as const, label: "TURN LEFT", instruction: "Slowly turn your head left" },
-    { key: "right" as const, label: "TURN RIGHT", instruction: "Slowly turn your head right" },
   ];
 
   // ── Hot-path refs (no re-render on change) ─────────────────────
@@ -1034,7 +1032,7 @@ function Stage9_FaceCalibration({
   const [lockPct, setLockPct] = useState(0);
   const lockPctRef = useRef(0);
   const [poseLabel, setPoseLabel] = useState("SCANNING");
-  const [captured, setCaptured] = useState([false, false, false]);
+  const [captured, setCaptured] = useState([false]);
   const [flash, setFlash] = useState(false);
   const [done, setDone] = useState(false);
   const [runtimeNote, setRuntimeNote] = useState<string | null>(null);
@@ -1056,7 +1054,7 @@ function Stage9_FaceCalibration({
 
   // ── Capture (ref-assigned so detection loop always gets latest) ─
   const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
-  capturePhaseRef.current = async (idx: number) => {
+  capturePhaseRef.current = async (_idx: number) => {
     const video = videoRef.current;
     const cap = captureCanvasRef.current;
     if (video && cap) {
@@ -1071,31 +1069,20 @@ function Stage9_FaceCalibration({
         try {
           await window.__TAURI__?.core.invoke("save_face_image", {
             imageData: dataUrl,
-            index: idx,
+            index: 0,
           });
         } catch {}
       }
     }
 
     setFlash(true);
-    setCaptured((prev) => {
-      const n = [...prev];
-      n[idx] = true;
-      return n;
-    });
+    setCaptured([true]);
     setGuidance("Got it!");
     speak("Got it!");
     await new Promise<void>((r) => setTimeout(r, 180));
     setFlash(false);
 
-    const nextCaptured = (() => {
-      const updated = [...capturedRef.current];
-      updated[idx] = true;
-      return updated;
-    })();
-    capturedRef.current = nextCaptured;
-
-    const nextPhase = nextCaptured.findIndex((value) => !value);
+    capturedRef.current = [true];
     holdMsRef.current = 0;
     facePresentRef.current = false;
     qualityOkRef.current = false;
@@ -1105,18 +1092,9 @@ function Stage9_FaceCalibration({
     lockPctRef.current = 0;
     setLockPct(0);
 
-    if (nextPhase === -1) {
-      setDone(true);
-      setGuidance("Face scan complete");
-      setTimeout(() => onPassRef.current(), 1400);
-    } else {
-      phaseIdxRef.current = nextPhase;
-      setPhaseIdx(nextPhase);
-      setGuidance(PHASES[nextPhase].instruction);
-      speak(PHASES[nextPhase].instruction);
-      await new Promise<void>((r) => setTimeout(r, 300));
-      capturingRef.current = false;
-    }
+    setDone(true);
+    setGuidance("Face scan complete");
+    setTimeout(() => onPassRef.current(), 1400);
   };
 
   function keypointAt(keypoints: FaceKeypointLike[], index: number, label?: string) {
@@ -1173,15 +1151,8 @@ function Stage9_FaceCalibration({
   }
 
   function getPoseLabel(pose: { yaw: number }) {
-    if (pose.yaw > 12) return "TURNING LEFT";
-    if (pose.yaw < -12) return "TURNING RIGHT";
-    return "LOOKING FORWARD";
-  }
-
-  function getPoseIndex(pose: { yaw: number }) {
-    if (pose.yaw > 12) return 1;
-    if (pose.yaw < -12) return 2;
-    return 0;
+    if (Math.abs(pose.yaw) <= 22) return "LOOKING FORWARD";
+    return "LOOK STRAIGHT AT THE CAMERA";
   }
 
   function beginTimedFallback() {
@@ -1193,15 +1164,13 @@ function Stage9_FaceCalibration({
     speak(PHASES[0].instruction);
 
     void (async () => {
-      for (let i = 0; i < 3; i++) {
-        phaseIdxRef.current = i;
-        setPhaseIdx(i);
-        setGuidance(PHASES[i].instruction);
-        speak(PHASES[i].instruction);
-        await new Promise<void>((r) => setTimeout(r, i === 0 ? 1200 : 1800));
-        capturingRef.current = true;
-        await capturePhaseRef.current(i);
-      }
+      phaseIdxRef.current = 0;
+      setPhaseIdx(0);
+      setGuidance(PHASES[0].instruction);
+      speak(PHASES[0].instruction);
+      await new Promise<void>((r) => setTimeout(r, 1200));
+      capturingRef.current = true;
+      await capturePhaseRef.current(0);
     })();
   }
 
@@ -1209,14 +1178,9 @@ function Stage9_FaceCalibration({
     setLostTracking((prev) => (prev === next ? prev : next));
   }
 
-  const capturedRef = useRef([false, false, false]);
+  const capturedRef = useRef([false]);
   useEffect(() => {
     capturedRef.current = captured;
-    const nextPhase = captured.findIndex((value) => !value);
-    if (nextPhase !== -1 && nextPhase !== phaseIdxRef.current) {
-      phaseIdxRef.current = nextPhase;
-      setPhaseIdx(nextPhase);
-    }
   }, [captured]);
 
   // ── Init: camera + TensorFlow.js BlazeFace ───────────────────
@@ -1311,7 +1275,7 @@ function Stage9_FaceCalibration({
     let prevGuidance = "";
     let prevPoseLabel = "";
 
-    function getQuality(s: typeof smooth.current, phase: number, pose: typeof poseRef.current) {
+    function getQuality(s: typeof smooth.current, pose: typeof poseRef.current) {
       if (s.w < 0.1) return { ok: false, hint: "Move a bit closer" };
       if (s.w > 0.72) return { ok: false, hint: "Step back a little" };
       if (Math.abs(pose.roll) > 30) return { ok: false, hint: "Keep your head level" };
@@ -1319,28 +1283,12 @@ function Stage9_FaceCalibration({
       if (pose.pitch > 30) return { ok: false, hint: "Lift your chin slightly" };
 
       const sx = 1 - s.cx;
-      if (phase === 0) {
-        if (sx < 0.18) return { ok: false, hint: "Move your face right" };
-        if (sx > 0.82) return { ok: false, hint: "Move your face left" };
-        if (s.cy < 0.12) return { ok: false, hint: "Move your face down" };
-        if (s.cy > 0.88) return { ok: false, hint: "Move your face up" };
-        if (Math.abs(pose.yaw) > 22) return { ok: false, hint: "Look straight at the camera" };
-        return { ok: true, hint: "Hold still..." };
-      }
-
-      if (sx < 0.08 || sx > 0.92 || s.cy < 0.06 || s.cy > 0.94) {
-        return { ok: false, hint: "Keep your face inside the frame" };
-      }
-
-      if (phase === 1) {
-        if (pose.yaw < -20) return { ok: false, hint: "Turn the other way" };
-        if (pose.yaw < 7) return { ok: false, hint: "Keep turning left" };
-        return { ok: true, hint: "Hold that position..." };
-      }
-
-      if (pose.yaw > 20) return { ok: false, hint: "Turn the other way" };
-      if (pose.yaw > -7) return { ok: false, hint: "Keep turning right" };
-      return { ok: true, hint: "Hold that position..." };
+      if (sx < 0.18) return { ok: false, hint: "Move your face right" };
+      if (sx > 0.82) return { ok: false, hint: "Move your face left" };
+      if (s.cy < 0.12) return { ok: false, hint: "Move your face down" };
+      if (s.cy > 0.88) return { ok: false, hint: "Move your face up" };
+      if (Math.abs(pose.yaw) > 22) return { ok: false, hint: "Look straight at the camera" };
+      return { ok: true, hint: "Hold still..." };
     }
 
     function processDetection(video: HTMLVideoElement) {
@@ -1405,8 +1353,7 @@ function Stage9_FaceCalibration({
             smooth.current.h *= 0.92;
           }
 
-          const activePhase = phaseIdxRef.current;
-          const { ok, hint } = getQuality(smooth.current, activePhase, poseRef.current);
+          const { ok, hint } = getQuality(smooth.current, poseRef.current);
           qualityOkRef.current = facePresentRef.current && ok;
           const nextPoseLabel = facePresentRef.current ? getPoseLabel(poseRef.current) : "SCANNING";
 
@@ -1433,12 +1380,7 @@ function Stage9_FaceCalibration({
             }
           }
 
-          const detectedPoseIdx = getPoseIndex(poseRef.current);
-          const requiredPoseIdx = phaseIdxRef.current;
-          const phasePoseMatch =
-            facePresentRef.current &&
-            !capturedRef.current[detectedPoseIdx] &&
-            detectedPoseIdx === requiredPoseIdx;
+          const phasePoseMatch = facePresentRef.current && !capturedRef.current[0];
 
           if (qualityOkRef.current && phasePoseMatch && !capturingRef.current) {
             holdMsRef.current = Math.min(PHASE_HOLD_MS, holdMsRef.current + DETECT_INTERVAL);
@@ -1450,7 +1392,7 @@ function Stage9_FaceCalibration({
 
           if (holdMsRef.current >= PHASE_HOLD_MS && !capturingRef.current) {
             capturingRef.current = true;
-            void capturePhaseRef.current(requiredPoseIdx);
+            void capturePhaseRef.current(0);
           }
         } catch (error) {
           detectionErrorsRef.current += 1;
@@ -1646,17 +1588,7 @@ function Stage9_FaceCalibration({
         }
       }
 
-      if (phaseIdxRef.current === 1) {
-        ctx.font = "bold 26px system-ui";
-        ctx.fillStyle = "rgba(168,85,247,0.7)";
-        ctx.fillText("←", bx1 - 34, oCY + 9);
-      } else if (phaseIdxRef.current === 2) {
-        ctx.font = "bold 26px system-ui";
-        ctx.fillStyle = "rgba(168,85,247,0.7)";
-        ctx.fillText("→", bx2 + 8, oCY + 9);
-      }
-
-      if (fp && phaseIdxRef.current === 0 && s.w > 0.12) {
+      if (fp && s.w > 0.12) {
         const sx = 1 - s.cx;
         ctx.font = "16px system-ui";
         ctx.fillStyle = "rgba(245,158,11,0.9)";
@@ -1882,46 +1814,6 @@ function Stage9_FaceCalibration({
           />
         </div>
       )}
-
-      {/* Phase capture dots */}
-      <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
-        {PHASES.map((p, i) => (
-          <div
-            key={p.key}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "7px" }}
-          >
-            <div
-              style={{
-                width: captured[i] ? 11 : 9,
-                height: captured[i] ? 11 : 9,
-                borderRadius: "50%",
-                background: captured[i]
-                  ? "#22c55e"
-                  : phaseIdx === i
-                    ? "#a855f7"
-                    : "rgba(255,255,255,0.1)",
-                boxShadow: captured[i]
-                  ? "0 0 8px rgba(34,197,94,0.6)"
-                  : phaseIdx === i
-                    ? "0 0 8px rgba(168,85,247,0.5)"
-                    : "none",
-                transition: "all 400ms ease",
-              }}
-            />
-            <span
-              style={{
-                fontSize: "9px",
-                fontWeight: 500,
-                color: captured[i] ? "#22c55e" : phaseIdx === i ? "#a855f7" : "#3f3f46",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase" as const,
-              }}
-            >
-              {p.label}
-            </span>
-          </div>
-        ))}
-      </div>
 
       <style>{`
         @keyframes face-flash { 0% { opacity: 1; } 100% { opacity: 0; } }

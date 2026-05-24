@@ -108,7 +108,7 @@ Face detection on the onboarding page uses `@mediapipe/tasks-vision` (primary) a
 
 **Fully implemented:**
 - Linux: process scanning, VM detection, display server detection (X11/Wayland/compositor)
-- Linux: GSettings keyboard intercept with crash recovery (GNOME only)
+- Linux: GSettings keyboard intercept with crash recovery (GNOME-based DEs — Ubuntu, Pop!_OS, Fedora Workstation, Zorin; detected via `XDG_CURRENT_DESKTOP`)
 - Linux: ptrace scope check, LD_PRELOAD injection check
 - `core-rs`: full 15-stage `ExamSession` pipeline with `StageStatus` (Pending/Checking/Pass/Warn/Fail) and `EnvironmentReport`
 - Web UI: login, home/contest dashboard, 15-stage onboarding flow, face detection
@@ -116,7 +116,7 @@ Face detection on the onboarding page uses `@mediapipe/tasks-vision` (primary) a
 **Stubbed / not yet implemented:**
 - `core-rs/src/auth/mod.rs` — empty; session token validation reserved for Phase 2
 - `core-rs/src/encryption/mod.rs` — empty; reserved for Phase 2
-- Windows keyboard intercept — returns `active: true` but does nothing (needs `SetWindowsHookEx`)
+- Windows keyboard intercept — **fully implemented** via `WH_KEYBOARD_LL` low-level hook in `packages/platform-rs/src/windows/mod.rs`; blocks Win/PrintScreen/Alt+Tab/Alt+F4/Ctrl+Esc/Esc
 - macOS keyboard intercept — returns `active: true` but does nothing (needs `CGEventTap`)
 - Violation flushing to backend — in-memory only, lost on crash
 - Contest page UI (`/session/contest`)
