@@ -2,18 +2,16 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 type Question = {
   id: string;
   title: string;
   description: string | null;
-  html_template: string | null;
-  css_template: string | null;
-  js_template: string | null;
+  html_starter: string | null;
+  css_starter: string | null;
+  js_starter: string | null;
   order_index: number;
 };
 
@@ -127,6 +125,7 @@ export default function ContestPageClient() {
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   // stable fallback so useCountdown's effect doesn't restart on every render
   const fallbackEndAt = useMemo(() => new Date(Date.now() + 3600000).toISOString(), []);
@@ -145,27 +144,27 @@ export default function ContestPageClient() {
           id: "mock-q-1",
           title: "Hello World Page",
           description: "Build a simple Hello World HTML page with styled heading",
-          html_template: `<div class="container">\n  <h1>Hello, World!</h1>\n  <p>Welcome to AMS Access dev test.</p>\n</div>`,
-          css_template: `body {\n  margin: 0;\n  font-family: system-ui, sans-serif;\n  background: #0f172a;\n  color: #f1f5f9;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n}\n\n.container {\n  text-align: center;\n  padding: 2rem;\n}\n\nh1 {\n  font-size: 2.5rem;\n  color: #a855f7;\n  margin-bottom: 0.5rem;\n}`,
-          js_template: `console.log("AMS contest session active");`,
+          html_starter: `<div class="container">\n  <h1>Hello, World!</h1>\n  <p>Welcome to AMS Access dev test.</p>\n</div>`,
+          css_starter: `body {\n  margin: 0;\n  font-family: system-ui, sans-serif;\n  background: #0f172a;\n  color: #f1f5f9;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n}\n\n.container {\n  text-align: center;\n  padding: 2rem;\n}\n\nh1 {\n  font-size: 2.5rem;\n  color: #a855f7;\n  margin-bottom: 0.5rem;\n}`,
+          js_starter: `console.log("AMS contest session active");`,
           order_index: 0,
         },
         {
           id: "mock-q-2",
           title: "Interactive Counter",
           description: "Build a counter with increment and decrement buttons",
-          html_template: `<div class="counter">\n  <button id="dec">−</button>\n  <span id="count">0</span>\n  <button id="inc">+</button>\n</div>`,
-          css_template: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n  font-family: system-ui, sans-serif;\n}\n\n.counter {\n  display: flex;\n  align-items: center;\n  gap: 1.5rem;\n}\n\nbutton {\n  width: 48px;\n  height: 48px;\n  border-radius: 50%;\n  border: 1px solid rgba(168,85,247,0.5);\n  background: rgba(168,85,247,0.1);\n  color: #a855f7;\n  font-size: 1.5rem;\n  cursor: pointer;\n}\n\n#count {\n  font-size: 3rem;\n  font-weight: 300;\n  color: #f5f7fa;\n  min-width: 60px;\n  text-align: center;\n}`,
-          js_template: `let n = 0;\nconst el = document.getElementById("count");\ndocument.getElementById("inc").onclick = () => el.textContent = ++n;\ndocument.getElementById("dec").onclick = () => el.textContent = --n;`,
+          html_starter: `<div class="counter">\n  <button id="dec">−</button>\n  <span id="count">0</span>\n  <button id="inc">+</button>\n</div>`,
+          css_starter: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n  font-family: system-ui, sans-serif;\n}\n\n.counter {\n  display: flex;\n  align-items: center;\n  gap: 1.5rem;\n}\n\nbutton {\n  width: 48px;\n  height: 48px;\n  border-radius: 50%;\n  border: 1px solid rgba(168,85,247,0.5);\n  background: rgba(168,85,247,0.1);\n  color: #a855f7;\n  font-size: 1.5rem;\n  cursor: pointer;\n}\n\n#count {\n  font-size: 3rem;\n  font-weight: 300;\n  color: #f5f7fa;\n  min-width: 60px;\n  text-align: center;\n}`,
+          js_starter: `let n = 0;\nconst el = document.getElementById("count");\ndocument.getElementById("inc").onclick = () => el.textContent = ++n;\ndocument.getElementById("dec").onclick = () => el.textContent = --n;`,
           order_index: 1,
         },
         {
           id: "mock-q-3",
           title: "CSS Animation",
           description: "Create a pulsing circle animation using pure CSS",
-          html_template: `<div class="pulse"></div>`,
-          css_template: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n}\n\n.pulse {\n  width: 80px;\n  height: 80px;\n  border-radius: 50%;\n  background: #a855f7;\n  animation: pulse 1.5s ease-in-out infinite;\n}\n\n@keyframes pulse {\n  0%, 100% { transform: scale(1); opacity: 1; }\n  50% { transform: scale(1.4); opacity: 0.5; }\n}`,
-          js_template: ``,
+          html_starter: `<div class="pulse"></div>`,
+          css_starter: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n}\n\n.pulse {\n  width: 80px;\n  height: 80px;\n  border-radius: 50%;\n  background: #a855f7;\n  animation: pulse 1.5s ease-in-out infinite;\n}\n\n@keyframes pulse {\n  0%, 100% { transform: scale(1); opacity: 1; }\n  50% { transform: scale(1.4); opacity: 0.5; }\n}`,
+          js_starter: ``,
           order_index: 2,
         },
       ];
@@ -175,42 +174,45 @@ export default function ContestPageClient() {
       return;
     }
 
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !contestId) {
-      setLoading(false);
-      return;
-    }
-    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     Promise.all([
-      sb.from("contests").select("id,title,end_at,status").eq("id", contestId).single(),
-      sb
-        .from("contest_questions")
-        .select(
-          "order_index, questions(id,title,description,html_template,css_template,js_template)"
-        )
-        .eq("contest_id", contestId)
-        .order("order_index"),
-    ]).then(([{ data: c }, { data: q }]) => {
-      if (c) setContest(c as ContestMeta);
-      type JoinRow = { order_index: number; questions: Question | Question[] | null };
-      const rows = (q ?? []) as unknown as JoinRow[];
-      const qs: Question[] = rows
-        .map((r) => {
-          const qt = Array.isArray(r.questions) ? r.questions[0] : r.questions;
-          return qt ? { ...qt, order_index: r.order_index } : null;
-        })
-        .filter((x): x is Question => x !== null);
-      setQuestions(qs);
-      if (qs.length > 0) loadQuestion(qs[0]);
-      setLoading(false);
-    });
+      fetch(`${API_URL}/contests/${contestId}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/contests/${contestId}/questions`).then((r) => (r.ok ? r.json() : [])),
+    ])
+      .then(async ([c, qs]) => {
+        if (c) setContest(c as ContestMeta);
+        const questions = (qs ?? []) as Question[];
+        setQuestions(questions);
+        if (questions.length > 0) loadQuestion(questions[0]);
+
+        // Create session for this contest
+        const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
+        try {
+          const res = await fetch(`${API_URL}/sessions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contest_id: contestId,
+              candidate_email: email,
+              candidate_name: email.split("@")[0],
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setSessionId(data.id);
+          }
+        } catch {}
+
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestId]);
 
   function loadQuestion(q: Question) {
-    setHtml(q.html_template ?? "");
-    setCss(q.css_template ?? "");
-    setJs(q.js_template ?? "");
-    setPreviewSrc(buildPreview(q.html_template ?? "", q.css_template ?? "", q.js_template ?? ""));
+    setHtml(q.html_starter ?? "");
+    setCss(q.css_starter ?? "");
+    setJs(q.js_starter ?? "");
+    setPreviewSrc(buildPreview(q.html_starter ?? "", q.css_starter ?? "", q.js_starter ?? ""));
   }
 
   function switchQuestion(idx: number) {
@@ -253,17 +255,18 @@ export default function ContestPageClient() {
   );
 
   async function handleSave() {
-    if (!questions[activeQ]) return;
+    if (!questions[activeQ] || !sessionId) return;
     setSaving(true);
-    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    await sb
-      .from("contest_questions")
-      .update({
-        html_template: html,
-        css_template: css,
-        js_template: js,
-      })
-      .eq("id", questions[activeQ].id);
+    try {
+      await fetch(`${API_URL}/sessions/${sessionId}/answers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: questions[activeQ].id,
+          answer_text: JSON.stringify({ html, css, js }),
+        }),
+      });
+    } catch {}
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -275,6 +278,11 @@ export default function ContestPageClient() {
       return;
     }
     await handleSave();
+    if (sessionId) {
+      try {
+        await fetch(`${API_URL}/sessions/${sessionId}/submit`, { method: "POST" });
+      } catch {}
+    }
     cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
     cameraStreamRef.current = null;
     setCameraStream(null);
@@ -344,6 +352,14 @@ export default function ContestPageClient() {
       cameraStreamRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const id = setInterval(() => {
+      fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, { method: "POST" }).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [sessionId]);
 
   useEffect(() => {
     if (cameraStream && cameraVideoRef.current) {

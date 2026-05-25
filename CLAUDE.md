@@ -51,8 +51,7 @@ No test framework is configured (no Jest/Vitest/cargo test setup). Pre-commit ho
 Create `apps/web/.env.local` for local development:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=<your-supabase-project-url>
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-supabase-anon-key>
+NEXT_PUBLIC_API_URL=http://localhost:8080
 ```
 
 CI release builds require `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and six `APPLE_*` secrets for macOS notarization (macOS builds currently disabled in release.yml pending signing setup).
@@ -97,10 +96,10 @@ All commands are registered in `lib.rs` via `tauri::generate_handler![]`:
 
 | Route | Status | Notes |
 |---|---|---|
-| `/` | Implemented | Email/password login form with Supabase auth |
-| `/home` | Implemented | Contest dashboard; queries Supabase RPC `get_invited_contests` |
+| `/` | Implemented | Email/password login form (stores email in localStorage) |
+| `/home` | Implemented | Contest dashboard; fetches `GET /contests/invited?email=X` from Go API |
 | `/session/onboarding` | Implemented | Animated 15-stage checklist wired to Tauri commands via `@ams/api-client` |
-| `/session/contest` | Stubbed | `page.tsx` wraps a stub `client.tsx` in Suspense; no content yet |
+| `/session/contest` | Implemented | HTML/CSS/JS code editor; sessions/answers/heartbeat/submit via Go API |
 
 Face detection on the onboarding page uses `@mediapipe/tasks-vision` (primary) and `@tensorflow-models/blazeface` (fallback).
 

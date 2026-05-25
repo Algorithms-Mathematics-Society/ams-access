@@ -2,10 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 type InvitedContest = {
   id: string;
@@ -60,17 +58,13 @@ export default function HomePage() {
     const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
     setUserEmail(email);
 
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-      setContests([]);
-      setContestsLoading(false);
-      return;
-    }
-
-    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    sb.rpc("get_invited_contests", { p_email: email }).then(({ data, error }) => {
-      if (!error) setContests((data as InvitedContest[]) ?? []);
-      setContestsLoading(false);
-    });
+    fetch(`${API_URL}/contests/invited?email=${encodeURIComponent(email)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: InvitedContest[]) => {
+        setContests(data ?? []);
+        setContestsLoading(false);
+      })
+      .catch(() => setContestsLoading(false));
   }, []);
 
   function handleSignOut() {
