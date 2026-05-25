@@ -1139,14 +1139,14 @@ export default function ContestPageClient() {
           bottom: "56px",
           right: "20px",
           zIndex: 50,
-          width: "200px",
-          height: "150px",
-          borderRadius: "14px",
+          width: "210px",
+          height: "158px",
+          borderRadius: "8px",
           overflow: "hidden",
-          border: `1.5px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.45)" : "rgba(245,158,11,0.45)"}`,
-          boxShadow: `0 0 24px ${faceStatus === "ok" ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.15)"}, 0 4px 16px rgba(0,0,0,0.4)`,
-          transition: "border-color 600ms, box-shadow 600ms",
-          background: "#000",
+          border: `1px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.35)" : "rgba(245,158,11,0.35)"}`,
+          boxShadow: `0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.06)" : "rgba(245,158,11,0.06)"}`,
+          transition: "all 300ms var(--ease-cinematic)",
+          background: "#02040a",
           display: (cameraStream ?? cameraError) ? "block" : "none",
         }}
       >
@@ -1157,6 +1157,65 @@ export default function ContestPageClient() {
           autoPlay
           style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
         />
+
+        {/* HUD Corner Alignment Brackets */}
+        {(() => {
+          const bracketColor =
+            faceStatus === "ok" ? "rgba(34,197,94,0.65)" : "rgba(245,158,11,0.65)";
+          return (
+            <>
+              <div
+                style={{
+                  position: "absolute",
+                  top: "10px",
+                  left: "10px",
+                  width: "8px",
+                  height: "8px",
+                  borderTop: `1.5px solid ${bracketColor}`,
+                  borderLeft: `1.5px solid ${bracketColor}`,
+                  pointerEvents: "none",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: "10px",
+                  right: "10px",
+                  width: "8px",
+                  height: "8px",
+                  borderTop: `1.5px solid ${bracketColor}`,
+                  borderRight: `1.5px solid ${bracketColor}`,
+                  pointerEvents: "none",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "10px",
+                  left: "10px",
+                  width: "8px",
+                  height: "8px",
+                  borderBottom: `1.5px solid ${bracketColor}`,
+                  borderLeft: `1.5px solid ${bracketColor}`,
+                  pointerEvents: "none",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "10px",
+                  right: "10px",
+                  width: "8px",
+                  height: "8px",
+                  borderBottom: `1.5px solid ${bracketColor}`,
+                  borderRight: `1.5px solid ${bracketColor}`,
+                  pointerEvents: "none",
+                }}
+              />
+            </>
+          );
+        })()}
+
         {cameraError && (
           <div
             style={{
@@ -1165,16 +1224,65 @@ export default function ContestPageClient() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "rgba(0,0,0,0.82)",
-              padding: "8px",
+              background: "rgba(2,4,10,0.85)",
+              padding: "12px",
             }}
           >
-            <p style={{ fontSize: "11px", color: "#fca5a5", textAlign: "center", lineHeight: 1.5 }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#fca5a5",
+                textAlign: "center",
+                lineHeight: 1.5,
+                fontFamily: "inherit",
+              }}
+            >
               {cameraError}
             </p>
           </div>
         )}
-        {/* Face status overlay */}
+
+        {/* PROCTORED Active Banner Top Overlay */}
+        <div
+          style={{
+            position: "absolute",
+            top: "8px",
+            left: "8px",
+            background: "rgba(0,0,0,0.65)",
+            backdropFilter: "blur(4px)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderRadius: "4px",
+            padding: "2px 6px",
+            display: "flex",
+            alignItems: "center",
+            gap: "5px",
+            pointerEvents: "none",
+          }}
+        >
+          <span
+            style={{
+              width: "4px",
+              height: "4px",
+              borderRadius: "50%",
+              background: "#ef4444",
+              boxShadow: "0 0 6px #ef4444",
+              animation: "pulse-preview 1.5s ease-in-out infinite",
+            }}
+          />
+          <span
+            style={{
+              fontSize: "8.5px",
+              color: "rgba(255,255,255,0.8)",
+              letterSpacing: "0.1em",
+              fontWeight: 600,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            LIVE FEED
+          </span>
+        </div>
+
+        {/* Face status HUD Bottom overlay */}
         <div
           style={{
             position: "absolute",
@@ -1182,11 +1290,13 @@ export default function ContestPageClient() {
             left: 0,
             right: 0,
             padding: "6px 10px",
-            background: "rgba(0,0,0,0.65)",
+            background: "rgba(2,4,10,0.75)",
             backdropFilter: "blur(4px)",
+            borderTop: "1px solid rgba(255,255,255,0.05)",
             display: "flex",
             alignItems: "center",
             gap: "6px",
+            justifyContent: "center",
           }}
         >
           <div
@@ -1196,34 +1306,21 @@ export default function ContestPageClient() {
               borderRadius: "50%",
               flexShrink: 0,
               background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-              boxShadow: `0 0 6px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
+              boxShadow: `0 0 8px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
               animation: "pulse-preview 2s ease-in-out infinite",
             }}
           />
           <span
             style={{
-              fontSize: "10px",
+              fontSize: "9px",
               color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
               letterSpacing: "0.08em",
-              fontWeight: 500,
+              fontWeight: 600,
+              fontFamily: "'JetBrains Mono', monospace",
             }}
           >
-            {faceStatus === "ok" ? "FACE OK" : "LOOK FORWARD"}
+            {faceStatus === "ok" ? "ALIGNMENT SECURE" : "LOOK FORWARD"}
           </span>
-        </div>
-        {/* PROCTORED label */}
-        <div
-          style={{
-            position: "absolute",
-            top: "8px",
-            left: "10px",
-            fontSize: "9px",
-            color: "rgba(168,85,247,0.85)",
-            letterSpacing: "0.12em",
-            fontWeight: 600,
-          }}
-        >
-          PROCTORED
         </div>
       </div>
 

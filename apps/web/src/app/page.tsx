@@ -108,19 +108,19 @@ export default function LoginPage() {
         {/* Form */}
         <form onSubmit={handleSubmit}>
           {/* Email */}
-          <div style={{ marginBottom: "14px" }}>
+          <div style={{ marginBottom: "16px" }}>
             <label
               style={{
                 display: "block",
-                fontSize: "11px",
+                fontSize: "10px",
                 fontWeight: 500,
-                letterSpacing: "0.1em",
-                color: "rgba(255,255,255,0.35)",
+                letterSpacing: "0.12em",
+                color: "rgba(255,255,255,0.4)",
                 textTransform: "uppercase",
                 marginBottom: "8px",
               }}
             >
-              Email
+              Email Address
             </label>
             <input
               type="email"
@@ -133,19 +133,18 @@ export default function LoginPage() {
               required
               style={{
                 width: "100%",
-                padding: "13px 15px",
-                background: "rgba(255,255,255,0.03)",
-                border: `1px solid ${emailFocused ? "rgba(139,92,246,0.55)" : "rgba(255,255,255,0.07)"}`,
-                borderRadius: "12px",
-                color: "#ffffff",
-                fontSize: "14px",
-                fontWeight: 300,
+                padding: "13px 16px",
+                background: "rgba(0, 0, 0, 0.4)",
+                border: `1px solid ${emailFocused ? "#a855f7" : "rgba(255,255,255,0.08)"}`,
+                borderRadius: "8px",
+                color: "#f8fafc",
+                fontSize: "13.5px",
+                fontWeight: 400,
                 fontFamily: "inherit",
-                transition:
-                  "border-color 280ms cubic-bezier(0.22,1,0.36,1), box-shadow 280ms cubic-bezier(0.22,1,0.36,1)",
+                transition: "all 300ms var(--ease-cinematic)",
                 boxShadow: emailFocused
-                  ? "0 0 0 3px rgba(139,92,246,0.1), inset 0 1px 3px rgba(0,0,0,0.3)"
-                  : "inset 0 1px 3px rgba(0,0,0,0.3)",
+                  ? "0 0 0 1px #a855f7, 0 0 0 4px rgba(168, 85, 247, 0.15), inset 0 1px 3px rgba(0,0,0,0.5)"
+                  : "inset 0 1px 3px rgba(0,0,0,0.5)",
                 outline: "none",
                 boxSizing: "border-box",
               }}
@@ -153,14 +152,14 @@ export default function LoginPage() {
           </div>
 
           {/* Password */}
-          <div style={{ marginBottom: "8px" }}>
+          <div style={{ marginBottom: "12px" }}>
             <label
               style={{
                 display: "block",
-                fontSize: "11px",
+                fontSize: "10px",
                 fontWeight: 500,
-                letterSpacing: "0.1em",
-                color: "rgba(255,255,255,0.35)",
+                letterSpacing: "0.12em",
+                color: "rgba(255,255,255,0.4)",
                 textTransform: "uppercase",
                 marginBottom: "8px",
               }}
@@ -178,20 +177,19 @@ export default function LoginPage() {
               required
               style={{
                 width: "100%",
-                padding: "13px 15px",
-                background: "rgba(255,255,255,0.03)",
-                border: `1px solid ${passwordFocused ? "rgba(139,92,246,0.55)" : "rgba(255,255,255,0.07)"}`,
-                borderRadius: "12px",
-                color: "#ffffff",
-                fontSize: "14px",
-                fontWeight: 300,
+                padding: "13px 16px",
+                background: "rgba(0, 0, 0, 0.4)",
+                border: `1px solid ${passwordFocused ? "#a855f7" : "rgba(255,255,255,0.08)"}`,
+                borderRadius: "8px",
+                color: "#f8fafc",
+                fontSize: "13.5px",
+                fontWeight: 400,
                 letterSpacing: "0.08em",
                 fontFamily: "inherit",
-                transition:
-                  "border-color 280ms cubic-bezier(0.22,1,0.36,1), box-shadow 280ms cubic-bezier(0.22,1,0.36,1)",
+                transition: "all 300ms var(--ease-cinematic)",
                 boxShadow: passwordFocused
-                  ? "0 0 0 3px rgba(139,92,246,0.1), inset 0 1px 3px rgba(0,0,0,0.3)"
-                  : "inset 0 1px 3px rgba(0,0,0,0.3)",
+                  ? "0 0 0 1px #a855f7, 0 0 0 4px rgba(168, 85, 247, 0.15), inset 0 1px 3px rgba(0,0,0,0.5)"
+                  : "inset 0 1px 3px rgba(0,0,0,0.5)",
                 outline: "none",
                 boxSizing: "border-box",
               }}
@@ -200,18 +198,32 @@ export default function LoginPage() {
 
           {/* Error */}
           {error && (
-            <p
+            <div
               style={{
-                fontSize: "12px",
-                color: "#ef4444",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "rgba(239,68,68,0.05)",
+                border: "1px solid rgba(239,68,68,0.15)",
+                borderRadius: "8px",
+                padding: "10px 14px",
+                marginTop: "12px",
                 marginBottom: "8px",
-                marginTop: "6px",
-                letterSpacing: "0.01em",
-                fontWeight: 300,
               }}
             >
-              {error}
-            </p>
+              <span style={{ color: "#ef4444", fontSize: "14px", fontWeight: "bold" }}>⚠</span>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "#fca5a5",
+                  letterSpacing: "0.01em",
+                  fontWeight: 400,
+                  margin: 0,
+                }}
+              >
+                {error}
+              </p>
+            </div>
           )}
 
           {/* Continue button */}
@@ -225,30 +237,32 @@ export default function LoginPage() {
               display: "flex",
               alignItems: "center",
               gap: "14px",
-              margin: "22px 0",
+              margin: "24px 0",
             }}
           >
             <div
               style={{
                 flex: 1,
                 height: "1px",
-                background: "rgba(255,255,255,0.06)",
+                background: "rgba(255,255,255,0.05)",
               }}
             />
             <span
               style={{
-                fontSize: "11px",
-                color: "rgba(255,255,255,0.35)",
-                letterSpacing: "0.08em",
+                fontSize: "10px",
+                color: "rgba(255,255,255,0.3)",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                fontWeight: 500,
               }}
             >
-              or
+              security gate
             </span>
             <div
               style={{
                 flex: 1,
                 height: "1px",
-                background: "rgba(255,255,255,0.06)",
+                background: "rgba(255,255,255,0.05)",
               }}
             />
           </div>
@@ -325,25 +339,25 @@ function ContinueButton({ loading }: { loading: boolean }) {
       onMouseLeave={() => setHovered(false)}
       style={{
         width: "100%",
-        padding: "14px 20px",
+        padding: "13px 20px",
         background: loading
-          ? "rgba(139,92,246,0.3)"
-          : "linear-gradient(135deg, #7e22ce 0%, #8b5cf6 45%, #c084fc 100%)",
+          ? "rgba(168, 85, 247, 0.25)"
+          : "linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #c084fc 100%)",
         border: "none",
-        borderRadius: "12px",
-        color: loading ? "rgba(255,255,255,0.5)" : "#ffffff",
-        fontSize: "14px",
+        borderRadius: "8px",
+        color: loading ? "rgba(255,255,255,0.4)" : "#ffffff",
+        fontSize: "13.5px",
         fontWeight: 500,
-        letterSpacing: "0.05em",
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
         fontFamily: "inherit",
         cursor: loading ? "not-allowed" : "pointer",
-        transition:
-          "transform 320ms cubic-bezier(0.22,1,0.36,1), box-shadow 320ms cubic-bezier(0.22,1,0.36,1)",
-        transform: hovered && !loading ? "translateY(-2px)" : "translateY(0)",
+        transition: "all 300ms var(--ease-cinematic)",
+        transform: hovered && !loading ? "translateY(-1.5px)" : "translateY(0)",
         boxShadow:
           hovered && !loading
-            ? "0 8px 30px rgba(139,92,246,0.35), 0 0 0 1px rgba(139,92,246,0.2)"
-            : "0 4px 16px rgba(139,92,246,0.2)",
+            ? "0 8px 24px rgba(168, 85, 247, 0.3), 0 0 0 1px rgba(168, 85, 247, 0.2)"
+            : "0 2px 8px rgba(168, 85, 247, 0.15)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -353,7 +367,7 @@ function ContinueButton({ loading }: { loading: boolean }) {
       {loading ? (
         <>
           <Spinner />
-          Signing in…
+          Verifying...
         </>
       ) : (
         "Continue"
@@ -371,10 +385,10 @@ function Spinner() {
       fill="none"
       style={{ animation: "spin 0.8s linear infinite" }}
     >
-      <circle cx="7" cy="7" r="5.5" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" />
+      <circle cx="7" cy="7" r="5.5" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5" />
       <path
         d="M7 1.5A5.5 5.5 0 0 1 12.5 7"
-        stroke="white"
+        stroke="#a855f7"
         strokeWidth="1.5"
         strokeLinecap="round"
       />
@@ -393,21 +407,23 @@ function SSOButton() {
       onMouseLeave={() => setHovered(false)}
       style={{
         width: "100%",
-        padding: "13px 20px",
-        background: hovered ? "rgba(139,92,246,0.06)" : "transparent",
-        border: `1px solid ${hovered ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.08)"}`,
-        borderRadius: "12px",
-        color: hovered ? "#c084fc" : "rgba(255,255,255,0.6)",
-        fontSize: "13px",
+        padding: "12px 20px",
+        background: hovered ? "rgba(168, 85, 247, 0.04)" : "transparent",
+        border: `1px solid ${hovered ? "rgba(168, 85, 247, 0.35)" : "rgba(255,255,255,0.06)"}`,
+        borderRadius: "8px",
+        color: hovered ? "#c084fc" : "rgba(255,255,255,0.5)",
+        fontSize: "12.5px",
         fontWeight: 400,
-        letterSpacing: "0.03em",
+        letterSpacing: "0.04em",
         fontFamily: "inherit",
         cursor: "pointer",
-        transition: "all 280ms cubic-bezier(0.22,1,0.36,1)",
+        transition: "all 300ms var(--ease-cinematic)",
+        transform: hovered ? "translateY(-1px)" : "translateY(0)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: "10px",
+        boxShadow: hovered ? "0 4px 12px rgba(168, 85, 247, 0.05)" : "none",
       }}
     >
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -417,7 +433,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.6)"}
+          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.5)"}
           strokeWidth="1.2"
         />
         <rect
@@ -426,7 +442,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.6)"}
+          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.5)"}
           strokeWidth="1.2"
         />
         <rect
@@ -435,7 +451,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.6)"}
+          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.5)"}
           strokeWidth="1.2"
         />
         <rect
@@ -444,11 +460,11 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.6)"}
+          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.5)"}
           strokeWidth="1.2"
         />
       </svg>
-      Sign in with Institution SSO
+      Institution Single Sign-On
     </button>
   );
 }

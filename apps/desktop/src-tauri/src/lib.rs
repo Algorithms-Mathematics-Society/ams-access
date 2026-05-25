@@ -5,7 +5,7 @@ use core_rs::exam::{
 use serde::{Deserialize, Serialize};
 use std::net::ToSocketAddrs;
 use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // ── Violation log ─────────────────────────────────────────────────────────────
 
@@ -100,7 +100,13 @@ async fn check_network_stability(host: String) -> NetworkCheckResult {
 
     for _ in 0..samples {
         let start = Instant::now();
-        if tokio::net::TcpStream::connect(&addr).await.is_ok() {
+        if tokio::time::timeout(
+            Duration::from_secs(3),
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok())
+        {
             latencies.push(start.elapsed().as_millis() as u64);
         }
     }
@@ -300,16 +306,20 @@ async fn save_face_image(image_data: String, index: u8) -> Result<String, String
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
-    // Require root on Linux — iptables needs it for network lockdown.
+    // The GUI must run inside the user's desktop session for WebKit camera,
+    // microphone, DBus, and portal permissions to work correctly. Network
+    // lockdown still requires elevated privileges and will report failure from
+    // its command path if the process cannot modify firewall rules.
     #[cfg(unix)]
     {
         let uid_out = std::process::Command::new("id").arg("-u").output();
         if let Ok(out) = uid_out {
             let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if uid != "0" {
-                eprintln!("AMS Access requires root privileges for network lockdown.");
-                eprintln!("Run: sudo ./ams-access");
-                std::process::exit(1);
+                eprintln!(
+                    "AMS Access is running without root; camera permissions should work, \
+                     but network lockdown may require elevated privileges."
+                );
             }
         }
     }
