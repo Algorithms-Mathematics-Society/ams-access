@@ -89,3 +89,48 @@ pub fn lock_desktop() -> bool {
 pub fn unlock_desktop() {
     disable_keyboard_intercept();
 }
+
+// ── Network lockdown (pf) ─────────────────────────────────────────────────────
+
+const PF_RULES_PATH: &str = "/tmp/ams_pf.conf";
+
+fn pfctl(args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("pfctl")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())
+}
+
+/// Apply outbound firewall via pf: allow only `allowed_ips`, block everything else.
+/// Rules persist until `disable_network_lockdown` is called — intentional.
+pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+    let mut rules = String::from("# AMS Proctor - generated, do not edit\n");
+    rules.push_str("set skip on lo0\n");
+    for ip in allowed_ips {
+        rules.push_str(&format!("pass out quick to {} keep state\n", ip));
+    }
+    rules.push_str("block out all\n");
+
+    std::fs::write(PF_RULES_PATH, &rules).map_err(|e| e.to_string())?;
+
+    let out = pfctl(&["-f", PF_RULES_PATH])?;
+    if !out.status.success() {
+        return Err(format!(
+            "pfctl load failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // Enable pf (idempotent if already on)
+    let _ = pfctl(&["-e"]);
+
+    Ok(())
+}
+
+/// Reload default macOS pf rules and disable pf (it's off by default on macOS).
+pub fn disable_network_lockdown() -> Result<(), String> {
+    let _ = pfctl(&["-f", "/etc/pf.conf"]);
+    let _ = pfctl(&["-d"]);
+    let _ = std::fs::remove_file(PF_RULES_PATH);
+    Ok(())
+}

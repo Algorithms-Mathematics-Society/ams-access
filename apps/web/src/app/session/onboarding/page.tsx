@@ -2044,26 +2044,37 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
       <StageHeader id={12} label="Connection Check" />
 
       <div
-        className="mb-8 relative flex h-24 w-24 items-center justify-center rounded-full"
+        className="mb-10 relative flex items-center justify-center rounded-full"
         style={{
+          width: 120,
+          height: 120,
           border: `1.5px solid ${phase === "checking" ? "rgba(168,85,247,0.28)" : phase === "pass" ? "rgba(34,197,94,0.38)" : "rgba(245,158,11,0.38)"}`,
           transition: "border-color 500ms",
         }}
       >
         {phase === "checking" ? (
-          <Spinner size={32} />
+          <Spinner size={36} />
         ) : (
           <div className="text-center">
-            <p style={{ fontSize: "22px", fontWeight: 600, color: qualityColor, lineHeight: 1 }}>
+            <p style={{ fontSize: "28px", fontWeight: 600, color: qualityColor, lineHeight: 1 }}>
               {latency}
             </p>
-            <p style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>ms</p>
+            <p
+              style={{
+                fontSize: "12px",
+                color: "#64748b",
+                marginTop: "4px",
+                letterSpacing: "0.05em",
+              }}
+            >
+              ms
+            </p>
           </div>
         )}
       </div>
 
       {phase !== "checking" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <CheckLine label={`Response time: ${latency}ms`} status={phase} />
           <CheckLine label={`Connection quality: ${quality ?? "—"}`} status={phase} delay={200} />
           {phase === "pass" && (

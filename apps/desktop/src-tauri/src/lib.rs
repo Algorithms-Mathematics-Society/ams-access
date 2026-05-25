@@ -3,6 +3,7 @@ use core_rs::exam::{
     KeyboardInterceptResult, NetworkCheckResult, ProcessScanResult, VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
+use std::net::ToSocketAddrs;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -44,9 +45,7 @@ fn scan_processes() -> ProcessScanResult {
     return platform_rs::linux::scan_processes();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::scan_processes();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::scan_processes();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     ProcessScanResult {
         found: vec![],
         clean: true,
@@ -60,9 +59,7 @@ fn detect_virtualization() -> VirtDetectionResult {
     return platform_rs::linux::detect_virtualization();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::detect_virtualization();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::detect_virtualization();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     VirtDetectionResult {
         detected: false,
         platform: None,
@@ -77,9 +74,7 @@ fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     return platform_rs::linux::enable_keyboard_intercept();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::enable_keyboard_intercept();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::enable_keyboard_intercept();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     KeyboardInterceptResult {
         active: false,
         method: "none",
@@ -94,8 +89,6 @@ fn disable_keyboard_intercept() {
     platform_rs::linux::disable_keyboard_intercept();
     #[cfg(target_os = "windows")]
     platform_rs::windows::disable_keyboard_intercept();
-    #[cfg(target_os = "macos")]
-    platform_rs::macos::disable_keyboard_intercept();
 }
 
 /// Measure TCP round-trip to a host to assess network stability.
@@ -195,9 +188,7 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
     return platform_rs::linux::lock_desktop();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::lock_desktop();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::lock_desktop();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     false
 }
 
@@ -213,8 +204,6 @@ async fn unlock_desktop(app: tauri::AppHandle) {
     platform_rs::linux::unlock_desktop();
     #[cfg(target_os = "windows")]
     platform_rs::windows::unlock_desktop();
-    #[cfg(target_os = "macos")]
-    platform_rs::macos::unlock_desktop();
 }
 
 /// Return all recorded violations for this session.
@@ -231,6 +220,58 @@ fn get_violation_log() -> Vec<ViolationEntry> {
 #[tauri::command]
 fn log_violation(kind: String, detail: String) {
     push_violation(&kind, &detail);
+}
+
+/// Lock outbound network to `allowed_domains` only (resolved to IPs at call time).
+/// Rules are applied at the OS firewall level and persist until `disable_network_lockdown`
+/// is explicitly called — intentional, so an app crash does not restore internet access.
+#[tauri::command]
+async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, String> {
+    let mut ips: Vec<String> = Vec::new();
+
+    for domain in &allowed_domains {
+        // If it's already a raw IP, use it directly
+        if domain.parse::<std::net::IpAddr>().is_ok() {
+            if !ips.contains(domain) {
+                ips.push(domain.clone());
+            }
+            continue;
+        }
+        // Try resolving as hostname (port doesn't matter for resolution; use 443)
+        let addr = format!("{}:443", domain);
+        if let Ok(addrs) = addr.as_str().to_socket_addrs() {
+            for a in addrs {
+                let ip = a.ip().to_string();
+                if !ips.contains(&ip) {
+                    ips.push(ip);
+                }
+            }
+        }
+    }
+
+    if ips.is_empty() {
+        return Err("Could not resolve any allowed domains to IPs".to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    return platform_rs::linux::enable_network_lockdown(&ips).map(|_| true);
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::enable_network_lockdown(&ips).map(|_| true);
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    Err("Network lockdown not supported on this platform".to_string())
+}
+
+/// Remove all AMS firewall rules and restore normal internet access.
+#[tauri::command]
+async fn disable_network_lockdown() -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    return platform_rs::linux::disable_network_lockdown().map(|_| true);
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::disable_network_lockdown().map(|_| true);
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    Err("Network lockdown not supported on this platform".to_string())
 }
 
 /// Save a base64-encoded face image to the faces directory.
@@ -259,6 +300,20 @@ async fn save_face_image(image_data: String, index: u8) -> Result<String, String
 // ── App entry point ───────────────────────────────────────────────────────────
 
 pub fn run() {
+    // Require root on Linux — iptables needs it for network lockdown.
+    #[cfg(unix)]
+    {
+        let uid_out = std::process::Command::new("id").arg("-u").output();
+        if let Ok(out) = uid_out {
+            let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if uid != "0" {
+                eprintln!("AMS Access requires root privileges for network lockdown.");
+                eprintln!("Run: sudo ./ams-access");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Restore keyboard shortcuts left behind by a previous crashed session.
     // Runs BEFORE Tauri/GTK initializes so it can't block the GTK main thread
     // (which would delay webkit2gtk's IPC handshake and break camera permissions)
@@ -281,6 +336,8 @@ pub fn run() {
             get_platform,
             get_security_environment,
             save_face_image,
+            enable_network_lockdown,
+            disable_network_lockdown,
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
@@ -305,8 +362,6 @@ pub fn run() {
                 platform_rs::linux::disable_keyboard_intercept();
                 #[cfg(target_os = "windows")]
                 platform_rs::windows::disable_keyboard_intercept();
-                #[cfg(target_os = "macos")]
-                platform_rs::macos::disable_keyboard_intercept();
             }
         })
         .run(tauri::generate_context!())

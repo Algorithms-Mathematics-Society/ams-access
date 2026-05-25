@@ -463,3 +463,99 @@ pub fn check_ptrace_scope() -> u8 {
         .and_then(|s| s.trim().parse::<u8>().ok())
         .unwrap_or(0)
 }
+
+// ── Network lockdown (iptables) ───────────────────────────────────────────────
+
+const IPTABLES_CHAIN: &str = "AMS_PROCTOR";
+
+fn iptables(args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("iptables")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())
+}
+
+/// Apply outbound firewall: allow only `allowed_ips`, block everything else.
+/// Rules persist until `disable_network_lockdown` is called — intentional.
+pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+    // Tear down any leftover chain from a previous session (idempotent)
+    let _ = iptables(&["-D", "OUTPUT", "-j", IPTABLES_CHAIN]);
+    let _ = iptables(&["-F", IPTABLES_CHAIN]);
+    let _ = iptables(&["-X", IPTABLES_CHAIN]);
+
+    // Create fresh chain
+    let out = iptables(&["-N", IPTABLES_CHAIN])?;
+    if !out.status.success() {
+        let msg = String::from_utf8_lossy(&out.stderr);
+        if !msg.contains("Chain already exists") {
+            return Err(format!("iptables -N failed: {}", msg));
+        }
+    }
+
+    // Loopback always passes
+    let out = iptables(&["-A", IPTABLES_CHAIN, "-o", "lo", "-j", "ACCEPT"])?;
+    if !out.status.success() {
+        return Err(format!(
+            "iptables loopback rule failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // Keep already-established connections alive (prevents exam session from dropping)
+    let out = iptables(&[
+        "-A",
+        IPTABLES_CHAIN,
+        "-m",
+        "state",
+        "--state",
+        "ESTABLISHED,RELATED",
+        "-j",
+        "ACCEPT",
+    ])?;
+    if !out.status.success() {
+        return Err(format!(
+            "iptables established rule failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // Allow each whitelisted IP
+    for ip in allowed_ips {
+        let out = iptables(&["-A", IPTABLES_CHAIN, "-d", ip.as_str(), "-j", "ACCEPT"])?;
+        if !out.status.success() {
+            return Err(format!(
+                "iptables allow {} failed: {}",
+                ip,
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+
+    // Drop everything else
+    let out = iptables(&["-A", IPTABLES_CHAIN, "-j", "DROP"])?;
+    if !out.status.success() {
+        return Err(format!(
+            "iptables DROP rule failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // Hook chain into OUTPUT (position 1 = evaluated first)
+    let out = iptables(&["-I", "OUTPUT", "1", "-j", IPTABLES_CHAIN])?;
+    if !out.status.success() {
+        return Err(format!(
+            "iptables OUTPUT hook failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Remove the AMS_PROCTOR iptables chain and all its rules.
+pub fn disable_network_lockdown() -> Result<(), String> {
+    let _ = iptables(&["-D", "OUTPUT", "-j", IPTABLES_CHAIN]);
+    let _ = iptables(&["-F", IPTABLES_CHAIN]);
+    let _ = iptables(&["-X", IPTABLES_CHAIN]);
+    Ok(())
+}

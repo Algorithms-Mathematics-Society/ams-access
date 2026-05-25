@@ -275,6 +275,15 @@ export default function ContestPageClient() {
       return;
     }
     await handleSave();
+    cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+    cameraStreamRef.current = null;
+    setCameraStream(null);
+    const win = window.__TAURI__?.window.getCurrentWindow();
+    if (win) {
+      await win.setFullscreen(false).catch(() => {});
+      await win.setAlwaysOnTop(false).catch(() => {});
+      await win.setDecorations(true).catch(() => {});
+    }
     try {
       await window.__TAURI__?.core.invoke("unlock_desktop");
     } catch {}
@@ -1111,15 +1120,15 @@ export default function ContestPageClient() {
       <div
         style={{
           position: "fixed",
-          bottom: "48px",
-          right: "16px",
+          bottom: "56px",
+          right: "20px",
           zIndex: 50,
-          width: "160px",
-          height: "120px",
-          borderRadius: "12px",
+          width: "200px",
+          height: "150px",
+          borderRadius: "14px",
           overflow: "hidden",
-          border: `2px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
-          boxShadow: `0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)"}`,
+          border: `1.5px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.45)" : "rgba(245,158,11,0.45)"}`,
+          boxShadow: `0 0 24px ${faceStatus === "ok" ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.15)"}, 0 4px 16px rgba(0,0,0,0.4)`,
           transition: "border-color 600ms, box-shadow 600ms",
           background: "#000",
           display: (cameraStream ?? cameraError) ? "block" : "none",
@@ -1156,28 +1165,31 @@ export default function ContestPageClient() {
             bottom: 0,
             left: 0,
             right: 0,
-            padding: "4px 8px",
-            background: "rgba(0,0,0,0.6)",
+            padding: "6px 10px",
+            background: "rgba(0,0,0,0.65)",
+            backdropFilter: "blur(4px)",
             display: "flex",
             alignItems: "center",
-            gap: "5px",
+            gap: "6px",
           }}
         >
           <div
             style={{
-              width: "5px",
-              height: "5px",
+              width: "6px",
+              height: "6px",
               borderRadius: "50%",
+              flexShrink: 0,
               background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-              boxShadow: `0 0 5px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
+              boxShadow: `0 0 6px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
               animation: "pulse-preview 2s ease-in-out infinite",
             }}
           />
           <span
             style={{
-              fontSize: "9px",
+              fontSize: "10px",
               color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-              letterSpacing: "0.06em",
+              letterSpacing: "0.08em",
+              fontWeight: 500,
             }}
           >
             {faceStatus === "ok" ? "FACE OK" : "LOOK FORWARD"}
@@ -1187,11 +1199,11 @@ export default function ContestPageClient() {
         <div
           style={{
             position: "absolute",
-            top: "5px",
-            left: "6px",
-            fontSize: "8px",
-            color: "rgba(168,85,247,0.8)",
-            letterSpacing: "0.1em",
+            top: "8px",
+            left: "10px",
+            fontSize: "9px",
+            color: "rgba(168,85,247,0.85)",
+            letterSpacing: "0.12em",
             fontWeight: 600,
           }}
         >

@@ -220,3 +220,84 @@ pub fn detect_remote_desktop() -> bool {
         .map(|s| s.to_uppercase().contains("RDP"))
         .unwrap_or(false)
 }
+
+// ── Network lockdown (Windows Firewall via netsh) ─────────────────────────────
+
+fn netsh(args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("netsh")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())
+}
+
+/// Apply outbound firewall: set default outbound to block, allow only `allowed_ips`.
+/// Rules persist until `disable_network_lockdown` is called — intentional.
+pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+    // Clear any leftover rules first (idempotent)
+    let _ = disable_network_lockdown();
+
+    // Add allow rules for whitelisted IPs before setting default to block
+    for ip in allowed_ips {
+        let out = std::process::Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=AMS_PROCTOR_ALLOW",
+                "dir=out",
+                "action=allow",
+                "enable=yes",
+                "profile=any",
+                &format!("remoteip={}", ip),
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(format!(
+                "netsh allow {} failed: {}",
+                ip,
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+
+    // Set default outbound to block across all profiles
+    // Explicit allow rules above take precedence over the default block
+    let out = netsh(&[
+        "advfirewall",
+        "set",
+        "allprofiles",
+        "firewallpolicy",
+        "blockinbound,blockoutbound",
+    ])?;
+    if !out.status.success() {
+        return Err(format!(
+            "netsh set policy failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Restore default outbound policy and remove AMS allow rules.
+pub fn disable_network_lockdown() -> Result<(), String> {
+    // Restore Windows default: block inbound, allow outbound
+    let _ = netsh(&[
+        "advfirewall",
+        "set",
+        "allprofiles",
+        "firewallpolicy",
+        "blockinbound,allowoutbound",
+    ]);
+    // Remove all AMS allow rules
+    let _ = netsh(&[
+        "advfirewall",
+        "firewall",
+        "delete",
+        "rule",
+        "name=AMS_PROCTOR_ALLOW",
+    ]);
+    Ok(())
+}
