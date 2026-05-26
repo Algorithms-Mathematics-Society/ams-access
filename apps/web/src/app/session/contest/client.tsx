@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const ACTIVE_SESSION_KEY = "ams_active_session";
 
 type Question = {
   id: string;
@@ -199,6 +200,15 @@ export default function ContestPageClient() {
           if (res.ok) {
             const data = await res.json();
             setSessionId(data.id);
+            localStorage.setItem(
+              ACTIVE_SESSION_KEY,
+              JSON.stringify({
+                id: data.id,
+                contest_id: contestId,
+                contest_title: c?.title,
+                updated_at: new Date().toISOString(),
+              })
+            );
           }
         } catch {}
 
@@ -283,6 +293,7 @@ export default function ContestPageClient() {
         await fetch(`${API_URL}/sessions/${sessionId}/submit`, { method: "POST" });
       } catch {}
     }
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
     cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
     cameraStreamRef.current = null;
     setCameraStream(null);

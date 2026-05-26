@@ -61,6 +61,22 @@ type NetworkCheckResult = {
   quality: string;
 };
 
+type InviteCodeResolveResponse = {
+  contest?: InvitedContest;
+  eligibility_status: string;
+  blocked_reason?: string;
+  active_session_id?: string;
+};
+
+type ActiveSession = {
+  id: string;
+  contest_id: string;
+  contest_title?: string;
+  updated_at?: string;
+};
+
+const ACTIVE_SESSION_KEY = "ams_active_session";
+
 function getNetworkProbeHost() {
   try {
     return new URL(API_URL).hostname;
@@ -167,6 +183,14 @@ export default function HomePage() {
   const [signingOut, setSigningOut] = useState(false);
   const [contests, setContests] = useState<InvitedContest[]>([]);
   const [contestsLoading, setContestsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteCodeStatus, setInviteCodeStatus] = useState<string | null>(null);
+  const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
+  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  const [resumeStatus, setResumeStatus] = useState<string | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
   const [userEmail, setUserEmail] = useState("tester@ams.local");
 
   // Load theme from localStorage on mount
@@ -188,22 +212,37 @@ export default function HomePage() {
     platform: "checking",
   });
 
+  async function loadContests(email: string, mode: "initial" | "refresh" = "refresh") {
+    if (mode === "initial") setContestsLoading(true);
+    else setSessionsRefreshing(true);
+    setSessionsError(null);
+    try {
+      const r = await fetch(`${API_URL}/contests/invited?email=${encodeURIComponent(email)}`);
+      if (!r.ok) throw new Error("Session refresh failed");
+      const data = (await r.json()) as InvitedContest[];
+      setContests(data ?? []);
+    } catch {
+      setSessionsError("Could not refresh sessions. Check your connection and try again.");
+    } finally {
+      setContestsLoading(false);
+      setSessionsRefreshing(false);
+    }
+  }
+
   useEffect(() => {
     const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
     setUserEmail(email);
     let cancelled = false;
+    const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
+    if (storedSession) {
+      try {
+        setActiveSession(JSON.parse(storedSession) as ActiveSession);
+      } catch {
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+      }
+    }
 
-    fetch(`${API_URL}/contests/invited?email=${encodeURIComponent(email)}`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: InvitedContest[]) => {
-        if (cancelled) return;
-        setContests(data ?? []);
-        setContestsLoading(false);
-      })
-      .catch(() => {
-        if (!cancelled) setContestsLoading(false);
-      });
-
+    void loadContests(email, "initial");
     navigator.mediaDevices
       ?.enumerateDevices()
       .then((devices) => {
@@ -263,6 +302,81 @@ export default function HomePage() {
       cancelled = true;
     };
   }, []);
+
+  async function handleInviteCodeSubmit() {
+    const code = inviteCode.trim();
+    setInviteCodeStatus(null);
+    if (!code) {
+      setInviteCodeStatus("Enter a session or invite code.");
+      return;
+    }
+    setInviteCodeBusy(true);
+    try {
+      const res = await fetch(`${API_URL}/session-codes/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, candidate_email: userEmail }),
+      });
+      let data: Partial<InviteCodeResolveResponse> | null = null;
+      try {
+        data = (await res.json()) as Partial<InviteCodeResolveResponse>;
+      } catch {}
+      if (!res.ok) {
+        setInviteCodeStatus(data?.blocked_reason || "Code validation unavailable.");
+        return;
+      }
+      if (data?.blocked_reason) {
+        setInviteCodeStatus(data.blocked_reason);
+        return;
+      }
+      if (!data?.contest?.id) {
+        setInviteCodeStatus("Code validation unavailable.");
+        return;
+      }
+      if (data.active_session_id) {
+        const nextActiveSession = {
+          id: data.active_session_id,
+          contest_id: data.contest.id,
+          contest_title: data.contest.title,
+          updated_at: new Date().toISOString(),
+        };
+        localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextActiveSession));
+        setActiveSession(nextActiveSession);
+      }
+      router.push(`/session/onboarding?contestId=${data.contest.id}`);
+    } catch {
+      setInviteCodeStatus("Code validation unavailable.");
+    } finally {
+      setInviteCodeBusy(false);
+    }
+  }
+
+  async function handleResumeActiveSession() {
+    setResumeStatus(null);
+    if (!activeSession?.id || !activeSession.contest_id) {
+      setResumeStatus("No active session found on this device.");
+      return;
+    }
+    setResumeBusy(true);
+    try {
+      const res = await fetch(`${API_URL}/sessions/${encodeURIComponent(activeSession.id)}`);
+      if (!res.ok) {
+        setResumeStatus("Active session validation unavailable.");
+        return;
+      }
+      const data = (await res.json()) as Partial<ActiveSession> & { contest_id?: string };
+      const contestId = data.contest_id ?? activeSession.contest_id;
+      if (!contestId) {
+        setResumeStatus("Active session validation unavailable.");
+        return;
+      }
+      router.push(`/session/contest?contestId=${contestId}`);
+    } catch {
+      setResumeStatus("Active session validation unavailable.");
+    } finally {
+      setResumeBusy(false);
+    }
+  }
 
   function handleSignOut() {
     setSigningOut(true);
@@ -502,6 +616,21 @@ export default function HomePage() {
             >
               {/* Left Column: Contests with premium cards */}
               <div style={{ display: "flex", flexDirection: "column", gap: "36px" }}>
+                <SessionActionsPanel
+                  activeSession={activeSession}
+                  inviteCode={inviteCode}
+                  inviteCodeBusy={inviteCodeBusy}
+                  inviteCodeStatus={inviteCodeStatus}
+                  onInviteCodeChange={setInviteCode}
+                  onInviteCodeSubmit={handleInviteCodeSubmit}
+                  onRefresh={() => loadContests(userEmail)}
+                  onResume={handleResumeActiveSession}
+                  resumeBusy={resumeBusy}
+                  resumeStatus={resumeStatus}
+                  sessionsError={sessionsError}
+                  sessionsRefreshing={sessionsRefreshing}
+                  theme={theme}
+                />
                 <ContestsPanel contests={contests} loading={contestsLoading} theme={theme} />
               </div>
 
@@ -1170,6 +1299,190 @@ function ActiveContestCard({
   );
 }
 
+function SessionActionsPanel({
+  activeSession,
+  inviteCode,
+  inviteCodeBusy,
+  inviteCodeStatus,
+  onInviteCodeChange,
+  onInviteCodeSubmit,
+  onRefresh,
+  onResume,
+  resumeBusy,
+  resumeStatus,
+  sessionsError,
+  sessionsRefreshing,
+  theme,
+}: {
+  activeSession: ActiveSession | null;
+  inviteCode: string;
+  inviteCodeBusy: boolean;
+  inviteCodeStatus: string | null;
+  onInviteCodeChange: (value: string) => void;
+  onInviteCodeSubmit: () => void;
+  onRefresh: () => void;
+  onResume: () => void;
+  resumeBusy: boolean;
+  resumeStatus: string | null;
+  sessionsError: string | null;
+  sessionsRefreshing: boolean;
+  theme: "dark" | "light";
+}) {
+  const c = getThemeColors(theme);
+  const inputBg = theme === "light" ? "#ffffff" : "rgba(255,255,255,0.03)";
+  const subtleButtonBg = theme === "light" ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)";
+
+  return (
+    <div
+      style={{
+        background: c.cardBg,
+        border: `1px solid ${c.border}`,
+        borderRadius: "8px",
+        padding: "20px",
+        display: "grid",
+        gridTemplateColumns: "1.25fr 0.75fr",
+        gap: "18px",
+        alignItems: "stretch",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div>
+          <p
+            style={{
+              fontSize: "11px",
+              color: c.textMuted,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              marginBottom: "6px",
+              fontWeight: 600,
+            }}
+          >
+            Session Code
+          </p>
+          <div style={{ display: "flex", gap: "10px" }}>
+            <input
+              value={inviteCode}
+              onChange={(e) => onInviteCodeChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onInviteCodeSubmit();
+              }}
+              placeholder="Enter invite code"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: "38px",
+                borderRadius: "6px",
+                border: `1px solid ${c.borderStrong}`,
+                background: inputBg,
+                color: c.text,
+                padding: "0 12px",
+                fontSize: "13px",
+                outline: "none",
+              }}
+            />
+            <button
+              onClick={onInviteCodeSubmit}
+              disabled={inviteCodeBusy}
+              style={{
+                minWidth: "96px",
+                height: "38px",
+                borderRadius: "6px",
+                border: `1px solid ${c.accentBorder}`,
+                background: c.accentLight,
+                color: c.accentText,
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: inviteCodeBusy ? "not-allowed" : "pointer",
+              }}
+            >
+              {inviteCodeBusy ? "Checking..." : "Validate"}
+            </button>
+          </div>
+          {inviteCodeStatus && (
+            <p style={{ marginTop: "8px", color: "#f59e0b", fontSize: "12px", lineHeight: 1.45 }}>
+              {inviteCodeStatus}
+            </p>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <button
+            onClick={onRefresh}
+            disabled={sessionsRefreshing}
+            style={{
+              height: "34px",
+              borderRadius: "6px",
+              border: `1px solid ${c.border}`,
+              background: subtleButtonBg,
+              color: c.textMutedStrong,
+              padding: "0 12px",
+              fontSize: "12px",
+              cursor: sessionsRefreshing ? "not-allowed" : "pointer",
+            }}
+          >
+            {sessionsRefreshing ? "Refreshing..." : "Refresh Sessions"}
+          </button>
+          {sessionsError && (
+            <span style={{ alignSelf: "center", color: "#f87171", fontSize: "12px" }}>
+              {sessionsError}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          borderLeft: `1px solid ${c.border}`,
+          paddingLeft: "18px",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
+      >
+        <div>
+          <p
+            style={{
+              fontSize: "11px",
+              color: c.textMuted,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              marginBottom: "6px",
+              fontWeight: 600,
+            }}
+          >
+            Resume
+          </p>
+          <p style={{ color: c.textMutedStrong, fontSize: "12.5px", lineHeight: 1.45 }}>
+            {activeSession
+              ? (activeSession.contest_title ?? `Contest ${activeSession.contest_id}`)
+              : "No active session stored on this device."}
+          </p>
+        </div>
+        <button
+          onClick={onResume}
+          disabled={resumeBusy || !activeSession}
+          style={{
+            height: "36px",
+            borderRadius: "6px",
+            border: `1px solid ${activeSession ? c.accentBorder : c.border}`,
+            background: activeSession ? c.accentLight : subtleButtonBg,
+            color: activeSession ? c.accentText : c.textMuted,
+            fontSize: "12px",
+            fontWeight: 600,
+            cursor: resumeBusy || !activeSession ? "not-allowed" : "pointer",
+          }}
+        >
+          {resumeBusy ? "Validating..." : "Resume Active Session"}
+        </button>
+        {resumeStatus && (
+          <p style={{ color: "#f59e0b", fontSize: "12px", lineHeight: 1.4 }}>{resumeStatus}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ContestsPanel({
   contests,
   loading,
@@ -1357,12 +1670,21 @@ function ReadinessWidget({
   onSettingsRedirect,
   theme,
 }: {
-  readiness: any;
+  readiness: ReadinessState;
   onSettingsRedirect: () => void;
   theme: "dark" | "light";
 }) {
   const [hovered, setHovered] = useState(false);
   const themeColors = getThemeColors(theme);
+  const failedChecks = [
+    { key: "camera", label: "Camera unavailable", status: readiness.camera },
+    { key: "mic", label: "Microphone unavailable", status: readiness.mic },
+    { key: "network", label: "Network unstable or unreachable", status: readiness.network },
+    { key: "restrictedApps", label: "Restricted app detected", status: readiness.restrictedApps },
+    { key: "keyboard", label: "Keyboard lockdown unavailable", status: readiness.keyboard },
+    { key: "platform", label: "Platform support check failed", status: readiness.platform },
+    { key: "vm", label: "VM or security check failed", status: readiness.vm },
+  ].filter((item) => item.status === "fail");
 
   return (
     <div
@@ -1407,12 +1729,45 @@ function ReadinessWidget({
         <ReadinessItem label="Audio Input" status={readiness.mic} theme={theme} />
         <ReadinessItem label="Secure VM Shield" status={readiness.vm} theme={theme} />
         <ReadinessItem label="Keyboard Lockdown" status={readiness.keyboard} theme={theme} />
+        <ReadinessItem label="Platform Support" status={readiness.platform} theme={theme} />
         <ReadinessItem
           label="Restricted Processes"
           status={readiness.restrictedApps}
           theme={theme}
         />
       </div>
+
+      {failedChecks.length > 0 && (
+        <div
+          style={{
+            marginBottom: "18px",
+            border: `1px solid rgba(239,68,68,0.22)`,
+            background: "rgba(239,68,68,0.06)",
+            borderRadius: "6px",
+            padding: "12px",
+          }}
+        >
+          <p
+            style={{
+              color: "#fca5a5",
+              fontSize: "11px",
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              marginBottom: "8px",
+            }}
+          >
+            Blocking Warnings
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {failedChecks.map((item) => (
+              <span key={item.key} style={{ color: "#f87171", fontSize: "12px", lineHeight: 1.35 }}>
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <button
         onClick={onSettingsRedirect}
@@ -2849,30 +3204,57 @@ function DiagnosticsPanel({ readiness, theme }: { readiness: any; theme: "dark" 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
             gap: "16px",
             marginBottom: "20px",
           }}
         >
           <TelemetryStat
             label="API Gateway Connectivity"
-            val="SECURE"
-            sub="ams-gateway.api.ams.local"
-            secure={true}
+            val={
+              checkingNetwork
+                ? "Checking"
+                : networkQuality === "unchecked"
+                  ? "Not checked"
+                  : networkQuality === "unavailable" || networkQuality === "unreachable"
+                    ? "Unavailable"
+                    : networkQuality
+            }
+            sub={`Probe host: ${getNetworkProbeHost()}`}
+            status={
+              checkingNetwork || networkQuality === "unchecked"
+                ? "unknown"
+                : networkQuality === "unavailable" || networkQuality === "unreachable"
+                  ? "fail"
+                  : "ok"
+            }
             theme={theme}
           />
           <TelemetryStat
-            label="Supabase DB Sync Node"
-            val="SECURE"
-            sub="db-sync.sup.ams.local"
-            secure={true}
+            label="Native Platform"
+            val={platformInfo ? `${platformInfo.os} ${platformInfo.arch}` : "Unavailable"}
+            sub={
+              platformInfo ? `Family: ${platformInfo.family}` : "get_platform did not return data"
+            }
+            status={platformInfo ? "ok" : "unknown"}
             theme={theme}
           />
           <TelemetryStat
-            label="Proctor Model Asset CDN"
-            val="SECURE"
-            sub="models.cdn.ams.local"
-            secure={true}
+            label="Security Environment"
+            val={securityEnv ? securityEnv.display_server : "Unavailable"}
+            sub={
+              securityEnv
+                ? `LD_PRELOAD ${securityEnv.ld_preload_injection ? "present" : "clean"}`
+                : "get_security_environment did not return data"
+            }
+            status={securityEnv ? (securityEnv.ld_preload_injection ? "fail" : "ok") : "unknown"}
+            theme={theme}
+          />
+          <TelemetryStat
+            label="Model Asset CDN"
+            val="Not checked"
+            sub="No real asset probe is configured yet"
+            status="unknown"
             theme={theme}
           />
         </div>
@@ -3002,16 +3384,26 @@ function TelemetryStat({
   label,
   val,
   sub,
-  secure,
+  status,
   theme,
 }: {
   label: string;
   val: string;
   sub: string;
-  secure: boolean;
+  status: "ok" | "fail" | "unknown";
   theme: "dark" | "light";
 }) {
   const c = getThemeColors(theme);
+  const dotColor =
+    status === "ok"
+      ? theme === "light"
+        ? "#10b981"
+        : "#22c55e"
+      : status === "fail"
+        ? "#ef4444"
+        : theme === "light"
+          ? "#a8a29e"
+          : "rgba(255,255,255,0.32)";
   return (
     <div
       style={{
@@ -3028,7 +3420,7 @@ function TelemetryStat({
             width: "5px",
             height: "5px",
             borderRadius: "50%",
-            background: secure ? (theme === "light" ? "#10b981" : "#22c55e") : "#ef4444",
+            background: dotColor,
           }}
         />
         <span style={{ fontSize: "13.5px", fontWeight: 600, color: c.text }}>{val}</span>
