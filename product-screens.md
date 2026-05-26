@@ -2,6 +2,8 @@
 
 This document defines what should exist on the main user-facing screens of the AMS Access desktop shell. The guiding principle is simple: the app should help a contestant understand whether their machine, identity, permissions, and session are ready for a locked exam.
 
+![AMS Access product screen](image/product-screens/1779750519199.png)
+
 ---
 
 ## Home Screen
