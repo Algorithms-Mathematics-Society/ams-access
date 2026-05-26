@@ -38,6 +38,64 @@ async function tauriWindow() {
   return window.__TAURI__?.window.getCurrentWindow() ?? null;
 }
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+function getUserMediaWithTimeout(
+  constraints: MediaStreamConstraints,
+  ms = 8000
+): Promise<MediaStream> {
+  let timedOut = false;
+  const request = navigator.mediaDevices.getUserMedia(constraints);
+  request.then((stream) => {
+    if (timedOut) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("Camera request timed out"));
+    }, ms);
+
+    request
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+async function waitForVideoReady(video: HTMLVideoElement, ms = 2500) {
+  if (video.readyState >= 2 && video.videoWidth > 0) return;
+
+  await withTimeout(
+    new Promise<void>((resolve) => {
+      const onReady = () => {
+        video.removeEventListener("loadeddata", onReady);
+        video.removeEventListener("canplay", onReady);
+        resolve();
+      };
+
+      video.addEventListener("loadeddata", onReady, { once: true });
+      video.addEventListener("canplay", onReady, { once: true });
+    }),
+    ms,
+    "Camera preview timed out"
+  );
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 type StageStatus = "pending" | "checking" | "pass" | "warn" | "fail";
 
@@ -846,22 +904,39 @@ function Stage8_CameraInit({
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    let handedOff = false;
+    let localStream: MediaStream | null = null;
+
     async function init() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error("Camera not available on this device");
         }
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        const stream = await getUserMediaWithTimeout({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         });
+        localStream = stream;
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+          await videoRef.current.play().catch(() => {});
+          await waitForVideoReady(videoRef.current);
         }
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        handedOff = true;
         onCameraReady(stream);
         setPhase("pass");
         setTimeout(onPass, 1000);
       } catch (err) {
+        localStream?.getTracks().forEach((track) => track.stop());
+        localStream = null;
         const msg = err instanceof Error ? err.message : "Camera access was denied";
         setError(
           msg.includes("denied") ||
@@ -877,6 +952,13 @@ function Stage8_CameraInit({
       }
     }
     void init();
+
+    return () => {
+      cancelled = true;
+      if (!handedOff) {
+        localStream?.getTracks().forEach((track) => track.stop());
+      }
+    };
   }, [onPass, onCameraReady]);
 
   return (
@@ -1018,9 +1100,11 @@ function Stage9_FaceCalibration({
   const rafRef = useRef(0);
   const detectCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastVideoTimeRef = useRef(-1);
+  const lastDrawMsRef = useRef(0);
   const detectionErrorsRef = useRef(0);
   const fallbackStartedRef = useRef(false);
   const detectionBusyRef = useRef(false);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   // ── React state (display only) ─────────────────────────────────
   const [detectorReady, setDetectorReady] = useState(false);
@@ -1188,52 +1272,48 @@ function Stage9_FaceCalibration({
     let cancelled = false;
 
     async function init() {
+      let activeStream: MediaStream | null = null;
       if (videoRef.current) {
-        const activeStream =
-          stream ??
-          (await navigator.mediaDevices
-            ?.getUserMedia?.({
-              video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-            })
-            .catch(() => null));
+        activeStream = stream;
+
+        if (!activeStream && navigator.mediaDevices) {
+          activeStream = await getUserMediaWithTimeout(
+            {
+              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+            },
+            8000
+          ).catch(() => null);
+          localStreamRef.current = activeStream;
+        }
 
         if (activeStream) {
           videoRef.current.srcObject = activeStream;
           await videoRef.current.play().catch(() => {});
-          if (videoRef.current.readyState < 2) {
-            await new Promise<void>((resolve) => {
-              const video = videoRef.current;
-              if (!video) {
-                resolve();
-                return;
-              }
-
-              const onReady = () => {
-                video.removeEventListener("loadeddata", onReady);
-                video.removeEventListener("canplay", onReady);
-                resolve();
-              };
-
-              video.addEventListener("loadeddata", onReady, { once: true });
-              video.addEventListener("canplay", onReady, { once: true });
-              setTimeout(onReady, 1200);
-            });
-          }
+          await waitForVideoReady(videoRef.current, 2500).catch(() => {});
+        } else {
+          beginTimedFallback();
+          return;
         }
       }
 
       try {
-        const tf = await import("@tensorflow/tfjs-core");
-        await import("@tensorflow/tfjs-backend-cpu");
-        await tf.setBackend("cpu");
-        await tf.ready();
-        const blazeface = (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike;
-        const det = await blazeface.load({
-          maxFaces: 1,
-          inputWidth: 128,
-          inputHeight: 128,
-          scoreThreshold: 0.75,
-        });
+        const det = await withTimeout(
+          (async () => {
+            const tf = await import("@tensorflow/tfjs-core");
+            await import("@tensorflow/tfjs-backend-cpu");
+            await tf.setBackend("cpu");
+            await tf.ready();
+            const blazeface = (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike;
+            return blazeface.load({
+              maxFaces: 1,
+              inputWidth: 128,
+              inputHeight: 128,
+              scoreThreshold: 0.75,
+            });
+          })(),
+          7000,
+          "Face detector startup timed out"
+        );
         if (cancelled) {
           det.dispose();
           return;
@@ -1261,6 +1341,8 @@ function Stage9_FaceCalibration({
       cancelled = true;
       detectorRef.current?.dispose();
       detectorRef.current = null;
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream]);
@@ -1268,7 +1350,7 @@ function Stage9_FaceCalibration({
   // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
     const EMA = 0.3;
-    const DETECT_INTERVAL = 120;
+    const DETECT_INTERVAL = 250;
 
     let prevFP = false;
     let prevQK = false;
@@ -1300,13 +1382,15 @@ function Stage9_FaceCalibration({
       void (async () => {
         try {
           let res: FacePredictionLike[] = [];
-          if (dc.width !== video.videoWidth || dc.height !== video.videoHeight) {
-            dc.width = video.videoWidth;
-            dc.height = video.videoHeight;
+          const sourceWidth = 160;
+          const sourceHeight = 120;
+          if (dc.width !== sourceWidth || dc.height !== sourceHeight) {
+            dc.width = sourceWidth;
+            dc.height = sourceHeight;
           }
           const dctx = dc.getContext("2d", { willReadFrequently: true });
           if (!dctx) return;
-          dctx.drawImage(video, 0, 0);
+          dctx.drawImage(video, 0, 0, sourceWidth, sourceHeight);
           res = await det.estimateFaces(dc, false, false, true);
 
           detectionErrorsRef.current = 0;
@@ -1316,10 +1400,10 @@ function Stage9_FaceCalibration({
             const [x1, y1] = detection.topLeft;
             const [x2, y2] = detection.bottomRight;
             const raw = {
-              cx: (x1 + x2) / 2 / video.videoWidth,
-              cy: (y1 + y2) / 2 / video.videoHeight,
-              w: Math.abs(x2 - x1) / video.videoWidth,
-              h: Math.abs(y2 - y1) / video.videoHeight,
+              cx: (x1 + x2) / 2 / sourceWidth,
+              cy: (y1 + y2) / 2 / sourceHeight,
+              w: Math.abs(x2 - x1) / sourceWidth,
+              h: Math.abs(y2 - y1) / sourceHeight,
             };
             if (isInsideGuide(raw)) {
               const s = smooth.current;
@@ -1335,8 +1419,8 @@ function Stage9_FaceCalibration({
                 s.h = EMA * raw.h + (1 - EMA) * s.h;
               }
               keypointsRef.current = (detection.landmarks ?? []).map(([x, y]) => ({
-                x: x / video.videoWidth,
-                y: y / video.videoHeight,
+                x: x / sourceWidth,
+                y: y / sourceHeight,
               }));
               poseRef.current = estimatePose(keypointsRef.current, raw);
               facePresentRef.current = true;
@@ -1414,6 +1498,8 @@ function Stage9_FaceCalibration({
 
     function loop(ts: number) {
       rafRef.current = requestAnimationFrame(loop);
+      if (ts - lastDrawMsRef.current < 66) return;
+      lastDrawMsRef.current = ts;
       const canvas = overlayCanvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
@@ -2316,6 +2402,37 @@ export default function OnboardingPage() {
 
   const advancePass = useCallback(() => advance("pass"), [advance]);
   const advanceWarn = useCallback(() => advance("warn"), [advance]);
+  const emergencyExit = useCallback(async () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraStream(null);
+
+    const win = await tauriWindow();
+    if (win) {
+      await win.setFullscreen(false).catch(() => {});
+      await win.setAlwaysOnTop(false).catch(() => {});
+      await win.setDecorations(true).catch(() => {});
+    }
+    try {
+      await window.__TAURI__?.core.invoke("unlock_desktop");
+    } catch {}
+    try {
+      await window.__TAURI__?.core.invoke("disable_keyboard_intercept");
+    } catch {}
+    router.push("/home");
+  }, [router]);
+
+  useEffect(() => {
+    function handleEmergencyKey(e: KeyboardEvent) {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        void emergencyExit();
+      }
+    }
+
+    window.addEventListener("keydown", handleEmergencyKey, true);
+    return () => window.removeEventListener("keydown", handleEmergencyKey, true);
+  }, [emergencyExit]);
 
   return (
     <main
@@ -2326,6 +2443,29 @@ export default function OnboardingPage() {
         userSelect: "none",
       }}
     >
+      <button
+        type="button"
+        onClick={() => void emergencyExit()}
+        style={{
+          position: "fixed",
+          top: 16,
+          right: 16,
+          zIndex: 1000,
+          padding: "8px 12px",
+          borderRadius: "8px",
+          border: "1px solid rgba(245,158,11,0.35)",
+          background: "rgba(3,8,22,0.82)",
+          color: "#f59e0b",
+          fontSize: "12px",
+          fontWeight: 600,
+          fontFamily: "Inter, system-ui, sans-serif",
+          cursor: "pointer",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+        }}
+      >
+        Exit Setup
+      </button>
+
       <ProgressBar current={currentStage} results={results} />
 
       <div

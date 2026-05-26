@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-`ams-access` is the **Tauri exam shell** — a cross-platform desktop app that wraps a Next.js web UI and enforces exam lockdown (keyboard grab, process scanning, VM detection, async proctoring). It is one of four repos in the broader AMS contest platform; the Go API, judge workers, Next.js contestant frontend, and infrastructure live in separate repos (`contest-platform`, `contest-web`, `infra`).
+`ams-access` is the **Tauri exam shell** — a cross-platform desktop app that wraps a Next.js web UI and enforces exam lockdown (keyboard grab, process scanning, VM detection, async proctoring). It is one of four repos in the broader AMS contest platform; the Go API, judge workers, browser contestant/admin frontend, and infrastructure live in separate repos (`contest-platform`, `contest-web`, `infra`).
+
+Current platform direction as of 2026-05-27:
+
+- `contest-web` owns the admin dashboard for contests and problem authoring.
+- Admin problem authoring is expected to support Polygon/Codeforces-style assets: statements, testcases, validators, generators, checkers, and local tester tooling.
+- Auth, contest metadata, problem/question sync, submissions, telemetry, and artifact uploads come through backend APIs. `ams-access` should consume those APIs and should not own admin authoring.
+- The backend is currently understood to be on Vercel, but the target direction is Google Cloud Platform: Cloud Run or similar for Go services, Cloud SQL/Postgres-compatible database, Cloud Storage buckets for screenshots/submissions/testcases/logs, Pub/Sub or Cloud Tasks for durable submission jobs, worker services for judging, Secret Manager, and Cloud Logging.
+- Older roadmap docs may still mention AWS/Supabase/S3/SQS. Treat those as legacy planning unless a task explicitly asks to preserve that target.
 
 ## Monorepo layout
 

@@ -1,7 +1,9 @@
 # AMS Access — Implementation Plan
 
 Architecture source: `contest-platform-architecture.html`  
-Stack: Supabase (Auth + Postgres + Realtime) · AWS (ECS Fargate, EC2 Spot, SQS, S3, CloudFront, ElastiCache) · Go API · Next.js · Tauri exam shell
+Current target stack: Go API · Next.js web/admin · Tauri exam shell · Google Cloud Platform (Cloud Run, Cloud SQL or Postgres-compatible DB, Cloud Storage, Pub/Sub or Cloud Tasks, worker services, Secret Manager, Cloud Logging)
+
+Historical note: this file originally described a Supabase/AWS path. AWS terms below such as S3, SQS, ECS, CloudFront, and EC2 should now be read as legacy equivalents unless a task explicitly targets AWS. The active planning direction is to keep `ams-access` backend-provider agnostic while the external platform moves from the current Vercel-hosted backend toward GCP.
 
 ---
 
@@ -10,11 +12,72 @@ Stack: Supabase (Auth + Postgres + Realtime) · AWS (ECS Fargate, EC2 Spot, SQS,
 ```
 ams-access/          ← this repo (Tauri exam shell)
 contest-platform/    ← separate repo (Go API + judge workers)
-contest-web/         ← separate repo (Next.js frontend)
-infra/               ← separate repo (Terraform / CDK)
+contest-web/         ← separate repo (Next.js contestant/admin frontend)
+infra/               ← separate repo (GCP-first provisioning; older AWS/Terraform/CDK notes may exist)
 ```
 
 > Everything below labeled **[this repo]** lives in `ams-access`. Other repos noted explicitly.
+
+---
+
+## Current Platform Direction — 2026-05-27
+
+This section supersedes older AWS/Supabase-specific assumptions in the roadmap until the team decides otherwise.
+
+### Product Ownership
+
+- `contest-web` owns the browser web experience and admin dashboard.
+- The admin dashboard should create and manage contests, invitations, users/organizations, and problems.
+- Problem authoring should support a Polygon/Codeforces-like workflow:
+  - statement and metadata
+  - examples
+  - testcase upload/generation
+  - validators
+  - generators
+  - checkers
+  - local tester/validator runner UX
+  - review/approval state
+- `ams-access` consumes contest and question data from backend APIs and focuses on secure contestant execution, not authoring.
+
+### GCP Backend Target
+
+- Current backend may remain on Vercel while development is moving.
+- Target backend platform: Google Cloud Platform, using available free credits carefully.
+- Suggested first-pass services:
+  - Cloud Run for the Go API and worker services.
+  - Cloud SQL Postgres, AlloyDB trial, or another Postgres-compatible managed database depending on cost and operational needs.
+  - Cloud Storage buckets for submissions, screenshots/proctoring frames, testcase assets, logs, diagnostics, and generated reports.
+  - Pub/Sub or Cloud Tasks for durable submission jobs and async processing.
+  - Secret Manager for API keys, signing material, database credentials, and judge secrets.
+  - Cloud Logging and Error Reporting for audit and operations.
+  - Artifact Registry for container images.
+
+### Submission and Judge Pipeline
+
+- The Go API may use goroutines for request-local fanout and worker internals, but durable submission processing should be queue-backed.
+- The expected flow is:
+  1. Contestant submits from `ams-access` or web.
+  2. API validates auth, contest window, rate limits, language, and size.
+  3. API stores source code in object storage or records it transactionally, depending on sensitivity.
+  4. API enqueues a submission job in Pub/Sub or Cloud Tasks.
+  5. Judge worker consumes the job, fetches test assets, runs sandboxed execution, writes verdicts, and updates DB.
+  6. Web/admin and `ams-access` poll or subscribe for verdict/session state.
+
+### AMS Access Contract
+
+`ams-access` should only require stable backend contracts:
+
+- `NEXT_PUBLIC_API_URL`
+- auth/session token
+- contest/session endpoints
+- question/problem payload endpoints
+- submission endpoints
+- heartbeat endpoint
+- telemetry/incident endpoint
+- signed upload URLs for large artifacts
+- readiness and client-version policy endpoint
+
+Do not bake GCP, Cloud Storage, Vercel, or any bucket naming directly into the desktop client.
 
 ---
 
@@ -26,22 +89,24 @@ infra/               ← separate repo (Terraform / CDK)
 
 ### 1.1 Infrastructure Bootstrap
 
+Legacy AWS version retained for reference. Current GCP equivalent should use Cloud Run, Cloud SQL/Postgres-compatible DB, Cloud Storage, Pub/Sub or Cloud Tasks, Artifact Registry, Secret Manager, and Cloud Logging.
+
 _Branch: `feat/infra-bootstrap` → merge to `main`_
 
 ```
-feat(infra): create Supabase project and migration runner structure
-feat(infra): provision S3 buckets — testcases, submissions, logs, assets
-feat(infra): create SQS queues — submission_jobs + DLQ
-feat(infra): IAM roles — ECS task role, EC2 judge role, CI deploy role
-feat(infra): ECR repositories — go-api, judge-worker
+feat(infra): create managed Postgres project and migration runner structure
+feat(infra): provision object-storage buckets — testcases, submissions, screenshots, logs, assets
+feat(infra): create durable queues — submission_jobs + DLQ equivalent
+feat(infra): IAM/service accounts — API, worker, judge, CI deploy roles
+feat(infra): container registry repositories — go-api, judge-worker
 feat(infra): VPC with public subnet (ALB) + two private subnets (app, execution)
 feat(infra): ALB + target group + HTTPS listener with ACM cert
-feat(infra): ECS cluster (Fargate) with CloudWatch log groups
-feat(infra): ElastiCache Redis t3.micro (single node for Phase 1)
-feat(infra): CloudFront distribution pointing to S3 static origin
+feat(infra): serverless container services with centralized log groups
+feat(infra): managed cache only when leaderboard/rate-limit load requires it
+feat(infra): static hosting/CDN for web frontend if not staying on Vercel
 ```
 
-**🔖 Checkpoint:** `infra/v0.0.1` — all AWS primitives exist, no app deployed yet
+**🔖 Checkpoint:** `infra/v0.0.1` — core GCP primitives exist, no app deployed yet
 
 ---
 
@@ -69,44 +134,46 @@ _Repo: `contest-platform` · Branch: `feat/api-core`_
 
 ```
 feat(api): project scaffold — Chi router, health check, structured logger (zap)
-feat(api): Supabase JWT middleware — RS256 verify via JWKs endpoint at startup
+feat(api): JWT/session middleware — verify issuer JWKs or platform auth at startup
 feat(api): RBAC middleware — extract org_id + role from JWT claims
 feat(api): orgs — POST /orgs, GET /orgs/:id, PATCH /orgs/:id
 feat(api): members — POST /orgs/:id/members (invite), DELETE, PATCH role
-feat(api): problems — CRUD endpoints + S3 presigned URL for testcase upload
+feat(api): problems — CRUD endpoints + signed object-storage URL for testcase upload
+feat(api): problems — Polygon-style assets: statement, examples, validators, generators, checkers, test groups
+feat(api): problems — tester/validator runner endpoints for admin preflight where safe
 feat(api): problems — checker type validation (exact/token/custom)
 feat(api): problems — approval flow state machine (draft→review→approved)
 feat(api): contests — CRUD + lifecycle: draft→review→scheduled→live→frozen→ended
 feat(api): contests — attach problems with label + points
-feat(api): submissions — POST /submit: validate lang, size-limit 100KB, upload code→S3, enqueue SQS
+feat(api): submissions — POST /submit: validate lang, size-limit 100KB, upload code→object storage, enqueue durable job
 feat(api): submissions — GET /submissions/:id (contestant own only via RBAC)
 feat(api): rate limiter — 1 submission/5s per user per problem (Redis token bucket)
 feat(api): audit log — middleware writes admin actions to audit_log table
-feat(api): Docker image + ECS task definition + rolling deploy via GitHub Actions
+feat(api): Docker image + Cloud Run/service deploy via GitHub Actions or GCP deploy pipeline
 ```
 
 ---
 
-### 1.4 Judge Worker — Phase 1 (Single EC2, nsjail)
+### 1.4 Judge Worker — Phase 1 (Queue-backed worker, nsjail)
 
 _Repo: `contest-platform` · Branch: `feat/judge-v1`_
 
 ```
-feat(judge): Go judge worker scaffold — SQS long-poll, graceful SIGTERM handler
+feat(judge): Go judge worker scaffold — durable queue consume, graceful SIGTERM handler
 feat(judge): SandboxDriver interface — Execute(ctx, ExecRequest) ExecResult
 feat(judge): NsjailDriver implementation — spawn nsjail subprocess, parse exit code
 feat(judge): compiler support — C++17 (g++), Python 3.11 (pypy fallback), Java 17
 feat(judge): checker — exact match
 feat(judge): checker — token-based (whitespace-insensitive)
-feat(judge): testcase fetcher — download from S3 prefix, cache on disk per problem
+feat(judge): testcase fetcher — download from object-storage prefix, cache on disk per problem
 feat(judge): verdict writer — PATCH /internal/verdict on Go API (internal-only route)
-feat(judge): EC2 AMI build script — nsjail + compilers + judge binary
-feat(judge): EC2 launch template — single t3.medium on-demand for Phase 1
+feat(judge): worker container/image build — nsjail + compilers + judge binary
+feat(judge): low-cost GCP worker deployment for Phase 1
 feat(judge): submission pipeline integration test — happy path AC, WA, TLE, MLE, RE, CE
 ```
 
 **🔖 Release: `v0.1.0-alpha`** — internal judge smoke test  
-Deploy single judge EC2 + Go API on ECS. Run 50 test submissions manually. Verify verdicts and S3 uploads. No frontend yet.
+Deploy one low-cost judge worker + Go API on the chosen GCP path. Run 50 test submissions manually. Verify verdicts and object-storage uploads. No frontend dependency required.
 
 ---
 
@@ -115,12 +182,13 @@ Deploy single judge EC2 + Go API on ECS. Run 50 test submissions manually. Verif
 _Repo: `contest-web` · Branch: `feat/web-auth`_
 
 ```
-feat(web): Next.js 15 App Router scaffold + Tailwind + Supabase client setup
+feat(web): Next.js 15 App Router scaffold + Tailwind + auth/API client setup
 feat(web): auth pages — login (email+password), signup, magic link
 feat(web): auth pages — GitHub OAuth callback handler
 feat(web): org creation flow + invite member by email
 feat(web): problem CMS — Markdown editor (react-md-editor) + KaTeX math preview
-feat(web): problem CMS — testcase upload via S3 presigned URL (drag-drop, validate pairs)
+feat(web): problem CMS — testcase upload via signed object-storage URL (drag-drop, validate pairs)
+feat(web): problem CMS — validators, generators, checkers, test groups, and local tester-style workflow
 feat(web): problem CMS — problem status badge + approval submit button
 feat(web): contest management — create/edit contest (scoring type, times, visibility)
 feat(web): contest management — attach problems with label + points
@@ -129,7 +197,8 @@ feat(web): submission list — contestant's own submissions, status polling ever
 feat(web): leaderboard — polling-based (no Realtime yet), full standings table
 feat(web): contestant dashboard — registered contests, upcoming, past results
 feat(web): admin UI — problem review queue, approve/reject with comment
-feat(web): deploy to CloudFront via GitHub Actions (pnpm build → S3 sync → invalidation)
+feat(web): admin UI — Polygon-style problem tester/validator/checker panels
+feat(web): deploy on Vercel initially or GCP/static hosting later
 ```
 
 **🔖 Release: `v0.2.0-alpha`** — first internal contest  
