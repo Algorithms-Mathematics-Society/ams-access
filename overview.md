@@ -8,9 +8,17 @@
 
 The overall AMS platform consists of four repositories:
 1. **`ams-access` (This Repository):** Cross-platform desktop application wrapping the contestant client and implementing low-level OS lockdown.
-2. **`contest-platform` (External):** The backend services, containing the Go API (REST endpoints, RBAC, billing, audit logging) and the sandboxed Judge Workers (running nsjail and Firecracker on EC2 Spot fleets).
-3. **`contest-web` (External):** The standard web contestant/admin dashboard (for non-desktop/low-stakes entries).
-4. **`infra` (External):** Provisioning code (Terraform & CDK) for VPCs, SQS queues, EKS/ECS clusters, RDS, and ElastiCache.
+2. **`contest-platform` (External):** The backend services, containing the Go API, auth/session validation, contest/question APIs, submission pipeline, audit logging, object-storage upload flows, and judging workers.
+3. **`contest-web` (External):** The browser-based contestant/admin dashboard. The admin side owns contest setup and problem authoring, including Polygon/Codeforces-style problem assets such as statements, testcases, validators, generators, checkers, and local tester tooling.
+4. **`infra` (External):** Provisioning and deployment for the backend and web surfaces. The near-term backend may remain on Vercel while the target platform is Google Cloud Platform (GCP), taking advantage of free credits for Cloud Run, Cloud SQL/Postgres-compatible storage, Cloud Storage buckets, Pub/Sub or Cloud Tasks, worker services, Secret Manager, and logging.
+
+Current platform direction as of 2026-05-27:
+
+- `contest-web` is the source of truth for admin workflows and problem setup.
+- Problems/questions created in the web admin dashboard should sync into `ams-access` through backend APIs; the desktop shell should not own authoring.
+- `ams-access` should remain backend-provider agnostic. It should depend on stable API contracts, signed upload URLs, and configured environment variables rather than AWS/GCP-specific assumptions.
+- Object storage is expected for screenshots, submissions, testcase assets, logs, diagnostics, and proctoring artifacts. In the GCP target this maps to Cloud Storage buckets.
+- Submission judging should be modeled as a queued worker pipeline. The Go backend can use goroutines inside API/worker services, but durable work should flow through a queue such as Pub/Sub or Cloud Tasks so crashes do not lose submissions.
 
 ---
 
@@ -143,4 +151,4 @@ All workspace operations are run from the project root using `pnpm` and `cargo`:
 - [ ] **macOS Support:** `CGEventTap` keyboard interceptors, Accessibility API audits, and system profiling hooks.
 - [ ] **Auth Token Hardening:** Cryptographic session tokens bound to local hardware profiles (CPU ID, MAC signature) to prevent session spoofing (Phase 2).
 - [ ] **Violation Backend Sync:** Uploading local violation lists (currently preserved in-memory using `OnceLock<Mutex<Vec<ViolationEntry>>>`) to the centralized Go backend immediately upon detection (Phase 2).
-- [ ] **Webcam Frame Archiving:** Direct background capturing of proctor webcam frames every 30s directly uploaded to secure S3 storage prefixes (Phase 3).
+- [ ] **Webcam Frame Archiving:** Direct background capturing of proctor webcam frames every 30s uploaded through signed object-storage URLs, likely Google Cloud Storage in the current GCP target (Phase 3).

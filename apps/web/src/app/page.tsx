@@ -1,13 +1,37 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
 
+function getLoginThemeColors(theme: "dark" | "light") {
+  const isLight = theme === "light";
+  return {
+    bg: isLight ? "#f7f4ee" : "#030408",
+    grid: isLight ? "rgba(68, 52, 94, 0.07)" : "rgba(255, 255, 255, 0.015)",
+    card: isLight ? "rgba(255, 255, 255, 0.94)" : "rgba(9, 9, 12, 0.95)",
+    cardBorder: isLight ? "rgba(124, 58, 237, 0.14)" : "rgba(255, 255, 255, 0.08)",
+    input: isLight ? "rgba(255, 255, 255, 0.86)" : "rgba(0, 0, 0, 0.45)",
+    inputBorder: isLight ? "rgba(124, 58, 237, 0.14)" : "rgba(255,255,255,0.08)",
+    inputShadow: isLight ? "inset 0 1px 2px rgba(80, 70, 55, 0.08)" : "inset 0 1px 3px rgba(0,0,0,0.6)",
+    text: isLight ? "#302a3b" : "#f8fafc",
+    muted: isLight ? "rgba(48, 42, 59, 0.54)" : "rgba(255,255,255,0.45)",
+    faint: isLight ? "rgba(48, 42, 59, 0.34)" : "rgba(255,255,255,0.28)",
+    accent: isLight ? "#7c3aed" : "#a855f7",
+    accentText: isLight ? "#6d28d9" : "#c084fc",
+    keycardBg: isLight ? "rgba(124, 58, 237, 0.06)" : "rgba(139, 92, 246, 0.05)",
+    keycardBorder: isLight ? "rgba(124, 58, 237, 0.18)" : "rgba(139, 92, 246, 0.16)",
+    shadow: isLight
+      ? "0 24px 64px rgba(80, 70, 55, 0.14), 0 0 0 1px rgba(124, 58, 237, 0.04)"
+      : "0 0 0 1px rgba(168, 85, 247, 0.03), 0 24px 64px rgba(0, 0, 0, 0.85), 0 0 48px rgba(168, 85, 247, 0.04)",
+  };
+}
+
 export default function LoginPage() {
   const router = useRouter();
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailFocused, setEmailFocused] = useState(false);
@@ -15,6 +39,22 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const c = getLoginThemeColors(theme);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("ams_theme");
+    if (saved === "dark" || saved === "light") {
+      setTheme(saved);
+    } else {
+      localStorage.setItem("ams_theme", "light");
+    }
+  }, []);
+
+  function toggleTheme() {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    localStorage.setItem("ams_theme", next);
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -77,14 +117,51 @@ export default function LoginPage() {
         padding: "24px",
         fontFamily: "var(--font-geist), 'Geist', 'Inter', system-ui, sans-serif",
         backgroundImage: `
-          linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px)
+          linear-gradient(${c.grid} 1px, transparent 1px),
+          linear-gradient(90deg, ${c.grid} 1px, transparent 1px)
         `,
-        backgroundSize: "28px 28px",
-        backgroundColor: "#030408",
+        backgroundSize: "56px 56px",
+        backgroundColor: c.bg,
         position: "relative",
+        transition: "background-color 260ms var(--ease-cinematic)",
       }}
     >
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
+        title={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
+        style={{
+          position: "absolute",
+          top: "24px",
+          right: "24px",
+          zIndex: 2,
+          width: "42px",
+          height: "42px",
+          borderRadius: "8px",
+          border: `1px solid ${c.cardBorder}`,
+          background: c.card,
+          color: c.accentText,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: theme === "light" ? "0 8px 24px rgba(80, 70, 55, 0.08)" : "0 8px 24px rgba(0,0,0,0.24)",
+          transition: "all 220ms var(--ease-cinematic)",
+        }}
+      >
+        {theme === "light" ? (
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M14.5 10.4A5.8 5.8 0 0 1 7.6 3.5a6 6 0 1 0 6.9 6.9Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <circle cx="9" cy="9" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.7 3.7l1.4 1.4M12.9 12.9l1.4 1.4M3.7 14.3l1.4-1.4M12.9 5.1l1.4-1.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        )}
+      </button>
+
       {/* ── Background centered ambient spotlights ── */}
       <div
         style={{
@@ -105,12 +182,11 @@ export default function LoginPage() {
         style={{
           width: "100%",
           maxWidth: "420px",
-          background: "rgba(9, 9, 12, 0.95)",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
+          background: c.card,
+          border: `1px solid ${c.cardBorder}`,
           borderRadius: "12px",
           padding: "44px 40px 36px",
-          boxShadow:
-            "0 0 0 1px rgba(168, 85, 247, 0.03), 0 24px 64px rgba(0, 0, 0, 0.85), 0 0 48px rgba(168, 85, 247, 0.04)",
+          boxShadow: c.shadow,
           position: "relative",
           overflow: "hidden",
           backdropFilter: "blur(12px)",
@@ -208,7 +284,7 @@ export default function LoginPage() {
             style={{
               fontSize: "14px",
               fontWeight: 500,
-              color: "#f8fafc",
+              color: c.text,
               letterSpacing: "0.15em",
               textTransform: "uppercase",
             }}
@@ -228,7 +304,7 @@ export default function LoginPage() {
                 fontSize: "9.5px",
                 fontWeight: 600,
                 letterSpacing: "0.14em",
-                color: emailFocused ? "#c084fc" : "rgba(255,255,255,0.4)",
+                color: emailFocused ? c.accentText : c.muted,
                 textTransform: "uppercase",
                 marginBottom: "8px",
                 transition: "color 200ms",
@@ -238,7 +314,7 @@ export default function LoginPage() {
               {emailFocused && (
                 <span
                   style={{
-                    color: "#c084fc",
+                    color: c.accentText,
                     animation: "blink-cursor 0.9s step-end infinite",
                     marginLeft: "5px",
                     fontWeight: "bold",
@@ -261,17 +337,17 @@ export default function LoginPage() {
               style={{
                 width: "100%",
                 padding: "13px 16px",
-                background: "rgba(0, 0, 0, 0.45)",
-                border: `1px solid ${emailFocused ? "#a855f7" : "rgba(255,255,255,0.08)"}`,
+                background: c.input,
+                border: `1px solid ${emailFocused ? c.accent : c.inputBorder}`,
                 borderRadius: "6px",
-                color: "#f8fafc",
+                color: c.text,
                 fontSize: "13px",
                 fontWeight: 400,
                 fontFamily: "'JetBrains Mono', 'IBM Plex Mono', monospace",
                 transition: "all 250ms var(--ease-cinematic)",
                 boxShadow: emailFocused
-                  ? "0 0 0 1px #a855f7, 0 0 16px rgba(168, 85, 247, 0.1), inset 0 1px 3px rgba(0,0,0,0.6)"
-                  : "inset 0 1px 3px rgba(0,0,0,0.6)",
+                  ? `0 0 0 1px ${c.accent}, 0 0 16px rgba(168, 85, 247, 0.1), ${c.inputShadow}`
+                  : c.inputShadow,
                 outline: "none",
                 boxSizing: "border-box",
               }}
@@ -287,7 +363,7 @@ export default function LoginPage() {
                 fontSize: "9.5px",
                 fontWeight: 600,
                 letterSpacing: "0.14em",
-                color: passwordFocused ? "#c084fc" : "rgba(255,255,255,0.4)",
+                color: passwordFocused ? c.accentText : c.muted,
                 textTransform: "uppercase",
                 marginBottom: "8px",
                 transition: "color 200ms",
@@ -297,7 +373,7 @@ export default function LoginPage() {
               {passwordFocused && (
                 <span
                   style={{
-                    color: "#c084fc",
+                    color: c.accentText,
                     animation: "blink-cursor 0.9s step-end infinite",
                     marginLeft: "5px",
                     fontWeight: "bold",
@@ -320,18 +396,18 @@ export default function LoginPage() {
               style={{
                 width: "100%",
                 padding: "13px 16px",
-                background: "rgba(0, 0, 0, 0.45)",
-                border: `1px solid ${passwordFocused ? "#a855f7" : "rgba(255,255,255,0.08)"}`,
+                background: c.input,
+                border: `1px solid ${passwordFocused ? c.accent : c.inputBorder}`,
                 borderRadius: "6px",
-                color: "#f8fafc",
+                color: c.text,
                 fontSize: "13px",
                 fontWeight: 400,
                 letterSpacing: "0.08em",
                 fontFamily: "'JetBrains Mono', 'IBM Plex Mono', monospace",
                 transition: "all 250ms var(--ease-cinematic)",
                 boxShadow: passwordFocused
-                  ? "0 0 0 1px #a855f7, 0 0 16px rgba(168, 85, 247, 0.1), inset 0 1px 3px rgba(0,0,0,0.6)"
-                  : "inset 0 1px 3px rgba(0,0,0,0.6)",
+                  ? `0 0 0 1px ${c.accent}, 0 0 16px rgba(168, 85, 247, 0.1), ${c.inputShadow}`
+                  : c.inputShadow,
                 outline: "none",
                 boxSizing: "border-box",
               }}
@@ -372,7 +448,7 @@ export default function LoginPage() {
 
           {/* Continue button */}
           <div style={{ marginTop: "24px" }}>
-            <ContinueButton loading={loading} isTyping={isTyping} />
+            <ContinueButton loading={loading} isTyping={isTyping} theme={theme} />
           </div>
 
           {/* Divider */}
@@ -388,13 +464,13 @@ export default function LoginPage() {
               style={{
                 flex: 1,
                 height: "1px",
-                background: "rgba(255,255,255,0.05)",
+                background: theme === "light" ? "rgba(48,42,59,0.08)" : "rgba(255,255,255,0.05)",
               }}
             />
             <span
               style={{
                 fontSize: "9px",
-                color: "rgba(255,255,255,0.28)",
+                color: c.faint,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
                 fontWeight: 500,
@@ -407,12 +483,17 @@ export default function LoginPage() {
               style={{
                 flex: 1,
                 height: "1px",
-                background: "rgba(255,255,255,0.05)",
+                background: theme === "light" ? "rgba(48,42,59,0.08)" : "rgba(255,255,255,0.05)",
               }}
             />
           </div>
 
-          <SSOButton />
+          <SSOButton
+            theme={theme}
+            onUnavailable={() =>
+              setError("SSO_UNAVAILABLE: Institution SSO is not configured in this build.")
+            }
+          />
         </form>
 
         {/* Footer */}
@@ -420,7 +501,7 @@ export default function LoginPage() {
           style={{
             marginTop: "28px",
             fontSize: "10.5px",
-            color: "rgba(255,255,255,0.22)",
+            color: c.faint,
             textAlign: "center",
             letterSpacing: "0.02em",
             lineHeight: 1.6,
@@ -432,21 +513,25 @@ export default function LoginPage() {
       </div>
 
       {/* ── Test credentials hint (Secure Auto-Fill Keycard) ── */}
-      <div
+      <button
+        type="button"
         onClick={handleAutoFill}
+        disabled={isTyping || loading}
         style={{
           marginTop: "20px",
           padding: "14px 20px",
-          background: "rgba(139, 92, 246, 0.05)",
-          border: "1px solid rgba(139, 92, 246, 0.16)",
+          background: c.keycardBg,
+          border: `1px solid ${c.keycardBorder}`,
           borderRadius: "8px",
           maxWidth: "420px",
           width: "100%",
           cursor: isTyping || loading ? "not-allowed" : "pointer",
+          textAlign: "left",
           transition: "all 300ms cubic-bezier(0.16, 1, 0.3, 1)",
           boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
           position: "relative",
           overflow: "hidden",
+          font: "inherit",
         }}
         className="secure-keycard"
       >
@@ -461,7 +546,7 @@ export default function LoginPage() {
           <p
             style={{
               fontSize: "9.5px",
-              color: "#c084fc",
+              color: c.accentText,
               fontWeight: 600,
               letterSpacing: "0.12em",
               textTransform: "uppercase",
@@ -473,7 +558,7 @@ export default function LoginPage() {
           <span
             style={{
               fontSize: "8.5px",
-              color: "#a855f7",
+              color: c.accent,
               fontFamily: "'JetBrains Mono', monospace",
               background: "rgba(168, 85, 247, 0.12)",
               padding: "2px 6px",
@@ -487,7 +572,7 @@ export default function LoginPage() {
         <div
           style={{
             fontSize: "11.5px",
-            color: "rgba(255,255,255,0.5)",
+            color: c.muted,
             fontWeight: 300,
             lineHeight: 1.8,
             fontFamily: "'IBM Plex Mono', 'Fira Code', monospace",
@@ -498,7 +583,7 @@ export default function LoginPage() {
           <span>EMAIL: {TEST_EMAIL}</span>
           <span>PASS: {TEST_PASSWORD}</span>
         </div>
-      </div>
+      </button>
 
       {/* Global CSS Styles Injection */}
       <style>{`
@@ -539,9 +624,18 @@ export default function LoginPage() {
   );
 }
 
-function ContinueButton({ loading, isTyping }: { loading: boolean; isTyping: boolean }) {
+function ContinueButton({
+  loading,
+  isTyping,
+  theme,
+}: {
+  loading: boolean;
+  isTyping: boolean;
+  theme: "dark" | "light";
+}) {
   const [hovered, setHovered] = useState(false);
   const disabled = loading || isTyping;
+  const c = getLoginThemeColors(theme);
 
   return (
     <button
@@ -558,7 +652,7 @@ function ContinueButton({ loading, isTyping }: { loading: boolean; isTyping: boo
           : "linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #c084fc 100%)",
         border: "none",
         borderRadius: "6px",
-        color: disabled ? "rgba(255,255,255,0.35)" : "#ffffff",
+        color: disabled ? c.faint : "#ffffff",
         fontSize: "12.5px",
         fontWeight: 600,
         letterSpacing: "0.08em",
@@ -632,21 +726,29 @@ function Spinner() {
   );
 }
 
-function SSOButton() {
+function SSOButton({
+  theme,
+  onUnavailable,
+}: {
+  theme: "dark" | "light";
+  onUnavailable: () => void;
+}) {
   const [hovered, setHovered] = useState(false);
+  const c = getLoginThemeColors(theme);
 
   return (
     <button
       type="button"
+      onClick={onUnavailable}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         width: "100%",
         padding: "12px 20px",
-        background: hovered ? "rgba(168, 85, 247, 0.04)" : "transparent",
-        border: `1px solid ${hovered ? "rgba(168, 85, 247, 0.35)" : "rgba(255,255,255,0.06)"}`,
+        background: hovered ? "rgba(168, 85, 247, 0.06)" : "transparent",
+        border: `1px solid ${hovered ? "rgba(168, 85, 247, 0.35)" : c.inputBorder}`,
         borderRadius: "6px",
-        color: hovered ? "#c084fc" : "rgba(255,255,255,0.45)",
+        color: hovered ? c.accentText : c.muted,
         fontSize: "12px",
         fontWeight: 400,
         letterSpacing: "0.04em",
@@ -668,7 +770,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.45)"}
+          stroke={hovered ? c.accentText : c.muted}
           strokeWidth="1.2"
         />
         <rect
@@ -677,7 +779,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.45)"}
+          stroke={hovered ? c.accentText : c.muted}
           strokeWidth="1.2"
         />
         <rect
@@ -686,7 +788,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.45)"}
+          stroke={hovered ? c.accentText : c.muted}
           strokeWidth="1.2"
         />
         <rect
@@ -695,7 +797,7 @@ function SSOButton() {
           width="5"
           height="5"
           rx="1"
-          stroke={hovered ? "#c084fc" : "rgba(255,255,255,0.45)"}
+          stroke={hovered ? c.accentText : c.muted}
           strokeWidth="1.2"
         />
       </svg>

@@ -214,3 +214,127 @@ Every assistant that contributes should append a new timestamped entry instead o
 
 - Clean up user-facing components on the Contestant Command Hub (`apps/web/src/app/home/page.tsx`) to match the pruned requirements exactly.
 - Wire native desktop process-sweeps and secure telemetry signals directly to the dashboard HUD.
+
+---
+
+## 2026-05-27T03:15:00+05:30 — Gemini (Antigravity)
+
+### Summary
+
+- **Session Readiness Pre-flight Handshake Portal**:
+  - Implemented an immersive, glassmorphic pre-flight modal overlay (`SessionReadinessModal`) that intercepts all navigation paths entering or resuming a secure contest session.
+  - Formulated a dynamic readiness score calculation matching the user specifications: network stability (30%), secure env/virtualization shields (35%), permissions (20%), and audio/optical devices (15%). If only the camera is disconnected, this precisely returns `92% Ready` with a Connection Delay penalty of `45 seconds`.
+  - Added an SVG circular scanner widget with dynamic glow indicators, color-mapped diagnostic signals, and an interactive monospace terminal console (`[SYS] Probing... [NET] stable (22ms)`) that types out active probes sequentially.
+  - Refactored the mounting hardware probe routines into a reusable, cancellation-aware `runIntegrityScan()` function. Added triggers for Rescan, Configure Hardware (settings shortcut), and Bypass (forcing session entry).
+  - Upgraded standard status labels to glowing, high-fidelity neon LED capsule lights (green and amber status signals with active pulse reflections) for an elegant appearance.
+- **Incident Reporting / Support Portal**:
+  - Integrated a premium, glassmorphic "Incident Support Enclave" button next to "Submit & Exit" in the contestant exam header page (`apps/web/src/app/session/contest/client.tsx`).
+  - Added the "Report Issue" action triggering a diagnostic modal with categories matching the operations requirements (Camera not detected, Internet unstable, App crashed, Fullscreen issue, Audio issue, Submission issue, and Custom details description).
+  - Configured automatic system telemetry gathering: the report captures user agent details, screen resolutions, violation histories, and session metadata. Displayed this inside a beautiful dark green monospace console box.
+  - Styled sending state transformations with an elegant, compiling transmission loader and secure check success confirmation.
+- **About / Legal Settings Tab**:
+  - Added an immersive "About / Legal" tab container in Settings showing structured sections for Privacy Policy, Terms of Service, Open Source Licenses, and System Version.
+  - Configured external links with `target="_blank"` and launch indicators to gracefully open legal documents in external browser pages.
+- **Login Screen Grid Spacing**:
+  - Doubled the background grid pattern size from `28px` to `56px` in `apps/web/src/app/page.tsx`, significantly reducing grid density for a cleaner, premium visual presentation.
+
+### Files Changed
+
+- `apps/web/src/app/home/page.tsx`
+  - Added pre-flight intercept states and conditional rendering block.
+  - Refactored mounting sweeps into reusable `runIntegrityScan`.
+  - Implemented `SessionReadinessModal`, `PreflightCheckItem`, and dynamic score formulas.
+- `apps/web/src/app/session/contest/client.tsx`
+  - Declared support states and simulated post transmission actions.
+  - Added "Report Issue" button to contestant header actions.
+  - Rendered glassmorphic support incident overlay panel with JSON diagnostics container.
+- `gpt-gem.md`
+  - Appended this shared work log entry.
+
+### Commands / Checks
+
+- `pnpm --filter @ams/web typecheck` (Passed with 0 type errors).
+- `pnpm --filter @ams/web build` (Passed with 0 compile errors, exit code 0).
+
+### Open Questions / Next Steps
+
+- Expose the telemetry support incidents endpoint in the main Go/Rust API layer.
+- Wire Tauri-native remote desktop detections on Windows into the secure proctoring scan loop.
+
+---
+
+## 2026-05-27T03:25:28+05:30 — GPT/Codex
+
+### Summary
+
+- Read the repo markdown context and the existing About / Legal Settings tab references.
+- Added first-class static legal routes for:
+  - Privacy Policy at `/privacy`
+  - Terms of Service at `/terms`
+  - Open Source Licenses at `/licenses`
+- Added a shared legal page layout matching the dark AMS Access shell aesthetic.
+- Updated Settings About / Legal links from placeholder `ams-derive.local` URLs to local routes.
+- Corrected the displayed system version from `v1.2.4-stable` to `v0.1.0`.
+- Spawned one review subagent per legal page and applied their findings:
+  - Privacy: disclosed local face snapshot storage, third-party connectivity probes, local-storage limits, and network-lockdown persistence after crash.
+  - Terms: narrowed permitted use to contestants/session participants, added organizer responsibilities, readiness-bypass review language, local violation-data nuance, and warranty/liability limitation language.
+  - Licenses: narrowed MIT wording to the Rust workspace, added native system-library caveats, and made lockfile/source wording less overconfident because the lockfile can contain stale entries.
+
+### Files Changed
+
+- `apps/web/src/app/legal-page.tsx`
+- `apps/web/src/app/privacy/page.tsx`
+- `apps/web/src/app/terms/page.tsx`
+- `apps/web/src/app/licenses/page.tsx`
+- `apps/web/src/app/home/page.tsx`
+- `gpt-gem.md`
+
+### Commands / Checks
+
+- `pnpm --filter @ams/web typecheck`
+  - Passed.
+  - Environment warning: current Node is `v18.19.1`, while the workspace asks for Node `>=20`.
+- `pnpm --filter @ams/web build`
+  - Passed.
+  - Exported `/privacy`, `/terms`, and `/licenses` as static routes.
+- Legal review subagents:
+  - Privacy reviewer completed; findings applied.
+  - Terms reviewer completed; findings applied.
+  - Licenses reviewer completed; findings applied.
+
+### Open Questions / Next Steps
+
+- Consider regenerating or auditing `pnpm-lock.yaml`; it still contains entries that may no longer be direct app dependencies.
+- Consider adding an explicit "clear all local AMS data" action so sign-out behavior and privacy expectations are easier to align.
+
+---
+
+## 2026-05-27T03:52:34+05:30 — GPT/Codex
+
+### Summary
+
+- Updated repository planning context based on the team direction:
+  - `contest-web` owns the browser/admin dashboard.
+  - Admin problem authoring should support Polygon/Codeforces-style assets such as statements, testcases, validators, generators, checkers, and tester tooling.
+  - Problems/questions sync into `ams-access` through backend APIs; the desktop shell should not own authoring.
+  - Backend is currently understood to be on Vercel, with target migration toward GCP using Cloud Run, Cloud SQL/Postgres-compatible DB, Cloud Storage, Pub/Sub or Cloud Tasks, worker services, Secret Manager, and logging.
+  - `ams-access` should stay backend-provider agnostic and depend on stable API contracts plus signed upload URLs.
+- Updated the audit direction to include the GCP/backend context and added a dedicated Admin/Problem Sync Contract phase.
+- Marked older AWS/Supabase roadmap assumptions as legacy equivalents where appropriate.
+
+### Files Changed
+
+- `overview.md`
+- `CLAUDE.md`
+- `plan.md`
+- `audit-27may-20260527-032852.md`
+- `gpt-gem.md`
+
+### Commands / Checks
+
+- `rg` checks across the modified markdown files confirmed the new Vercel/GCP/admin/problem-sync context is present.
+
+### Open Questions / Next Steps
+
+- Decide the exact managed database choice on GCP: Cloud SQL Postgres, AlloyDB trial, or another Postgres-compatible option.
+- Define the first `ContestBundle` / question-sync API contract between `contest-web`, backend, and `ams-access`.

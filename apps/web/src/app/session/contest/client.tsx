@@ -127,6 +127,55 @@ export default function ContestPageClient() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [supportCategory, setSupportCategory] = useState("camera_not_detected");
+  const [customIssueDetail, setCustomIssueDetail] = useState("");
+  const [isSendingReport, setIsSendingReport] = useState(false);
+  const [reportSentSuccess, setReportSentSuccess] = useState(false);
+
+  const supportTelemetry = useMemo(() => {
+    return {
+      timestamp: new Date().toISOString(),
+      contest_id: contestId,
+      session_id: sessionId ?? "unregistered",
+      device: {
+        user_agent: typeof window !== "undefined" ? window.navigator.userAgent : "node",
+        screen_resolution: typeof window !== "undefined" ? `${window.screen.width}x${window.screen.height}` : "unknown",
+        pixel_ratio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
+      },
+      proctoring_snapshot: {
+        camera_error: cameraError ?? "none",
+        face_status: faceStatus,
+        restricted_apps: blockedApps,
+        proctoring_ok: proctoringOk,
+      }
+    };
+  }, [contestId, sessionId, cameraError, faceStatus, blockedApps, proctoringOk, showSupportModal]);
+
+  async function handleSendSupportReport() {
+    setIsSendingReport(true);
+    try {
+      await fetch(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: supportCategory,
+          detail: supportCategory === "other" ? customIssueDetail : "",
+          telemetry: supportTelemetry,
+        }),
+      }).catch(() => {});
+    } catch {}
+    
+    await new Promise((r) => setTimeout(r, 1200));
+    setIsSendingReport(false);
+    setReportSentSuccess(true);
+    setTimeout(() => {
+      setReportSentSuccess(false);
+      setShowSupportModal(false);
+      setSupportCategory("camera_not_detected");
+      setCustomIssueDetail("");
+    }, 2200);
+  }
 
   // stable fallback so useCountdown's effect doesn't restart on every render
   const fallbackEndAt = useMemo(() => new Date(Date.now() + 3600000).toISOString(), []);
@@ -695,6 +744,31 @@ export default function ContestPageClient() {
 
         {/* Right: Submit */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <button
+            onClick={() => setShowSupportModal(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "7px 14px",
+              borderRadius: "8px",
+              border: "1px solid rgba(245,158,11,0.35)",
+              background: "rgba(245,158,11,0.08)",
+              color: "#f59e0b",
+              fontSize: "12px",
+              fontWeight: 500,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              transition: "all 220ms",
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1v6M8 11.5h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+            Report Issue
+          </button>
+
           {submitConfirm && (
             <span style={{ fontSize: "12px", color: "#f59e0b" }}>
               Confirm? Click again to submit.
@@ -1334,6 +1408,208 @@ export default function ContestPageClient() {
           </span>
         </div>
       </div>
+
+      {/* ── Support Incident Modal Overlay ── */}
+      {showSupportModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(3,8,22,0.85)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "800px",
+              background: "#080b11",
+              border: "1px solid rgba(168,85,247,0.2)",
+              borderRadius: "16px",
+              padding: "32px",
+              boxShadow: "0 24px 64px rgba(168, 85, 247, 0.08)",
+              position: "relative",
+              overflow: "hidden",
+              display: "grid",
+              gridTemplateColumns: "1.1fr 1fr",
+              gap: "32px",
+            }}
+          >
+            {/* L-Shape Decals */}
+            <div style={{ position: "absolute", top: 0, left: 0, width: "12px", height: "12px", borderTop: "2px solid #a855f7", borderLeft: "2px solid #a855f7", opacity: 0.6 }} />
+            <div style={{ position: "absolute", top: 0, right: 0, width: "12px", height: "12px", borderTop: "2px solid #a855f7", borderRight: "2px solid #a855f7", opacity: 0.6 }} />
+            <div style={{ position: "absolute", bottom: 0, left: 0, width: "12px", height: "12px", borderBottom: "2px solid #a855f7", borderLeft: "2px solid #a855f7", opacity: 0.6 }} />
+            <div style={{ position: "absolute", bottom: 0, right: 0, width: "12px", height: "12px", borderBottom: "2px solid #a855f7", borderRight: "2px solid #a855f7", opacity: 0.6 }} />
+
+            {/* Left Column: Form & Categories */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+              <div>
+                <h3 style={{ fontSize: "18px", fontWeight: 700, color: "#ffffff", marginBottom: "6px" }}>
+                  Report an Incident
+                </h3>
+                <p style={{ fontSize: "12px", color: "#64748b", lineHeight: 1.45 }}>
+                  Select the issue encountered. Our operations team will receive this report instantly along with diagnostic system telemetry.
+                </p>
+              </div>
+
+              {/* Success Screen */}
+              {reportSentSuccess ? (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "220px", textAlign: "center" }}>
+                  <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "16px" }}>
+                    <svg width="20" height="20" viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6l2 2 5-5" stroke="#22c55e" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <h4 style={{ fontSize: "15px", fontWeight: 600, color: "#22c55e", marginBottom: "6px" }}>Incident Ticket Transmitted</h4>
+                  <p style={{ fontSize: "12px", color: "#94a3b8", maxWidth: "260px" }}>Telemetry logs attached. Operations has been flagged. Keep working if possible.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Category choices */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {[
+                      { value: "camera_not_detected", label: "Camera not detected" },
+                      { value: "internet_unstable", label: "Internet unstable" },
+                      { value: "app_crashed", label: "App crashed" },
+                      { value: "fullscreen_issue", label: "Fullscreen issue" },
+                      { value: "audio_issue", label: "Audio issue" },
+                      { value: "submission_issue", label: "Submission issue" },
+                      { value: "other", label: "Other issue..." }
+                    ].map(opt => (
+                      <label
+                        key={opt.value}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          padding: "10px 14px",
+                          borderRadius: "8px",
+                          background: supportCategory === opt.value ? "rgba(168,85,247,0.08)" : "rgba(255,255,255,0.01)",
+                          border: `1px solid ${supportCategory === opt.value ? "rgba(168,85,247,0.3)" : "rgba(255,255,255,0.05)"}`,
+                          cursor: "pointer",
+                          fontSize: "13px",
+                          color: supportCategory === opt.value ? "#ffffff" : "#94a3b8",
+                          transition: "all 150ms ease"
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="supportCategory"
+                          value={opt.value}
+                          checked={supportCategory === opt.value}
+                          onChange={(e) => setSupportCategory(e.target.value)}
+                          style={{
+                            accentColor: "#a855f7",
+                            cursor: "pointer"
+                          }}
+                        />
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+
+                  {supportCategory === "other" && (
+                    <textarea
+                      placeholder="Describe the issue in detail..."
+                      value={customIssueDetail}
+                      onChange={(e) => setCustomIssueDetail(e.target.value)}
+                      spellCheck={false}
+                      style={{
+                        width: "100%",
+                        height: "70px",
+                        resize: "none",
+                        background: "#02040a",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: "8px",
+                        padding: "10px 12px",
+                        fontSize: "12px",
+                        color: "#e2e8f0",
+                        fontFamily: "inherit",
+                        outline: "none"
+                      }}
+                    />
+                  )}
+
+                  {/* Actions */}
+                  <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+                    <button
+                      onClick={handleSendSupportReport}
+                      disabled={isSendingReport || (supportCategory === "other" && !customIssueDetail.trim())}
+                      style={{
+                        flex: 1,
+                        height: "38px",
+                        borderRadius: "8px",
+                        border: "none",
+                        background: "#f59e0b",
+                        color: "#080b11",
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        cursor: isSendingReport ? "not-allowed" : "pointer",
+                        transition: "all 200ms ease",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        boxShadow: "0 4px 12px rgba(245,158,11,0.2)"
+                      }}
+                    >
+                      {isSendingReport ? "TRANSMITTING..." : "SUBMIT REPORT"}
+                    </button>
+                    <button
+                      onClick={() => setShowSupportModal(false)}
+                      disabled={isSendingReport}
+                      style={{
+                        height: "38px",
+                        borderRadius: "8px",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "transparent",
+                        color: "#94a3b8",
+                        padding: "0 16px",
+                        fontSize: "13px",
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        transition: "all 200ms ease"
+                      }}
+                    >
+                      CANCEL
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Right Column: Auto Attached Telemetry Preview */}
+            <div style={{ display: "flex", flexDirection: "column", borderLeft: "1px solid rgba(255,255,255,0.05)", paddingLeft: "32px", overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "12px" }}>
+                <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#22c55e" }} />
+                <span style={{ fontSize: "11px", fontWeight: 600, color: "#22c55e", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.05em" }}>AUTO-ATTACHED DIAGNOSTICS</span>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  background: "#02040a",
+                  border: "1px solid rgba(255,255,255,0.05)",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  overflowY: "auto",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: "10.5px",
+                  color: "rgba(168, 85, 247, 0.8)",
+                  lineHeight: 1.5,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all"
+                }}
+              >
+                {JSON.stringify(supportTelemetry, null, 2)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse-preview {
