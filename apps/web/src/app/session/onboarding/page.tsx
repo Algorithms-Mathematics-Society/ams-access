@@ -2,6 +2,27 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+
+function getNetworkProbeHost() {
+  try {
+    return new URL(API_URL).hostname;
+  } catch {}
+  return "localhost";
+}
+
+function getOrCreateDeviceId() {
+  const existing = localStorage.getItem("ams_device_id");
+  if (existing) return existing;
+  const generated =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem("ams_device_id", generated);
+  return generated;
+}
 
 // ─── Tauri bridge ─────────────────────────────────────────────────────────────
 declare const window: Window & {
@@ -48,6 +69,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
     promise
       .then(resolve)
       .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+function withNullableTimeout<T>(promise: Promise<T | null>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise
+      .then(resolve)
+      .catch(() => resolve(null))
       .finally(() => clearTimeout(timer));
   });
 }
@@ -108,21 +139,21 @@ interface Stage {
 }
 
 const STAGES: Omit<Stage, "status">[] = [
-  { id: 1, label: "Preparing Your Session", group: "GETTING READY" },
-  { id: 2, label: "Secure Full-Screen", group: "GETTING READY" },
-  { id: 3, label: "Display Check", group: "GETTING READY" },
-  { id: 4, label: "Keyboard Setup", group: "GETTING READY" },
-  { id: 5, label: "Setup Verification", group: "CHECKING YOUR SETUP" },
-  { id: 6, label: "Application Check", group: "CHECKING YOUR SETUP" },
-  { id: 7, label: "Device Compatibility", group: "CHECKING YOUR SETUP" },
-  { id: 8, label: "Camera Setup", group: "IDENTITY VERIFICATION" },
-  { id: 9, label: "Face Scan", group: "IDENTITY VERIFICATION" },
-  { id: 10, label: "Presence Check", group: "IDENTITY VERIFICATION" },
-  { id: 11, label: "Microphone Check", group: "CONNECTIVITY" },
-  { id: 12, label: "Connection Check", group: "CONNECTIVITY" },
-  { id: 13, label: "Final Review", group: "FINAL STEPS" },
-  { id: 14, label: "Starting Session", group: "FINAL STEPS" },
-  { id: 15, label: "Entering Contest", group: "FINAL STEPS" },
+  { id: 1, label: "Preparing Your Session", group: "Workspace Lockdown" },
+  { id: 2, label: "Secure Full-Screen", group: "Workspace Lockdown" },
+  { id: 3, label: "Display Check", group: "Workspace Lockdown" },
+  { id: 4, label: "Keyboard Setup", group: "Workspace Lockdown" },
+  { id: 5, label: "Setup Verification", group: "System Checks" },
+  { id: 6, label: "Application Check", group: "System Checks" },
+  { id: 7, label: "Device Compatibility", group: "System Checks" },
+  { id: 8, label: "Camera Setup", group: "Media Setup" },
+  { id: 9, label: "Face Scan", group: "Identity Scan" },
+  { id: 10, label: "Presence Check", group: "Identity Scan" },
+  { id: 11, label: "Microphone Check", group: "Media Setup" },
+  { id: 12, label: "Connection Check", group: "Finalizing" },
+  { id: 13, label: "Final Review", group: "Finalizing" },
+  { id: 14, label: "Starting Session", group: "Finalizing" },
+  { id: 15, label: "Entering Contest", group: "Finalizing" },
 ];
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
@@ -399,63 +430,55 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
 function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [done, setDone] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    let progressed = false;
+  const runDetection = useCallback(async () => {
+    setScanning(true);
+    setDone(false);
 
-    const progress = () => {
-      if (cancelled || progressed) return;
-      progressed = true;
-      setDone(true);
-      setTimeout(() => {
-        if (!cancelled) onPass();
-      }, 1200);
-    };
-
-    async function go() {
-      let mons: MonitorInfo[] = [];
-      try {
-        const win = await tauriWindow();
-        if (win) {
-          let monitorsPromise: Promise<MonitorInfo[]>;
-          try {
-            monitorsPromise = win.availableMonitors();
-          } catch {
-            monitorsPromise = Promise.resolve([]);
-          }
-          mons = await Promise.race([
-            monitorsPromise,
-            new Promise<MonitorInfo[]>((resolve) => setTimeout(() => resolve([]), 2000)),
-          ]).catch(() => [] as MonitorInfo[]);
+    let mons: MonitorInfo[] = [];
+    try {
+      const win = await tauriWindow();
+      if (win) {
+        let monitorsPromise: Promise<MonitorInfo[]>;
+        try {
+          monitorsPromise = win.availableMonitors();
+        } catch {
+          monitorsPromise = Promise.resolve([]);
         }
-      } catch {
-        mons = [];
+        mons = await Promise.race([
+          monitorsPromise,
+          new Promise<MonitorInfo[]>((resolve) => setTimeout(() => resolve([]), 2000)),
+        ]).catch(() => [] as MonitorInfo[]);
       }
-
-      if (cancelled) return;
-
-      const list = mons.length
-        ? mons
-        : [
-            {
-              name: "Primary Display",
-              position: { x: 0, y: 0 },
-              size: { width: window.screen.width, height: window.screen.height },
-              scaleFactor: window.devicePixelRatio,
-            },
-          ];
-      setMonitors(list);
-      setTimeout(progress, 900);
+    } catch {
+      mons = [];
     }
 
-    const failSafe = setTimeout(progress, 3500);
-    void go();
-    return () => {
-      cancelled = true;
-      clearTimeout(failSafe);
-    };
+    const list = mons.length
+      ? mons
+      : [
+          {
+            name: "Primary Display",
+            position: { x: 0, y: 0 },
+            size: { width: window.screen.width, height: window.screen.height },
+            scaleFactor: window.devicePixelRatio,
+          },
+        ];
+    setMonitors(list);
+    setScanning(false);
+    setDone(true);
+
+    if (list.length === 1) {
+      setTimeout(() => {
+        onPass();
+      }, 1200);
+    }
   }, [onPass]);
+
+  useEffect(() => {
+    void runDetection();
+  }, [runDetection]);
 
   return (
     <div className="flex flex-col items-center">
@@ -498,32 +521,75 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
       </div>
 
       {done && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px", textAlign: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            textAlign: "center",
+            alignItems: "center",
+          }}
+        >
           <CheckLine
             label={`${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`}
-            status="pass"
+            status={monitors.length > 1 ? "warn" : "pass"}
           />
           {monitors.length > 1 ? (
-            <CheckLine
-              label="Additional screens found — please use your main screen only"
-              status="warn"
-            />
+            <>
+              <CheckLine
+                label="Multiple displays active — please disconnect external screens"
+                status="warn"
+              />
+              <button
+                type="button"
+                onClick={runDetection}
+                disabled={scanning}
+                style={{
+                  marginTop: "20px",
+                  padding: "12px 24px",
+                  borderRadius: "8px",
+                  background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
+                  border: "none",
+                  color: "#ffffff",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: scanning ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 14px rgba(168, 85, 247, 0.4)",
+                  transition: "all 200ms var(--ease-cinematic)",
+                  fontFamily: "inherit",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+                onMouseEnter={(e) => {
+                  if (!scanning) {
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.boxShadow = "0 6px 20px rgba(168, 85, 247, 0.6)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!scanning) {
+                    e.currentTarget.style.transform = "none";
+                    e.currentTarget.style.boxShadow = "0 4px 14px rgba(168, 85, 247, 0.4)";
+                  }
+                }}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  style={{ animation: scanning ? "spin 1.2s linear infinite" : "none" }}
+                >
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                </svg>
+                {scanning ? "Scanning..." : "Re-detect Connected Displays"}
+              </button>
+            </>
           ) : (
             <CheckLine label="Single screen confirmed" status="pass" />
-          )}
-          {monitors.length > 1 && (
-            <p
-              style={{
-                marginTop: "14px",
-                fontSize: "13px",
-                color: "#f59e0b",
-                maxWidth: "320px",
-                textAlign: "center",
-                lineHeight: 1.65,
-              }}
-            >
-              Only your main screen may be used during the contest.
-            </p>
           )}
         </div>
       )}
@@ -538,7 +604,10 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   useEffect(() => {
     async function go() {
       setPhase(1);
-      const result = await invoke<{ active: boolean }>("enable_keyboard_intercept");
+      const result = await withNullableTimeout(
+        invoke<{ active: boolean }>("enable_keyboard_intercept"),
+        2500
+      );
       if (result?.active !== true) {
         setLockFailed(true);
       }
@@ -649,7 +718,10 @@ function Stage5_EnvironmentValidation({ onPass }: { onPass(): void }) {
       resolveCheck("Full-screen mode", isFs ? "pass" : "warn");
 
       pushCheck("Keyboard controls");
-      const kbr = await invoke<{ active: boolean }>("enable_keyboard_intercept");
+      const kbr = await withNullableTimeout(
+        invoke<{ active: boolean }>("enable_keyboard_intercept"),
+        2500
+      );
       resolveCheck("Keyboard controls", kbr?.active ? "pass" : "warn");
 
       pushCheck("Screen capture guard");
@@ -699,7 +771,10 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
     setScanning(true);
     setCleared(false);
     await new Promise((r) => setTimeout(r, 600));
-    const result = await invoke<{ found: string[]; clean: boolean }>("scan_processes");
+    const result = await withNullableTimeout(
+      invoke<{ found: string[]; clean: boolean }>("scan_processes"),
+      3000
+    );
     const foundApps = result?.found ?? [];
     setFound(foundApps);
     setScanning(false);
@@ -815,8 +890,9 @@ function Stage7_VMDetection({ onPass }: { onPass(): void }) {
 
   useEffect(() => {
     async function go() {
-      const result = await invoke<{ detected: boolean; platform: string | null }>(
-        "detect_virtualization"
+      const result = await withNullableTimeout(
+        invoke<{ detected: boolean; platform: string | null }>("detect_virtualization"),
+        3000
       );
       await new Promise((r) => setTimeout(r, 1400));
       if (result?.detected) {
@@ -1149,12 +1225,22 @@ function Stage9_FaceCalibration({
         ctx.scale(-1, 1);
         ctx.drawImage(video, 0, 0, cap.width, cap.height);
         ctx.restore();
-        const dataUrl = cap.toDataURL("image/png");
         try {
-          await window.__TAURI__?.core.invoke("save_face_image", {
-            imageData: dataUrl,
-            index: 0,
-          });
+          const blob = await new Promise<Blob | null>((resolve) =>
+            cap.toBlob(resolve, "image/png")
+          );
+          if (blob) {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result));
+              reader.onerror = () => reject(reader.error ?? new Error("Face capture read failed"));
+              reader.readAsDataURL(blob);
+            });
+            await window.__TAURI__?.core.invoke("save_face_image", {
+              imageData: dataUrl,
+              index: 0,
+            });
+          }
         } catch {}
       }
     }
@@ -1349,7 +1435,7 @@ function Stage9_FaceCalibration({
 
   // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
-    const EMA = 0.3;
+    const EMA = 0.08;
     const DETECT_INTERVAL = 250;
 
     let prevFP = false;
@@ -1563,33 +1649,23 @@ function Stage9_FaceCalibration({
 
       if (keypoints?.length) {
         ctx.save();
-        const boxGrad = ctx.createLinearGradient(
-          dCX - dW / 2,
-          dCY - dH / 2,
-          dCX + dW / 2,
-          dCY + dH / 2
-        );
-        boxGrad.addColorStop(0, `rgba(${rgb},${qk ? 0.9 : 0.55})`);
-        boxGrad.addColorStop(1, `rgba(255,255,255,${qk ? 0.15 : 0.05})`);
-        ctx.strokeStyle = boxGrad;
-        ctx.lineWidth = qk ? 2.2 : 1.3;
-        ctx.setLineDash(qk ? [] : [6, 4]);
-        (
-          [
-            [dCX - dW / 2, dCY - dH / 2, 1, 1],
-            [dCX + dW / 2, dCY - dH / 2, -1, 1],
-            [dCX - dW / 2, dCY + dH / 2, 1, -1],
-            [dCX + dW / 2, dCY + dH / 2, -1, -1],
-          ] as [number, number, number, number][]
-        ).forEach(([x, y, dx, dy]) => {
-          const arm = Math.min(20, dW * 0.24, dH * 0.24);
-          ctx.beginPath();
-          ctx.moveTo(x + dx * arm, y);
-          ctx.lineTo(x, y);
-          ctx.lineTo(x, y + dy * arm);
-          ctx.stroke();
-        });
+        ctx.beginPath();
+        const faceRadius = Math.max(dW, dH) * 0.6;
+        ctx.arc(dCX, dCY, faceRadius, 0, Math.PI * 2);
+        if (qk) {
+          ctx.strokeStyle = "rgba(34, 197, 94, 0.9)";
+          ctx.lineWidth = 3;
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = "rgba(34, 197, 94, 0.6)";
+        } else {
+          ctx.strokeStyle = `rgba(${rgb}, 0.55)`;
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([6, 4]);
+          ctx.shadowBlur = 0;
+        }
+        ctx.stroke();
         ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
         ctx.fillStyle = `rgba(${rgb},0.75)`;
         keypoints.forEach((point, idx) => {
           ctx.beginPath();
@@ -2005,10 +2081,17 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
         analyserRef.current = analyser;
 
         const data = new Uint8Array(analyser.frequencyBinCount);
-        function tick() {
+        let lastUiUpdate = 0;
+        function tick(now: number) {
           analyser.getByteFrequencyData(data);
-          const avg = data.reduce((a, b) => a + b, 0) / data.length;
-          setLevel(Math.min(100, avg * 2.5));
+          if (now - lastUiUpdate >= 125) {
+            lastUiUpdate = now;
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            setLevel((prev) => {
+              const next = Math.min(100, avg * 2.5);
+              return Math.abs(next - prev) < 2 ? prev : next;
+            });
+          }
           rafRef.current = requestAnimationFrame(tick);
         }
         rafRef.current = requestAnimationFrame(tick);
@@ -2036,15 +2119,45 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
     <div className="flex flex-col items-center">
       <StageHeader id={11} label="Microphone Check" />
 
-      <div className="mb-8 flex items-end justify-center gap-1.5" style={{ height: 60 }}>
+      <div
+        className="mb-8 flex items-end justify-center gap-1.5 relative"
+        style={{ height: 60, width: "160px" }}
+      >
+        {/* Dotted threshold line indicating passing barrier */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: "20px",
+            left: "-20px",
+            right: "-20px",
+            borderBottom: "1px dashed rgba(168,85,247,0.45)",
+            zIndex: 1,
+            pointerEvents: "none",
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "8px",
+              fontFamily: "'JetBrains Mono', monospace",
+              color: "#a855f7",
+              background: "#030816",
+              padding: "0 4px",
+              transform: "translateY(5px)",
+              letterSpacing: "0.05em",
+              fontWeight: 600,
+            }}
+          >
+            -24dB THRESHOLD
+          </span>
+        </div>
         {bars.map((i) => {
           const height =
             phase === "pass"
-              ? Math.max(
-                  4,
-                  level * 0.6 * (0.4 + 0.6 * Math.abs(Math.sin(i * 0.8 + Date.now() * 0.01)))
-                )
+              ? Math.max(4, level * 0.6 * (0.4 + 0.6 * Math.abs(Math.sin(i * 0.8 + level * 0.05))))
               : 4;
+          const isAboveThreshold = height >= 20;
           return (
             <div
               key={i}
@@ -2052,9 +2165,15 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
                 width: 6,
                 borderRadius: "3px",
                 height: `${height}px`,
-                background: phase === "pass" ? "rgba(168,85,247,0.65)" : "rgba(255,255,255,0.09)",
-                transition: "height 60ms ease, background 400ms",
+                background:
+                  phase === "pass"
+                    ? isAboveThreshold
+                      ? "rgba(168,85,247,0.85)"
+                      : "rgba(100,116,139,0.4)"
+                    : "rgba(255,255,255,0.09)",
+                transition: "height 120ms ease, background 200ms",
                 maxHeight: 56,
+                zIndex: 2,
               }}
             />
           );
@@ -2095,23 +2214,23 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
 
   useEffect(() => {
     async function go() {
-      const result = await invoke<{
-        reachable: boolean;
-        latency_ms: number | null;
-        quality: string;
-      }>("check_network_stability", { host: "supabase.com" });
+      const result = await withNullableTimeout(
+        invoke<{
+          reachable: boolean;
+          latency_ms: number | null;
+          quality: string;
+        }>("check_network_stability", { host: getNetworkProbeHost() }),
+        3000
+      );
 
       if (result?.reachable) {
         setLatency(result.latency_ms);
         setQuality(result.quality);
         setPhase(result.quality === "poor" ? "warn" : "pass");
       } else {
-        const t0 = performance.now();
-        await fetch("https://www.google.com/generate_204", { mode: "no-cors" }).catch(() => {});
-        const rtt = Math.round(performance.now() - t0);
-        setLatency(rtt);
-        setQuality(rtt < 100 ? "excellent" : rtt < 250 ? "good" : "fair");
-        setPhase("pass");
+        setLatency(null);
+        setQuality("unreachable");
+        setPhase("warn");
       }
       setTimeout(onPass, 1400);
     }
@@ -2322,32 +2441,112 @@ function ProgressBar({
   current: number;
   results: Record<number, StageStatus>;
 }) {
+  const currentStageInfo = STAGES[current - 1];
+  const activeGroup = currentStageInfo?.group ?? "Workspace Lockdown";
+  const groups = [
+    "Workspace Lockdown",
+    "System Checks",
+    "Media Setup",
+    "Identity Scan",
+    "Finalizing",
+  ];
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "3px", padding: "20px 32px 0" }}>
-      {STAGES.map((s) => {
-        const status =
-          s.id < current ? (results[s.id] ?? "pass") : s.id === current ? "checking" : "pending";
-        const color =
-          status === "pass"
-            ? "#22c55e"
-            : status === "warn"
-              ? "#f59e0b"
-              : status === "checking"
-                ? "#a855f7"
-                : "rgba(255,255,255,0.08)";
-        return (
-          <div key={s.id} style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+    <div style={{ padding: "20px 32px 0", display: "flex", flexDirection: "column", gap: "12px" }}>
+      {/* 5-Phase visual stepper */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "8px",
+        }}
+      >
+        {groups.map((group, idx) => {
+          const isActive = group === activeGroup;
+          const isPassed = groups.indexOf(activeGroup) > idx;
+          return (
+            <div key={group} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  borderRadius: "50%",
+                  border: `1.5px solid ${isActive ? "#a855f7" : isPassed ? "#22c55e" : "rgba(255,255,255,0.1)"}`,
+                  background: isActive
+                    ? "rgba(168,85,247,0.15)"
+                    : isPassed
+                      ? "rgba(34,197,94,0.1)"
+                      : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "8.5px",
+                  fontWeight: 700,
+                  color: isActive ? "#d8b4fe" : isPassed ? "#22c55e" : "#52525B",
+                  transition: "all 300ms var(--ease-cinematic)",
+                }}
+              >
+                {isPassed ? "✓" : idx + 1}
+              </div>
+              <span
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 600,
+                  letterSpacing: "0.08em",
+                  color: isActive ? "#ffffff" : isPassed ? "#94a3b8" : "#4b5563",
+                  transition: "all 300ms var(--ease-cinematic)",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  display: "inline",
+                }}
+              >
+                {group}
+              </span>
+              {idx < groups.length - 1 && (
+                <div
+                  style={{
+                    width: "24px",
+                    height: "1px",
+                    background: isPassed ? "#22c55e" : "rgba(255,255,255,0.05)",
+                    marginLeft: "6px",
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Tiny incremental progress bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+        {STAGES.map((s) => {
+          const status =
+            s.id < current ? (results[s.id] ?? "pass") : s.id === current ? "checking" : "pending";
+          const color =
+            status === "pass"
+              ? "#22c55e"
+              : status === "warn"
+                ? "#f59e0b"
+                : status === "checking"
+                  ? "#a855f7"
+                  : "rgba(255,255,255,0.08)";
+          return (
             <div
-              style={{
-                height: 3,
-                borderRadius: 2,
-                background: color,
-                transition: "background 500ms ease",
-              }}
-            />
-          </div>
-        );
-      })}
+              key={s.id}
+              style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}
+            >
+              <div
+                style={{
+                  height: 3,
+                  borderRadius: 2,
+                  background: color,
+                  transition: "background 500ms ease",
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2364,6 +2563,7 @@ export default function OnboardingPage() {
   const [results, setResults] = useState<Record<number, StageStatus>>({});
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [transitioning, setTransitioning] = useState(false);
+  const [policyBlock, setPolicyBlock] = useState<string | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Keep ref in sync with state so the unmount cleanup below sees the latest stream.
@@ -2380,6 +2580,36 @@ export default function OnboardingPage() {
     };
   }, []);
 
+  const finalizeSecureStart = useCallback(async () => {
+    setPolicyBlock(null);
+    const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
+    const deviceState = await collectDeviceState({
+      networkHost: getNetworkProbeHost(),
+      cameraAvailable:
+        cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live") ||
+        devices?.some((device) => device.kind === "videoinput") ||
+        false,
+      microphoneAvailable: devices?.some((device) => device.kind === "audioinput") || false,
+      activateKeyboard: true,
+    });
+
+    try {
+      await startSecureSession({
+        contestId,
+        deviceId: getOrCreateDeviceId(),
+        policy: strictContestPolicy(),
+        deviceState,
+      });
+      router.push(`/session/contest?contestId=${contestId}`);
+    } catch (error) {
+      setCurrentStage(13);
+      setTransitioning(false);
+      setPolicyBlock(
+        error instanceof Error ? error.message : "Readiness policy blocked contest launch."
+      );
+    }
+  }, [contestId, router]);
+
   const advance = useCallback(
     (status: StageStatus = "pass") => {
       if (transitioning) return;
@@ -2389,7 +2619,7 @@ export default function OnboardingPage() {
         setCurrentStage((s) => {
           const next = s + 1;
           if (next >= 15) {
-            router.push(`/session/contest?contestId=${contestId}`);
+            void finalizeSecureStart();
             return next;
           }
           return next;
@@ -2397,7 +2627,7 @@ export default function OnboardingPage() {
         setTransitioning(false);
       }, 300);
     },
-    [currentStage, transitioning, router, contestId]
+    [currentStage, transitioning, finalizeSecureStart]
   );
 
   const advancePass = useCallback(() => advance("pass"), [advance]);
@@ -2466,6 +2696,22 @@ export default function OnboardingPage() {
         Exit Setup
       </button>
 
+      {policyBlock && (
+        <div
+          style={{
+            margin: "20px auto 0",
+            maxWidth: 560,
+            border: "1px solid rgba(239,68,68,0.28)",
+            background: "rgba(239,68,68,0.08)",
+            color: "#fca5a5",
+            borderRadius: 12,
+            padding: "12px 16px",
+            fontSize: 13,
+          }}
+        >
+          {policyBlock}
+        </div>
+      )}
       <ProgressBar current={currentStage} results={results} />
 
       <div

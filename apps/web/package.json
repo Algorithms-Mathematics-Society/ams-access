@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/setup-mediapipe.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/setup-mediapipe.mjs",
-    "build": "next build",
+    "prebuild": "node scripts/setup-mediapipe.mjs --if-used",
+    "build": "next build && node scripts/check-size-budgets.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .next out"
+    "clean": "rm -rf .next out",
+    "mediapipe:setup": "node scripts/setup-mediapipe.mjs",
+    "size:check": "node scripts/check-size-budgets.mjs"
   },
   "dependencies": {
     "@ams/api-client": "workspace:*",

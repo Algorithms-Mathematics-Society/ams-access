@@ -91,7 +91,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
                     return VirtDetectionResult {
                         detected: true,
                         platform: Some(vm.to_string()),
-                        confidence: "high",
+                        confidence: "high".to_string(),
                     };
                 }
             }
@@ -104,7 +104,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
             return VirtDetectionResult {
                 detected: true,
                 platform: Some("hypervisor".to_string()),
-                confidence: "medium",
+                confidence: "medium".to_string(),
             };
         }
         // CPUID hypervisor vendor strings
@@ -113,7 +113,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
                 return VirtDetectionResult {
                     detected: true,
                     platform: Some(vm.to_lowercase()),
-                    confidence: "high",
+                    confidence: "high".to_string(),
                 };
             }
         }
@@ -128,7 +128,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
             return VirtDetectionResult {
                 detected: true,
                 platform: Some("container".to_string()),
-                confidence: "medium",
+                confidence: "medium".to_string(),
             };
         }
     }
@@ -144,7 +144,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
                 return VirtDetectionResult {
                     detected: true,
                     platform: Some(virt),
-                    confidence: "high",
+                    confidence: "high".to_string(),
                 };
             }
         }
@@ -153,7 +153,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     VirtDetectionResult {
         detected: false,
         platform: None,
-        confidence: "high",
+        confidence: "high".to_string(),
     }
 }
 
@@ -399,8 +399,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         };
         return KeyboardInterceptResult {
             active: true,
-            method,
-            platform: "linux",
+            method: method.to_string(),
+            platform: "linux".to_string(),
         };
     }
 
@@ -411,8 +411,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 
     KeyboardInterceptResult {
         active: false,
-        method: "unsupported",
-        platform: "linux",
+        method: "unsupported".to_string(),
+        platform: "linux".to_string(),
     }
 }
 

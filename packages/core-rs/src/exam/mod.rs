@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -30,7 +31,7 @@ pub enum StageStatus {
     Fail,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MonitorInfo {
     pub index: u32,
     pub is_primary: bool,
@@ -49,14 +50,14 @@ pub struct ProcessScanResult {
 pub struct VirtDetectionResult {
     pub detected: bool,
     pub platform: Option<String>,
-    pub confidence: &'static str,
+    pub confidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyboardInterceptResult {
     pub active: bool,
-    pub method: &'static str,
-    pub platform: &'static str,
+    pub method: String,
+    pub platform: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +65,181 @@ pub struct NetworkCheckResult {
     pub reachable: bool,
     pub latency_ms: Option<u64>,
     pub jitter_ms: Option<u64>,
-    pub quality: &'static str,
+    pub quality: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckKind {
+    ContestId,
+    DeviceId,
+    Camera,
+    Microphone,
+    Network,
+    KeyboardLockdown,
+    RestrictedApps,
+    Virtualization,
+    Platform,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementProfile {
+    Practice,
+    InternalPilot,
+    StrictContest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockingSeverity {
+    Info,
+    Warning,
+    Block,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReasonCode {
+    ContestIdMissing,
+    DeviceIdMissing,
+    CameraUnavailable,
+    MicrophoneUnavailable,
+    NetworkUnreachable,
+    KeyboardLockdownUnavailable,
+    RestrictedApplicationDetected,
+    VirtualizationDetected,
+    UnsupportedPlatform,
+    ProbeUnavailable,
+}
+
+pub type FailureReason = FailureReasonCode;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    SelectContest,
+    RegisterDevice,
+    GrantMediaPermission,
+    ConnectNetwork,
+    CloseRestrictedApplications,
+    UsePhysicalMachine,
+    UseSupportedPlatform,
+    RetryReadinessScan,
+    ContactOrganizer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadinessRequirement {
+    pub kind: CheckKind,
+    pub required: bool,
+    pub severity: BlockingSeverity,
+    pub organizer_override_allowed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionPolicy {
+    pub profile: EnforcementProfile,
+    pub checks: Vec<ReadinessRequirement>,
+}
+
+impl SessionPolicy {
+    pub fn for_profile(profile: EnforcementProfile) -> Self {
+        let strict = matches!(profile, EnforcementProfile::StrictContest);
+        let severity = if strict {
+            BlockingSeverity::Block
+        } else {
+            BlockingSeverity::Warning
+        };
+        let required = strict;
+        let organizer_override_allowed = !strict;
+
+        let checks = [
+            CheckKind::ContestId,
+            CheckKind::DeviceId,
+            CheckKind::Platform,
+            CheckKind::RestrictedApps,
+            CheckKind::Virtualization,
+            CheckKind::KeyboardLockdown,
+            CheckKind::Network,
+            CheckKind::Camera,
+            CheckKind::Microphone,
+        ]
+        .into_iter()
+        .map(|kind| ReadinessRequirement {
+            kind,
+            required,
+            severity: severity.clone(),
+            organizer_override_allowed,
+        })
+        .collect();
+
+        Self { profile, checks }
+    }
+
+    pub fn strict_contest() -> Self {
+        Self::for_profile(EnforcementProfile::StrictContest)
+    }
+}
+
+impl Default for SessionPolicy {
+    fn default() -> Self {
+        Self::strict_contest()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceState {
+    pub platform: Option<String>,
+    pub camera_available: Option<bool>,
+    pub microphone_available: Option<bool>,
+    pub network: Option<NetworkCheckResult>,
+    pub keyboard: Option<KeyboardInterceptResult>,
+    pub restricted_processes: Option<ProcessScanResult>,
+    pub virtualization: Option<VirtDetectionResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckOutcome {
+    Pass,
+    Warn,
+    Fail,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadinessCheck {
+    pub kind: CheckKind,
+    pub required: bool,
+    pub severity: BlockingSeverity,
+    pub outcome: CheckOutcome,
+    pub blocking: bool,
+    pub organizer_override_allowed: bool,
+    pub reason: Option<FailureReasonCode>,
+    pub recovery_actions: Vec<RecoveryAction>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementDecision {
+    Allowed,
+    AllowedWithWarnings,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadinessReport {
+    pub contest_id: Option<String>,
+    pub device_id: Option<String>,
+    pub policy_profile: EnforcementProfile,
+    pub decision: EnforcementDecision,
+    pub required_checks: Vec<ReadinessCheck>,
+    pub optional_checks: Vec<ReadinessCheck>,
+    pub checks: Vec<ReadinessCheck>,
+    pub blocking_reasons: Vec<FailureReasonCode>,
+    pub generated_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,5 +298,382 @@ impl ExamSession {
             SessionStage::LockInCountdown => SessionStage::ContestLaunch,
             SessionStage::ContestLaunch => SessionStage::ContestLaunch,
         };
+    }
+}
+
+pub fn evaluate_readiness(
+    policy: &SessionPolicy,
+    contest_id: Option<String>,
+    device_id: Option<String>,
+    device_state: &DeviceState,
+) -> ReadinessReport {
+    let requirements = merge_requirements(policy);
+    let checks = requirements
+        .into_values()
+        .map(|requirement| {
+            evaluate_requirement(
+                requirement,
+                contest_id.as_deref(),
+                device_id.as_deref(),
+                device_state,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let blocking_reasons = checks
+        .iter()
+        .filter(|check| check.blocking)
+        .filter_map(|check| check.reason.clone())
+        .collect::<Vec<_>>();
+
+    let has_blocking = !blocking_reasons.is_empty();
+    let has_warnings = checks.iter().any(|check| {
+        matches!(
+            check.outcome,
+            CheckOutcome::Warn | CheckOutcome::Fail | CheckOutcome::Unknown
+        )
+    });
+
+    let decision = if has_blocking {
+        EnforcementDecision::Blocked
+    } else if has_warnings {
+        EnforcementDecision::AllowedWithWarnings
+    } else {
+        EnforcementDecision::Allowed
+    };
+
+    let required_checks = checks
+        .iter()
+        .filter(|check| check.required)
+        .cloned()
+        .collect::<Vec<_>>();
+    let optional_checks = checks
+        .iter()
+        .filter(|check| !check.required)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    ReadinessReport {
+        contest_id,
+        device_id,
+        policy_profile: policy.profile.clone(),
+        decision,
+        required_checks,
+        optional_checks,
+        checks,
+        blocking_reasons,
+        generated_at_ms: now_ms(),
+    }
+}
+
+fn merge_requirements(policy: &SessionPolicy) -> BTreeMap<CheckKind, ReadinessRequirement> {
+    let mut requirements = SessionPolicy::for_profile(policy.profile.clone())
+        .checks
+        .into_iter()
+        .map(|requirement| (requirement.kind.clone(), requirement))
+        .collect::<BTreeMap<_, _>>();
+
+    for requirement in &policy.checks {
+        requirements.insert(requirement.kind.clone(), requirement.clone());
+    }
+
+    requirements
+}
+
+fn evaluate_requirement(
+    requirement: ReadinessRequirement,
+    contest_id: Option<&str>,
+    device_id: Option<&str>,
+    device_state: &DeviceState,
+) -> ReadinessCheck {
+    let (passed, reason, detail, recovery_actions) = match requirement.kind {
+        CheckKind::ContestId if is_present(contest_id) => {
+            (true, None, Some("contest id present".to_string()), vec![])
+        }
+        CheckKind::ContestId => (
+            false,
+            Some(FailureReasonCode::ContestIdMissing),
+            Some("contest id missing".to_string()),
+            vec![RecoveryAction::SelectContest],
+        ),
+        CheckKind::DeviceId if is_present(device_id) => {
+            (true, None, Some("device id present".to_string()), vec![])
+        }
+        CheckKind::DeviceId => (
+            false,
+            Some(FailureReasonCode::DeviceIdMissing),
+            Some("device id missing".to_string()),
+            vec![RecoveryAction::RegisterDevice],
+        ),
+        CheckKind::Camera => match device_state.camera_available {
+            Some(true) => (true, None, Some("camera available".to_string()), vec![]),
+            Some(false) => (
+                false,
+                Some(FailureReasonCode::CameraUnavailable),
+                Some("camera unavailable".to_string()),
+                vec![
+                    RecoveryAction::GrantMediaPermission,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+        CheckKind::Microphone => match device_state.microphone_available {
+            Some(true) => (true, None, Some("microphone available".to_string()), vec![]),
+            Some(false) => (
+                false,
+                Some(FailureReasonCode::MicrophoneUnavailable),
+                Some("microphone unavailable".to_string()),
+                vec![
+                    RecoveryAction::GrantMediaPermission,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+        CheckKind::Network => match &device_state.network {
+            Some(network) if network.reachable && network.quality != "poor" => (
+                true,
+                None,
+                Some(format!(
+                    "network reachable with {} quality",
+                    network.quality
+                )),
+                vec![],
+            ),
+            Some(network) if network.reachable => (
+                false,
+                Some(FailureReasonCode::NetworkUnreachable),
+                Some("network quality is poor".to_string()),
+                vec![
+                    RecoveryAction::ConnectNetwork,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            ),
+            Some(_) => (
+                false,
+                Some(FailureReasonCode::NetworkUnreachable),
+                Some("network unreachable".to_string()),
+                vec![
+                    RecoveryAction::ConnectNetwork,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+        CheckKind::KeyboardLockdown => match &device_state.keyboard {
+            Some(keyboard) if keyboard.active => (
+                true,
+                None,
+                Some(format!("keyboard lockdown active via {}", keyboard.method)),
+                vec![],
+            ),
+            Some(keyboard) => (
+                false,
+                Some(FailureReasonCode::KeyboardLockdownUnavailable),
+                Some(format!(
+                    "keyboard lockdown unavailable on {}",
+                    keyboard.platform
+                )),
+                vec![
+                    RecoveryAction::RetryReadinessScan,
+                    RecoveryAction::ContactOrganizer,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+        CheckKind::RestrictedApps => match &device_state.restricted_processes {
+            Some(scan) if scan.clean => (
+                true,
+                None,
+                Some("no restricted applications detected".to_string()),
+                vec![],
+            ),
+            Some(scan) => (
+                false,
+                Some(FailureReasonCode::RestrictedApplicationDetected),
+                Some(format!(
+                    "restricted applications: {}",
+                    scan.found.join(", ")
+                )),
+                vec![
+                    RecoveryAction::CloseRestrictedApplications,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+        CheckKind::Virtualization => match &device_state.virtualization {
+            Some(virt) if !virt.detected => (
+                true,
+                None,
+                Some("physical environment expected".to_string()),
+                vec![],
+            ),
+            Some(virt) => (
+                false,
+                Some(FailureReasonCode::VirtualizationDetected),
+                Some(
+                    virt.platform
+                        .clone()
+                        .unwrap_or_else(|| "virtualized environment detected".to_string()),
+                ),
+                vec![
+                    RecoveryAction::UsePhysicalMachine,
+                    RecoveryAction::ContactOrganizer,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+        CheckKind::Platform => match &device_state.platform {
+            Some(platform) if platform == "linux" || platform == "windows" => (
+                true,
+                None,
+                Some(format!("supported platform: {}", platform)),
+                vec![],
+            ),
+            Some(platform) => (
+                false,
+                Some(FailureReasonCode::UnsupportedPlatform),
+                Some(format!("unsupported platform: {}", platform)),
+                vec![
+                    RecoveryAction::UseSupportedPlatform,
+                    RecoveryAction::ContactOrganizer,
+                ],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
+    };
+
+    let outcome = if passed {
+        CheckOutcome::Pass
+    } else if matches!(requirement.severity, BlockingSeverity::Block) && requirement.required {
+        CheckOutcome::Fail
+    } else {
+        CheckOutcome::Warn
+    };
+    let blocking = matches!(outcome, CheckOutcome::Fail)
+        && requirement.required
+        && matches!(requirement.severity, BlockingSeverity::Block);
+
+    ReadinessCheck {
+        kind: requirement.kind,
+        required: requirement.required,
+        severity: requirement.severity,
+        outcome,
+        blocking,
+        organizer_override_allowed: requirement.organizer_override_allowed,
+        reason,
+        recovery_actions,
+        detail,
+    }
+}
+
+fn unknown(
+    reason: FailureReasonCode,
+) -> (
+    bool,
+    Option<FailureReasonCode>,
+    Option<String>,
+    Vec<RecoveryAction>,
+) {
+    (
+        false,
+        Some(reason),
+        Some("readiness probe did not return a result".to_string()),
+        vec![
+            RecoveryAction::RetryReadinessScan,
+            RecoveryAction::ContactOrganizer,
+        ],
+    )
+}
+
+fn is_present(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|value| !value.is_empty())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn passing_state() -> DeviceState {
+        DeviceState {
+            platform: Some("linux".to_string()),
+            camera_available: Some(true),
+            microphone_available: Some(true),
+            network: Some(NetworkCheckResult {
+                reachable: true,
+                latency_ms: Some(40),
+                jitter_ms: Some(5),
+                quality: "good".to_string(),
+            }),
+            keyboard: Some(KeyboardInterceptResult {
+                active: true,
+                method: "test".to_string(),
+                platform: "linux".to_string(),
+            }),
+            restricted_processes: Some(ProcessScanResult {
+                found: vec![],
+                clean: true,
+            }),
+            virtualization: Some(VirtDetectionResult {
+                detected: false,
+                platform: None,
+                confidence: "high".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn strict_policy_blocks_required_failure() {
+        let mut state = passing_state();
+        state.virtualization = Some(VirtDetectionResult {
+            detected: true,
+            platform: Some("KVM".to_string()),
+            confidence: "high".to_string(),
+        });
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("c1".into()),
+            None,
+            &state,
+        );
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::VirtualizationDetected));
+    }
+
+    #[test]
+    fn practice_policy_warns_without_blocking() {
+        let mut state = passing_state();
+        state.camera_available = Some(false);
+
+        let policy = SessionPolicy::for_profile(EnforcementProfile::Practice);
+        let report = evaluate_readiness(&policy, None, None, &state);
+
+        assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
+        assert!(report.blocking_reasons.is_empty());
+    }
+    #[test]
+    fn strict_policy_blocks_missing_ids_and_splits_outcomes() {
+        let policy = SessionPolicy::strict_contest();
+        let report = evaluate_readiness(&policy, None, Some("device-1".into()), &passing_state());
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ContestIdMissing));
+        assert_eq!(report.required_checks.len(), report.checks.len());
+        assert!(report.optional_checks.is_empty());
     }
 }

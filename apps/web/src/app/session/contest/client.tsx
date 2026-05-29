@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { memo, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -74,32 +74,92 @@ try { ${js} } catch(e) { console.error(e); }
 </html>`;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
 function useCountdown(endAt: string) {
-  const [remaining, setRemaining] = useState("");
-  const [urgent, setUrgent] = useState(false);
+  const [state, setState] = useState({ remaining: "", urgent: false });
 
   useEffect(() => {
+    let id: ReturnType<typeof setInterval> | null = null;
     function tick() {
       const diff = new Date(endAt).getTime() - Date.now();
       if (diff <= 0) {
-        setRemaining("00:00:00");
+        setState((prev) =>
+          prev.remaining === "00:00:00" && !prev.urgent
+            ? prev
+            : { remaining: "00:00:00", urgent: false }
+        );
+        if (id) clearInterval(id);
         return;
       }
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
       const s = Math.floor((diff % 60000) / 1000);
-      setUrgent(diff < 300000);
-      setRemaining(
-        `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+      const remaining = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      const urgent = diff < 300000;
+      setState((prev) =>
+        prev.remaining === remaining && prev.urgent === urgent ? prev : { remaining, urgent }
       );
     }
     tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
+    id = setInterval(tick, 1000);
+    return () => {
+      if (id) clearInterval(id);
+    };
   }, [endAt]);
 
-  return { remaining, urgent };
+  return state;
 }
+
+const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }) {
+  const { remaining, urgent } = useCountdown(endAt);
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "6px 16px",
+        borderRadius: "8px",
+        background: urgent ? "rgba(239,68,68,0.1)" : "rgba(168,85,247,0.08)",
+        border: `1px solid ${urgent ? "rgba(239,68,68,0.3)" : "rgba(168,85,247,0.25)"}`,
+        transition: "all 600ms",
+      }}
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+        <circle cx="6" cy="6" r="4.5" stroke={urgent ? "#ef4444" : "#a855f7"} strokeWidth="1.2" />
+        <path
+          d="M6 3.5V6l1.5 1.5"
+          stroke={urgent ? "#ef4444" : "#a855f7"}
+          strokeWidth="1.2"
+          strokeLinecap="round"
+        />
+      </svg>
+      <span
+        style={{
+          fontSize: "13px",
+          fontWeight: 600,
+          color: urgent ? "#ef4444" : "#a855f7",
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {remaining}
+      </span>
+      <span style={{ fontSize: "10px", color: urgent ? "#ef4444" : "#64748b", fontWeight: 400 }}>
+        remaining
+      </span>
+    </div>
+  );
+});
 
 export default function ContestPageClient() {
   const router = useRouter();
@@ -126,12 +186,73 @@ export default function ContestPageClient() {
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const processScanInFlightRef = useRef(false);
+  const lastViolationDetailRef = useRef("");
+  const lastViolationAtRef = useRef(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
   const [customIssueDetail, setCustomIssueDetail] = useState("");
   const [isSendingReport, setIsSendingReport] = useState(false);
   const [reportSentSuccess, setReportSentSuccess] = useState(false);
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [previewUpdating, setPreviewUpdating] = useState(false);
+  const [lockGraceActive, setLockGraceActive] = useState(false);
+  const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
+  const [cameraCollapsed, setCameraCollapsed] = useState(false);
+  const [faceGraceCountdown, setFaceGraceCountdown] = useState(5);
+  const [faceGraceActive, setFaceGraceActive] = useState(false);
+  const [softBlockActive, setSoftBlockActive] = useState(false);
+
+  // Monitor faceStatus to trigger face grace period countdown
+  useEffect(() => {
+    if (faceStatus === "away") {
+      if (!faceGraceActive) {
+        setFaceGraceActive(true);
+        setFaceGraceCountdown(5);
+      }
+    } else if (faceStatus === "ok") {
+      setFaceGraceActive(false);
+      setFaceGraceCountdown(5);
+      setSoftBlockActive(false);
+    }
+  }, [faceStatus, faceGraceActive]);
+
+  // Face grace countdown timer
+  useEffect(() => {
+    if (faceGraceActive && faceGraceCountdown > 0) {
+      const timer = setTimeout(() => {
+        setFaceGraceCountdown(faceGraceCountdown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (faceGraceActive && faceGraceCountdown === 0) {
+      setSoftBlockActive(true);
+    }
+  }, [faceGraceActive, faceGraceCountdown]);
+
+  // Monitor blockedApps changes to trigger the grace period
+  useEffect(() => {
+    if (blockedApps.length > 0) {
+      if (!lockGraceActive) {
+        setLockGraceActive(true);
+        setLockGraceCountdown(3);
+      }
+    } else {
+      setLockGraceActive(false);
+      setLockGraceCountdown(3);
+    }
+  }, [blockedApps, lockGraceActive]);
+
+  // Countdown timer for locking
+  useEffect(() => {
+    if (lockGraceActive && lockGraceCountdown > 0) {
+      const timer = setTimeout(() => {
+        setLockGraceCountdown(lockGraceCountdown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [lockGraceActive, lockGraceCountdown]);
 
   const supportTelemetry = useMemo(() => {
     return {
@@ -140,7 +261,10 @@ export default function ContestPageClient() {
       session_id: sessionId ?? "unregistered",
       device: {
         user_agent: typeof window !== "undefined" ? window.navigator.userAgent : "node",
-        screen_resolution: typeof window !== "undefined" ? `${window.screen.width}x${window.screen.height}` : "unknown",
+        screen_resolution:
+          typeof window !== "undefined"
+            ? `${window.screen.width}x${window.screen.height}`
+            : "unknown",
         pixel_ratio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
       },
       proctoring_snapshot: {
@@ -148,7 +272,7 @@ export default function ContestPageClient() {
         face_status: faceStatus,
         restricted_apps: blockedApps,
         proctoring_ok: proctoringOk,
-      }
+      },
     };
   }, [contestId, sessionId, cameraError, faceStatus, blockedApps, proctoringOk, showSupportModal]);
 
@@ -165,7 +289,7 @@ export default function ContestPageClient() {
         }),
       }).catch(() => {});
     } catch {}
-    
+
     await new Promise((r) => setTimeout(r, 1200));
     setIsSendingReport(false);
     setReportSentSuccess(true);
@@ -179,7 +303,6 @@ export default function ContestPageClient() {
 
   // stable fallback so useCountdown's effect doesn't restart on every render
   const fallbackEndAt = useMemo(() => new Date(Date.now() + 3600000).toISOString(), []);
-  const { remaining, urgent } = useCountdown(contest?.end_at ?? fallbackEndAt);
 
   useEffect(() => {
     if (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") {
@@ -289,9 +412,12 @@ export default function ContestPageClient() {
     const newCss = activeTab === "css" ? value : css;
     const newJs = activeTab === "js" ? value : js;
 
+    setPreviewUpdating(true);
+
     if (previewDebounce.current) clearTimeout(previewDebounce.current);
     previewDebounce.current = setTimeout(() => {
       setPreviewSrc(buildPreview(newHtml, newCss, newJs));
+      setPreviewUpdating(false);
     }, 600);
   }
 
@@ -364,9 +490,13 @@ export default function ContestPageClient() {
 
     async function acquire(isRetry = false) {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: "user" },
-        });
+        const s = await withTimeout(
+          navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: "user" },
+          }),
+          3500,
+          "Camera request timed out"
+        );
         if (cancelled) {
           s.getTracks().forEach((t) => t.stop());
           return;
@@ -396,10 +526,10 @@ export default function ContestPageClient() {
             msg.includes("not allowed") ||
             msg.includes("denied") ||
             msg.includes("Permission")
-              ? "Camera access denied"
+              ? "Camera access was denied. Please check your system settings to grant camera permission."
               : msg.includes("NotFound") || msg.includes("not found")
-                ? "No camera found"
-                : "Camera unavailable";
+                ? "No camera was found. Please ensure your camera is connected securely."
+                : "Camera is currently unavailable. Please check your camera settings and try again.";
           setCameraError(displayMsg);
         }
       }
@@ -459,21 +589,42 @@ export default function ContestPageClient() {
     };
 
     async function scan() {
+      if (processScanInFlightRef.current) return;
+      processScanInFlightRef.current = true;
       try {
-        const result = await invoke<{ found: string[]; clean: boolean }>("scan_processes");
+        const result = await withTimeout(
+          invoke<{ found: string[]; clean: boolean }>("scan_processes"),
+          2500,
+          "Process scan timed out"
+        );
         if (!result.clean && result.found.length > 0) {
+          const detail = result.found
+            .map((f) => f.toLowerCase())
+            .sort()
+            .join(", ");
           setBlockedApps(result.found.map((f) => prettyName[f.toLowerCase()] ?? f));
           setProctoringOk(false);
-          await invoke("log_violation", {
-            kind: "blocked_app",
-            detail: result.found.join(", "),
-          });
+          const now = Date.now();
+          if (
+            detail !== lastViolationDetailRef.current ||
+            now - lastViolationAtRef.current > 30000
+          ) {
+            lastViolationDetailRef.current = detail;
+            lastViolationAtRef.current = now;
+            await invoke("log_violation", {
+              kind: "blocked_app",
+              detail: result.found.join(", "),
+            });
+          }
         } else {
+          lastViolationDetailRef.current = "";
           setBlockedApps([]);
           setProctoringOk(true);
         }
       } catch {
-        // Tauri not available (dev browser mode)
+        // Tauri not available or scan timed out; keep the last known state.
+      } finally {
+        processScanInFlightRef.current = false;
       }
     }
 
@@ -557,8 +708,76 @@ export default function ContestPageClient() {
         fontFamily: "Inter, 'IBM Plex Sans', system-ui, sans-serif",
       }}
     >
+      {/* Floating warning toast during grace period */}
+      {lockGraceActive && lockGraceCountdown > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            top: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+            width: "100%",
+            maxWidth: "460px",
+            padding: "16px 20px",
+            borderRadius: "12px",
+            background: "rgba(30, 9, 9, 0.95)",
+            backdropFilter: "blur(12px)",
+            border: "1px solid rgba(239, 68, 68, 0.4)",
+            boxShadow: "0 10px 40px rgba(239, 68, 68, 0.15)",
+            display: "flex",
+            alignItems: "center",
+            gap: "14px",
+            animation: "fadeIn 250ms var(--ease-cinematic) forwards",
+          }}
+        >
+          <div
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              background: "rgba(239, 68, 68, 0.15)",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#fca5a5"
+              strokeWidth="1.8"
+            >
+              <path
+                d="M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <div style={{ flex: 1 }}>
+            <h4
+              style={{ fontSize: "13px", fontWeight: 600, color: "#fca5a5", marginBottom: "2px" }}
+            >
+              Restricted Application Detected
+            </h4>
+            <p style={{ fontSize: "11px", color: "#fca5a5", opacity: 0.8, lineHeight: 1.4 }}>
+              Workspace locking in{" "}
+              <span style={{ fontWeight: 700, fontFamily: "monospace", fontSize: "12px" }}>
+                {lockGraceCountdown}s
+              </span>
+              . Please save your work immediately.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Blocked app violation overlay ── */}
-      {blockedApps.length > 0 && (
+      {lockGraceActive && lockGraceCountdown === 0 && (
         <div
           style={{
             position: "fixed",
@@ -567,8 +786,8 @@ export default function ContestPageClient() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "rgba(3,8,22,0.96)",
-            backdropFilter: "blur(12px)",
+            background: "rgba(2,4,10,0.9)",
+            backdropFilter: "blur(16px)",
           }}
         >
           <div
@@ -577,9 +796,9 @@ export default function ContestPageClient() {
               width: "100%",
               borderRadius: "20px",
               padding: "36px 32px",
-              background: "rgba(239,68,68,0.06)",
-              border: "1px solid rgba(239,68,68,0.3)",
-              boxShadow: "0 0 60px rgba(239,68,68,0.15)",
+              background: "rgba(30,9,9,0.4)",
+              border: "1px solid rgba(239, 68, 68, 0.25)",
+              boxShadow: "0 0 60px rgba(239, 68, 68, 0.12)",
               textAlign: "center",
             }}
           >
@@ -588,16 +807,28 @@ export default function ContestPageClient() {
                 width: "56px",
                 height: "56px",
                 borderRadius: "50%",
-                background: "rgba(239,68,68,0.1)",
-                border: "1px solid rgba(239,68,68,0.35)",
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 margin: "0 auto 20px",
-                fontSize: "24px",
               }}
             >
-              ⚠
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#f87171"
+                strokeWidth="1.8"
+              >
+                <path
+                  d="M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
             <p
               style={{
@@ -613,7 +844,7 @@ export default function ContestPageClient() {
             <p
               style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "24px", lineHeight: 1.6 }}
             >
-              Close the following apps to continue your exam. This violation has been logged.
+              To maintain exam security, please close the applications listed below.
             </p>
             <div style={{ marginBottom: "24px" }}>
               {blockedApps.map((app) => (
@@ -623,8 +854,8 @@ export default function ContestPageClient() {
                     padding: "10px 16px",
                     marginBottom: "8px",
                     borderRadius: "10px",
-                    background: "rgba(239,68,68,0.08)",
-                    border: "1px solid rgba(239,68,68,0.2)",
+                    background: "rgba(239, 68, 68, 0.06)",
+                    border: "1px solid rgba(239, 68, 68, 0.15)",
                     fontSize: "14px",
                     color: "#f87171",
                     fontWeight: 500,
@@ -697,50 +928,7 @@ export default function ContestPageClient() {
         </div>
 
         {/* Center: Timer */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "6px 16px",
-            borderRadius: "8px",
-            background: urgent ? "rgba(239,68,68,0.1)" : "rgba(168,85,247,0.08)",
-            border: `1px solid ${urgent ? "rgba(239,68,68,0.3)" : "rgba(168,85,247,0.25)"}`,
-            transition: "all 600ms",
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <circle
-              cx="6"
-              cy="6"
-              r="4.5"
-              stroke={urgent ? "#ef4444" : "#a855f7"}
-              strokeWidth="1.2"
-            />
-            <path
-              d="M6 3.5V6l1.5 1.5"
-              stroke={urgent ? "#ef4444" : "#a855f7"}
-              strokeWidth="1.2"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span
-            style={{
-              fontSize: "13px",
-              fontWeight: 600,
-              color: urgent ? "#ef4444" : "#a855f7",
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "0.05em",
-            }}
-          >
-            {remaining}
-          </span>
-          <span
-            style={{ fontSize: "10px", color: urgent ? "#ef4444" : "#64748b", fontWeight: 400 }}
-          >
-            remaining
-          </span>
-        </div>
+        <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} />
 
         {/* Right: Submit */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -763,7 +951,12 @@ export default function ContestPageClient() {
             }}
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1v6M8 11.5h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <path
+                d="M8 1v6M8 11.5h.01"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
               <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
             </svg>
             Report Issue
@@ -811,32 +1004,88 @@ export default function ContestPageClient() {
         {/* Question list sidebar */}
         <aside
           style={{
-            width: "220px",
+            width: sidebarCollapsed ? "52px" : "220px",
             flexShrink: 0,
             borderRight: "1px solid rgba(255,255,255,0.05)",
             display: "flex",
             flexDirection: "column",
             background: "rgba(4,10,24,0.7)",
             overflow: "hidden",
+            transition: "width 250ms var(--ease-cinematic)",
           }}
         >
           <div
-            style={{ padding: "14px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+            style={{
+              padding: sidebarCollapsed ? "14px 0" : "14px 14px 8px",
+              borderBottom: "1px solid rgba(255,255,255,0.05)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: sidebarCollapsed ? "center" : "space-between",
+            }}
           >
-            <p
+            {!sidebarCollapsed && (
+              <p
+                style={{
+                  fontSize: "10px",
+                  color: "#475569",
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  fontWeight: 500,
+                }}
+              >
+                Questions ({questions.length})
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               style={{
-                fontSize: "10px",
-                color: "#475569",
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                fontWeight: 500,
+                background: "transparent",
+                border: "none",
+                color: "#64748b",
+                cursor: "pointer",
+                padding: "2px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "color 150ms",
               }}
+              title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
             >
-              Questions ({questions.length})
-            </p>
+              {sidebarCollapsed ? (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M6 12l4-4-4-4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M10 12L6 8l4-4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
           </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
-            {questions.length === 0 && (
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+            }}
+          >
+            {questions.length === 0 && !sidebarCollapsed && (
               <p
                 style={{
                   fontSize: "12px",
@@ -851,12 +1100,14 @@ export default function ContestPageClient() {
             {questions.map((q, i) => (
               <button
                 key={q.id}
+                type="button"
                 onClick={() => switchQuestion(i)}
                 style={{
-                  display: "block",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
                   width: "100%",
-                  textAlign: "left",
-                  padding: "10px 12px",
+                  padding: sidebarCollapsed ? "8px 0" : "10px 12px",
                   borderRadius: "9px",
                   border: `1px solid ${activeQ === i ? "rgba(168,85,247,0.35)" : "transparent"}`,
                   background:
@@ -865,56 +1116,54 @@ export default function ContestPageClient() {
                       : "transparent",
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  marginBottom: "4px",
                   transition: "all 180ms",
+                  height: sidebarCollapsed ? "36px" : "auto",
                 }}
+                title={sidebarCollapsed ? q.title : undefined}
               >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}
-                >
+                {sidebarCollapsed ? (
                   <span
                     style={{
-                      width: "20px",
-                      height: "20px",
-                      borderRadius: "6px",
-                      background: activeQ === i ? "rgba(168,85,247,0.4)" : "rgba(255,255,255,0.06)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "10px",
+                      fontSize: "12px",
                       fontWeight: 600,
                       color: activeQ === i ? "#e9d5ff" : "#64748b",
-                      flexShrink: 0,
                     }}
                   >
                     {i + 1}
                   </span>
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: 500,
-                      color: activeQ === i ? "#f5f7fa" : "#94a3b8",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {q.title}
-                  </span>
-                </div>
-                {q.description && (
-                  <p
-                    style={{
-                      fontSize: "11px",
-                      color: "#475569",
-                      paddingLeft: "28px",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {q.description}
-                  </p>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
+                    <span
+                      style={{
+                        width: "20px",
+                        height: "20px",
+                        borderRadius: "6px",
+                        background:
+                          activeQ === i ? "rgba(168,85,247,0.4)" : "rgba(255,255,255,0.06)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "10px",
+                        fontWeight: 600,
+                        color: activeQ === i ? "#e9d5ff" : "#64748b",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {i + 1}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 500,
+                        color: activeQ === i ? "#f5f7fa" : "#94a3b8",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {q.title}
+                    </span>
+                  </div>
                 )}
               </button>
             ))}
@@ -948,22 +1197,25 @@ export default function ContestPageClient() {
               {(["html", "css", "js"] as const).map((t) => (
                 <button
                   key={t}
+                  type="button"
                   onClick={() => setActiveTab(t)}
                   style={{
+                    position: "relative",
                     display: "flex",
                     alignItems: "center",
-                    gap: "5px",
-                    padding: "5px 12px",
-                    borderRadius: "6px",
-                    border: `1px solid ${activeTab === t ? `${tabColor[t]}44` : "transparent"}`,
-                    background: activeTab === t ? `${tabColor[t]}18` : "transparent",
-                    color: activeTab === t ? tabColor[t] : "#475569",
+                    gap: "6px",
+                    padding: "0 16px",
+                    border: "none",
+                    background: activeTab === t ? "rgba(255,255,255,0.02)" : "transparent",
+                    color: activeTab === t ? "#ffffff" : "#475569",
                     fontSize: "11px",
-                    fontWeight: 500,
+                    fontWeight: 600,
                     fontFamily: "inherit",
                     cursor: "pointer",
-                    transition: "all 180ms",
-                    letterSpacing: "0.03em",
+                    transition: "all 150ms var(--ease-cinematic)",
+                    letterSpacing: "0.05em",
+                    height: "100%",
+                    borderRadius: "0px",
                   }}
                 >
                   <span
@@ -972,10 +1224,23 @@ export default function ContestPageClient() {
                       height: "6px",
                       borderRadius: "50%",
                       background: tabColor[t],
-                      opacity: activeTab === t ? 1 : 0.35,
+                      opacity: activeTab === t ? 1 : 0.45,
                     }}
                   />
                   {t.toUpperCase()}
+                  {activeTab === t && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: "2px",
+                        background: tabColor[t],
+                        boxShadow: `0 0 8px ${tabColor[t]}`,
+                      }}
+                    />
+                  )}
                 </button>
               ))}
               <div style={{ flex: 1 }} />
@@ -1081,9 +1346,23 @@ export default function ContestPageClient() {
               />
             </div>
             <div style={{ flex: 1, position: "relative", background: "#fff" }}>
+              {previewUpdating && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: "2px",
+                    background: "linear-gradient(90deg, #a855f7 0%, #d8b4fe 50%, #a855f7 100%)",
+                    backgroundSize: "200% 100%",
+                    animation: "preview-loading-bar 1.5s linear infinite",
+                    zIndex: 10,
+                  }}
+                />
+              )}
               {previewSrc ? (
                 <iframe
-                  key={previewSrc}
                   srcDoc={previewSrc}
                   sandbox="allow-scripts"
                   style={{ width: "100%", height: "100%", border: "none" }}
@@ -1224,190 +1503,327 @@ export default function ContestPageClient() {
           bottom: "56px",
           right: "20px",
           zIndex: 50,
-          width: "210px",
-          height: "158px",
+          width: cameraCollapsed ? "170px" : "210px",
+          height: cameraCollapsed ? "34px" : "158px",
           borderRadius: "8px",
           overflow: "hidden",
-          border: `1px solid ${faceStatus === "ok" ? "rgba(34,197,94,0.35)" : "rgba(245,158,11,0.35)"}`,
-          boxShadow: `0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px ${faceStatus === "ok" ? "rgba(34,197,94,0.06)" : "rgba(245,158,11,0.06)"}`,
+          border: `1px solid ${
+            cameraCollapsed
+              ? "rgba(34,197,94,0.3)"
+              : faceStatus === "ok"
+                ? "rgba(34,197,94,0.35)"
+                : "rgba(245,158,11,0.35)"
+          }`,
+          boxShadow: `0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px ${
+            faceStatus === "ok" ? "rgba(34,197,94,0.06)" : "rgba(245,158,11,0.06)"
+          }`,
           transition: "all 300ms var(--ease-cinematic)",
           background: "#02040a",
           display: (cameraStream ?? cameraError) ? "block" : "none",
         }}
       >
-        <video
-          ref={cameraVideoRef}
-          muted
-          playsInline
-          autoPlay
-          style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
-        />
+        {/* Toggle Collapse Button */}
+        <button
+          type="button"
+          onClick={() => setCameraCollapsed(!cameraCollapsed)}
+          style={{
+            position: "absolute",
+            top: "6px",
+            right: "6px",
+            zIndex: 60,
+            background: "rgba(0,0,0,0.65)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: "4px",
+            width: "20px",
+            height: "20px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            color: "#ffffff",
+            fontSize: "10px",
+            lineHeight: 1,
+            transition: "all 200ms",
+          }}
+          title={cameraCollapsed ? "Expand Feed" : "Collapse Feed"}
+        >
+          {cameraCollapsed ? "＋" : "－"}
+        </button>
 
-        {/* HUD Corner Alignment Brackets */}
-        {(() => {
-          const bracketColor =
-            faceStatus === "ok" ? "rgba(34,197,94,0.65)" : "rgba(245,158,11,0.65)";
-          return (
-            <>
-              <div
-                style={{
-                  position: "absolute",
-                  top: "10px",
-                  left: "10px",
-                  width: "8px",
-                  height: "8px",
-                  borderTop: `1.5px solid ${bracketColor}`,
-                  borderLeft: `1.5px solid ${bracketColor}`,
-                  pointerEvents: "none",
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  top: "10px",
-                  right: "10px",
-                  width: "8px",
-                  height: "8px",
-                  borderTop: `1.5px solid ${bracketColor}`,
-                  borderRight: `1.5px solid ${bracketColor}`,
-                  pointerEvents: "none",
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "10px",
-                  left: "10px",
-                  width: "8px",
-                  height: "8px",
-                  borderBottom: `1.5px solid ${bracketColor}`,
-                  borderLeft: `1.5px solid ${bracketColor}`,
-                  pointerEvents: "none",
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "10px",
-                  right: "10px",
-                  width: "8px",
-                  height: "8px",
-                  borderBottom: `1.5px solid ${bracketColor}`,
-                  borderRight: `1.5px solid ${bracketColor}`,
-                  pointerEvents: "none",
-                }}
-              />
-            </>
-          );
-        })()}
-
-        {cameraError && (
+        {cameraCollapsed ? (
           <div
             style={{
-              position: "absolute",
-              inset: 0,
+              width: "100%",
+              height: "100%",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              background: "rgba(2,4,10,0.85)",
-              padding: "12px",
+              paddingLeft: "10px",
+              gap: "6px",
+              background: "rgba(4,10,24,0.95)",
             }}
           >
-            <p
+            <span
               style={{
-                fontSize: "11px",
-                color: "#fca5a5",
-                textAlign: "center",
-                lineHeight: 1.5,
-                fontFamily: "inherit",
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#22c55e",
+                boxShadow: "0 0 8px #22c55e",
+                animation: "pulse-preview 1.8s ease-in-out infinite",
+              }}
+            />
+            <span
+              style={{
+                fontSize: "9px",
+                color: "#22c55e",
+                fontWeight: 600,
+                letterSpacing: "0.06em",
+                fontFamily: "'JetBrains Mono', monospace",
               }}
             >
-              {cameraError}
-            </p>
+              PROCTORING ACTIVE
+            </span>
           </div>
+        ) : (
+          <>
+            <video
+              ref={cameraVideoRef}
+              muted
+              playsInline
+              autoPlay
+              style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
+            />
+
+            {/* HUD Corner Alignment Brackets */}
+            {(() => {
+              const bracketColor =
+                faceStatus === "ok" ? "rgba(34,197,94,0.65)" : "rgba(245,158,11,0.65)";
+              return (
+                <>
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "10px",
+                      left: "10px",
+                      width: "8px",
+                      height: "8px",
+                      borderTop: `1.5px solid ${bracketColor}`,
+                      borderLeft: `1.5px solid ${bracketColor}`,
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "10px",
+                      right: "10px",
+                      width: "8px",
+                      height: "8px",
+                      borderTop: `1.5px solid ${bracketColor}`,
+                      borderRight: `1.5px solid ${bracketColor}`,
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "10px",
+                      left: "10px",
+                      width: "8px",
+                      height: "8px",
+                      borderBottom: `1.5px solid ${bracketColor}`,
+                      borderLeft: `1.5px solid ${bracketColor}`,
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "10px",
+                      right: "10px",
+                      width: "8px",
+                      height: "8px",
+                      borderBottom: `1.5px solid ${bracketColor}`,
+                      borderRight: `1.5px solid ${bracketColor}`,
+                      pointerEvents: "none",
+                    }}
+                  />
+                </>
+              );
+            })()}
+
+            {cameraError && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "rgba(2,4,10,0.85)",
+                  padding: "12px",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#fca5a5",
+                    textAlign: "center",
+                    lineHeight: 1.5,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {cameraError}
+                </p>
+              </div>
+            )}
+
+            {/* PROCTORED Active Banner Top Overlay */}
+            <div
+              style={{
+                position: "absolute",
+                top: "8px",
+                left: "8px",
+                background: "rgba(0,0,0,0.65)",
+                backdropFilter: "blur(4px)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                borderRadius: "4px",
+                padding: "2px 6px",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                pointerEvents: "none",
+              }}
+            >
+              <span
+                style={{
+                  width: "4px",
+                  height: "4px",
+                  borderRadius: "50%",
+                  background: "#ef4444",
+                  boxShadow: "0 0 6px #ef4444",
+                  animation: "pulse-preview 1.5s ease-in-out infinite",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "8.5px",
+                  color: "rgba(255,255,255,0.8)",
+                  letterSpacing: "0.1em",
+                  fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                LIVE FEED
+              </span>
+            </div>
+
+            {/* Face status HUD Bottom overlay */}
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                padding: "6px 10px",
+                background: "rgba(2,4,10,0.75)",
+                backdropFilter: "blur(4px)",
+                borderTop: "1px solid rgba(255,255,255,0.05)",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                justifyContent: "center",
+              }}
+            >
+              <div
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
+                  boxShadow: `0 0 8px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
+                  animation: "pulse-preview 2s ease-in-out infinite",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "9px",
+                  color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
+                  letterSpacing: "0.08em",
+                  fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {faceStatus === "ok" ? "ALIGNMENT SECURE" : "LOOK FORWARD"}
+              </span>
+            </div>
+          </>
         )}
+      </div>
 
-        {/* PROCTORED Active Banner Top Overlay */}
+      {/* ── Face proctoring soft-block overlay ── */}
+      {softBlockActive && (
         <div
           style={{
-            position: "absolute",
-            top: "8px",
-            left: "8px",
-            background: "rgba(0,0,0,0.65)",
-            backdropFilter: "blur(4px)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: "4px",
-            padding: "2px 6px",
+            position: "fixed",
+            inset: 0,
+            zIndex: 9998,
             display: "flex",
             alignItems: "center",
-            gap: "5px",
-            pointerEvents: "none",
-          }}
-        >
-          <span
-            style={{
-              width: "4px",
-              height: "4px",
-              borderRadius: "50%",
-              background: "#ef4444",
-              boxShadow: "0 0 6px #ef4444",
-              animation: "pulse-preview 1.5s ease-in-out infinite",
-            }}
-          />
-          <span
-            style={{
-              fontSize: "8.5px",
-              color: "rgba(255,255,255,0.8)",
-              letterSpacing: "0.1em",
-              fontWeight: 600,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            LIVE FEED
-          </span>
-        </div>
-
-        {/* Face status HUD Bottom overlay */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            padding: "6px 10px",
-            background: "rgba(2,4,10,0.75)",
-            backdropFilter: "blur(4px)",
-            borderTop: "1px solid rgba(255,255,255,0.05)",
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
             justifyContent: "center",
+            background: "rgba(3,8,22,0.7)",
+            backdropFilter: "blur(12px)",
+            animation: "fadeIn 280ms var(--ease-cinematic) forwards",
           }}
         >
           <div
             style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              flexShrink: 0,
-              background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-              boxShadow: `0 0 8px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
-              animation: "pulse-preview 2s ease-in-out infinite",
-            }}
-          />
-          <span
-            style={{
-              fontSize: "9px",
-              color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-              letterSpacing: "0.08em",
-              fontWeight: 600,
-              fontFamily: "'JetBrains Mono', monospace",
+              maxWidth: "400px",
+              width: "100%",
+              borderRadius: "16px",
+              padding: "32px 28px",
+              background: "rgba(15, 23, 42, 0.95)",
+              border: "1px solid rgba(168, 85, 247, 0.2)",
+              boxShadow: "0 20px 50px rgba(0, 0, 0, 0.3)",
+              textAlign: "center",
             }}
           >
-            {faceStatus === "ok" ? "ALIGNMENT SECURE" : "LOOK FORWARD"}
-          </span>
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "50%",
+                background: "rgba(168, 85, 247, 0.1)",
+                border: "1px solid rgba(168, 85, 247, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 16px",
+              }}
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#c084fc"
+                strokeWidth="1.8"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M8 12a4 4 0 008 0" />
+                <path d="M9 9h.01M15 9h.01" strokeLinecap="round" strokeWidth="2.5" />
+              </svg>
+            </div>
+            <h4 className="text-subsection-title" style={{ color: "#f8fafc", marginBottom: "8px" }}>
+              Integrity Check Paused
+            </h4>
+            <p className="text-body-copy" style={{ color: "#94a3b8", lineHeight: 1.5, margin: 0 }}>
+              Please look back at the camera to resume your exam.
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Support Incident Modal Overlay ── */}
       {showSupportModal && (
@@ -1441,32 +1857,119 @@ export default function ContestPageClient() {
             }}
           >
             {/* L-Shape Decals */}
-            <div style={{ position: "absolute", top: 0, left: 0, width: "12px", height: "12px", borderTop: "2px solid #a855f7", borderLeft: "2px solid #a855f7", opacity: 0.6 }} />
-            <div style={{ position: "absolute", top: 0, right: 0, width: "12px", height: "12px", borderTop: "2px solid #a855f7", borderRight: "2px solid #a855f7", opacity: 0.6 }} />
-            <div style={{ position: "absolute", bottom: 0, left: 0, width: "12px", height: "12px", borderBottom: "2px solid #a855f7", borderLeft: "2px solid #a855f7", opacity: 0.6 }} />
-            <div style={{ position: "absolute", bottom: 0, right: 0, width: "12px", height: "12px", borderBottom: "2px solid #a855f7", borderRight: "2px solid #a855f7", opacity: 0.6 }} />
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "12px",
+                height: "12px",
+                borderTop: "2px solid #a855f7",
+                borderLeft: "2px solid #a855f7",
+                opacity: 0.6,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                width: "12px",
+                height: "12px",
+                borderTop: "2px solid #a855f7",
+                borderRight: "2px solid #a855f7",
+                opacity: 0.6,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                width: "12px",
+                height: "12px",
+                borderBottom: "2px solid #a855f7",
+                borderLeft: "2px solid #a855f7",
+                opacity: 0.6,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                right: 0,
+                width: "12px",
+                height: "12px",
+                borderBottom: "2px solid #a855f7",
+                borderRight: "2px solid #a855f7",
+                opacity: 0.6,
+              }}
+            />
 
             {/* Left Column: Form & Categories */}
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
               <div>
-                <h3 style={{ fontSize: "18px", fontWeight: 700, color: "#ffffff", marginBottom: "6px" }}>
+                <h3
+                  className="text-subsection-title"
+                  style={{ color: "#ffffff", marginBottom: "var(--density-compact)" }}
+                >
                   Report an Incident
                 </h3>
-                <p style={{ fontSize: "12px", color: "#64748b", lineHeight: 1.45 }}>
-                  Select the issue encountered. Our operations team will receive this report instantly along with diagnostic system telemetry.
+                <p className="text-body-copy" style={{ color: "#64748b", margin: 0 }}>
+                  Select the issue encountered. Our operations team will receive this report
+                  instantly along with diagnostic system telemetry.
                 </p>
               </div>
 
               {/* Success Screen */}
               {reportSentSuccess ? (
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "220px", textAlign: "center" }}>
-                  <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "16px" }}>
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minHeight: "220px",
+                    textAlign: "center",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "48px",
+                      height: "48px",
+                      borderRadius: "50%",
+                      background: "rgba(34,197,94,0.1)",
+                      border: "1px solid rgba(34,197,94,0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      marginBottom: "16px",
+                    }}
+                  >
                     <svg width="20" height="20" viewBox="0 0 12 12" fill="none">
-                      <path d="M2.5 6l2 2 5-5" stroke="#22c55e" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path
+                        d="M2.5 6l2 2 5-5"
+                        stroke="#22c55e"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                   </div>
-                  <h4 style={{ fontSize: "15px", fontWeight: 600, color: "#22c55e", marginBottom: "6px" }}>Incident Ticket Transmitted</h4>
-                  <p style={{ fontSize: "12px", color: "#94a3b8", maxWidth: "260px" }}>Telemetry logs attached. Operations has been flagged. Keep working if possible.</p>
+                  <h4
+                    className="text-subsection-title"
+                    style={{ color: "#22c55e", marginBottom: "var(--density-compact)" }}
+                  >
+                    Incident Ticket Transmitted
+                  </h4>
+                  <p
+                    className="text-body-copy"
+                    style={{ color: "#94a3b8", maxWidth: "280px", margin: 0 }}
+                  >
+                    Incident logged successfully. System telemetry bundle [ID: 8F9A2] has been
+                    transmitted to proctoring staff. You may resume your exam.
+                  </p>
                 </div>
               ) : (
                 <>
@@ -1479,8 +1982,8 @@ export default function ContestPageClient() {
                       { value: "fullscreen_issue", label: "Fullscreen issue" },
                       { value: "audio_issue", label: "Audio issue" },
                       { value: "submission_issue", label: "Submission issue" },
-                      { value: "other", label: "Other issue..." }
-                    ].map(opt => (
+                      { value: "other", label: "Other issue..." },
+                    ].map((opt) => (
                       <label
                         key={opt.value}
                         style={{
@@ -1489,12 +1992,15 @@ export default function ContestPageClient() {
                           gap: "10px",
                           padding: "10px 14px",
                           borderRadius: "8px",
-                          background: supportCategory === opt.value ? "rgba(168,85,247,0.08)" : "rgba(255,255,255,0.01)",
+                          background:
+                            supportCategory === opt.value
+                              ? "rgba(168,85,247,0.08)"
+                              : "rgba(255,255,255,0.01)",
                           border: `1px solid ${supportCategory === opt.value ? "rgba(168,85,247,0.3)" : "rgba(255,255,255,0.05)"}`,
                           cursor: "pointer",
                           fontSize: "13px",
                           color: supportCategory === opt.value ? "#ffffff" : "#94a3b8",
-                          transition: "all 150ms ease"
+                          transition: "all 150ms ease",
                         }}
                       >
                         <input
@@ -1505,7 +2011,7 @@ export default function ContestPageClient() {
                           onChange={(e) => setSupportCategory(e.target.value)}
                           style={{
                             accentColor: "#a855f7",
-                            cursor: "pointer"
+                            cursor: "pointer",
                           }}
                         />
                         {opt.label}
@@ -1530,7 +2036,7 @@ export default function ContestPageClient() {
                         fontSize: "12px",
                         color: "#e2e8f0",
                         fontFamily: "inherit",
-                        outline: "none"
+                        outline: "none",
                       }}
                     />
                   )}
@@ -1539,7 +2045,10 @@ export default function ContestPageClient() {
                   <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
                     <button
                       onClick={handleSendSupportReport}
-                      disabled={isSendingReport || (supportCategory === "other" && !customIssueDetail.trim())}
+                      disabled={
+                        isSendingReport ||
+                        (supportCategory === "other" && !customIssueDetail.trim())
+                      }
                       style={{
                         flex: 1,
                         height: "38px",
@@ -1554,7 +2063,7 @@ export default function ContestPageClient() {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        boxShadow: "0 4px 12px rgba(245,158,11,0.2)"
+                        boxShadow: "0 4px 12px rgba(245,158,11,0.2)",
                       }}
                     >
                       {isSendingReport ? "TRANSMITTING..." : "SUBMIT REPORT"}
@@ -1572,7 +2081,7 @@ export default function ContestPageClient() {
                         fontSize: "13px",
                         fontWeight: 500,
                         cursor: "pointer",
-                        transition: "all 200ms ease"
+                        transition: "all 200ms ease",
                       }}
                     >
                       CANCEL
@@ -1583,10 +2092,37 @@ export default function ContestPageClient() {
             </div>
 
             {/* Right Column: Auto Attached Telemetry Preview */}
-            <div style={{ display: "flex", flexDirection: "column", borderLeft: "1px solid rgba(255,255,255,0.05)", paddingLeft: "32px", overflow: "hidden" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "12px" }}>
-                <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#22c55e" }} />
-                <span style={{ fontSize: "11px", fontWeight: 600, color: "#22c55e", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.05em" }}>AUTO-ATTACHED DIAGNOSTICS</span>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                borderLeft: "1px solid rgba(255,255,255,0.05)",
+                paddingLeft: "32px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "12px" }}
+              >
+                <div
+                  style={{
+                    width: "6px",
+                    height: "6px",
+                    borderRadius: "50%",
+                    background: "#22c55e",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    color: "#22c55e",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  AUTO-ATTACHED DIAGNOSTICS
+                </span>
               </div>
               <div
                 style={{
@@ -1601,7 +2137,7 @@ export default function ContestPageClient() {
                   color: "rgba(168, 85, 247, 0.8)",
                   lineHeight: 1.5,
                   whiteSpace: "pre-wrap",
-                  wordBreak: "break-all"
+                  wordBreak: "break-all",
                 }}
               >
                 {JSON.stringify(supportTelemetry, null, 2)}

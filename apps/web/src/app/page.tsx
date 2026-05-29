@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
@@ -15,7 +15,9 @@ function getLoginThemeColors(theme: "dark" | "light") {
     cardBorder: isLight ? "rgba(124, 58, 237, 0.14)" : "rgba(255, 255, 255, 0.08)",
     input: isLight ? "rgba(255, 255, 255, 0.86)" : "rgba(0, 0, 0, 0.45)",
     inputBorder: isLight ? "rgba(124, 58, 237, 0.14)" : "rgba(255,255,255,0.08)",
-    inputShadow: isLight ? "inset 0 1px 2px rgba(80, 70, 55, 0.08)" : "inset 0 1px 3px rgba(0,0,0,0.6)",
+    inputShadow: isLight
+      ? "inset 0 1px 2px rgba(80, 70, 55, 0.08)"
+      : "inset 0 1px 3px rgba(0,0,0,0.6)",
     text: isLight ? "#302a3b" : "#f8fafc",
     muted: isLight ? "rgba(48, 42, 59, 0.54)" : "rgba(255,255,255,0.45)",
     faint: isLight ? "rgba(48, 42, 59, 0.34)" : "rgba(255,255,255,0.28)",
@@ -39,7 +41,24 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [showSSOModal, setShowSSOModal] = useState(false);
+  const emailIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const passIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const c = getLoginThemeColors(theme);
+
+  // Interrupt simulated typing on any keypress
+  useEffect(() => {
+    if (!isTyping) return;
+    const handleKeyDown = () => {
+      if (emailIntervalRef.current) clearInterval(emailIntervalRef.current);
+      if (passIntervalRef.current) clearInterval(passIntervalRef.current);
+      setIsTyping(false);
+      setEmail(TEST_EMAIL);
+      setPassword(TEST_PASSWORD);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isTyping]);
 
   useEffect(() => {
     const saved = localStorage.getItem("ams_theme");
@@ -66,7 +85,7 @@ export default function LoginPage() {
       localStorage.setItem("ams_user_email", email);
       setTimeout(() => router.push("/home"), 850);
     } else {
-      setError("AUTHENTICATION_FAILED: Verify secure credentials and retry.");
+      setError("Invalid email or password. Please verify your credentials and try again.");
     }
   }
 
@@ -75,35 +94,33 @@ export default function LoginPage() {
     setError("");
     setIsTyping(true);
 
-    // Dynamic physical typing simulation
     let currentEmail = "";
     let currentPass = "";
     let emailIdx = 0;
     let passIdx = 0;
 
-    const emailInterval = setInterval(() => {
+    emailIntervalRef.current = setInterval(() => {
       if (emailIdx < TEST_EMAIL.length) {
         currentEmail += TEST_EMAIL[emailIdx];
         setEmail(currentEmail);
         emailIdx++;
       } else {
-        clearInterval(emailInterval);
+        if (emailIntervalRef.current) clearInterval(emailIntervalRef.current);
 
-        // Brief pause between fields to simulate human typing cadence
         setTimeout(() => {
-          const passInterval = setInterval(() => {
+          passIntervalRef.current = setInterval(() => {
             if (passIdx < TEST_PASSWORD.length) {
               currentPass += TEST_PASSWORD[passIdx];
               setPassword(currentPass);
               passIdx++;
             } else {
-              clearInterval(passInterval);
+              if (passIntervalRef.current) clearInterval(passIntervalRef.current);
               setIsTyping(false);
             }
-          }, 35);
-        }, 150);
+          }, 8);
+        }, 50);
       }
-    }, 25);
+    }, 8);
   };
 
   return (
@@ -146,18 +163,30 @@ export default function LoginPage() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: theme === "light" ? "0 8px 24px rgba(80, 70, 55, 0.08)" : "0 8px 24px rgba(0,0,0,0.24)",
+          boxShadow:
+            theme === "light" ? "0 8px 24px rgba(80, 70, 55, 0.08)" : "0 8px 24px rgba(0,0,0,0.24)",
           transition: "all 220ms var(--ease-cinematic)",
         }}
       >
         {theme === "light" ? (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M14.5 10.4A5.8 5.8 0 0 1 7.6 3.5a6 6 0 1 0 6.9 6.9Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M14.5 10.4A5.8 5.8 0 0 1 7.6 3.5a6 6 0 1 0 6.9 6.9Z"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         ) : (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
             <circle cx="9" cy="9" r="3.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.7 3.7l1.4 1.4M12.9 12.9l1.4 1.4M3.7 14.3l1.4-1.4M12.9 5.1l1.4-1.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path
+              d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.7 3.7l1.4 1.4M12.9 12.9l1.4 1.4M3.7 14.3l1.4-1.4M12.9 5.1l1.4-1.4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
           </svg>
         )}
       </button>
@@ -281,11 +310,9 @@ export default function LoginPage() {
         {/* Heading */}
         <div style={{ textAlign: "center", marginBottom: "28px" }}>
           <h1
+            className="text-subsection-title"
             style={{
-              fontSize: "14px",
-              fontWeight: 500,
               color: c.text,
-              letterSpacing: "0.15em",
               textTransform: "uppercase",
             }}
           >
@@ -298,25 +325,24 @@ export default function LoginPage() {
           {/* Email */}
           <div style={{ marginBottom: "18px" }}>
             <label
+              className="text-micro-label"
               style={{
                 display: "flex",
                 alignItems: "center",
-                fontSize: "9.5px",
-                fontWeight: 600,
-                letterSpacing: "0.14em",
                 color: emailFocused ? c.accentText : c.muted,
-                textTransform: "uppercase",
                 marginBottom: "8px",
                 transition: "color 200ms",
+                position: "relative",
               }}
             >
               Email Address
               {emailFocused && (
                 <span
                   style={{
+                    position: "absolute",
+                    left: "105px",
                     color: c.accentText,
                     animation: "blink-cursor 0.9s step-end infinite",
-                    marginLeft: "5px",
                     fontWeight: "bold",
                   }}
                 >
@@ -357,25 +383,24 @@ export default function LoginPage() {
           {/* Password */}
           <div style={{ marginBottom: "12px" }}>
             <label
+              className="text-micro-label"
               style={{
                 display: "flex",
                 alignItems: "center",
-                fontSize: "9.5px",
-                fontWeight: 600,
-                letterSpacing: "0.14em",
                 color: passwordFocused ? c.accentText : c.muted,
-                textTransform: "uppercase",
                 marginBottom: "8px",
                 transition: "color 200ms",
+                position: "relative",
               }}
             >
               Password
               {passwordFocused && (
                 <span
                   style={{
+                    position: "absolute",
+                    left: "75px",
                     color: c.accentText,
                     animation: "blink-cursor 0.9s step-end infinite",
-                    marginLeft: "5px",
                     fontWeight: "bold",
                   }}
                 >
@@ -414,37 +439,7 @@ export default function LoginPage() {
             />
           </div>
 
-          {/* Error */}
-          {error && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: "10px",
-                background: "rgba(239,68,68,0.05)",
-                border: "1px solid rgba(239,68,68,0.22)",
-                borderRadius: "6px",
-                padding: "10px 14px",
-                marginTop: "16px",
-                marginBottom: "4px",
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              <span style={{ color: "#f87171", fontSize: "11px", fontWeight: "bold" }}>[!]</span>
-              <p
-                style={{
-                  fontSize: "10.5px",
-                  color: "#fca5a5",
-                  letterSpacing: "0.01em",
-                  fontWeight: 400,
-                  margin: 0,
-                  lineHeight: 1.5,
-                }}
-              >
-                {error}
-              </p>
-            </div>
-          )}
+          {/* Removed old inline error container to avoid form layout shifts */}
 
           {/* Continue button */}
           <div style={{ marginTop: "24px" }}>
@@ -488,12 +483,7 @@ export default function LoginPage() {
             />
           </div>
 
-          <SSOButton
-            theme={theme}
-            onUnavailable={() =>
-              setError("SSO_UNAVAILABLE: Institution SSO is not configured in this build.")
-            }
-          />
+          <SSOButton theme={theme} onUnavailable={() => setShowSSOModal(true)} />
         </form>
 
         {/* Footer */}
@@ -544,12 +534,9 @@ export default function LoginPage() {
           }}
         >
           <p
+            className="text-micro-label"
             style={{
-              fontSize: "9.5px",
               color: c.accentText,
-              fontWeight: 600,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
               margin: 0,
             }}
           >
@@ -620,6 +607,145 @@ export default function LoginPage() {
           boxShadow: 0 8px 24px rgba(168, 85, 247, 0.06), 0 4px 16px rgba(0,0,0,0.3) !important;
         }
       `}</style>
+
+      {/* ── Error Toast Notification ── */}
+      {error && (
+        <div
+          style={{
+            position: "fixed",
+            top: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+            width: "100%",
+            maxWidth: "420px",
+            padding: "14px 18px",
+            borderRadius: "10px",
+            background: "rgba(220, 38, 38, 0.95)",
+            backdropFilter: "blur(12px)",
+            border: "1px solid rgba(248, 113, 113, 0.4)",
+            boxShadow: "0 12px 40px rgba(0, 0, 0, 0.25)",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            animation: "fadeIn 250ms var(--ease-cinematic) forwards",
+          }}
+        >
+          <span style={{ color: "#ffffff", fontSize: "14px", fontWeight: "bold" }}>[!]</span>
+          <p
+            className="text-mono-console"
+            style={{
+              color: "#ffffff",
+              margin: 0,
+              lineHeight: 1.4,
+              flex: 1,
+            }}
+          >
+            {error}
+          </p>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#ffffff",
+              opacity: 0.7,
+              cursor: "pointer",
+              fontSize: "14px",
+              padding: "4px",
+              lineHeight: 1,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ── SSO Info Modal ── */}
+      {showSSOModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(3,8,22,0.6)",
+            backdropFilter: "blur(16px)",
+            animation: "fadeIn 280ms var(--ease-cinematic) forwards",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: "460px",
+              width: "100%",
+              borderRadius: "16px",
+              padding: "36px 32px",
+              background: theme === "light" ? "#ffffff" : "rgba(15, 23, 42, 0.95)",
+              border: `1px solid ${c.cardBorder}`,
+              boxShadow: "0 24px 64px rgba(0, 0, 0, 0.35)",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "50%",
+                background: theme === "light" ? "rgba(48,42,59,0.06)" : "rgba(255,255,255,0.05)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 20px",
+              }}
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke={c.text}
+                strokeWidth="1.8"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            </div>
+            <h3 className="text-subsection-title" style={{ color: c.text, marginBottom: "12px" }}>
+              Institution SSO Portal
+            </h3>
+            <p
+              className="text-body-copy"
+              style={{ color: c.muted, lineHeight: 1.6, marginBottom: "28px" }}
+            >
+              Institution Single Sign-On is currently unavailable for this version of the app.
+              Please contact your institution's administrator to register your device or use your
+              designated secure email credentials to sign in directly.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowSSOModal(false)}
+              style={{
+                width: "100%",
+                padding: "12px",
+                background: theme === "light" ? "#302a3b" : "#ffffff",
+                color: theme === "light" ? "#ffffff" : "#0f172a",
+                border: "none",
+                borderRadius: "6px",
+                fontWeight: 600,
+                fontSize: "12px",
+                cursor: "pointer",
+                transition: "opacity 200ms",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+            >
+              Acknowledge & Close
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

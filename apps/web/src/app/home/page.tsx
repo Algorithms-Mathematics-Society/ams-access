@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useRouter } from "next/navigation";
-import { invoke } from "@ams/api-client";
+import { invoke, runSessionReadiness, sessionPolicy, type ReadinessReport } from "@ams/api-client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -84,6 +84,17 @@ const READINESS_TIMEOUT_MS = {
   network: 5000,
 };
 
+function getOrCreateDeviceId() {
+  const existing = localStorage.getItem("ams_device_id");
+  if (existing) return existing;
+  const generated =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem("ams_device_id", generated);
+  return generated;
+}
+
 function getNetworkProbeHost() {
   try {
     return new URL(API_URL).hostname;
@@ -101,11 +112,37 @@ function withUiTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   });
 }
 
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-  ms = 8000
-) {
+function statusFromReport(report: ReadinessReport, kind: string): ReadinessStatus {
+  const check = report.checks.find((item) => item.kind === kind);
+  if (!check) return "fail";
+  return check.outcome === "pass" ? "ok" : "fail";
+}
+
+function readinessFromReport(report: ReadinessReport): ReadinessState {
+  return {
+    camera: statusFromReport(report, "camera"),
+    mic: statusFromReport(report, "microphone"),
+    network: statusFromReport(report, "network"),
+    keyboard: statusFromReport(report, "keyboard_lockdown"),
+    restrictedApps: statusFromReport(report, "restricted_apps"),
+    vm: statusFromReport(report, "virtualization"),
+    platform: statusFromReport(report, "platform"),
+  };
+}
+
+async function getBrowserMediaAvailability() {
+  const devices = await withUiTimeout(
+    navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
+    READINESS_TIMEOUT_MS.media
+  );
+  if (!devices) return { cameraAvailable: false, microphoneAvailable: false };
+  return {
+    cameraAvailable: devices.some((d) => d.kind === "videoinput"),
+    microphoneAvailable: devices.some((d) => d.kind === "audioinput"),
+  };
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, ms = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
@@ -208,27 +245,24 @@ const NAV_ITEMS = [
 ];
 
 function getThemeColors(theme: "dark" | "light") {
-  const isLight = theme === "light";
   return {
-    bg: isLight ? "#FAF8F5" : "#02040a",
-    sidebarBg: isLight ? "#F2EDE4" : "#080b11",
-    cardBg: isLight ? "#ffffff" : "#080b11",
-    innerBg: isLight ? "#F8F5F0" : "#02040a",
-    border: isLight ? "rgba(124, 58, 237, 0.08)" : "rgba(255, 255, 255, 0.05)",
-    borderStrong: isLight ? "rgba(124, 58, 237, 0.16)" : "rgba(168, 85, 247, 0.15)",
-    text: isLight ? "#3c362e" : "#ffffff",
-    textMuted: isLight ? "#7c7467" : "rgba(255, 255, 255, 0.35)",
-    textMutedStrong: isLight ? "#5c5447" : "rgba(255, 255, 255, 0.65)",
-    accent: isLight ? "#7c3aed" : "#a855f7",
-    accentLight: isLight ? "rgba(124, 58, 237, 0.08)" : "rgba(168, 85, 247, 0.08)",
-    accentBorder: isLight ? "rgba(124, 58, 237, 0.25)" : "rgba(168, 85, 247, 0.25)",
-    accentText: isLight ? "#6d28d9" : "#c084fc",
-    consoleText: isLight ? "#5c2d91" : "rgba(168, 85, 247, 0.8)",
-    shadow: isLight ? "0 4px 20px rgba(120, 110, 90, 0.06)" : "0 4px 16px rgba(0, 0, 0, 0.15)",
-    shadowHover: isLight
-      ? "0 12px 30px rgba(120, 110, 90, 0.12)"
-      : "0 12px 36px rgba(168, 85, 247, 0.04)",
-    dot: isLight ? "#10b981" : "#22c55e",
+    bg: "var(--theme-bg)",
+    sidebarBg: "var(--theme-sidebar-bg)",
+    cardBg: "var(--theme-card-bg)",
+    innerBg: "var(--theme-inner-bg)",
+    border: "var(--theme-border)",
+    borderStrong: "var(--theme-border-strong)",
+    text: "var(--theme-text)",
+    textMuted: "var(--theme-text-muted)",
+    textMutedStrong: "var(--theme-text-muted-strong)",
+    accent: "var(--theme-accent)",
+    accentLight: "var(--theme-accent-light)",
+    accentBorder: "var(--theme-accent-border)",
+    accentText: "var(--theme-accent-text)",
+    consoleText: "var(--theme-console-text)",
+    shadow: "var(--theme-shadow)",
+    shadowHover: "var(--theme-shadow-hover)",
+    dot: "var(--theme-dot)",
   };
 }
 
@@ -250,6 +284,8 @@ export default function HomePage() {
   const [userEmail, setUserEmail] = useState("tester@ams.local");
   const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
   const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
+  const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
+  const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
 
   // Load theme from localStorage on mount
   useEffect(() => {
@@ -260,6 +296,11 @@ export default function HomePage() {
       localStorage.setItem("ams_theme", "light");
     }
   }, []);
+
+  // Sync theme class to documentElement for CSS variables
+  useEffect(() => {
+    document.documentElement.className = theme;
+  }, [theme]);
 
   const c = getThemeColors(theme);
 
@@ -273,6 +314,7 @@ export default function HomePage() {
     vm: "checking",
     platform: "checking",
   });
+  const [readinessReport, setReadinessReport] = useState<ReadinessReport | null>(null);
 
   async function loadContests(email: string, mode: "initial" | "refresh" = "refresh") {
     if (mode === "initial") setContestsLoading(true);
@@ -293,13 +335,8 @@ export default function HomePage() {
     }
   }
 
-  async function runIntegrityScan(cancelledRef?: { current: boolean }) {
+  async function runIntegrityScan(cancelledRef?: { current: boolean }, contestId?: string | null) {
     const isCancelled = () => cancelledRef?.current ?? false;
-    const updateReadiness = (patch: Partial<ReadinessState>) => {
-      if (!isCancelled()) {
-        setReadiness((r) => ({ ...r, ...patch }));
-      }
-    };
 
     if (!isCancelled()) {
       setReadiness({
@@ -313,78 +350,43 @@ export default function HomePage() {
       });
     }
 
-    const mediaProbe = withUiTimeout(
-      navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
-      READINESS_TIMEOUT_MS.media
-    ).then((devices) => {
-      if (devices) {
-        const cameras = devices.filter((d) => d.kind === "videoinput");
-        const mics = devices.filter((d) => d.kind === "audioinput");
-        updateReadiness({
-          camera: cameras.length > 0 ? "ok" : "fail",
-          mic: mics.length > 0 ? "ok" : "fail",
-        });
-      } else {
-        updateReadiness({ camera: "fail", mic: "fail" });
-      }
-    });
+    const media = await getBrowserMediaAvailability();
+    if (isCancelled()) return;
 
-    const platformProbe = withUiTimeout(
-      invoke<PlatformInfo>("get_platform"),
-      READINESS_TIMEOUT_MS.platform
-    ).then((platform) => {
-      if (platform) {
-        const supported = platform.os === "linux" || platform.os === "windows";
-        updateReadiness({
-          platform: supported ? "ok" : "fail",
-          keyboard: supported ? "ok" : "fail",
-        });
-      } else {
-        updateReadiness({ platform: "fail", keyboard: "fail" });
-      }
-    });
-
-    const processProbe = withUiTimeout(
-      invoke<ProcessScanResult>("scan_processes"),
-      READINESS_TIMEOUT_MS.process
-    ).then((scan) => {
-      if (scan) {
-        updateReadiness({ restrictedApps: scan.clean ? "ok" : "fail" });
-      } else {
-        updateReadiness({ restrictedApps: "fail" });
-      }
-    });
-
-    const virtualizationProbe = withUiTimeout(
-      invoke<VirtDetectionResult>("detect_virtualization"),
-      READINESS_TIMEOUT_MS.virtualization
-    ).then((virt) => {
-      if (virt) {
-        updateReadiness({ vm: virt.detected ? "fail" : "ok" });
-      } else {
-        updateReadiness({ vm: "fail" });
-      }
-    });
-
-    const networkProbe = withUiTimeout(
-      invoke<NetworkCheckResult>("check_network_stability", { host: getNetworkProbeHost() }),
-      READINESS_TIMEOUT_MS.network
-    ).then((network) => {
-      if (network) {
-        updateReadiness({ network: network.reachable ? "ok" : "fail" });
-      } else {
-        updateReadiness({ network: "fail" });
-      }
-    });
-
-    await Promise.allSettled([
-      mediaProbe,
-      platformProbe,
-      processProbe,
-      virtualizationProbe,
-      networkProbe,
-    ]);
+    try {
+      const strict = Boolean(contestId);
+      const report = await runSessionReadiness({
+        networkHost: getNetworkProbeHost(),
+        contestId: contestId ?? null,
+        deviceId: getOrCreateDeviceId(),
+        cameraAvailable: media.cameraAvailable,
+        microphoneAvailable: media.microphoneAvailable,
+        activateKeyboard: true,
+        policy: sessionPolicy(strict ? "strict_contest" : "internal_pilot"),
+      });
+      if (isCancelled()) return;
+      setReadinessReport(report);
+      setReadiness(readinessFromReport(report));
+    } catch {
+      if (isCancelled()) return;
+      setReadinessReport(null);
+      setReadiness({
+        camera: media.cameraAvailable ? "ok" : "fail",
+        mic: media.microphoneAvailable ? "ok" : "fail",
+        network: "fail",
+        keyboard: "fail",
+        restrictedApps: "fail",
+        vm: "fail",
+        platform: "fail",
+      });
+    }
   }
+
+  useEffect(() => {
+    if (preflightContestId) {
+      void runIntegrityScan(undefined, preflightContestId);
+    }
+  }, [preflightContestId]);
 
   useEffect(() => {
     const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
@@ -440,18 +442,26 @@ export default function HomePage() {
       }
       const resolvedActiveSession = data.active_session_id
         ? {
-          id: data.active_session_id,
-          contest_id: data.contest.id,
-          contest_title: data.contest.title,
-          updated_at: new Date().toISOString(),
+            id: data.active_session_id,
+            contest_id: data.contest.id,
+            contest_title: data.contest.title,
+            updated_at: new Date().toISOString(),
           }
         : null;
       if (resolvedActiveSession) {
         localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(resolvedActiveSession));
         setActiveSession(resolvedActiveSession);
       }
-      setPreflightContestId(data.contest.id);
-      setPreflightSessionType(resolvedActiveSession ? "resume" : "new");
+
+      // Display success checkmark state first for 800ms
+      setInviteSuccessMsg("Contest Resolved Successfully");
+      setInviteCode("");
+      setInviteCodeStatus(null);
+      setTimeout(() => {
+        setInviteSuccessMsg(null);
+        setPreflightContestId(data.contest!.id);
+        setPreflightSessionType(resolvedActiveSession ? "resume" : "new");
+      }, 800);
     } catch {
       setInviteCodeStatus("Code validation unavailable.");
     } finally {
@@ -499,6 +509,7 @@ export default function HomePage() {
 
   return (
     <div
+      className="theme-transition"
       style={{
         display: "flex",
         height: "100vh",
@@ -506,8 +517,6 @@ export default function HomePage() {
         fontFamily: "'Geist', 'Inter', system-ui, sans-serif",
         background: c.bg,
         color: c.text,
-        transition:
-          "background 300ms cubic-bezier(0.22, 1, 0.36, 1), color 300ms cubic-bezier(0.22, 1, 0.36, 1)",
       }}
     >
       {/* ── Sidebar ── */}
@@ -609,12 +618,12 @@ export default function HomePage() {
                   <div
                     style={{
                       position: "absolute",
-                      left: "-14px",
-                      top: "15%",
-                      bottom: "15%",
-                      width: "3px",
+                      left: "6px",
+                      top: "10px",
+                      bottom: "10px",
+                      width: "3.5px",
                       background: c.accent,
-                      borderRadius: "0 4px 4px 0",
+                      borderRadius: "2px",
                       boxShadow: `0 0 8px ${c.accent}`,
                     }}
                   />
@@ -720,9 +729,8 @@ export default function HomePage() {
         <div style={{ flex: 1, overflowY: "auto", padding: "36px 48px" }}>
           {activeNav === "overview" && (
             <div
+              className="grid grid-cols-1 xl:grid-cols-[1fr_360px]"
               style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 360px",
                 gap: "36px",
                 alignItems: "stretch",
               }}
@@ -734,6 +742,7 @@ export default function HomePage() {
                   inviteCode={inviteCode}
                   inviteCodeBusy={inviteCodeBusy}
                   inviteCodeStatus={inviteCodeStatus}
+                  inviteSuccessMsg={inviteSuccessMsg}
                   onInviteCodeChange={setInviteCode}
                   onInviteCodeSubmit={handleInviteCodeSubmit}
                   onRefresh={() => loadContests(userEmail)}
@@ -760,6 +769,7 @@ export default function HomePage() {
                 readiness={readiness}
                 onSettingsRedirect={() => setActiveNav("settings")}
                 theme={theme}
+                onResolve={(key) => setActiveResolveModal(key)}
               />
             </div>
           )}
@@ -790,14 +800,22 @@ export default function HomePage() {
           theme={theme}
           onClose={() => setPreflightContestId(null)}
           readiness={readiness}
+          readinessReport={readinessReport}
           onSettingsRedirect={() => {
             setPreflightContestId(null);
             setActiveNav("settings");
           }}
-          onRescan={() => runIntegrityScan()}
+          onRescan={() => runIntegrityScan(undefined, preflightContestId)}
         />
       )}
-
+      {activeResolveModal && (
+        <ResolveModal
+          isOpen={true}
+          onClose={() => setActiveResolveModal(null)}
+          checkKey={activeResolveModal}
+          theme={theme}
+        />
+      )}
       <style>{`
         @keyframes pulse-dot {
           0%, 100% { opacity: 1; }
@@ -858,40 +876,29 @@ function SignOutButton({
   );
 }
 
-function useStartsIn(startAt: string) {
-  const [label, setLabel] = useState("");
-  useEffect(() => {
-    function tick() {
-      const diff = new Date(startAt).getTime() - Date.now();
-      if (diff <= 0) {
-        setLabel("Starting now");
-        return;
-      }
-      const m = Math.floor(diff / 60000);
-      const s = Math.floor((diff % 60000) / 1000);
-      setLabel(m > 0 ? `${m}m ${s}s` : `${s}s`);
-    }
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [startAt]);
-  return label;
+function formatStartsIn(startAt: string, now: number) {
+  const diff = new Date(startAt).getTime() - now;
+  if (diff <= 0) return "Starting now";
+  const m = Math.floor(diff / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 function ScheduledContestCard({
   c,
   onJoin,
   theme,
+  now,
 }: {
   c: InvitedContest;
   onJoin: () => void;
   theme: "dark" | "light";
+  now: number;
 }) {
-  const startsIn = useStartsIn(c.start_at);
+  const startsIn = formatStartsIn(c.start_at, now);
   const [hovered, setHovered] = useState(false);
   const themeColors = getThemeColors(theme);
   const isLight = theme === "light";
-  const now = Date.now();
   const canJoin = new Date(c.start_at).getTime() <= now && now < new Date(c.end_at).getTime();
 
   return (
@@ -1112,11 +1119,7 @@ function ScheduledContestCard({
             borderRadius: "10px",
             border: `1px solid ${canJoin ? themeColors.accent : themeColors.borderStrong}`,
             background: canJoin && hovered ? themeColors.accent : "transparent",
-            color: canJoin
-              ? hovered
-                ? "#ffffff"
-                : themeColors.accentText
-              : themeColors.textMuted,
+            color: canJoin ? (hovered ? "#ffffff" : themeColors.accentText) : themeColors.textMuted,
             fontSize: "14px",
             fontWeight: 600,
             fontFamily: "inherit",
@@ -1124,11 +1127,12 @@ function ScheduledContestCard({
             letterSpacing: "0.02em",
             whiteSpace: "nowrap",
             transition: "all 300ms cubic-bezier(0.16, 1, 0.3, 1)",
-            boxShadow: canJoin && hovered
-              ? isLight
-                ? "0 8px 20px rgba(124, 58, 237, 0.2)"
-                : "0 8px 24px rgba(168, 85, 247, 0.3)"
-              : "none",
+            boxShadow:
+              canJoin && hovered
+                ? isLight
+                  ? "0 8px 20px rgba(124, 58, 237, 0.2)"
+                  : "0 8px 24px rgba(168, 85, 247, 0.3)"
+                : "none",
           }}
         >
           <svg
@@ -1449,6 +1453,7 @@ function SessionActionsPanel({
   inviteCode,
   inviteCodeBusy,
   inviteCodeStatus,
+  inviteSuccessMsg,
   onInviteCodeChange,
   onInviteCodeSubmit,
   onRefresh,
@@ -1463,6 +1468,7 @@ function SessionActionsPanel({
   inviteCode: string;
   inviteCodeBusy: boolean;
   inviteCodeStatus: string | null;
+  inviteSuccessMsg: string | null;
   onInviteCodeChange: (value: string) => void;
   onInviteCodeSubmit: () => void;
   onRefresh: () => void;
@@ -1546,6 +1552,31 @@ function SessionActionsPanel({
               {inviteCodeBusy ? "Checking..." : "Validate"}
             </button>
           </div>
+          {inviteSuccessMsg && (
+            <p
+              style={{
+                marginTop: "8px",
+                color: theme === "light" ? "#10b981" : "#22c55e",
+                fontSize: "12.5px",
+                lineHeight: 1.45,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M3 7l3 3 5-5"
+                  stroke={theme === "light" ? "#10b981" : "#22c55e"}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {inviteSuccessMsg}
+            </p>
+          )}
           {inviteCodeStatus && (
             <p style={{ marginTop: "8px", color: "#f59e0b", fontSize: "12px", lineHeight: 1.45 }}>
               {inviteCodeStatus}
@@ -1643,6 +1674,12 @@ function ContestsPanel({
   onPreflight: (contestId: string, type: "new" | "resume") => void;
 }) {
   const themeColors = getThemeColors(theme);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   function statusColor(s: string) {
     if (s === "ACTIVE")
@@ -1792,6 +1829,7 @@ function ContestsPanel({
                 c={c}
                 onJoin={() => onPreflight(c.id, "new")}
                 theme={theme}
+                now={now}
               />
             );
           }
@@ -1818,10 +1856,12 @@ function ReadinessWidget({
   readiness,
   onSettingsRedirect,
   theme,
+  onResolve,
 }: {
   readiness: ReadinessState;
   onSettingsRedirect: () => void;
   theme: "dark" | "light";
+  onResolve?: (key: string) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const themeColors = getThemeColors(theme);
@@ -1873,16 +1913,47 @@ function ReadinessWidget({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "24px" }}>
-        <ReadinessItem label="Network Connection" status={readiness.network} theme={theme} />
-        <ReadinessItem label="Video Capture" status={readiness.camera} theme={theme} />
-        <ReadinessItem label="Audio Input" status={readiness.mic} theme={theme} />
-        <ReadinessItem label="Secure VM Shield" status={readiness.vm} theme={theme} />
-        <ReadinessItem label="Keyboard Lockdown" status={readiness.keyboard} theme={theme} />
-        <ReadinessItem label="Platform Support" status={readiness.platform} theme={theme} />
+        <ReadinessItem
+          label="Network Connection"
+          status={readiness.network}
+          theme={theme}
+          onResolve={onResolve ? () => onResolve("network") : undefined}
+        />
+        <ReadinessItem
+          label="Video Capture"
+          status={readiness.camera}
+          theme={theme}
+          onResolve={onResolve ? () => onResolve("camera") : undefined}
+        />
+        <ReadinessItem
+          label="Audio Input"
+          status={readiness.mic}
+          theme={theme}
+          onResolve={onResolve ? () => onResolve("mic") : undefined}
+        />
+        <ReadinessItem
+          label="Secure VM Shield"
+          status={readiness.vm}
+          theme={theme}
+          onResolve={onResolve ? () => onResolve("vm") : undefined}
+        />
+        <ReadinessItem
+          label="Keyboard Lockdown"
+          status={readiness.keyboard}
+          theme={theme}
+          onResolve={onResolve ? () => onResolve("keyboard") : undefined}
+        />
+        <ReadinessItem
+          label="Platform Support"
+          status={readiness.platform}
+          theme={theme}
+          onResolve={onResolve ? () => onResolve("platform") : undefined}
+        />
         <ReadinessItem
           label="Restricted Processes"
           status={readiness.restrictedApps}
           theme={theme}
+          onResolve={onResolve ? () => onResolve("restrictedApps") : undefined}
         />
       </div>
 
@@ -1957,10 +2028,12 @@ function ReadinessItem({
   label,
   status,
   theme,
+  onResolve,
 }: {
   label: string;
   status: "ok" | "fail" | "checking";
   theme: "dark" | "light";
+  onResolve?: () => void;
 }) {
   const themeColors = getThemeColors(theme);
   return (
@@ -2023,7 +2096,7 @@ function ReadinessItem({
           </>
         )}
         {status === "fail" && (
-          <>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span
               style={{
                 fontSize: "10px",
@@ -2034,11 +2107,40 @@ function ReadinessItem({
             >
               ACTION REQUIRED
             </span>
+            {onResolve && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onResolve();
+                }}
+                style={{
+                  background: "rgba(245, 158, 11, 0.12)",
+                  border: "1px solid rgba(245, 158, 11, 0.3)",
+                  borderRadius: "4px",
+                  padding: "2px 8px",
+                  fontSize: "9.5px",
+                  color: "#f59e0b",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  transition: "all 200ms",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(245, 158, 11, 0.22)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(245, 158, 11, 0.12)";
+                }}
+              >
+                RESOLVE
+              </button>
+            )}
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <circle cx="6" cy="6" r="4.5" stroke="#f59e0b" strokeWidth="1.2" />
               <path d="M6 4v2.5M6 8h.01" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -2057,7 +2159,9 @@ function SettingsPanel({
   theme: "dark" | "light";
   setTheme: (t: "dark" | "light") => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"hardware" | "permissions" | "security" | "about">("hardware");
+  const [activeTab, setActiveTab] = useState<"hardware" | "permissions" | "security" | "about">(
+    "hardware"
+  );
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCam, setSelectedCam] = useState("");
@@ -3218,8 +3322,17 @@ function SettingsPanel({
               <h4 style={{ fontSize: "16px", fontWeight: 700, color: c.text, marginBottom: "8px" }}>
                 About AMS Access
               </h4>
-              <p style={{ fontSize: "13px", color: c.textMuted, lineHeight: 1.5, marginBottom: "24px" }}>
-                AMS Access secure contestant sandbox environment. This platform manages identity verification, optical telemetry, and background integrity validations during quantitative rounds.
+              <p
+                style={{
+                  fontSize: "13px",
+                  color: c.textMuted,
+                  lineHeight: 1.5,
+                  marginBottom: "24px",
+                }}
+              >
+                AMS Access secure contestant sandbox environment. This platform manages identity
+                verification, optical telemetry, and background integrity validations during
+                quantitative rounds.
               </p>
 
               {/* Legal and version listings */}
@@ -3236,7 +3349,7 @@ function SettingsPanel({
                   { label: "Privacy Policy", url: "/privacy" },
                   { label: "Terms of Service", url: "/terms" },
                   { label: "Open Source Licenses", url: "/licenses" },
-                  { label: "System Version", value: "v0.1.0" }
+                  { label: "System Version", value: "v0.1.0" },
                 ].map((item) => (
                   <div
                     key={item.label}
@@ -3250,7 +3363,9 @@ function SettingsPanel({
                       border: `1px solid ${c.border}`,
                     }}
                   >
-                    <span style={{ fontSize: "12.5px", fontWeight: 500, color: c.textMuted }}>{item.label}</span>
+                    <span style={{ fontSize: "12.5px", fontWeight: 500, color: c.textMuted }}>
+                      {item.label}
+                    </span>
                     {item.url ? (
                       <a
                         href={item.url}
@@ -3269,8 +3384,20 @@ function SettingsPanel({
                         }}
                       >
                         Launch Document
-                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ marginLeft: "2px" }}>
-                          <path d="M1 9l8-8M9 1h-6M9 1v6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        <svg
+                          width="10"
+                          height="10"
+                          viewBox="0 0 10 10"
+                          fill="none"
+                          style={{ marginLeft: "2px" }}
+                        >
+                          <path
+                            d="M1 9l8-8M9 1h-6M9 1v6"
+                            stroke="currentColor"
+                            strokeWidth="1.2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
                         </svg>
                       </a>
                     ) : (
@@ -3515,10 +3642,13 @@ function DiagnosticsPanel({ readiness, theme }: { readiness: any; theme: "dark" 
           background: c.cardBg,
           border: `1px solid ${c.border}`,
           borderRadius: "8px",
-          padding: "20px 24px",
+          padding: "var(--density-relaxed)",
         }}
       >
-        <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text, marginBottom: "14px" }}>
+        <h4
+          className="text-subsection-title"
+          style={{ color: c.text, marginBottom: "var(--density-compact)" }}
+        >
           Platform Connection Diagnostics
         </h4>
         <div
@@ -3727,13 +3857,15 @@ function TelemetryStat({
   return (
     <div
       style={{
-        padding: "14px 18px",
+        padding: "var(--density-standard)",
         background: c.innerBg,
         border: `1px solid ${c.border}`,
         borderRadius: "6px",
       }}
     >
-      <p style={{ fontSize: "11.5px", color: c.textMuted, marginBottom: "4px" }}>{label}</p>
+      <p className="text-micro-label" style={{ color: c.textMuted, marginBottom: "4px" }}>
+        {label}
+      </p>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" }}>
         <div
           style={{
@@ -3743,11 +3875,11 @@ function TelemetryStat({
             background: dotColor,
           }}
         />
-        <span style={{ fontSize: "13.5px", fontWeight: 600, color: c.text }}>{val}</span>
+        <span className="text-body-copy" style={{ fontWeight: 600, color: c.text }}>
+          {val}
+        </span>
       </div>
-      <p
-        style={{ fontSize: "10px", fontFamily: "'JetBrains Mono', monospace", color: c.textMuted }}
-      >
+      <p className="text-mono-console" style={{ color: c.textMuted, margin: 0 }}>
         {sub}
       </p>
     </div>
@@ -3848,6 +3980,7 @@ interface SessionReadinessModalProps {
   theme: "dark" | "light";
   onClose: () => void;
   readiness: ReadinessState;
+  readinessReport: ReadinessReport | null;
   onSettingsRedirect: () => void;
   onRescan: () => Promise<void>;
 }
@@ -3858,6 +3991,7 @@ function SessionReadinessModal({
   theme,
   onClose,
   readiness,
+  readinessReport,
   onSettingsRedirect,
   onRescan,
 }: SessionReadinessModalProps) {
@@ -3871,11 +4005,11 @@ function SessionReadinessModal({
 
   const score = calculateReadinessScore(readiness);
   const estimatedTime = getEstimatedTimeToReady(readiness);
-  const canProceed = scanStatus === "done" && score === 100;
+  const canProceed = scanStatus === "done" && readinessReport?.decision === "allowed";
 
   useEffect(() => {
     let active = true;
-    
+
     // Reset/start scan sequence
     setScanStatus("scanning");
     setScanProgress(0);
@@ -3883,18 +4017,35 @@ function SessionReadinessModal({
 
     const logTemplates = [
       { delay: 100, text: "[SYS] Initializing pre-flight secure handshake..." },
-      { delay: 400, text: `[NET] Dispatching TCP ping to gateway... ${readiness.network === "ok" ? "STABLE (22ms)" : "ERROR: DESTINATION UNREACHABLE"}` },
-      { delay: 800, text: `[AUD] Opening acoustic input buffer... ${readiness.mic === "ok" ? "ACTIVE (44.1kHz)" : "WARNING: MICROPHONE DISCONNECTED OR MUTED"}` },
-      { delay: 1200, text: `[CAM] Binding secure WebKit camera feed... ${readiness.camera === "ok" ? "RESOLVED (1080p)" : "CRITICAL: CAMERA DISCONNECTED"}` },
-      { delay: 1600, text: `[SEC] Scanning procfs/kernel hooks for VM footprints... ${readiness.vm === "ok" ? "SHIELD ACTIVE (0 flags)" : "WARNING: VIRTUALIZATION ENGINE DETECTED"}` },
-      { delay: 2000, text: "[SYS] Diagnostic signature generated. Integrity report compiled." }
+      {
+        delay: 400,
+        text: `[NET] Dispatching TCP ping to gateway... ${readiness.network === "ok" ? "STABLE (22ms)" : "ERROR: DESTINATION UNREACHABLE"}`,
+      },
+      {
+        delay: 800,
+        text: `[AUD] Opening acoustic input buffer... ${readiness.mic === "ok" ? "ACTIVE (44.1kHz)" : "WARNING: MICROPHONE DISCONNECTED OR MUTED"}`,
+      },
+      {
+        delay: 1200,
+        text: `[CAM] Binding secure WebKit camera feed... ${readiness.camera === "ok" ? "RESOLVED (1080p)" : "CRITICAL: CAMERA DISCONNECTED"}`,
+      },
+      {
+        delay: 1600,
+        text: `[SEC] Scanning procfs/kernel hooks for VM footprints... ${readiness.vm === "ok" ? "SHIELD ACTIVE (0 flags)" : "WARNING: VIRTUALIZATION ENGINE DETECTED"}`,
+      },
+      {
+        delay: 2000,
+        text: readinessReport
+          ? `[SYS] Policy decision: ${readinessReport.decision.toUpperCase()}`
+          : "[SYS] Diagnostic signature unavailable.",
+      },
     ];
 
     let timerIds: NodeJS.Timeout[] = [];
-    
+
     const progressInterval = setInterval(() => {
       if (!active) return;
-      setScanProgress(p => {
+      setScanProgress((p) => {
         if (p >= 100) {
           clearInterval(progressInterval);
           setScanStatus("done");
@@ -3904,10 +4055,10 @@ function SessionReadinessModal({
       });
     }, 80);
 
-    logTemplates.forEach(item => {
+    logTemplates.forEach((item) => {
       const id = setTimeout(() => {
         if (!active) return;
-        setConsoleLogs(prev => [...prev, item.text]);
+        setConsoleLogs((prev) => [...prev, item.text]);
       }, item.delay);
       timerIds.push(id);
     });
@@ -3917,7 +4068,7 @@ function SessionReadinessModal({
       clearInterval(progressInterval);
       timerIds.forEach(clearTimeout);
     };
-  }, [contestId, isRescanning]);
+  }, [contestId, isRescanning, readinessReport]);
 
   async function handleRescan() {
     setIsRescanning(true);
@@ -3978,10 +4129,54 @@ function SessionReadinessModal({
         }}
       >
         {/* L-Shape Corner Decals (Matching Premium Login Page Aesthetics) */}
-        <div style={{ position: "absolute", top: 0, left: 0, width: "16px", height: "16px", borderTop: `2px solid ${c.accent}`, borderLeft: `2px solid ${c.accent}`, opacity: 0.6 }} />
-        <div style={{ position: "absolute", top: 0, right: 0, width: "16px", height: "16px", borderTop: `2px solid ${c.accent}`, borderRight: `2px solid ${c.accent}`, opacity: 0.6 }} />
-        <div style={{ position: "absolute", bottom: 0, left: 0, width: "16px", height: "16px", borderBottom: `2px solid ${c.accent}`, borderLeft: `2px solid ${c.accent}`, opacity: 0.6 }} />
-        <div style={{ position: "absolute", bottom: 0, right: 0, width: "16px", height: "16px", borderBottom: `2px solid ${c.accent}`, borderRight: `2px solid ${c.accent}`, opacity: 0.6 }} />
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "16px",
+            height: "16px",
+            borderTop: `2px solid ${c.accent}`,
+            borderLeft: `2px solid ${c.accent}`,
+            opacity: 0.6,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            width: "16px",
+            height: "16px",
+            borderTop: `2px solid ${c.accent}`,
+            borderRight: `2px solid ${c.accent}`,
+            opacity: 0.6,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            width: "16px",
+            height: "16px",
+            borderBottom: `2px solid ${c.accent}`,
+            borderLeft: `2px solid ${c.accent}`,
+            opacity: 0.6,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            right: 0,
+            width: "16px",
+            height: "16px",
+            borderBottom: `2px solid ${c.accent}`,
+            borderRight: `2px solid ${c.accent}`,
+            opacity: 0.6,
+          }}
+        />
 
         {/* Ambient Spotlights inside Card */}
         <div
@@ -3997,7 +4192,16 @@ function SessionReadinessModal({
         />
 
         {/* Left Column: Circular scanner & diagnostics score */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${c.border}`, paddingRight: "36px" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRight: `1px solid ${c.border}`,
+            paddingRight: "36px",
+          }}
+        >
           <h2
             style={{
               fontSize: "14px",
@@ -4013,8 +4217,15 @@ function SessionReadinessModal({
           </h2>
 
           {/* SVG Circular Ring Scanner */}
-          <div style={{ position: "relative", width: "160px", height: "160px", marginBottom: "24px" }}>
-            <svg width="100%" height="100%" viewBox="0 0 120 120" style={{ transform: "rotate(-90deg)" }}>
+          <div
+            style={{ position: "relative", width: "160px", height: "160px", marginBottom: "24px" }}
+          >
+            <svg
+              width="100%"
+              height="100%"
+              viewBox="0 0 120 120"
+              style={{ transform: "rotate(-90deg)" }}
+            >
               {/* Underlay Track */}
               <circle
                 cx="60"
@@ -4036,7 +4247,8 @@ function SessionReadinessModal({
                 strokeDashoffset={strokeDashoffset}
                 strokeLinecap="round"
                 style={{
-                  transition: "stroke-dashoffset 200ms cubic-bezier(0.16, 1, 0.3, 1), stroke 300ms ease",
+                  transition:
+                    "stroke-dashoffset 200ms cubic-bezier(0.16, 1, 0.3, 1), stroke 300ms ease",
                   filter: `drop-shadow(0 0 8px ${glowColor})`,
                 }}
               />
@@ -4101,7 +4313,9 @@ function SessionReadinessModal({
                 color: c.textMutedStrong,
               }}
             >
-              {estimatedTime === 0 ? "0 sec (Fully Armed)" : `Estimated time to ready: ${estimatedTime} sec`}
+              {estimatedTime === 0
+                ? "0 sec (Fully Armed)"
+                : `Estimated time to ready: ${estimatedTime} sec`}
             </span>
           </div>
         </div>
@@ -4114,7 +4328,8 @@ function SessionReadinessModal({
               Secure Enclave Port
             </h3>
             <p style={{ fontSize: "13px", color: c.textMuted, lineHeight: 1.45 }}>
-              Pre-flight validation of biometric feeds, restricted process hooks, and network topology.
+              Pre-flight validation of biometric feeds, restricted process hooks, and network
+              topology.
             </p>
           </div>
 
@@ -4143,7 +4358,11 @@ function SessionReadinessModal({
             />
             <PreflightCheckItem
               label="Kernel Virtualization Shield"
-              status={readiness.vm === "ok" && readiness.keyboard === "ok" && readiness.platform === "ok" ? "ok" : "fail"}
+              status={
+                readiness.vm === "ok" && readiness.keyboard === "ok" && readiness.platform === "ok"
+                  ? "ok"
+                  : "fail"
+              }
               successLabel="Secure environment active"
               failLabel="Secure environment flagged"
               theme={theme}
@@ -4175,14 +4394,28 @@ function SessionReadinessModal({
             }}
           >
             {consoleLogs.map((log, index) => (
-              <div key={index} style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+              <div
+                key={index}
+                style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}
+              >
                 {log}
               </div>
             ))}
             {scanStatus === "scanning" && (
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                 <span>[SCAN] Running active telemetry probe</span>
-                <span className="terminal-caret" style={{ display: "inline-block", width: "6px", height: "12px", background: "currentColor", animation: "pulse-dot 1s ease infinite" }}>▎</span>
+                <span
+                  className="terminal-caret"
+                  style={{
+                    display: "inline-block",
+                    width: "6px",
+                    height: "12px",
+                    background: "currentColor",
+                    animation: "pulse-dot 1s ease infinite",
+                  }}
+                >
+                  ▎
+                </span>
               </div>
             )}
           </div>
@@ -4236,10 +4469,17 @@ function SessionReadinessModal({
                 viewBox="0 0 16 16"
                 fill="none"
                 style={{
-                  animation: scanStatus === "scanning" || isRescanning ? "spin 1s linear infinite" : "none",
+                  animation:
+                    scanStatus === "scanning" || isRescanning ? "spin 1s linear infinite" : "none",
                 }}
               >
-                <path d="M1 8a7 7 0 1 1 7 7M1 8h4V4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path
+                  d="M1 8a7 7 0 1 1 7 7M1 8h4V4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             </button>
             <button
@@ -4261,7 +4501,12 @@ function SessionReadinessModal({
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <path
+                  d="M8 1v2M8 13v2M1 8h2M13 8h2"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
               </svg>
             </button>
             <button
@@ -4319,7 +4564,9 @@ function PreflightCheckItem({
         border: `1px solid ${isLight ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}`,
       }}
     >
-      <span style={{ fontSize: "12px", color: isLight ? "#7c7467" : "rgba(255, 255, 255, 0.45)" }}>{label}</span>
+      <span style={{ fontSize: "12px", color: isLight ? "#7c7467" : "rgba(255, 255, 255, 0.45)" }}>
+        {label}
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
         {status === "checking" && (
           <div
@@ -4440,15 +4687,15 @@ function calculateReadinessScore(r: ReadinessState) {
   const micOk = r.mic === "ok";
   const networkOk = r.network === "ok";
   const secureEnvOk = r.vm === "ok" && r.keyboard === "ok" && r.platform === "ok";
-  
+
   if (!networkOk) score -= 30;
   if (!secureEnvOk) {
     let vmDeduct = r.vm !== "ok" ? 15 : 0;
     let kbDeduct = r.keyboard !== "ok" ? 10 : 0;
     let platDeduct = r.platform !== "ok" ? 10 : 0;
-    score -= (vmDeduct + kbDeduct + platDeduct);
+    score -= vmDeduct + kbDeduct + platDeduct;
   }
-  
+
   if (!cameraOk && !micOk) {
     score -= 25;
   } else if (!cameraOk) {
@@ -4456,7 +4703,7 @@ function calculateReadinessScore(r: ReadinessState) {
   } else if (!micOk) {
     score -= 6;
   }
-  
+
   return Math.max(10, Math.min(100, score));
 }
 
@@ -4467,4 +4714,139 @@ function getEstimatedTimeToReady(r: ReadinessState) {
   if (r.network !== "ok") time += 30;
   if (r.vm !== "ok" || r.keyboard !== "ok") time += 60;
   return time;
+}
+
+interface ResolveModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  checkKey: string | null;
+  theme: "dark" | "light";
+}
+
+function ResolveModal({ isOpen, onClose, checkKey, theme }: ResolveModalProps) {
+  if (!isOpen || !checkKey) return null;
+
+  const c = getThemeColors(theme);
+
+  const getDetails = () => {
+    switch (checkKey) {
+      case "restrictedApps":
+        return {
+          title: "Close Conflicting Applications",
+          desc: "Security protocol requires all screen recording, sharing, or development side-applications (e.g., Discord, Zoom, OBS Studio, Teams) to be closed completely. Please terminate these background processes using Task Manager / System Monitor to resume system readiness.",
+        };
+      case "camera":
+        return {
+          title: "Webcam Access Requirement",
+          desc: "The system cannot detect a live video source. Please confirm your webcam is plugged in securely, verify that other applications (like Skype or Zoom) are not locking the feed, and check browser camera permissions in your operating system settings.",
+        };
+      case "mic":
+        return {
+          title: "Audio Device Connection",
+          desc: "The audio hardware check failed. Please ensure your microphone is plugged in, is not muted at the physical hardware level, and is allowed inside your system privacy preferences.",
+        };
+      case "network":
+        return {
+          title: "Stabilize Network Connectivity",
+          desc: "High network latency, packet loss, or host blocking was detected. Please switch to a wired Ethernet connection if possible, disable running VPN clients, and ensure your router allows standard HTTPS websockets.",
+        };
+      case "keyboard":
+        return {
+          title: "Configure OS Keyboard Shortcuts",
+          desc: "Standard browser window shortcuts are restricted during this session. If you are using custom window managers or keys (like i3, AutoHotkey, or keyboard remappers), please temporarily disable them.",
+        };
+      default:
+        return {
+          title: "Environment Verification Error",
+          desc: "The sandbox system detected a virtualized environment or unauthorized platform. Please close any hypervisors (e.g., VirtualBox, VMware) and boot into your native desktop environment.",
+        };
+    }
+  };
+
+  const info = getDetails();
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(3,8,22,0.6)",
+        backdropFilter: "blur(16px)",
+        animation: "fadeIn 280ms var(--ease-cinematic) forwards",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "460px",
+          width: "100%",
+          borderRadius: "16px",
+          padding: "36px 32px",
+          background: theme === "light" ? "#ffffff" : "rgba(15, 23, 42, 0.95)",
+          border: `1px solid ${c.border}`,
+          boxShadow: "0 24px 64px rgba(0, 0, 0, 0.35)",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            width: "48px",
+            height: "48px",
+            borderRadius: "50%",
+            background: "rgba(245, 158, 11, 0.1)",
+            border: "1px solid rgba(245, 158, 11, 0.3)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 20px",
+          }}
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#f59e0b"
+            strokeWidth="1.8"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" strokeLinecap="round" strokeWidth="2.5" />
+          </svg>
+        </div>
+        <h3 className="text-subsection-title" style={{ color: c.text, marginBottom: "12px" }}>
+          {info.title}
+        </h3>
+        <p
+          className="text-body-copy"
+          style={{ color: c.textMutedStrong, lineHeight: 1.6, marginBottom: "28px" }}
+        >
+          {info.desc}
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: "100%",
+            padding: "12px",
+            background: theme === "light" ? "#302a3b" : "#ffffff",
+            color: theme === "light" ? "#ffffff" : "#0f172a",
+            border: "none",
+            borderRadius: "6px",
+            fontWeight: 600,
+            fontSize: "12px",
+            cursor: "pointer",
+            transition: "opacity 200ms",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+        >
+          Close Resolution Guide
+        </button>
+      </div>
+    </div>
+  );
 }

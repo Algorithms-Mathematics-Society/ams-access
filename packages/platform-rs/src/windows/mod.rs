@@ -70,7 +70,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
                 return VirtDetectionResult {
                     detected: true,
                     platform: Some(vm.to_string()),
-                    confidence: "high",
+                    confidence: "high".to_string(),
                 };
             }
         }
@@ -85,13 +85,13 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         return VirtDetectionResult {
             detected: true,
             platform: Some("hyper-v".to_string()),
-            confidence: "high",
+            confidence: "high".to_string(),
         };
     }
     VirtDetectionResult {
         detected: false,
         platform: None,
-        confidence: "high",
+        confidence: "high".to_string(),
     }
 }
 
@@ -125,8 +125,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     if HOOK_ACTIVE.load(Ordering::SeqCst) {
         return KeyboardInterceptResult {
             active: true,
-            method: "ll-keyboard-hook",
-            platform: "windows",
+            method: "ll-keyboard-hook".to_string(),
+            platform: "windows".to_string(),
         };
     }
     HOOK_ACTIVE.store(true, Ordering::SeqCst);
@@ -164,8 +164,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 
     KeyboardInterceptResult {
         active: true,
-        method: "ll-keyboard-hook",
-        platform: "windows",
+        method: "ll-keyboard-hook".to_string(),
+        platform: "windows".to_string(),
     }
 }
 

@@ -91,6 +91,9 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: pnpm turbo run build --filter=@ams/web
 
+      - name: Check frontend size budgets
+        run: pnpm --filter @ams/web size:check
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:

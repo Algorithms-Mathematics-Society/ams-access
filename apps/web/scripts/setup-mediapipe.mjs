@@ -1,20 +1,60 @@
 #!/usr/bin/env node
 /**
- * Copies MediaPipe WASM runtime files to public/mediapipe/wasm/ and
- * downloads the Face Landmarker task bundle if not already present.
+ * Idempotent MediaPipe asset setup.
  *
- * Run once: node scripts/setup-mediapipe.mjs
- * Or add to package.json prebuild: "prebuild": "node scripts/setup-mediapipe.mjs"
+ * Default: ensure assets.
+ * --if-used: skip all work unless current source references MediaPipe.
+ * --skip-model: copy WASM only; do not check/download the task bundle.
  */
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync } from "fs";
+import {
+  copyFileSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from "fs";
+import { createHash } from "crypto";
 import { get } from "https";
-import { dirname, join } from "path";
+import { dirname, join, relative } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
+const args = new Set(process.argv.slice(2));
+const onlyIfUsed = args.has("--if-used");
+const skipModel = args.has("--skip-model") || process.env.AMS_MEDIAPIPE_SKIP_MODEL === "1";
 
-// pnpm hoists deps differently — walk up to find the package
+const wasmDest = join(root, "public/mediapipe/wasm");
+const modelDest = join(root, "public/mediapipe/face_landmarker.task");
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+function walk(dir, files = []) {
+  if (!existsSync(dir)) return files;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (["node_modules", ".next", "out"].includes(entry.name)) continue;
+      walk(path, files);
+    } else if (/\.(ts|tsx|js|jsx|mjs|css|html)$/.test(entry.name)) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function sourceUsesMediaPipe() {
+  const needles = ["@mediapipe/tasks-vision", "/mediapipe/", "face_landmarker.task"];
+  return walk(join(root, "src")).some((file) => {
+    const text = readFileSync(file, "utf8");
+    return needles.some((needle) => text.includes(needle));
+  });
+}
+
 function findWasmSrc() {
   const candidates = [
     join(root, "node_modules/@mediapipe/tasks-vision/wasm"),
@@ -28,33 +68,52 @@ function findWasmSrc() {
   return null;
 }
 
-const wasmSrc = findWasmSrc();
-const wasmDest = join(root, "public/mediapipe/wasm");
-const modelDest = join(root, "public/mediapipe/face_landmarker.task");
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+function hashFile(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function sameFile(src, dest) {
+  if (!existsSync(dest)) return false;
+  const srcStat = statSync(src);
+  const destStat = statSync(dest);
+  return srcStat.size === destStat.size && hashFile(src) === hashFile(dest);
+}
 
 function copyWasm() {
+  const wasmSrc = findWasmSrc();
   if (!wasmSrc) {
     console.error("ERROR: @mediapipe/tasks-vision not found. Run pnpm install first.");
     process.exit(1);
   }
   mkdirSync(wasmDest, { recursive: true });
-  let n = 0;
+  let copied = 0;
+  let skipped = 0;
   for (const f of readdirSync(wasmSrc)) {
-    copyFileSync(join(wasmSrc, f), join(wasmDest, f));
-    n++;
+    const src = join(wasmSrc, f);
+    const dest = join(wasmDest, f);
+    if (sameFile(src, dest)) {
+      skipped++;
+      continue;
+    }
+    copyFileSync(src, dest);
+    copied++;
   }
-  console.log(`✓ Copied ${n} WASM files → public/mediapipe/wasm/`);
+  console.log(
+    `MediaPipe WASM: ${copied} copied, ${skipped} unchanged (${relative(root, wasmDest)})`
+  );
 }
 
 function downloadModel() {
+  if (skipModel) {
+    console.log("MediaPipe model: skipped by flag/env");
+    return Promise.resolve();
+  }
   if (existsSync(modelDest)) {
-    console.log("✓ Face Landmarker model already present, skipping download");
+    console.log("MediaPipe model: already present");
     return Promise.resolve();
   }
   mkdirSync(join(root, "public/mediapipe"), { recursive: true });
-  console.log("⬇  Downloading Face Landmarker model bundle…");
+  console.log("MediaPipe model: downloading Face Landmarker task bundle...");
   return new Promise((resolve, reject) => {
     function fetch(url) {
       get(url, (res) => {
@@ -66,18 +125,30 @@ function downloadModel() {
           reject(new Error(`HTTP ${res.statusCode}`));
           return;
         }
-        const file = createWriteStream(modelDest);
+        const tempDest = `${modelDest}.tmp`;
+        const file = createWriteStream(tempDest);
         res.pipe(file);
         file.on("finish", () => {
           file.close();
-          console.log("✓ Face Landmarker model saved → public/mediapipe/face_landmarker.task");
+          renameSync(tempDest, modelDest);
+          console.log("MediaPipe model: saved public/mediapipe/face_landmarker.task");
           resolve();
         });
-        file.on("error", reject);
+        file.on("error", (error) => {
+          try {
+            unlinkSync(tempDest);
+          } catch {}
+          reject(error);
+        });
       }).on("error", reject);
     }
     fetch(MODEL_URL);
   });
+}
+
+if (onlyIfUsed && !sourceUsesMediaPipe()) {
+  console.log("MediaPipe setup: skipped; active source does not reference MediaPipe.");
+  process.exit(0);
 }
 
 copyWasm();
