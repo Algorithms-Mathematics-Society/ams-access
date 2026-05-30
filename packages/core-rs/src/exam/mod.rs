@@ -664,6 +664,62 @@ mod tests {
         assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
         assert!(report.blocking_reasons.is_empty());
     }
+
+    #[test]
+    fn strict_policy_allows_when_all_required_checks_pass() {
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("contest-1".into()),
+            Some("device-1".into()),
+            &passing_state(),
+        );
+
+        assert_eq!(report.decision, EnforcementDecision::Allowed);
+        assert!(report.blocking_reasons.is_empty());
+        assert!(report
+            .checks
+            .iter()
+            .all(|check| check.outcome == CheckOutcome::Pass && !check.blocking));
+    }
+
+    #[test]
+    fn custom_optional_requirement_warns_without_blocking() {
+        let mut state = passing_state();
+        state.network = Some(NetworkCheckResult {
+            reachable: false,
+            latency_ms: None,
+            jitter_ms: None,
+            quality: "offline".to_string(),
+        });
+
+        let mut policy = SessionPolicy::strict_contest();
+        policy.checks.push(ReadinessRequirement {
+            kind: CheckKind::Network,
+            required: false,
+            severity: BlockingSeverity::Warning,
+            organizer_override_allowed: true,
+        });
+
+        let report = evaluate_readiness(
+            &policy,
+            Some("contest-1".into()),
+            Some("device-1".into()),
+            &state,
+        );
+
+        let network_check = report
+            .checks
+            .iter()
+            .find(|check| check.kind == CheckKind::Network)
+            .expect("network check is present");
+
+        assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
+        assert!(report.blocking_reasons.is_empty());
+        assert_eq!(network_check.outcome, CheckOutcome::Warn);
+        assert!(!network_check.required);
+        assert!(!network_check.blocking);
+    }
+
     #[test]
     fn strict_policy_blocks_missing_ids_and_splits_outcomes() {
         let policy = SessionPolicy::strict_contest();

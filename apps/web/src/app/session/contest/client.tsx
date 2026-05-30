@@ -164,7 +164,7 @@ const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }
 export default function ContestPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const contestId = searchParams.get("contestId") ?? "";
+  const contestId = searchParams?.get("contestId") ?? "";
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -1270,6 +1270,7 @@ export default function ContestPageClient() {
             {/* Textarea */}
             <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
               <textarea
+                aria-label="Answer editor"
                 key={`${activeQ}-${activeTab}`}
                 value={currentCode}
                 onChange={(e) => handleCodeChange(e.target.value)}
@@ -2021,6 +2022,7 @@ export default function ContestPageClient() {
 
                   {supportCategory === "other" && (
                     <textarea
+                      aria-label="Describe the issue in detail"
                       placeholder="Describe the issue in detail..."
                       value={customIssueDetail}
                       onChange={(e) => setCustomIssueDetail(e.target.value)}

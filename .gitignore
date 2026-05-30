@@ -9,6 +9,7 @@ Cargo.lock
 node_modules/
 .pnpm-store/
 .turbo/
+*.tsbuildinfo
 
 # Next.js
 apps/web/.next/

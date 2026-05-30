@@ -25,6 +25,10 @@ importers:
         version: 2.9.9
 
   apps/desktop:
+    dependencies:
+      '@ams/web':
+        specifier: workspace:*
+        version: link:../web
     devDependencies:
       '@tauri-apps/cli':
         specifier: ^2.0.0

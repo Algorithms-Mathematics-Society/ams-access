@@ -325,6 +325,7 @@ export default function LoginPage() {
           {/* Email */}
           <div style={{ marginBottom: "18px" }}>
             <label
+              htmlFor="login-email"
               className="text-micro-label"
               style={{
                 display: "flex",
@@ -351,6 +352,7 @@ export default function LoginPage() {
               )}
             </label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -383,6 +385,7 @@ export default function LoginPage() {
           {/* Password */}
           <div style={{ marginBottom: "12px" }}>
             <label
+              htmlFor="login-password"
               className="text-micro-label"
               style={{
                 display: "flex",
@@ -409,6 +412,7 @@ export default function LoginPage() {
               )}
             </label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -611,6 +615,7 @@ export default function LoginPage() {
       {/* ── Error Toast Notification ── */}
       {error && (
         <div
+          role="alert"
           style={{
             position: "fixed",
             top: "24px",
@@ -646,6 +651,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => setError("")}
+            aria-label="Dismiss error message"
             style={{
               background: "none",
               border: "none",
@@ -665,6 +671,9 @@ export default function LoginPage() {
       {/* ── SSO Info Modal ── */}
       {showSSOModal && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sso-modal-title"
           style={{
             position: "fixed",
             inset: 0,
@@ -712,7 +721,11 @@ export default function LoginPage() {
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
             </div>
-            <h3 className="text-subsection-title" style={{ color: c.text, marginBottom: "12px" }}>
+            <h3
+              id="sso-modal-title"
+              className="text-subsection-title"
+              style={{ color: c.text, marginBottom: "12px" }}
+            >
               Institution SSO Portal
             </h3>
             <p

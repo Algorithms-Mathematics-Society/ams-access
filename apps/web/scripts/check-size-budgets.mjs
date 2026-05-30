@@ -7,10 +7,19 @@ import { dirname } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 
+function readBudget(name, fallback, unitBytes) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value <= 0) {
+    console.error(`Invalid ${name}: expected a positive number, got ${process.env[name]}`);
+    process.exit(1);
+  }
+  return value * unitBytes;
+}
+
 const budgets = {
-  outBytes: Number(process.env.AMS_BUDGET_WEB_OUT_MB ?? 45) * 1024 * 1024,
-  publicMediaPipeBytes: Number(process.env.AMS_BUDGET_MEDIAPIPE_MB ?? 40) * 1024 * 1024,
-  maxJsChunkBytes: Number(process.env.AMS_BUDGET_JS_CHUNK_KB ?? 350) * 1024,
+  outBytes: readBudget("AMS_BUDGET_WEB_OUT_MB", 45, 1024 * 1024),
+  publicMediaPipeBytes: readBudget("AMS_BUDGET_MEDIAPIPE_MB", 40, 1024 * 1024),
+  maxJsChunkBytes: readBudget("AMS_BUDGET_JS_CHUNK_KB", 350, 1024),
 };
 
 function dirSize(path) {
@@ -40,10 +49,21 @@ function fmt(bytes) {
 const checks = [];
 const outDir = join(root, "out");
 const mediaPipeDir = join(root, "public/mediapipe");
+
+if (!existsSync(outDir)) {
+  console.error("Size budget check failed: static export out/ is missing. Run next build first.");
+  process.exit(1);
+}
+
 const jsChunks = files(join(outDir, "_next/static"), (path) => path.endsWith(".js"));
 const largestChunk = jsChunks
   .map((path) => ({ path, size: statSync(path).size }))
   .sort((a, b) => b.size - a.size)[0];
+
+if (!largestChunk) {
+  console.error("Size budget check failed: no JS chunks found in out/_next/static.");
+  process.exit(1);
+}
 
 checks.push({ label: "static export out/", actual: dirSize(outDir), budget: budgets.outBytes });
 checks.push({
@@ -51,13 +71,11 @@ checks.push({
   actual: dirSize(mediaPipeDir),
   budget: budgets.publicMediaPipeBytes,
 });
-if (largestChunk) {
-  checks.push({
-    label: `largest JS chunk (${relative(root, largestChunk.path)})`,
-    actual: largestChunk.size,
-    budget: budgets.maxJsChunkBytes,
-  });
-}
+checks.push({
+  label: `largest JS chunk (${relative(root, largestChunk.path)})`,
+  actual: largestChunk.size,
+  budget: budgets.maxJsChunkBytes,
+});
 
 let failed = false;
 for (const check of checks) {

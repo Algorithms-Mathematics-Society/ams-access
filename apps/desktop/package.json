@@ -7,7 +7,9 @@
     "build": "tauri build",
     "clean": "rm -rf src-tauri/target"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@ams/web": "workspace:*"
+  },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"
   }

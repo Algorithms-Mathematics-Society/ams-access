@@ -328,7 +328,11 @@ export default function HomePage() {
       const data = (await r.json()) as InvitedContest[];
       setContests(data ?? []);
     } catch {
-      setSessionsError("Could not refresh sessions. Check your connection and try again.");
+      // Only surface the error to the user on an explicit refresh action.
+      // On initial auto-load, a missing backend just means no contests yet — fail silently.
+      if (mode === "refresh") {
+        setSessionsError("Could not refresh sessions. Check your connection and try again.");
+      }
     } finally {
       setContestsLoading(false);
       setSessionsRefreshing(false);
@@ -1498,8 +1502,10 @@ function SessionActionsPanel({
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <div>
-          <p
+          <label
+            htmlFor="session-code"
             style={{
+              display: "block",
               fontSize: "11px",
               color: c.textMuted,
               letterSpacing: "0.1em",
@@ -1509,9 +1515,10 @@ function SessionActionsPanel({
             }}
           >
             Session Code
-          </p>
+          </label>
           <div style={{ display: "flex", gap: "10px" }}>
             <input
+              id="session-code"
               value={inviteCode}
               onChange={(e) => onInviteCodeChange(e.target.value)}
               onKeyDown={(e) => {
@@ -2214,6 +2221,40 @@ function SettingsPanel({
     };
   }, [camStream, micStream]);
 
+  // Sync camera stream to video element after React re-renders and mounts <video>
+  useEffect(() => {
+    if (camStream && videoRef.current) {
+      videoRef.current.srcObject = camStream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [camStream]);
+
+  // Monitor stream health — detect dead/ended tracks and gracefully reset
+  useEffect(() => {
+    if (!camStream) return;
+    const videoTrack = camStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    function handleTrackEnded() {
+      setCamStream(null);
+      setCameraError("Camera stream ended unexpectedly. Click to restart.");
+      setReadiness((r) => ({ ...r, camera: "fail" }));
+    }
+
+    videoTrack.addEventListener("ended", handleTrackEnded);
+    return () => {
+      videoTrack.removeEventListener("ended", handleTrackEnded);
+    };
+  }, [camStream, setReadiness]);
+
+  // Release camera when switching away from the hardware tab
+  useEffect(() => {
+    if (activeTab !== "hardware" && camStream) {
+      camStream.getTracks().forEach((track) => track.stop());
+      setCamStream(null);
+    }
+  }, [activeTab, camStream]);
+
   useEffect(() => {
     navigator.mediaDevices
       ?.enumerateDevices()
@@ -2267,10 +2308,10 @@ function SettingsPanel({
     }
   }
 
-  // Request/Query camera streams
-  async function startCameraTest() {
-    if (cameraBusy) return;
-    setCameraBusy(true);
+  // Request/Query camera streams with retry on device-busy race errors
+  async function startCameraTest(isRetry = false) {
+    if (cameraBusy && !isRetry) return;
+    if (!isRetry) setCameraBusy(true);
     try {
       setCameraError(null);
       if (camStream) {
@@ -2310,11 +2351,20 @@ function SettingsPanel({
       setCameras(devices.filter((d) => d.kind === "videoinput"));
       setReadiness((r) => ({ ...r, camera: "ok" }));
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // NotReadableError / AbortError = device still releasing from prior use;
+      // retry once after a short delay before surfacing an error.
+      const isRaceError =
+        !isRetry && (msg.includes("NotReadable") || msg.includes("Abort") || msg.includes("busy"));
+      if (isRaceError) {
+        setTimeout(() => void startCameraTest(true), 600);
+        return; // keep cameraBusy true during retry
+      }
       console.error("Camera setup failed", err);
       setCameraError(describeMediaError(err, "camera"));
       setReadiness((r) => ({ ...r, camera: "fail" }));
     } finally {
-      setCameraBusy(false);
+      if (!isRetry || !cameraBusy) setCameraBusy(false);
     }
   }
 
@@ -2726,7 +2776,7 @@ function SettingsPanel({
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
                   <button
-                    onClick={startCameraTest}
+                    onClick={() => startCameraTest()}
                     disabled={cameraBusy}
                     style={{
                       padding: "10px 18px",
@@ -2750,6 +2800,7 @@ function SettingsPanel({
 
                   {cameras.length > 0 && (
                     <select
+                      aria-label="Camera interface"
                       value={selectedCam}
                       onChange={(e) => setSelectedCam(e.target.value)}
                       style={{
@@ -2974,6 +3025,7 @@ function SettingsPanel({
                     <span>{speakerVolume}%</span>
                   </div>
                   <input
+                    aria-label="Test tone gain amplitude"
                     type="range"
                     min="0"
                     max="100"
