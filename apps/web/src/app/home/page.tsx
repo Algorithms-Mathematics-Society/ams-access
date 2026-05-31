@@ -78,6 +78,7 @@ type ActiveSession = {
 };
 
 const ACTIVE_SESSION_KEY = "ams_active_session";
+const UNLOCKED_CONTESTS_KEY = "ams_unlocked_contests";
 const READINESS_TIMEOUT_MS = {
   media: 2000,
   platform: 2500,
@@ -85,6 +86,33 @@ const READINESS_TIMEOUT_MS = {
   virtualization: 3500,
   network: 5000,
 };
+
+function mergeContestLists(
+  primary: InvitedContest[],
+  secondary: InvitedContest[]
+): InvitedContest[] {
+  const byId = new Map<string, InvitedContest>();
+  for (const c of secondary) byId.set(c.id, c);
+  for (const c of primary) byId.set(c.id, c);
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
+  );
+}
+
+function loadUnlockedContests(): InvitedContest[] {
+  try {
+    const raw = localStorage.getItem(UNLOCKED_CONTESTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as InvitedContest[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUnlockedContests(list: InvitedContest[]) {
+  localStorage.setItem(UNLOCKED_CONTESTS_KEY, JSON.stringify(list));
+}
 
 function getOrCreateDeviceId() {
   const existing = localStorage.getItem("ams_device_id");
@@ -328,7 +356,8 @@ export default function HomePage() {
       );
       if (!r.ok) throw new Error("Session refresh failed");
       const data = (await r.json()) as InvitedContest[];
-      setContests(data ?? []);
+      const unlocked = loadUnlockedContests();
+      setContests(mergeContestLists(data ?? [], unlocked));
     } catch {
       // Only surface the error to the user on an explicit refresh action.
       // On initial auto-load, a missing backend just means no contests yet — fail silently.
@@ -446,6 +475,12 @@ export default function HomePage() {
         setInviteCodeStatus("Code validation unavailable.");
         return;
       }
+      const resolvedContest = data.contest as InvitedContest;
+      const unlocked = loadUnlockedContests();
+      const mergedUnlocked = mergeContestLists([resolvedContest], unlocked);
+      saveUnlockedContests(mergedUnlocked);
+      setContests((prev) => mergeContestLists([resolvedContest], prev));
+
       const resolvedActiveSession = data.active_session_id
         ? {
             id: data.active_session_id,
@@ -459,15 +494,11 @@ export default function HomePage() {
         setActiveSession(resolvedActiveSession);
       }
 
-      // Display success checkmark state first for 800ms
-      setInviteSuccessMsg("Contest Resolved Successfully");
+      // Keep validated contest in the list and let user explicitly start verification.
+      setInviteSuccessMsg("Contest added to your list.");
       setInviteCode("");
       setInviteCodeStatus(null);
-      setTimeout(() => {
-        setInviteSuccessMsg(null);
-        setPreflightContestId(data.contest!.id);
-        setPreflightSessionType(resolvedActiveSession ? "resume" : "new");
-      }, 800);
+      setTimeout(() => setInviteSuccessMsg(null), 1200);
     } catch {
       setInviteCodeStatus("Code validation unavailable.");
     } finally {
@@ -909,7 +940,7 @@ function ScheduledContestCard({
   now,
 }: {
   c: InvitedContest;
-  onJoin: () => void;
+  onJoin: (type: "new" | "resume") => void;
   theme: "dark" | "light";
   now: number;
 }) {
@@ -918,14 +949,15 @@ function ScheduledContestCard({
   const themeColors = getThemeColors(theme);
   const isLight = theme === "light";
   const phase = getEntryPhase(c.start_at, c.end_at, now);
-  const canJoin = phase === "verification_open";
+  const canJoin = phase === "verification_open" || phase === "join_closed";
+  const joinType: "new" | "resume" = phase === "join_closed" ? "resume" : "new";
   const label =
     phase === "verification_open"
       ? "Begin Verification"
       : phase === "too_early"
         ? `Verification opens ${startsIn}`
         : phase === "join_closed"
-          ? "Join Closed"
+          ? "Enter Contest"
           : "Ended";
 
   return (
@@ -1110,7 +1142,9 @@ function ScheduledContestCard({
                 ? `opens in ${startsIn}`
                 : phase === "verification_open"
                   ? `starts in ${startsIn}`
-                  : "window closed"}
+                  : phase === "join_closed"
+                    ? "live now"
+                    : "window closed"}
             </span>
           </div>
 
@@ -1141,7 +1175,7 @@ function ScheduledContestCard({
         {/* Right Side: CTA Button */}
         <button
           onClick={() => {
-            if (canJoin) onJoin();
+            if (canJoin) onJoin(joinType);
           }}
           disabled={!canJoin}
           style={{
@@ -1866,7 +1900,7 @@ function ContestsPanel({
               <ScheduledContestCard
                 key={c.id}
                 c={c}
-                onJoin={() => onPreflight(c.id, "new")}
+                onJoin={(type) => onPreflight(c.id, type)}
                 theme={theme}
                 now={now}
               />

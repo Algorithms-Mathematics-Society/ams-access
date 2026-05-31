@@ -2571,6 +2571,7 @@ export default function OnboardingPage() {
     timezone?: string;
   } | null>(null);
   const [waitMs, setWaitMs] = useState<number>(0);
+  const [readyForStart, setReadyForStart] = useState(false);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Keep ref in sync with state so the unmount cleanup below sees the latest stream.
@@ -2641,12 +2642,55 @@ export default function OnboardingPage() {
 
   const finalizeSecureStart = useCallback(async () => {
     setPolicyBlock(null);
-    const gate = evaluateEntryGate();
+    let windowMeta = contestWindow;
+    if (!windowMeta && contestId) {
+      try {
+        const res = await fetch(`${API_URL}/contests/${contestId}`);
+        if (res.ok) {
+          const meta = (await res.json()) as {
+            start_at?: string;
+            end_at?: string;
+            timezone?: string;
+          };
+          if (meta?.start_at && meta?.end_at) {
+            windowMeta = { startAt: meta.start_at, endAt: meta.end_at, timezone: meta.timezone };
+            setContestWindow(windowMeta);
+          }
+        }
+      } catch {}
+    }
+
+    const gate = (() => {
+      if (!windowMeta) return { ok: true, reason: null as string | null };
+      const now = Date.now();
+      const start = new Date(windowMeta.startAt).getTime();
+      const end = new Date(windowMeta.endAt).getTime();
+      const open = start - 20 * 60 * 1000;
+      if (now >= end) return { ok: false, reason: "Contest has ended." };
+      if (now < open)
+        return { ok: false, reason: "Verification opens 20 minutes before contest start." };
+      if (now >= start && !readyForStart)
+        return { ok: false, reason: "Join window is closed once contest starts." };
+      return { ok: true, reason: null as string | null };
+    })();
+
     if (!gate.ok) {
       setCurrentStage(13);
       setTransitioning(false);
+      setReadyForStart(false);
       setPolicyBlock(gate.reason);
       return;
+    }
+
+    if (windowMeta) {
+      const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
+      if (remaining > 0) {
+        setCurrentStage(15);
+        setTransitioning(false);
+        setReadyForStart(true);
+        setPolicyBlock(null);
+        return;
+      }
     }
     const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
     const deviceState = await collectDeviceState({
@@ -2698,32 +2742,45 @@ export default function OnboardingPage() {
         deviceState,
       });
 
-      if (contestWindow) {
-        const remaining = new Date(contestWindow.startAt).getTime() - Date.now();
+      if (windowMeta) {
+        const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
         if (remaining > 0) {
           setCurrentStage(15);
           setTransitioning(false);
-          setPolicyBlock("Verification complete. Waiting for contest start.");
+          setReadyForStart(true);
+          setPolicyBlock(null);
           return;
         }
       }
+      setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "Readiness policy blocked contest launch.";
+      if (windowMeta) {
+        const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
+        if (remaining > 0 && msg.toLowerCase().includes("not accepting sessions")) {
+          setCurrentStage(15);
+          setTransitioning(false);
+          setReadyForStart(true);
+          setPolicyBlock(null);
+          return;
+        }
+      }
       setCurrentStage(13);
       setTransitioning(false);
-      setPolicyBlock(
-        error instanceof Error ? error.message : "Readiness policy blocked contest launch."
-      );
+      setReadyForStart(false);
+      setPolicyBlock(msg);
     }
-  }, [contestId, router, contestWindow]);
+  }, [contestId, router, contestWindow, readyForStart]);
 
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== 15) return;
-    if (waitMs <= 0) {
-      router.push(`/session/contest?contestId=${contestId}`);
+    if (waitMs <= 0 && readyForStart) {
+      void finalizeSecureStart();
     }
-  }, [contestWindow, currentStage, waitMs, router, contestId]);
+  }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
 
   const advance = useCallback(
     (status: StageStatus = "pass") => {
