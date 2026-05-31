@@ -13,6 +13,7 @@ type InvitedContest = {
   description: string | null;
   start_at: string;
   end_at: string;
+  timezone?: string;
   status: string;
   org_name: string;
   question_count: number;
@@ -888,6 +889,18 @@ function formatStartsIn(startAt: string, now: number) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+type EntryPhase = "too_early" | "verification_open" | "join_closed" | "ended";
+
+function getEntryPhase(startAt: string, endAt: string, now: number): EntryPhase {
+  const start = new Date(startAt).getTime();
+  const end = new Date(endAt).getTime();
+  const windowOpen = start - 20 * 60 * 1000;
+  if (now >= end) return "ended";
+  if (now < windowOpen) return "too_early";
+  if (now < start) return "verification_open";
+  return "join_closed";
+}
+
 function ScheduledContestCard({
   c,
   onJoin,
@@ -903,7 +916,16 @@ function ScheduledContestCard({
   const [hovered, setHovered] = useState(false);
   const themeColors = getThemeColors(theme);
   const isLight = theme === "light";
-  const canJoin = new Date(c.start_at).getTime() <= now && now < new Date(c.end_at).getTime();
+  const phase = getEntryPhase(c.start_at, c.end_at, now);
+  const canJoin = phase === "verification_open";
+  const label =
+    phase === "verification_open"
+      ? "Begin Verification"
+      : phase === "too_early"
+        ? `Verification opens ${startsIn}`
+        : phase === "join_closed"
+          ? "Join Closed"
+          : "Ended";
 
   return (
     <div
@@ -1082,7 +1104,9 @@ function ScheduledContestCard({
               <circle cx="8" cy="8" r="6" />
               <path d="M8 3.5v5h4" />
             </svg>
-            <span style={{ color: themeColors.accent }}>starts in {startsIn}</span>
+            <span style={{ color: themeColors.accent }}>
+              {phase === "too_early" ? `opens in ${startsIn}` : phase === "verification_open" ? `starts in ${startsIn}` : "window closed"}
+            </span>
           </div>
 
           <div
@@ -1156,8 +1180,11 @@ function ScheduledContestCard({
               strokeLinejoin="round"
             />
           </svg>
-          <span>{canJoin ? "Join Session" : `Opens ${startsIn}`}</span>
+          <span>{label}</span>
         </button>
+      </div>
+      <div style={{ marginTop: "4px", fontSize: "11px", color: themeColors.textMuted }}>
+        Timezone: {c.timezone || "UTC"}
       </div>
     </div>
   );

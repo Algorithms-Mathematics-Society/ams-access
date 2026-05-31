@@ -2564,6 +2564,12 @@ export default function OnboardingPage() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
+  const [contestWindow, setContestWindow] = useState<{
+    startAt: string;
+    endAt: string;
+    timezone?: string;
+  } | null>(null);
+  const [waitMs, setWaitMs] = useState<number>(0);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Keep ref in sync with state so the unmount cleanup below sees the latest stream.
@@ -2580,8 +2586,62 @@ export default function OnboardingPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!contestId) return;
+    let cancelled = false;
+    fetch(`${API_URL}/contests/${contestId}`)
+      .then(async (res) => (res.ok ? ((await res.json()) as { start_at?: string; end_at?: string; timezone?: string }) : null))
+      .then((meta) => {
+        if (cancelled || !meta?.start_at || !meta?.end_at) return;
+        setContestWindow({ startAt: meta.start_at, endAt: meta.end_at, timezone: meta.timezone });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [contestId]);
+
+  useEffect(() => {
+    if (!contestWindow) return;
+    const tick = () => {
+      const startMs = new Date(contestWindow.startAt).getTime();
+      const now = Date.now();
+      setWaitMs(Math.max(0, startMs - now));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [contestWindow]);
+
+  function evaluateEntryGate() {
+    if (!contestWindow) return { ok: true, reason: null as string | null };
+    const now = Date.now();
+    const start = new Date(contestWindow.startAt).getTime();
+    const end = new Date(contestWindow.endAt).getTime();
+    const open = start - 20 * 60 * 1000;
+    if (now >= end) return { ok: false, reason: "Contest has ended." };
+    if (now < open) return { ok: false, reason: "Verification opens 20 minutes before contest start." };
+    if (now >= start) return { ok: false, reason: "Join window is closed once contest starts." };
+    return { ok: true, reason: null as string | null };
+  }
+
+  function formatCountdown(ms: number) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
   const finalizeSecureStart = useCallback(async () => {
     setPolicyBlock(null);
+    const gate = evaluateEntryGate();
+    if (!gate.ok) {
+      setCurrentStage(13);
+      setTransitioning(false);
+      setPolicyBlock(gate.reason);
+      return;
+    }
     const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
     const deviceState = await collectDeviceState({
       networkHost: getNetworkProbeHost(),
@@ -2594,12 +2654,53 @@ export default function OnboardingPage() {
     });
 
     try {
+      const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
+      const sessionRes = await fetch(`${API_URL}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contest_id: contestId,
+          candidate_email: email,
+          candidate_name: email.split("@")[0],
+        }),
+      });
+      if (!sessionRes.ok) {
+        let body: { error?: string } | null = null;
+        try {
+          body = (await sessionRes.json()) as { error?: string };
+        } catch {}
+        throw new Error(body?.error || "Unable to create contest session.");
+      }
+      try {
+        const body = (await sessionRes.json()) as { id?: string };
+        if (body?.id) {
+          localStorage.setItem(
+            "ams_active_session",
+            JSON.stringify({
+              id: body.id,
+              contest_id: contestId,
+              updated_at: new Date().toISOString(),
+            })
+          );
+        }
+      } catch {}
+
       await startSecureSession({
         contestId,
         deviceId: getOrCreateDeviceId(),
         policy: strictContestPolicy(),
         deviceState,
       });
+
+      if (contestWindow) {
+        const remaining = new Date(contestWindow.startAt).getTime() - Date.now();
+        if (remaining > 0) {
+          setCurrentStage(15);
+          setTransitioning(false);
+          setPolicyBlock("Verification complete. Waiting for contest start.");
+          return;
+        }
+      }
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
       setCurrentStage(13);
@@ -2608,7 +2709,15 @@ export default function OnboardingPage() {
         error instanceof Error ? error.message : "Readiness policy blocked contest launch."
       );
     }
-  }, [contestId, router]);
+  }, [contestId, router, contestWindow]);
+
+  useEffect(() => {
+    if (!contestWindow) return;
+    if (currentStage !== 15) return;
+    if (waitMs <= 0) {
+      router.push(`/session/contest?contestId=${contestId}`);
+    }
+  }, [contestWindow, currentStage, waitMs, router, contestId]);
 
   const advance = useCallback(
     (status: StageStatus = "pass") => {
@@ -2663,6 +2772,15 @@ export default function OnboardingPage() {
     window.addEventListener("keydown", handleEmergencyKey, true);
     return () => window.removeEventListener("keydown", handleEmergencyKey, true);
   }, [emergencyExit]);
+
+  const nowMs = Date.now();
+  const startMs = contestWindow ? new Date(contestWindow.startAt).getTime() : 0;
+  const endMs = contestWindow ? new Date(contestWindow.endAt).getTime() : 0;
+  const verifyOpenMs = startMs - 20 * 60 * 1000;
+  const isTooEarly = contestWindow ? nowMs < verifyOpenMs : false;
+  const isAfterStart = contestWindow ? nowMs >= startMs && nowMs < endMs : false;
+  const isEnded = contestWindow ? nowMs >= endMs : false;
+  const verifyOpensInMs = contestWindow ? Math.max(0, verifyOpenMs - nowMs) : 0;
 
   return (
     <main
@@ -2744,6 +2862,75 @@ export default function OnboardingPage() {
 
         {/* Stage content */}
         <div style={{ maxWidth: "480px", width: "100%" }}>
+          {isTooEarly && (
+            <div
+              style={{
+                border: "1px solid rgba(245,158,11,0.35)",
+                background: "rgba(245,158,11,0.08)",
+                borderRadius: 12,
+                padding: "18px 16px",
+                color: "#fcd34d",
+                textAlign: "center",
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Verification not open yet</div>
+              <div style={{ fontSize: 13, color: "#fef3c7", marginBottom: 8 }}>
+                Opens in {formatCountdown(verifyOpensInMs)} ({contestWindow?.timezone || "UTC"})
+              </div>
+              <div style={{ fontSize: 12, color: "#a1a1aa" }}>You can start setup only in the 20-minute window before contest start.</div>
+            </div>
+          )}
+          {isAfterStart && (
+            <div
+              style={{
+                border: "1px solid rgba(239,68,68,0.35)",
+                background: "rgba(239,68,68,0.08)",
+                borderRadius: 12,
+                padding: "18px 16px",
+                color: "#fca5a5",
+                textAlign: "center",
+                marginBottom: 16,
+              }}
+            >
+              Join window is closed once contest starts.
+            </div>
+          )}
+          {isEnded && (
+            <div
+              style={{
+                border: "1px solid rgba(239,68,68,0.35)",
+                background: "rgba(239,68,68,0.08)",
+                borderRadius: 12,
+                padding: "18px 16px",
+                color: "#fca5a5",
+                textAlign: "center",
+                marginBottom: 16,
+              }}
+            >
+              Contest has ended.
+            </div>
+          )}
+          {!isTooEarly && !isAfterStart && !isEnded && (
+            <>
+          {currentStage === 15 && contestWindow && waitMs > 0 && (
+            <div
+              style={{
+                border: "1px solid rgba(168,85,247,0.32)",
+                background: "rgba(168,85,247,0.08)",
+                borderRadius: 12,
+                padding: "18px 16px",
+                color: "#ddd6fe",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Verification complete</div>
+              <div style={{ fontSize: 13, color: "#c4b5fd", marginBottom: 8 }}>
+                Contest starts in {formatCountdown(waitMs)} ({contestWindow.timezone || "UTC"})
+              </div>
+              <div style={{ fontSize: 12, color: "#a1a1aa" }}>You will be redirected automatically at start time.</div>
+            </div>
+          )}
           {currentStage === 1 && <Stage1_SessionIsolation onPass={advancePass} />}
           {currentStage === 2 && <Stage2_Fullscreen onPass={advancePass} />}
           {currentStage === 3 && <Stage3_MonitorDetection onPass={advancePass} />}
@@ -2766,6 +2953,8 @@ export default function OnboardingPage() {
             <Stage13_IntegrityConfirmation results={results} onPass={advancePass} />
           )}
           {currentStage === 14 && <Stage14_LockInCountdown onPass={advancePass} />}
+            </>
+          )}
         </div>
       </div>
 
