@@ -2,8 +2,9 @@
 
 import { memo, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { resolveApiBase } from "@/lib/api-base";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = "ams_active_session";
 
 type Question = {
@@ -19,6 +20,7 @@ type Question = {
 type ContestMeta = {
   id: string;
   title: string;
+  start_at?: string;
   end_at: string;
   status: string;
 };
@@ -175,6 +177,7 @@ export default function ContestPageClient() {
   const [js, setJs] = useState("");
   const [previewSrc, setPreviewSrc] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [submitConfirm, setSubmitConfirm] = useState(false);
@@ -305,6 +308,12 @@ export default function ContestPageClient() {
   const fallbackEndAt = useMemo(() => new Date(Date.now() + 3600000).toISOString(), []);
 
   useEffect(() => {
+    if (!contestId) {
+      setLoadError("Missing contest ID. Please relaunch from your contest list.");
+      setLoading(false);
+      return;
+    }
+
     if (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") {
       const mockEnd = new Date(Date.now() + 5400000).toISOString();
       const titles: Record<string, string> = {
@@ -343,19 +352,38 @@ export default function ContestPageClient() {
       ];
       setQuestions(mockQuestions);
       loadQuestion(mockQuestions[0]);
+      setLoadError(null);
       setLoading(false);
       return;
     }
 
+    async function fetchWithRetry<T>(url: string, attempts = 4, delayMs = 800): Promise<T | null> {
+      for (let i = 0; i < attempts; i += 1) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) return (await res.json()) as T;
+        } catch {}
+        if (i < attempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
+        }
+      }
+      return null;
+    }
+
     Promise.all([
-      fetch(`${API_URL}/contests/${contestId}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/contests/${contestId}/questions`).then((r) => (r.ok ? r.json() : [])),
+      fetchWithRetry<ContestMeta>(`${API_URL}/contests/${contestId}`, 2, 500),
+      fetchWithRetry<Question[]>(`${API_URL}/contests/${contestId}/questions`, 4, 700),
     ])
       .then(async ([c, qs]) => {
-        if (c) setContest(c as ContestMeta);
-        const questions = (qs ?? []) as Question[];
-        setQuestions(questions);
-        if (questions.length > 0) loadQuestion(questions[0]);
+        if (c) setContest(c);
+        const fetchedQuestions = qs ?? [];
+        setQuestions(fetchedQuestions);
+        if (fetchedQuestions.length > 0) {
+          loadQuestion(fetchedQuestions[0]);
+          setLoadError(null);
+        } else {
+          setLoadError("Questions are not available yet. Please retry in a few seconds.");
+        }
 
         // Create session for this contest
         const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
@@ -386,7 +414,10 @@ export default function ContestPageClient() {
 
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setLoadError("Unable to load contest. Check connection and retry.");
+        setLoading(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestId]);
 
@@ -690,6 +721,53 @@ export default function ContestPageClient() {
           </p>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          background: "#030816",
+          padding: "24px",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            maxWidth: "560px",
+            borderRadius: "16px",
+            border: "1px solid rgba(239,68,68,0.35)",
+            background: "rgba(239,68,68,0.06)",
+            padding: "20px",
+            color: "#fecaca",
+            fontFamily: "Inter, system-ui, sans-serif",
+          }}
+        >
+          <p style={{ fontSize: "15px", fontWeight: 600, marginBottom: "8px" }}>
+            Contest Load Error
+          </p>
+          <p style={{ fontSize: "13px", color: "#fca5a5", marginBottom: "14px" }}>{loadError}</p>
+          <button
+            onClick={() => router.push("/home")}
+            style={{
+              border: "1px solid rgba(239,68,68,0.35)",
+              background: "rgba(239,68,68,0.14)",
+              color: "#fecaca",
+              padding: "8px 12px",
+              borderRadius: "8px",
+              cursor: "pointer",
+              fontSize: "12px",
+            }}
+          >
+            Back to contests
+          </button>
+        </div>
       </div>
     );
   }

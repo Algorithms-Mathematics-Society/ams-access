@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
+import { resolveApiBase } from "@/lib/api-base";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const API_URL = resolveApiBase();
 
 function getNetworkProbeHost() {
   try {
@@ -2590,7 +2591,11 @@ export default function OnboardingPage() {
     if (!contestId) return;
     let cancelled = false;
     fetch(`${API_URL}/contests/${contestId}`)
-      .then(async (res) => (res.ok ? ((await res.json()) as { start_at?: string; end_at?: string; timezone?: string }) : null))
+      .then(async (res) =>
+        res.ok
+          ? ((await res.json()) as { start_at?: string; end_at?: string; timezone?: string })
+          : null
+      )
       .then((meta) => {
         if (cancelled || !meta?.start_at || !meta?.end_at) return;
         setContestWindow({ startAt: meta.start_at, endAt: meta.end_at, timezone: meta.timezone });
@@ -2620,7 +2625,8 @@ export default function OnboardingPage() {
     const end = new Date(contestWindow.endAt).getTime();
     const open = start - 20 * 60 * 1000;
     if (now >= end) return { ok: false, reason: "Contest has ended." };
-    if (now < open) return { ok: false, reason: "Verification opens 20 minutes before contest start." };
+    if (now < open)
+      return { ok: false, reason: "Verification opens 20 minutes before contest start." };
     if (now >= start) return { ok: false, reason: "Join window is closed once contest starts." };
     return { ok: true, reason: null as string | null };
   }
@@ -2874,11 +2880,15 @@ export default function OnboardingPage() {
                 marginBottom: 16,
               }}
             >
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Verification not open yet</div>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                Verification not open yet
+              </div>
               <div style={{ fontSize: 13, color: "#fef3c7", marginBottom: 8 }}>
                 Opens in {formatCountdown(verifyOpensInMs)} ({contestWindow?.timezone || "UTC"})
               </div>
-              <div style={{ fontSize: 12, color: "#a1a1aa" }}>You can start setup only in the 20-minute window before contest start.</div>
+              <div style={{ fontSize: 12, color: "#a1a1aa" }}>
+                You can start setup only in the 20-minute window before contest start.
+              </div>
             </div>
           )}
           {isAfterStart && (
@@ -2913,46 +2923,50 @@ export default function OnboardingPage() {
           )}
           {!isTooEarly && !isAfterStart && !isEnded && (
             <>
-          {currentStage === 15 && contestWindow && waitMs > 0 && (
-            <div
-              style={{
-                border: "1px solid rgba(168,85,247,0.32)",
-                background: "rgba(168,85,247,0.08)",
-                borderRadius: 12,
-                padding: "18px 16px",
-                color: "#ddd6fe",
-                textAlign: "center",
-              }}
-            >
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Verification complete</div>
-              <div style={{ fontSize: 13, color: "#c4b5fd", marginBottom: 8 }}>
-                Contest starts in {formatCountdown(waitMs)} ({contestWindow.timezone || "UTC"})
-              </div>
-              <div style={{ fontSize: 12, color: "#a1a1aa" }}>You will be redirected automatically at start time.</div>
-            </div>
-          )}
-          {currentStage === 1 && <Stage1_SessionIsolation onPass={advancePass} />}
-          {currentStage === 2 && <Stage2_Fullscreen onPass={advancePass} />}
-          {currentStage === 3 && <Stage3_MonitorDetection onPass={advancePass} />}
-          {currentStage === 4 && <Stage4_KeyboardLockdown onPass={advancePass} />}
-          {currentStage === 5 && <Stage5_EnvironmentValidation onPass={advancePass} />}
-          {currentStage === 6 && <Stage6_RestrictedApps onPass={advancePass} />}
-          {currentStage === 7 && <Stage7_VMDetection onPass={advancePass} />}
-          {currentStage === 8 && (
-            <Stage8_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
-          )}
-          {currentStage === 9 && (
-            <Stage9_FaceCalibration stream={cameraStream} onPass={advancePass} />
-          )}
-          {currentStage === 10 && (
-            <Stage10_PresenceVerification stream={cameraStream} onPass={advancePass} />
-          )}
-          {currentStage === 11 && <Stage11_AudioVerification onPass={advancePass} />}
-          {currentStage === 12 && <Stage12_NetworkValidation onPass={advancePass} />}
-          {currentStage === 13 && (
-            <Stage13_IntegrityConfirmation results={results} onPass={advancePass} />
-          )}
-          {currentStage === 14 && <Stage14_LockInCountdown onPass={advancePass} />}
+              {currentStage === 15 && contestWindow && waitMs > 0 && (
+                <div
+                  style={{
+                    border: "1px solid rgba(168,85,247,0.32)",
+                    background: "rgba(168,85,247,0.08)",
+                    borderRadius: 12,
+                    padding: "18px 16px",
+                    color: "#ddd6fe",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                    Verification complete
+                  </div>
+                  <div style={{ fontSize: 13, color: "#c4b5fd", marginBottom: 8 }}>
+                    Contest starts in {formatCountdown(waitMs)} ({contestWindow.timezone || "UTC"})
+                  </div>
+                  <div style={{ fontSize: 12, color: "#a1a1aa" }}>
+                    You will be redirected automatically at start time.
+                  </div>
+                </div>
+              )}
+              {currentStage === 1 && <Stage1_SessionIsolation onPass={advancePass} />}
+              {currentStage === 2 && <Stage2_Fullscreen onPass={advancePass} />}
+              {currentStage === 3 && <Stage3_MonitorDetection onPass={advancePass} />}
+              {currentStage === 4 && <Stage4_KeyboardLockdown onPass={advancePass} />}
+              {currentStage === 5 && <Stage5_EnvironmentValidation onPass={advancePass} />}
+              {currentStage === 6 && <Stage6_RestrictedApps onPass={advancePass} />}
+              {currentStage === 7 && <Stage7_VMDetection onPass={advancePass} />}
+              {currentStage === 8 && (
+                <Stage8_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
+              )}
+              {currentStage === 9 && (
+                <Stage9_FaceCalibration stream={cameraStream} onPass={advancePass} />
+              )}
+              {currentStage === 10 && (
+                <Stage10_PresenceVerification stream={cameraStream} onPass={advancePass} />
+              )}
+              {currentStage === 11 && <Stage11_AudioVerification onPass={advancePass} />}
+              {currentStage === 12 && <Stage12_NetworkValidation onPass={advancePass} />}
+              {currentStage === 13 && (
+                <Stage13_IntegrityConfirmation results={results} onPass={advancePass} />
+              )}
+              {currentStage === 14 && <Stage14_LockInCountdown onPass={advancePass} />}
             </>
           )}
         </div>

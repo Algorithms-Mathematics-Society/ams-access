@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { invoke, runSessionReadiness, sessionPolicy, type ReadinessReport } from "@ams/api-client";
+import { resolveApiBase } from "@/lib/api-base";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const API_URL = resolveApiBase();
 
 type InvitedContest = {
   id: string;
@@ -1105,7 +1106,11 @@ function ScheduledContestCard({
               <path d="M8 3.5v5h4" />
             </svg>
             <span style={{ color: themeColors.accent }}>
-              {phase === "too_early" ? `opens in ${startsIn}` : phase === "verification_open" ? `starts in ${startsIn}` : "window closed"}
+              {phase === "too_early"
+                ? `opens in ${startsIn}`
+                : phase === "verification_open"
+                  ? `starts in ${startsIn}`
+                  : "window closed"}
             </span>
           </div>
 
