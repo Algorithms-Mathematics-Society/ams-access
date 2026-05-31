@@ -38,3 +38,11 @@ Thumbs.db
 
 CLAUDE.md
 fixes
+
+# Local Dev / Scratch Files
+.cargo/
+access-software.md
+fix_ui.py
+patch_media_toggle.py
+scratch.py
+session-start.md
