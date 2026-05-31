@@ -1,6 +1,20 @@
-import { invoke } from "@tauri-apps/api/core";
-
-export { invoke };
+export async function invoke<T = unknown>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<T> {
+  const tauri = (
+    globalThis as unknown as {
+      __TAURI__?: {
+        core?: { invoke?: (cmd: string, payload?: Record<string, unknown>) => Promise<T> };
+      };
+    }
+  ).__TAURI__;
+  const fn = tauri?.core?.invoke;
+  if (!fn) {
+    throw new Error("Tauri bridge unavailable");
+  }
+  return fn(command, args);
+}
 
 export type CheckKind =
   | "contest_id"

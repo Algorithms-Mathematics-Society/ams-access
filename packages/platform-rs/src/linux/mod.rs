@@ -59,12 +59,20 @@ pub fn scan_processes() -> ProcessScanResult {
             continue;
         }
         let cmdline_path = format!("/proc/{}/cmdline", name);
-        if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
-            let lower = cmdline.to_lowercase();
-            for &r in RESTRICTED {
-                if lower.contains(r) && !found.contains(&r.to_string()) {
-                    found.push(r.to_string());
-                }
+        let Ok(raw) = std::fs::read(&cmdline_path) else {
+            continue;
+        };
+        if raw.is_empty() {
+            continue;
+        }
+        // cmdline is null-separated; argv[0] is the executable path
+        let exe = raw.split(|&b| b == 0).next().unwrap_or(&[]);
+        let exe_str = String::from_utf8_lossy(exe).to_lowercase();
+        // match only the basename so "/usr/bin/obs-studio" → "obs-studio"
+        let basename = exe_str.rsplit('/').next().unwrap_or(&exe_str).to_string();
+        for &r in RESTRICTED {
+            if basename == r && !found.contains(&r.to_string()) {
+                found.push(r.to_string());
             }
         }
     }

@@ -66,6 +66,7 @@ type NetworkCheckResult = {
 type InviteCodeResolveResponse = {
   contest?: InvitedContest;
   eligibility_status: string;
+  session_window_state?: string;
   blocked_reason?: string;
   active_session_id?: string;
 };
@@ -454,21 +455,18 @@ export default function HomePage() {
     }
     setInviteCodeBusy(true);
     try {
+      // Avoid CORS preflight failures in desktop webview by sending plain body
+      // without custom headers; backend JSON decoder still accepts this payload.
       const res = await fetchWithTimeout(`${API_URL}/session-codes/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, candidate_email: userEmail }),
       });
       let data: Partial<InviteCodeResolveResponse> | null = null;
       try {
         data = (await res.json()) as Partial<InviteCodeResolveResponse>;
       } catch {}
-      if (!res.ok) {
+      if (!res.ok && !data?.contest?.id) {
         setInviteCodeStatus(data?.blocked_reason || "Code validation unavailable.");
-        return;
-      }
-      if (data?.blocked_reason) {
-        setInviteCodeStatus(data.blocked_reason);
         return;
       }
       if (!data?.contest?.id) {
@@ -494,10 +492,23 @@ export default function HomePage() {
         setActiveSession(resolvedActiveSession);
       }
 
-      // Keep validated contest in the list and let user explicitly start verification.
-      setInviteSuccessMsg("Contest added to your list.");
+      const eligibility = String(data?.eligibility_status ?? "").toLowerCase();
+      const blockedReason = data?.blocked_reason?.trim();
+      if (eligibility === "allowed") {
+        setInviteSuccessMsg("Contest added to your list.");
+        setInviteCodeStatus(null);
+      } else if (eligibility === "wait") {
+        setInviteSuccessMsg("Contest added to your list.");
+        setInviteCodeStatus(blockedReason || "Verification opens 20 minutes before contest start.");
+      } else if (eligibility === "blocked") {
+        setInviteSuccessMsg("Contest added to your list.");
+        setInviteCodeStatus(blockedReason || "Join window is closed for this contest.");
+      } else {
+        setInviteSuccessMsg("Contest added to your list.");
+        setInviteCodeStatus(null);
+      }
+
       setInviteCode("");
-      setInviteCodeStatus(null);
       setTimeout(() => setInviteSuccessMsg(null), 1200);
     } catch {
       setInviteCodeStatus("Code validation unavailable.");

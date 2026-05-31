@@ -2572,6 +2572,7 @@ export default function OnboardingPage() {
   } | null>(null);
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
+  const [sessionPrepared, setSessionPrepared] = useState(false);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Keep ref in sync with state so the unmount cleanup below sees the latest stream.
@@ -2632,6 +2633,54 @@ export default function OnboardingPage() {
     return { ok: true, reason: null as string | null };
   }
 
+  async function evaluateEntryGateFromServer() {
+    if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
+    try {
+      const res = await fetch(`${API_URL}/contests/${contestId}/session-window`);
+      if (!res.ok)
+        return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
+      const body = (await res.json()) as {
+        eligibility_status?: string;
+        blocked_reason?: string;
+        session_window_state?: string;
+        start_at?: string;
+        end_at?: string;
+      };
+      if (body.start_at && body.end_at) {
+        setContestWindow((prev) => ({
+          startAt: body.start_at ?? prev?.startAt ?? "",
+          endAt: body.end_at ?? prev?.endAt ?? "",
+          timezone: prev?.timezone,
+        }));
+      }
+      const status = String(body.eligibility_status ?? "blocked").toLowerCase();
+      if (status === "allowed")
+        return {
+          ok: true,
+          reason: null as string | null,
+          state: body.session_window_state ?? "VERIFY_WINDOW_OPEN",
+        };
+      if (status === "wait")
+        return {
+          ok: false,
+          reason: body.blocked_reason || "Verification opens 20 minutes before contest start.",
+          state: body.session_window_state ?? "NOT_OPEN",
+        };
+      // If candidate already finished verification and prepared a session, allow
+      // transition to contest even when server reports LIVE.
+      if ((body.session_window_state ?? "").toUpperCase() === "LIVE" && readyForStart) {
+        return { ok: true, reason: null as string | null, state: "LIVE" };
+      }
+      return {
+        ok: false,
+        reason: body.blocked_reason || "Join window is closed once contest starts.",
+        state: body.session_window_state ?? "LIVE",
+      };
+    } catch {
+      return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
+    }
+  }
+
   function formatCountdown(ms: number) {
     const total = Math.max(0, Math.floor(ms / 1000));
     const h = Math.floor(total / 3600);
@@ -2660,7 +2709,8 @@ export default function OnboardingPage() {
       } catch {}
     }
 
-    const gate = (() => {
+    const gate = await evaluateEntryGateFromServer();
+    const localGate = (() => {
       if (!windowMeta) return { ok: true, reason: null as string | null };
       const now = Date.now();
       const start = new Date(windowMeta.startAt).getTime();
@@ -2673,12 +2723,13 @@ export default function OnboardingPage() {
         return { ok: false, reason: "Join window is closed once contest starts." };
       return { ok: true, reason: null as string | null };
     })();
+    const effectiveGate = gate.state === "UNKNOWN" ? localGate : gate;
 
-    if (!gate.ok) {
+    if (!effectiveGate.ok) {
       setCurrentStage(13);
       setTransitioning(false);
       setReadyForStart(false);
-      setPolicyBlock(gate.reason);
+      setPolicyBlock(effectiveGate.reason);
       return;
     }
 
@@ -2705,35 +2756,38 @@ export default function OnboardingPage() {
 
     try {
       const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
-      const sessionRes = await fetch(`${API_URL}/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contest_id: contestId,
-          candidate_email: email,
-          candidate_name: email.split("@")[0],
-        }),
-      });
-      if (!sessionRes.ok) {
-        let body: { error?: string } | null = null;
-        try {
-          body = (await sessionRes.json()) as { error?: string };
-        } catch {}
-        throw new Error(body?.error || "Unable to create contest session.");
-      }
-      try {
-        const body = (await sessionRes.json()) as { id?: string };
-        if (body?.id) {
-          localStorage.setItem(
-            "ams_active_session",
-            JSON.stringify({
-              id: body.id,
-              contest_id: contestId,
-              updated_at: new Date().toISOString(),
-            })
-          );
+      if (!sessionPrepared) {
+        const sessionRes = await fetch(`${API_URL}/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contest_id: contestId,
+            candidate_email: email,
+            candidate_name: email.split("@")[0],
+          }),
+        });
+        if (!sessionRes.ok) {
+          let body: { error?: string } | null = null;
+          try {
+            body = (await sessionRes.json()) as { error?: string };
+          } catch {}
+          throw new Error(body?.error || "Unable to create contest session.");
         }
-      } catch {}
+        try {
+          const body = (await sessionRes.json()) as { id?: string };
+          if (body?.id) {
+            localStorage.setItem(
+              "ams_active_session",
+              JSON.stringify({
+                id: body.id,
+                contest_id: contestId,
+                updated_at: new Date().toISOString(),
+              })
+            );
+          }
+        } catch {}
+        setSessionPrepared(true);
+      }
 
       await startSecureSession({
         contestId,
@@ -2844,6 +2898,7 @@ export default function OnboardingPage() {
   const isAfterStart = contestWindow ? nowMs >= startMs && nowMs < endMs : false;
   const isEnded = contestWindow ? nowMs >= endMs : false;
   const verifyOpensInMs = contestWindow ? Math.max(0, verifyOpenMs - nowMs) : 0;
+  const showWaitLock = currentStage === 15 && readyForStart;
 
   return (
     <main
@@ -2948,7 +3003,7 @@ export default function OnboardingPage() {
               </div>
             </div>
           )}
-          {isAfterStart && (
+          {isAfterStart && !showWaitLock && (
             <div
               style={{
                 border: "1px solid rgba(239,68,68,0.35)",
@@ -2978,7 +3033,7 @@ export default function OnboardingPage() {
               Contest has ended.
             </div>
           )}
-          {!isTooEarly && !isAfterStart && !isEnded && (
+          {!isTooEarly && (!isAfterStart || showWaitLock) && !isEnded && (
             <>
               {currentStage === 15 && contestWindow && waitMs > 0 && (
                 <div
