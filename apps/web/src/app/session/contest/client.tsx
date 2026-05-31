@@ -25,6 +25,125 @@ type ContestMeta = {
   status: string;
 };
 
+type QuestionPayload = Partial<Question> & {
+  problem_id?: string;
+  name?: string;
+  statement?: string | null;
+  prompt?: string | null;
+  body?: string | null;
+  html?: string | null;
+  css?: string | null;
+  js?: string | null;
+  starter_html?: string | null;
+  starter_css?: string | null;
+  starter_js?: string | null;
+  starter?: {
+    html?: string | null;
+    css?: string | null;
+    js?: string | null;
+  } | null;
+  order?: number;
+  position?: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+function pickNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function unwrapQuestionList(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!isRecord(payload)) return [];
+
+  const candidates = [
+    payload.questions,
+    payload.problems,
+    payload.items,
+    payload.data,
+    payload.results,
+    isRecord(payload.contest) ? payload.contest.questions : null,
+    isRecord(payload.contest) ? payload.contest.problems : null,
+    isRecord(payload.bundle) ? payload.bundle.questions : null,
+    isRecord(payload.bundle) ? payload.bundle.problems : null,
+  ];
+
+  for (const candidate of candidates) {
+    const nested = unwrapQuestionList(candidate);
+    if (nested.length > 0) return nested;
+  }
+
+  return [];
+}
+
+function normalizeQuestion(value: unknown, index: number): Question | null {
+  if (!isRecord(value)) return null;
+  const payload = value as QuestionPayload;
+  const starter = isRecord(payload.starter) ? payload.starter : null;
+  const id = pickString(payload.id, payload.problem_id);
+  const title = pickString(payload.title, payload.name);
+  const orderIndex = pickNumber(payload.order_index, payload.order, payload.position) ?? index;
+
+  return {
+    id: id ?? `question-${orderIndex + 1}`,
+    title: title ?? `Question ${orderIndex + 1}`,
+    description: pickString(payload.description, payload.statement, payload.prompt, payload.body),
+    html_starter: pickString(
+      payload.html_starter,
+      payload.starter_html,
+      starter?.html,
+      payload.html
+    ),
+    css_starter: pickString(payload.css_starter, payload.starter_css, starter?.css, payload.css),
+    js_starter: pickString(payload.js_starter, payload.starter_js, starter?.js, payload.js),
+    order_index: orderIndex,
+  };
+}
+
+function normalizeQuestions(payload: unknown): Question[] {
+  return unwrapQuestionList(payload)
+    .map((item, index) => normalizeQuestion(item, index))
+    .filter((item): item is Question => item !== null)
+    .sort((a, b) => a.order_index - b.order_index);
+}
+
+async function fetchJsonOrNull(url: string): Promise<unknown | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchContestQuestions(contestId: string): Promise<Question[]> {
+  const paths = [
+    `/contests/${contestId}/questions`,
+    `/contests/${contestId}/problems`,
+    `/contests/${contestId}/bundle`,
+  ];
+
+  for (const path of paths) {
+    const questions = normalizeQuestions(await fetchJsonOrNull(`${API_URL}${path}`));
+    if (questions.length > 0) return questions;
+  }
+
+  return [];
+}
+
 declare global {
   interface Window {
     __TAURI__?: {
@@ -86,6 +205,50 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+function isVideoRendering(video: HTMLVideoElement): boolean {
+  return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0;
+}
+
+function waitForVideoFrame(video: HTMLVideoElement, timeoutMs = 3000): Promise<boolean> {
+  if (isVideoRendering(video)) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      clearTimeout(timer);
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("canplay", onReady);
+      video.removeEventListener("playing", onReady);
+      resolve(ok);
+    };
+    const onReady = () => done(isVideoRendering(video));
+    const timer = setTimeout(() => done(isVideoRendering(video)), timeoutMs);
+
+    video.addEventListener("loadeddata", onReady, { once: true });
+    video.addEventListener("canplay", onReady, { once: true });
+    video.addEventListener("playing", onReady, { once: true });
+  });
+}
+
+async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): Promise<boolean> {
+  video.muted = true;
+  video.playsInline = true;
+  if (video.srcObject !== stream) video.srcObject = stream;
+
+  try {
+    await video.play();
+  } catch {
+    // WebKit can reject play before metadata is ready; wait for a real frame below.
+  }
+
+  const ready = await waitForVideoFrame(video);
+  if (!ready) return false;
+
+  try {
+    await video.play();
+  } catch {}
+  return isVideoRendering(video);
+}
+
 function useCountdown(endAt: string) {
   const [state, setState] = useState({ remaining: "", urgent: false });
 
@@ -124,40 +287,18 @@ function useCountdown(endAt: string) {
 const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }) {
   const { remaining, urgent } = useCountdown(endAt);
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "8px",
-        padding: "6px 16px",
-        borderRadius: "8px",
-        background: urgent ? "rgba(239,68,68,0.1)" : "rgba(168,85,247,0.08)",
-        border: `1px solid ${urgent ? "rgba(239,68,68,0.3)" : "rgba(168,85,247,0.25)"}`,
-        transition: "all 600ms",
-      }}
-    >
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-        <circle cx="6" cy="6" r="4.5" stroke={urgent ? "#ef4444" : "#a855f7"} strokeWidth="1.2" />
-        <path
-          d="M6 3.5V6l1.5 1.5"
-          stroke={urgent ? "#ef4444" : "#a855f7"}
-          strokeWidth="1.2"
-          strokeLinecap="round"
-        />
-      </svg>
+    <div style={{ display: "flex", alignItems: "center" }}>
       <span
         style={{
           fontSize: "13px",
           fontWeight: 600,
           color: urgent ? "#ef4444" : "#a855f7",
+          fontFamily: "'JetBrains Mono', monospace",
           fontVariantNumeric: "tabular-nums",
           letterSpacing: "0.05em",
         }}
       >
-        {remaining}
-      </span>
-      <span style={{ fontSize: "10px", color: urgent ? "#ef4444" : "#64748b", fontWeight: 400 }}>
-        remaining
+        T-MINUS: {remaining}
       </span>
     </div>
   );
@@ -188,6 +329,7 @@ export default function ContestPageClient() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraVideoReady, setCameraVideoReady] = useState(false);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processScanInFlightRef = useRef(false);
   const lastViolationDetailRef = useRef("");
@@ -206,7 +348,51 @@ export default function ContestPageClient() {
   const [cameraCollapsed, setCameraCollapsed] = useState(false);
   const [faceGraceCountdown, setFaceGraceCountdown] = useState(5);
   const [faceGraceActive, setFaceGraceActive] = useState(false);
+
   const [softBlockActive, setSoftBlockActive] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [hasToggledMedia, setHasToggledMedia] = useState(false);
+  const [showMediaToggleWarning, setShowMediaToggleWarning] = useState(false);
+  const [pendingMediaToggle, setPendingMediaToggle] = useState<{type: 'camera' | 'mic', value: boolean} | null>(null);
+
+  function applyMediaToggle(type: 'camera' | 'mic', value: boolean) {
+    if (type === 'camera') {
+      setCameraEnabled(value);
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = value));
+      }
+    } else {
+      setMicEnabled(value);
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = value));
+      }
+    }
+  }
+
+  function handleToggleMedia(type: 'camera' | 'mic', value: boolean) {
+    if (!hasToggledMedia) {
+      setPendingMediaToggle({ type, value });
+      setShowMediaToggleWarning(true);
+      return;
+    }
+    applyMediaToggle(type, value);
+  }
+
+  function confirmMediaToggle() {
+    setHasToggledMedia(true);
+    setShowMediaToggleWarning(false);
+    if (pendingMediaToggle) {
+      applyMediaToggle(pendingMediaToggle.type, pendingMediaToggle.value);
+      setPendingMediaToggle(null);
+    }
+  }
+
+  function cancelMediaToggle() {
+    setShowMediaToggleWarning(false);
+    setPendingMediaToggle(null);
+  }
+
 
   // Monitor faceStatus to trigger face grace period countdown
   useEffect(() => {
@@ -371,15 +557,16 @@ export default function ContestPageClient() {
     }
 
     Promise.all([
-      fetchWithRetry<ContestMeta>(`${API_URL}/contests/${contestId}`, 2, 500),
-      fetchWithRetry<Question[]>(`${API_URL}/contests/${contestId}/questions`, 4, 700),
+      fetchJsonOrNull(`${API_URL}/contests/${contestId}`),
+      fetchContestQuestions(contestId),
     ])
-      .then(async ([c, qs]) => {
-        if (c) setContest(c);
-        const fetchedQuestions = qs ?? [];
-        setQuestions(fetchedQuestions);
-        if (fetchedQuestions.length > 0) {
-          loadQuestion(fetchedQuestions[0]);
+      .then(async ([c, questions]) => {
+        const contestMeta = c ? (c as ContestMeta) : null;
+        if (contestMeta) setContest(contestMeta);
+        setActiveQ(0);
+        setQuestions(questions);
+        if (questions.length > 0) {
+          loadQuestion(questions[0]);
           setLoadError(null);
         } else {
           setLoadError("Questions are not available yet. Please retry in a few seconds.");
@@ -405,7 +592,7 @@ export default function ContestPageClient() {
               JSON.stringify({
                 id: data.id,
                 contest_id: contestId,
-                contest_title: c?.title,
+                contest_title: contestMeta?.title,
                 updated_at: new Date().toISOString(),
               })
             );
@@ -516,63 +703,115 @@ export default function ContestPageClient() {
   }
 
   useEffect(() => {
-    if (!navigator.mediaDevices?.getUserMedia) return;
-    let cancelled = false;
+    if (loading) return; // Wait for contest load to ensure <video> ref is in DOM
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Camera access is unavailable in this environment.");
+      setProctoringOk(false);
+      setFaceStatus("away");
+      return;
+    }
 
-    async function acquire(isRetry = false) {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const stopStream = (stream: MediaStream | null) => {
+      stream?.getTracks().forEach((track) => track.stop());
+    };
+
+    const displayCameraError = (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      return msg.includes("NotAllowed") ||
+        msg.includes("not allowed") ||
+        msg.includes("denied") ||
+        msg.includes("Permission")
+        ? "Camera access was denied. Please check your system settings to grant camera permission."
+        : msg.includes("NotFound") || msg.includes("not found")
+          ? "No camera was found. Please ensure your camera is connected securely."
+          : "Camera is currently unavailable. Please check your camera settings and try again.";
+    };
+
+    async function bindStream(stream: MediaStream, attempt: number) {
+      const video = cameraVideoRef.current;
+      if (!video) {
+        if (attempt < 3) {
+          retryTimer = setTimeout(() => {
+            if (!cancelled) void bindStream(stream, attempt + 1);
+          }, 150);
+        }
+        return;
+      }
+
+      const ready = await attachVideoStream(video, stream);
+      if (cancelled || cameraStreamRef.current !== stream) return;
+
+      setCameraVideoReady(ready);
+      if (!ready) setProctoringOk(false);
+      if (!ready && attempt < 2) {
+        stopStream(stream);
+        retryTimer = setTimeout(() => {
+          if (!cancelled) void acquire(attempt + 1);
+        }, 700);
+      } else if (!ready) {
+        setCameraError(
+          "Camera opened, but no video frames were received. Close other camera apps and try again."
+        );
+      }
+    }
+
+    async function acquire(attempt = 0) {
       try {
-        const s = await withTimeout(
+        const stream = await withTimeout(
           navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: "user" },
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+            audio: true,
           }),
-          3500,
+          8000,
           "Camera request timed out"
         );
         if (cancelled) {
-          s.getTracks().forEach((t) => t.stop());
+          stopStream(stream);
           return;
         }
-        cameraStreamRef.current = s;
-        setCameraStream(s);
+
+        stopStream(cameraStreamRef.current);
+        cameraStreamRef.current = stream;
+        setCameraStream(stream);
+        setCameraVideoReady(false);
         setCameraError(null);
-        if (cameraVideoRef.current) {
-          cameraVideoRef.current.srcObject = s;
-          cameraVideoRef.current.play().catch(() => {});
-        }
+        void bindStream(stream, attempt);
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
-        // NotReadableError / AbortError = device still releasing from onboarding;
-        // retry once after a short delay before surfacing an error.
-        const isRaceError =
-          !isRetry &&
-          (msg.includes("NotReadable") || msg.includes("Abort") || msg.includes("busy"));
-        if (isRaceError) {
-          setTimeout(() => {
-            if (!cancelled) void acquire(true);
-          }, 600);
-        } else {
-          const displayMsg =
-            msg.includes("NotAllowed") ||
-            msg.includes("not allowed") ||
-            msg.includes("denied") ||
-            msg.includes("Permission")
-              ? "Camera access was denied. Please check your system settings to grant camera permission."
-              : msg.includes("NotFound") || msg.includes("not found")
-                ? "No camera was found. Please ensure your camera is connected securely."
-                : "Camera is currently unavailable. Please check your camera settings and try again.";
-          setCameraError(displayMsg);
+        const shouldRetry =
+          attempt < 2 &&
+          (msg.includes("NotReadable") ||
+            msg.includes("Abort") ||
+            msg.includes("busy") ||
+            msg.includes("timed out"));
+
+        if (shouldRetry) {
+          retryTimer = setTimeout(() => {
+            if (!cancelled) void acquire(attempt + 1);
+          }, 900);
+          return;
         }
+
+        setCameraVideoReady(false);
+        setProctoringOk(false);
+        setFaceStatus("away");
+        setCameraError(displayCameraError(err));
       }
     }
 
     void acquire();
     return () => {
       cancelled = true;
-      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+      if (retryTimer) clearTimeout(retryTimer);
+      stopStream(cameraStreamRef.current);
       cameraStreamRef.current = null;
+      setCameraVideoReady(false);
     };
-  }, []);
+  }, [loading]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -583,21 +822,35 @@ export default function ContestPageClient() {
   }, [sessionId]);
 
   useEffect(() => {
-    if (cameraStream && cameraVideoRef.current) {
-      cameraVideoRef.current.srcObject = cameraStream;
-      cameraVideoRef.current.play().catch(() => {});
-    }
-  }, [cameraStream]);
+    if (!cameraStream || !cameraVideoRef.current) return;
+    let cancelled = false;
+    void attachVideoStream(cameraVideoRef.current, cameraStream).then((ready) => {
+      if (!cancelled) setCameraVideoReady(ready);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cameraCollapsed, cameraStream]);
 
   useEffect(() => {
-    if (!cameraStream || !cameraVideoRef.current) return;
-    // Simulate face detection toggle based on whether stream is active
-    const interval = setInterval(() => {
-      setFaceStatus(cameraStream.active ? "ok" : "away");
-      setProctoringOk(true);
-    }, 2000);
+    if (!cameraStream) return;
+
+    const updateCameraStatus = () => {
+      const video = cameraVideoRef.current;
+      const cameraOk = cameraStream.active && Boolean(video && isVideoRendering(video));
+      setFaceStatus(cameraOk ? "ok" : "away");
+      setProctoringOk(cameraOk && blockedApps.length === 0);
+      if (cameraOk) {
+        setFaceGraceActive(false);
+        setFaceGraceCountdown(5);
+        setSoftBlockActive(false);
+      }
+    };
+
+    updateCameraStatus();
+    const interval = setInterval(updateCameraStatus, 1000);
     return () => clearInterval(interval);
-  }, [cameraStream]);
+  }, [blockedApps.length, cameraStream, cameraVideoReady]);
 
   // Periodic process scan — every 5s, log + alert on violation
   useEffect(() => {
@@ -695,7 +948,7 @@ export default function ContestPageClient() {
           alignItems: "center",
           justifyContent: "center",
           height: "100vh",
-          background: "#030816",
+          background: "#0F0F0F",
         }}
       >
         <div style={{ textAlign: "center" }}>
@@ -774,6 +1027,14 @@ export default function ContestPageClient() {
 
   const currentCode = activeTab === "html" ? html : activeTab === "css" ? css : js;
   const tabColor = { html: "#f97316", css: "#38bdf8", js: "#facc15" };
+  const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
+  const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
+  const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
+  const faceBlockMessage = cameraHealthy
+    ? "Please face the camera to resume your exam."
+    : cameraError
+      ? cameraError
+      : "Waiting for a live camera frame. Check the camera preview before continuing.";
 
   return (
     <div
@@ -782,7 +1043,7 @@ export default function ContestPageClient() {
         flexDirection: "column",
         height: "100vh",
         overflow: "hidden",
-        background: "#030816",
+        background: "#0F0F0F",
         fontFamily: "Inter, 'IBM Plex Sans', system-ui, sans-serif",
       }}
     >
@@ -958,9 +1219,10 @@ export default function ContestPageClient() {
           justifyContent: "space-between",
           padding: "0 20px",
           height: "48px",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(4,10,24,0.95)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+          background: "#0F0F0F",
           flexShrink: 0,
+          boxShadow: "none",
           gap: "16px",
         }}
       >
@@ -1013,89 +1275,63 @@ export default function ContestPageClient() {
           <button
             onClick={() => setShowSupportModal(true)}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "7px 14px",
-              borderRadius: "8px",
-              border: "1px solid rgba(245,158,11,0.35)",
-              background: "rgba(245,158,11,0.08)",
+              padding: "6px 12px",
+              border: "1px solid #f59e0b",
+              background: "#0F0F0F",
               color: "#f59e0b",
-              fontSize: "12px",
-              fontWeight: 500,
-              fontFamily: "inherit",
+              fontSize: "11px",
+              fontWeight: 600,
+              fontFamily: "'JetBrains Mono', monospace",
               cursor: "pointer",
-              transition: "all 220ms",
             }}
           >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M8 1v6M8 11.5h.01"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-              />
-              <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-            </svg>
-            Report Issue
+            [ RAISE EXCEPTION ]
           </button>
 
           {submitConfirm && (
-            <span style={{ fontSize: "12px", color: "#f59e0b" }}>
-              Confirm? Click again to submit.
+            <span style={{ fontSize: "11px", color: "#ef4444", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
+              CONFIRM? CLICK AGAIN
             </span>
           )}
           <button
             onClick={handleSubmit}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "7px 16px",
-              borderRadius: "8px",
-              border: "1px solid rgba(239,68,68,0.4)",
-              background: submitConfirm ? "rgba(239,68,68,0.2)" : "rgba(239,68,68,0.08)",
+              padding: "6px 12px",
+              border: "1px solid #ef4444",
+              background: "#0F0F0F",
               color: "#ef4444",
-              fontSize: "12px",
-              fontWeight: 500,
-              fontFamily: "inherit",
+              fontSize: "11px",
+              fontWeight: 600,
+              fontFamily: "'JetBrains Mono', monospace",
               cursor: "pointer",
-              transition: "all 220ms",
+              textTransform: "uppercase",
             }}
           >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path
-                d="M1.5 9L4.5 6M4.5 6L1.5 3M4.5 6H10.5"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            {submitConfirm ? "Confirm Submit" : "Submit & Exit"}
+            {submitConfirm ? "[ CONFIRM SUBMIT ]" : "[ SUBMIT & EXIT ]"}
           </button>
         </div>
       </header>
 
       {/* ── Body ── */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", background: "#0F0F0F" }}>
         {/* Question list sidebar */}
         <aside
           style={{
             width: sidebarCollapsed ? "52px" : "220px",
             flexShrink: 0,
-            borderRight: "1px solid rgba(255,255,255,0.05)",
+            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
             display: "flex",
             flexDirection: "column",
-            background: "rgba(4,10,24,0.7)",
+            background: "#0F0F0F",
+            boxShadow: "none",
             overflow: "hidden",
-            transition: "width 250ms var(--ease-cinematic)",
+            transition: "width 250ms",
           }}
         >
           <div
             style={{
               padding: sidebarCollapsed ? "14px 0" : "14px 14px 8px",
-              borderBottom: "1px solid rgba(255,255,255,0.05)",
+              borderBottom: "1px solid #1F1F1F",
               display: "flex",
               alignItems: "center",
               justifyContent: sidebarCollapsed ? "center" : "space-between",
@@ -1105,10 +1341,11 @@ export default function ContestPageClient() {
               <p
                 style={{
                   fontSize: "10px",
-                  color: "#475569",
+                  color: "#64748b",
                   letterSpacing: "0.1em",
                   textTransform: "uppercase",
-                  fontWeight: 500,
+                  fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
                 Questions ({questions.length})
@@ -1126,29 +1363,16 @@ export default function ContestPageClient() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                transition: "color 150ms",
               }}
               title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
             >
               {sidebarCollapsed ? (
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M6 12l4-4-4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               ) : (
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M10 12L6 8l4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               )}
             </button>
@@ -1164,14 +1388,7 @@ export default function ContestPageClient() {
             }}
           >
             {questions.length === 0 && !sidebarCollapsed && (
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#475569",
-                  textAlign: "center",
-                  marginTop: "24px",
-                }}
-              >
+              <p style={{ fontSize: "12px", color: "#475569", textAlign: "center", marginTop: "24px", fontFamily: "'JetBrains Mono', monospace" }}>
                 No questions
               </p>
             )}
@@ -1186,59 +1403,26 @@ export default function ContestPageClient() {
                   justifyContent: sidebarCollapsed ? "center" : "flex-start",
                   width: "100%",
                   padding: sidebarCollapsed ? "8px 0" : "10px 12px",
-                  borderRadius: "9px",
-                  border: `1px solid ${activeQ === i ? "rgba(168,85,247,0.35)" : "transparent"}`,
-                  background:
-                    activeQ === i
-                      ? "linear-gradient(135deg, rgba(126,34,206,0.5) 0%, rgba(168,85,247,0.35) 100%)"
-                      : "transparent",
+                  borderRadius: "2px",
+                  border: `1px solid ${activeQ === i ? "#1F1F1F" : "transparent"}`,
+                  background: activeQ === i ? "#1F1F1F" : "transparent",
                   cursor: "pointer",
-                  fontFamily: "inherit",
-                  transition: "all 180ms",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  transition: "all 150ms",
                   height: sidebarCollapsed ? "36px" : "auto",
                 }}
                 title={sidebarCollapsed ? q.title : undefined}
               >
                 {sidebarCollapsed ? (
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: 600,
-                      color: activeQ === i ? "#e9d5ff" : "#64748b",
-                    }}
-                  >
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: activeQ === i ? "#ffffff" : "#64748b" }}>
                     {i + 1}
                   </span>
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
-                    <span
-                      style={{
-                        width: "20px",
-                        height: "20px",
-                        borderRadius: "6px",
-                        background:
-                          activeQ === i ? "rgba(168,85,247,0.4)" : "rgba(255,255,255,0.06)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "10px",
-                        fontWeight: 600,
-                        color: activeQ === i ? "#e9d5ff" : "#64748b",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {i + 1}
+                    <span style={{ fontSize: "10px", fontWeight: 600, color: activeQ === i ? "#ffffff" : "#64748b", flexShrink: 0 }}>
+                      [{i + 1}]
                     </span>
-                    <span
-                      style={{
-                        fontSize: "12px",
-                        fontWeight: 500,
-                        color: activeQ === i ? "#f5f7fa" : "#94a3b8",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
+                    <span style={{ fontSize: "12px", fontWeight: 500, color: activeQ === i ? "#f5f7fa" : "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {q.title}
                     </span>
                   </div>
@@ -1246,81 +1430,156 @@ export default function ContestPageClient() {
               </button>
             ))}
           </div>
-        </aside>
-
-        {/* Editor + Preview */}
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          {/* Code editor panel */}
+          
+          {/* Docked Camera feed */}
           <div
             style={{
-              width: "50%",
-              display: "flex",
+              borderTop: "1px solid #1F1F1F",
+              background: "#0F0F0F",
+              position: "relative",
+              flexShrink: 0,
+              display: (cameraStream ?? cameraError) ? "flex" : "none",
               flexDirection: "column",
-              borderRight: "1px solid rgba(255,255,255,0.05)",
             }}
           >
-            {/* Tab bar */}
+            {!sidebarCollapsed && (
+              <div style={{ display: "flex", alignItems: "center", padding: "6px", gap: "6px", borderBottom: "1px solid #1F1F1F" }}>
+                <button
+                  type="button"
+                  onClick={() => handleToggleMedia('camera', !cameraEnabled)}
+                  style={{ flex: 1, padding: "4px", fontSize: "10px", fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${cameraEnabled ? '#1F1F1F' : '#ef4444'}`, background: cameraEnabled ? '#1F1F1F' : 'rgba(239,68,68,0.1)', color: cameraEnabled ? '#e2e8f0' : '#ef4444', cursor: "pointer" }}
+                >
+                  {cameraEnabled ? "CAM ON" : "CAM OFF"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleMedia('mic', !micEnabled)}
+                  style={{ flex: 1, padding: "4px", fontSize: "10px", fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${micEnabled ? '#1F1F1F' : '#ef4444'}`, background: micEnabled ? '#1F1F1F' : 'rgba(239,68,68,0.1)', color: micEnabled ? '#e2e8f0' : '#ef4444', cursor: "pointer" }}
+                >
+                  {micEnabled ? "MIC ON" : "MIC OFF"}
+                </button>
+              </div>
+            )}
+            <div style={{ width: "100%", height: sidebarCollapsed ? "52px" : "150px", border: "1px solid #1F1F1F", boxSizing: "border-box", position: "relative" }}>
+              <video
+                ref={cameraVideoRef}
+                muted
+                playsInline
+                autoPlay
+                style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: sidebarCollapsed ? "none" : "block", borderRadius: "0" }}
+              />
+              {sidebarCollapsed && (
+                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                   <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: faceStatus === "ok" ? "#22c55e" : "#ef4444" }} />
+                </div>
+              )}
+            </div>
+            
+            {!sidebarCollapsed && (
+              <div style={{ position: "absolute", bottom: "8px", left: "8px", padding: "2px 4px", background: "#0F0F0F", border: "1px solid #1F1F1F", fontSize: "9px", color: faceStatus === "ok" ? "#22c55e" : "#ef4444", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
+                 {faceStatus === "ok" ? "OPTICAL: SECURE" : "OPTICAL: ALERT"}
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* Middle pane: Problem Description */}
+        <div
+          style={{
+            width: "35%",
+            display: "flex",
+            flexDirection: "column",
+            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
+            background: "#0F0F0F",
+            boxShadow: "none",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              borderBottom: "1px solid #1F1F1F",
+              background: "#0F0F0F",
+              padding: "0 16px",
+              flexShrink: 0,
+              height: "38px",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "11px",
+                color: "#64748b",
+                letterSpacing: "0.06em",
+                fontFamily: "'JetBrains Mono', monospace",
+                fontWeight: 600,
+              }}
+            >
+              [ PROBLEM DESCRIPTION ]
+            </span>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px", color: "#e2e8f0", fontSize: "14px", lineHeight: 1.6, fontFamily: "system-ui, sans-serif" }}>
+            <h2 style={{ marginTop: 0, marginBottom: "16px", fontSize: "20px", fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{questions[activeQ]?.title}</h2>
+            <div style={{ whiteSpace: "pre-wrap" }}>{questions[activeQ]?.description || "No description provided."}</div>
+          </div>
+        </div>
+
+        {/* Right panel: Editor (Top) + Terminal (Bottom) */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#0F0F0F", minWidth: 0 }}>
+          {/* Top Right: Code Editor */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)", boxShadow: "none" }}>
+            {/* Editor Tabs & Header */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-                background: "rgba(4,10,24,0.8)",
+                borderBottom: "1px solid #1F1F1F",
+                background: "#0F0F0F",
                 padding: "0 12px",
                 gap: "4px",
                 flexShrink: 0,
                 height: "38px",
               }}
             >
-              {(["html", "css", "js"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setActiveTab(t)}
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "0 16px",
-                    border: "none",
-                    background: activeTab === t ? "rgba(255,255,255,0.02)" : "transparent",
-                    color: activeTab === t ? "#ffffff" : "#475569",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    fontFamily: "inherit",
-                    cursor: "pointer",
-                    transition: "all 150ms var(--ease-cinematic)",
-                    letterSpacing: "0.05em",
-                    height: "100%",
-                    borderRadius: "0px",
-                  }}
-                >
-                  <span
+              <span
+                style={{
+                  fontSize: "11px",
+                  color: "#64748b",
+                  letterSpacing: "0.06em",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600,
+                  marginRight: "12px",
+                }}
+              >
+                [ EDITOR ]
+              </span>
+              {(["html", "css", "js"] as const).map((t) => {
+                const label = t === "html" ? "main.cpp" : t === "css" ? "order_book.h" : "test_cases.txt";
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setActiveTab(t)}
                     style={{
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: tabColor[t],
-                      opacity: activeTab === t ? 1 : 0.45,
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "0 16px",
+                      border: "1px solid",
+                      borderColor: activeTab === t ? "#1F1F1F" : "transparent",
+                      borderBottom: "none",
+                      background: activeTab === t ? "#1F1F1F" : "transparent",
+                      color: activeTab === t ? "#ffffff" : "#475569",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      fontFamily: "'JetBrains Mono', monospace",
+                      cursor: "pointer",
+                      height: "100%",
+                      borderRadius: "2px 2px 0 0",
                     }}
-                  />
-                  {t.toUpperCase()}
-                  {activeTab === t && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: "2px",
-                        background: tabColor[t],
-                        boxShadow: `0 0 8px ${tabColor[t]}`,
-                      }}
-                    />
-                  )}
-                </button>
-              ))}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
               <div style={{ flex: 1 }} />
               <button
                 onClick={handleSave}
@@ -1328,25 +1587,21 @@ export default function ContestPageClient() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "5px",
                   padding: "4px 10px",
-                  borderRadius: "6px",
+                  border: "1px solid #1F1F1F",
+                  background: "#0F0F0F",
+                  color: saved ? "#22c55e" : "#e2e8f0",
                   fontSize: "11px",
-                  fontWeight: 500,
-                  fontFamily: "inherit",
-                  border: `1px solid ${saved ? "rgba(34,197,94,0.4)" : "rgba(168,85,247,0.3)"}`,
-                  background: saved ? "rgba(34,197,94,0.1)" : "rgba(168,85,247,0.08)",
-                  color: saved ? "#22c55e" : "#a855f7",
+                  fontFamily: "'JetBrains Mono', monospace",
                   cursor: saving ? "not-allowed" : "pointer",
-                  transition: "all 200ms",
                 }}
               >
-                {saving ? "Saving…" : saved ? "✓ Saved" : "Save"}
+                {saving ? "SAVING..." : saved ? "[ SAVED ]" : "[ SAVE ]"}
               </button>
             </div>
-
-            {/* Textarea */}
-            <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+            
+            {/* Editor Textarea */}
+            <div style={{ flex: 1, position: "relative" }}>
               <textarea
                 aria-label="Answer editor"
                 key={`${activeQ}-${activeTab}`}
@@ -1360,107 +1615,62 @@ export default function ContestPageClient() {
                   resize: "none",
                   border: "none",
                   outline: "none",
-                  background: "#050d1e",
+                  background: "#0F0F0F",
                   color: "#e2e8f0",
-                  fontFamily:
-                    "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                   fontSize: "13px",
                   lineHeight: 1.7,
                   padding: "16px 20px",
                   boxSizing: "border-box",
-                  caretColor: tabColor[activeTab],
-                  tabSize: 2,
+                  tabSize: 4,
                 }}
               />
             </div>
           </div>
 
-          {/* Preview panel */}
-          <div style={{ width: "50%", display: "flex", flexDirection: "column" }}>
+          {/* Bottom Right: Terminal */}
+          <div style={{ height: "30%", minHeight: "200px", display: "flex", flexDirection: "column", background: "#0F0F0F" }}>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-                background: "rgba(4,10,24,0.8)",
+                borderBottom: "1px solid #1F1F1F",
+                background: "#0F0F0F",
                 padding: "0 16px",
                 flexShrink: 0,
                 height: "38px",
               }}
             >
-              <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
-                {["#ef4444", "#f59e0b", "#22c55e"].map((c) => (
-                  <div
-                    key={c}
-                    style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      background: c,
-                      opacity: 0.6,
-                    }}
-                  />
-                ))}
-              </div>
               <span
                 style={{
-                  marginLeft: "12px",
                   fontSize: "11px",
-                  color: "#475569",
+                  color: "#64748b",
                   letterSpacing: "0.06em",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600,
                 }}
               >
-                PREVIEW
+                [ STDOUT // COMPILE LOGS ]
               </span>
               <div style={{ flex: 1 }} />
-              <div
-                style={{
-                  width: "6px",
-                  height: "6px",
-                  borderRadius: "50%",
-                  background: "#22c55e",
-                  boxShadow: "0 0 6px rgba(34,197,94,0.5)",
-                  animation: "pulse-preview 2s ease-in-out infinite",
-                }}
-              />
-            </div>
-            <div style={{ flex: 1, position: "relative", background: "#fff" }}>
               {previewUpdating && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: "2px",
-                    background: "linear-gradient(90deg, #a855f7 0%, #d8b4fe 50%, #a855f7 100%)",
-                    backgroundSize: "200% 100%",
-                    animation: "preview-loading-bar 1.5s linear infinite",
-                    zIndex: 10,
-                  }}
-                />
+                <span style={{ fontSize: "10px", color: "#f59e0b", fontFamily: "'JetBrains Mono', monospace" }}>
+                  COMPILING...
+                </span>
               )}
-              {previewSrc ? (
-                <iframe
-                  srcDoc={previewSrc}
-                  sandbox="allow-scripts"
-                  style={{ width: "100%", height: "100%", border: "none" }}
-                  title="preview"
-                />
-              ) : (
-                <div
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: "#0a1428",
-                  }}
-                >
-                  <p style={{ color: "#475569", fontSize: "12px" }}>No preview yet</p>
-                </div>
-              )}
+            </div>
+            <div style={{ flex: 1, padding: "12px 16px", overflowY: "auto", color: "#a8b2d1", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", lineHeight: 1.6, position: "relative" }}>
+              <div style={{ color: "#22c55e" }}>$ make build</div>
+              <div>g++ -O3 -std=c++20 main.cpp order_book.h -o executable</div>
+              <div>Build finished successfully.</div>
+              <div style={{ marginTop: "8px", color: "#22c55e" }}>$ ./executable</div>
+              <div style={{ marginTop: "4px" }}>[HFT_ENGINE] Initializing order book...</div>
+              <div>[HFT_ENGINE] Ready to accept FIX messages.</div>
+              
+              <div style={{ display: "flex", alignItems: "center", marginTop: "16px", background: "#0F0F0F", padding: "4px 8px" }}>
+                <span style={{ color: "#a855f7", marginRight: "8px", fontWeight: "bold" }}>&gt;</span>
+                <span style={{ color: "#a855f7", animation: "blink-cursor 1s step-end infinite", fontWeight: "bold" }}>_</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1475,7 +1685,7 @@ export default function ContestPageClient() {
           padding: "0 20px",
           height: "36px",
           borderTop: "1px solid rgba(255,255,255,0.05)",
-          background: "rgba(3,8,22,0.98)",
+          background: "#0F0F0F",
           flexShrink: 0,
         }}
       >
@@ -1575,274 +1785,8 @@ export default function ContestPageClient() {
         </span>
       </footer>
 
-      {/* ── Camera PiP ── video always in DOM so ref is available when stream arrives */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: "56px",
-          right: "20px",
-          zIndex: 50,
-          width: cameraCollapsed ? "170px" : "210px",
-          height: cameraCollapsed ? "34px" : "158px",
-          borderRadius: "8px",
-          overflow: "hidden",
-          border: `1px solid ${
-            cameraCollapsed
-              ? "rgba(34,197,94,0.3)"
-              : faceStatus === "ok"
-                ? "rgba(34,197,94,0.35)"
-                : "rgba(245,158,11,0.35)"
-          }`,
-          boxShadow: `0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px ${
-            faceStatus === "ok" ? "rgba(34,197,94,0.06)" : "rgba(245,158,11,0.06)"
-          }`,
-          transition: "all 300ms var(--ease-cinematic)",
-          background: "#02040a",
-          display: (cameraStream ?? cameraError) ? "block" : "none",
-        }}
-      >
-        {/* Toggle Collapse Button */}
-        <button
-          type="button"
-          onClick={() => setCameraCollapsed(!cameraCollapsed)}
-          style={{
-            position: "absolute",
-            top: "6px",
-            right: "6px",
-            zIndex: 60,
-            background: "rgba(0,0,0,0.65)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: "4px",
-            width: "20px",
-            height: "20px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            color: "#ffffff",
-            fontSize: "10px",
-            lineHeight: 1,
-            transition: "all 200ms",
-          }}
-          title={cameraCollapsed ? "Expand Feed" : "Collapse Feed"}
-        >
-          {cameraCollapsed ? "＋" : "－"}
-        </button>
-
-        {cameraCollapsed ? (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              paddingLeft: "10px",
-              gap: "6px",
-              background: "rgba(4,10,24,0.95)",
-            }}
-          >
-            <span
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "#22c55e",
-                boxShadow: "0 0 8px #22c55e",
-                animation: "pulse-preview 1.8s ease-in-out infinite",
-              }}
-            />
-            <span
-              style={{
-                fontSize: "9px",
-                color: "#22c55e",
-                fontWeight: 600,
-                letterSpacing: "0.06em",
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              PROCTORING ACTIVE
-            </span>
-          </div>
-        ) : (
-          <>
-            <video
-              ref={cameraVideoRef}
-              muted
-              playsInline
-              autoPlay
-              style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
-            />
-
-            {/* HUD Corner Alignment Brackets */}
-            {(() => {
-              const bracketColor =
-                faceStatus === "ok" ? "rgba(34,197,94,0.65)" : "rgba(245,158,11,0.65)";
-              return (
-                <>
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "10px",
-                      left: "10px",
-                      width: "8px",
-                      height: "8px",
-                      borderTop: `1.5px solid ${bracketColor}`,
-                      borderLeft: `1.5px solid ${bracketColor}`,
-                      pointerEvents: "none",
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "10px",
-                      right: "10px",
-                      width: "8px",
-                      height: "8px",
-                      borderTop: `1.5px solid ${bracketColor}`,
-                      borderRight: `1.5px solid ${bracketColor}`,
-                      pointerEvents: "none",
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: "10px",
-                      left: "10px",
-                      width: "8px",
-                      height: "8px",
-                      borderBottom: `1.5px solid ${bracketColor}`,
-                      borderLeft: `1.5px solid ${bracketColor}`,
-                      pointerEvents: "none",
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: "10px",
-                      right: "10px",
-                      width: "8px",
-                      height: "8px",
-                      borderBottom: `1.5px solid ${bracketColor}`,
-                      borderRight: `1.5px solid ${bracketColor}`,
-                      pointerEvents: "none",
-                    }}
-                  />
-                </>
-              );
-            })()}
-
-            {cameraError && (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  background: "rgba(2,4,10,0.85)",
-                  padding: "12px",
-                }}
-              >
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "#fca5a5",
-                    textAlign: "center",
-                    lineHeight: 1.5,
-                    fontFamily: "inherit",
-                  }}
-                >
-                  {cameraError}
-                </p>
-              </div>
-            )}
-
-            {/* PROCTORED Active Banner Top Overlay */}
-            <div
-              style={{
-                position: "absolute",
-                top: "8px",
-                left: "8px",
-                background: "rgba(0,0,0,0.65)",
-                backdropFilter: "blur(4px)",
-                border: "1px solid rgba(255,255,255,0.06)",
-                borderRadius: "4px",
-                padding: "2px 6px",
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-                pointerEvents: "none",
-              }}
-            >
-              <span
-                style={{
-                  width: "4px",
-                  height: "4px",
-                  borderRadius: "50%",
-                  background: "#ef4444",
-                  boxShadow: "0 0 6px #ef4444",
-                  animation: "pulse-preview 1.5s ease-in-out infinite",
-                }}
-              />
-              <span
-                style={{
-                  fontSize: "8.5px",
-                  color: "rgba(255,255,255,0.8)",
-                  letterSpacing: "0.1em",
-                  fontWeight: 600,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                LIVE FEED
-              </span>
-            </div>
-
-            {/* Face status HUD Bottom overlay */}
-            <div
-              style={{
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                right: 0,
-                padding: "6px 10px",
-                background: "rgba(2,4,10,0.75)",
-                backdropFilter: "blur(4px)",
-                borderTop: "1px solid rgba(255,255,255,0.05)",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                justifyContent: "center",
-              }}
-            >
-              <div
-                style={{
-                  width: "6px",
-                  height: "6px",
-                  borderRadius: "50%",
-                  flexShrink: 0,
-                  background: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-                  boxShadow: `0 0 8px ${faceStatus === "ok" ? "#22c55e" : "#f59e0b"}`,
-                  animation: "pulse-preview 2s ease-in-out infinite",
-                }}
-              />
-              <span
-                style={{
-                  fontSize: "9px",
-                  color: faceStatus === "ok" ? "#22c55e" : "#f59e0b",
-                  letterSpacing: "0.08em",
-                  fontWeight: 600,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                {faceStatus === "ok" ? "ALIGNMENT SECURE" : "LOOK FORWARD"}
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-
       {/* ── Face proctoring soft-block overlay ── */}
-      {softBlockActive && (
+      {shouldShowFaceBlock && (
         <div
           style={{
             position: "fixed",
@@ -1851,7 +1795,7 @@ export default function ContestPageClient() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "rgba(3,8,22,0.7)",
+            background: "rgba(15,15,15,0.75)",
             backdropFilter: "blur(12px)",
             animation: "fadeIn 280ms var(--ease-cinematic) forwards",
           }}
@@ -1860,9 +1804,9 @@ export default function ContestPageClient() {
             style={{
               maxWidth: "400px",
               width: "100%",
-              borderRadius: "16px",
+              borderRadius: "2px",
               padding: "32px 28px",
-              background: "rgba(15, 23, 42, 0.95)",
+              background: "#1F1F1F",
               border: "1px solid rgba(168, 85, 247, 0.2)",
               boxShadow: "0 20px 50px rgba(0, 0, 0, 0.3)",
               textAlign: "center",
@@ -1895,23 +1839,87 @@ export default function ContestPageClient() {
               </svg>
             </div>
             <h4 className="text-subsection-title" style={{ color: "#f8fafc", marginBottom: "8px" }}>
-              Integrity Check Paused
+              {faceBlockTitle}
             </h4>
             <p className="text-body-copy" style={{ color: "#94a3b8", lineHeight: 1.5, margin: 0 }}>
-              Please look back at the camera to resume your exam.
+              {faceBlockMessage}
             </p>
           </div>
         </div>
       )}
 
-      {/* ── Support Incident Modal Overlay ── */}
+            {/* ── Media Toggle Warning Modal ── */}
+      {showMediaToggleWarning && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(15,15,15,0.75)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: "400px",
+              width: "100%",
+              borderRadius: "2px",
+              padding: "24px",
+              background: "#1F1F1F",
+              border: "1px solid rgba(239,68,68,0.3)",
+              boxShadow: "0 20px 50px rgba(0, 0, 0, 0.3)",
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            <h4 style={{ color: "#ef4444", margin: "0 0 16px 0", fontSize: "14px" }}>
+              [ LOGGING NOTICE ]
+            </h4>
+            <p style={{ color: "#a8b2d1", fontSize: "12px", lineHeight: 1.6, margin: "0 0 24px 0" }}>
+              Please note: Disabling your camera or microphone will be permanently logged in our system with the exact timestamp. This may affect proctoring validation.
+            </p>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                onClick={cancelMediaToggle}
+                style={{
+                  padding: "8px 16px",
+                  border: "1px solid #475569",
+                  background: "transparent",
+                  color: "#e2e8f0",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={confirmMediaToggle}
+                style={{
+                  padding: "8px 16px",
+                  border: "1px solid #ef4444",
+                  background: "rgba(239,68,68,0.1)",
+                  color: "#ef4444",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                ACKNOWLEDGE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+{/* ── Support Incident Modal Overlay ── */}
       {showSupportModal && (
         <div
           style={{
             position: "fixed",
             inset: 0,
             zIndex: 9999,
-            background: "rgba(3,8,22,0.85)",
+            background: "rgba(15,15,15,0.85)",
             backdropFilter: "blur(20px) saturate(180%)",
             display: "flex",
             alignItems: "center",
@@ -1923,9 +1931,9 @@ export default function ContestPageClient() {
             style={{
               width: "100%",
               maxWidth: "800px",
-              background: "#080b11",
+              background: "#1F1F1F",
               border: "1px solid rgba(168,85,247,0.2)",
-              borderRadius: "16px",
+              borderRadius: "2px",
               padding: "32px",
               boxShadow: "0 24px 64px rgba(168, 85, 247, 0.08)",
               position: "relative",
@@ -1935,55 +1943,6 @@ export default function ContestPageClient() {
               gap: "32px",
             }}
           >
-            {/* L-Shape Decals */}
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "12px",
-                height: "12px",
-                borderTop: "2px solid #a855f7",
-                borderLeft: "2px solid #a855f7",
-                opacity: 0.6,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                right: 0,
-                width: "12px",
-                height: "12px",
-                borderTop: "2px solid #a855f7",
-                borderRight: "2px solid #a855f7",
-                opacity: 0.6,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                width: "12px",
-                height: "12px",
-                borderBottom: "2px solid #a855f7",
-                borderLeft: "2px solid #a855f7",
-                opacity: 0.6,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                bottom: 0,
-                right: 0,
-                width: "12px",
-                height: "12px",
-                borderBottom: "2px solid #a855f7",
-                borderRight: "2px solid #a855f7",
-                opacity: 0.6,
-              }}
-            />
 
             {/* Left Column: Form & Categories */}
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -2109,9 +2068,9 @@ export default function ContestPageClient() {
                         width: "100%",
                         height: "70px",
                         resize: "none",
-                        background: "#02040a",
+                        background: "#0F0F0F",
                         border: "1px solid rgba(255,255,255,0.08)",
-                        borderRadius: "8px",
+                        borderRadius: "2px",
                         padding: "10px 12px",
                         fontSize: "12px",
                         color: "#e2e8f0",
@@ -2135,7 +2094,7 @@ export default function ContestPageClient() {
                         borderRadius: "8px",
                         border: "none",
                         background: "#f59e0b",
-                        color: "#080b11",
+                        color: "#0F0F0F",
                         fontSize: "13px",
                         fontWeight: 600,
                         cursor: isSendingReport ? "not-allowed" : "pointer",
@@ -2207,9 +2166,9 @@ export default function ContestPageClient() {
               <div
                 style={{
                   flex: 1,
-                  background: "#02040a",
+                  background: "#0F0F0F",
                   border: "1px solid rgba(255,255,255,0.05)",
-                  borderRadius: "8px",
+                  borderRadius: "2px",
                   padding: "16px",
                   overflowY: "auto",
                   fontFamily: "'JetBrains Mono', monospace",

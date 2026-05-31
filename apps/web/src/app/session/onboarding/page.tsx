@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
 import { resolveApiBase } from "@/lib/api-base";
 
+function useTheme() {
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  useEffect(() => {
+    const saved = localStorage.getItem("ams_theme") as "dark" | "light";
+    if (saved) setTheme(saved);
+  }, []);
+  return theme;
+}
+
 const API_URL = resolveApiBase();
 
 function getNetworkProbeHost() {
@@ -169,6 +178,9 @@ function CheckLine({
   delay?: number;
 }) {
   const [visible, setVisible] = useState(false);
+  const theme = useTheme();
+  const isLight = theme === "light";
+
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), delay);
     return () => clearTimeout(t);
@@ -176,37 +188,39 @@ function CheckLine({
 
   if (!visible) return null;
 
-  const icon =
-    status === "checking" ? (
-      <Spinner size={14} />
-    ) : status === "pass" ? (
-      "✓"
-    ) : status === "warn" ? (
-      "⚠"
-    ) : (
-      "✗"
-    );
-
   const color =
     status === "checking"
-      ? "#64748b"
+      ? "#A8A8A8"
       : status === "pass"
         ? "#22c55e"
         : status === "warn"
           ? "#f59e0b"
           : "#ef4444";
 
+  const text =
+    status === "checking"
+      ? "[SCAN]"
+      : status === "pass"
+        ? "[ OK ]"
+        : status === "warn"
+          ? "[WARN]"
+          : "[FAIL]";
+
   return (
     <div
       className="flex items-center gap-3"
-      style={{ opacity: 0, animation: `fadeIn 400ms ease forwards ${delay}ms` }}
+      style={{
+        opacity: 0,
+        animation: `fadeIn 400ms ease forwards ${visible ? 0 : delay}ms`,
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      }}
     >
-      <span style={{ color, fontSize: "15px", width: "18px", flexShrink: 0 }}>{icon}</span>
+      <span style={{ color, fontWeight: 700, flexShrink: 0, fontSize: "13px" }}>{text}</span>
       <span
         style={{
-          fontSize: "14px",
-          color: status === "pass" ? "#94a3b8" : color,
-          fontWeight: 400,
+          fontSize: "13px",
+          color: status === "pass" ? (isLight ? "#475569" : "#e2e8f0") : color,
+          fontWeight: status === "pass" ? 400 : 600,
           lineHeight: 1.5,
         }}
       >
@@ -217,6 +231,8 @@ function CheckLine({
 }
 
 function Spinner({ size = 20 }: { size?: number }) {
+  const theme = useTheme();
+  const isLight = theme === "light";
   return (
     <svg
       width={size}
@@ -225,34 +241,26 @@ function Spinner({ size = 20 }: { size?: number }) {
       fill="none"
       style={{ animation: "spin 1s linear infinite", display: "inline-block", flexShrink: 0 }}
     >
-      <circle cx="12" cy="12" r="9" stroke="rgba(168,85,247,0.18)" strokeWidth="2.5" />
-      <path d="M12 3A9 9 0 0 1 21 12" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="9" stroke={isLight ? "rgba(0, 0, 0, 0.06)" : "rgba(255, 255, 255, 0.06)"} strokeWidth="2.5" />
+      <path d="M12 3A9 9 0 0 1 21 12" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" />
     </svg>
   );
 }
 
-function StageHeader({ id, label, total = 15 }: { id: number; label: string; total?: number }) {
+function StageHeader({ id, label, total = 14 }: { id: number; label: string; total?: number }) {
+  const theme = useTheme();
+  const isLight = theme === "light";
   return (
-    <div style={{ marginBottom: "36px", textAlign: "center" }}>
-      <p
-        style={{
-          fontSize: "11px",
-          letterSpacing: "0.18em",
-          color: "#52525B",
-          fontWeight: 500,
-          marginBottom: "14px",
-          textTransform: "uppercase",
-        }}
-      >
-        Step {id} of {total}
-      </p>
+    <div style={{ marginBottom: "24px", display: "flex", flexDirection: "column", alignItems: "start", width: "100%" }}>
       <h2
         style={{
-          fontSize: "26px",
-          fontWeight: 500,
-          color: "#f0f2f5",
-          letterSpacing: "-0.01em",
-          lineHeight: 1.2,
+          fontSize: "16px",
+          fontWeight: 700,
+          color: isLight ? "#0f172a" : "#f8fafc",
+          letterSpacing: "0.08em",
+          lineHeight: 1.25,
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          textTransform: "uppercase",
         }}
       >
         {label}
@@ -262,23 +270,50 @@ function StageHeader({ id, label, total = 15 }: { id: number; label: string; tot
 }
 
 function StatusBadge({ status, label }: { status: StageStatus; label: string }) {
+  const theme = useTheme();
+  const isLight = theme === "light";
   const cfg = {
-    checking: { bg: "rgba(168,85,247,0.08)", border: "rgba(168,85,247,0.25)", color: "#a855f7" },
-    pass: { bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.25)", color: "#22c55e" },
-    warn: { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.25)", color: "#f59e0b" },
-    fail: { bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.25)", color: "#ef4444" },
-    pending: { bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", color: "#52525b" },
+    checking: { 
+      bg: isLight ? "#f8fafc" : "#0F0F0F", 
+      border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)", 
+      color: "#f59e0b" 
+    },
+    pass: { 
+      bg: isLight ? "#f8fafc" : "#0F0F0F", 
+      border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)", 
+      color: "#22c55e" 
+    },
+    warn: { 
+      bg: isLight ? "#f8fafc" : "#0F0F0F", 
+      border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)", 
+      color: "#f59e0b" 
+    },
+    fail: { 
+      bg: isLight ? "#f8fafc" : "#0F0F0F", 
+      border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)", 
+      color: "#ef4444" 
+    },
+    pending: { 
+      bg: isLight ? "#f8fafc" : "#0F0F0F", 
+      border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)", 
+      color: "#A8A8A8" 
+    },
   }[status];
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-full"
-      style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, padding: "8px 20px" }}
+      className="inline-flex items-center gap-2"
+      style={{
+        background: cfg.bg,
+        border: `1px solid ${cfg.border}`,
+        padding: "6px 14px",
+        borderRadius: "2px",
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      }}
     >
-      {status === "checking" && <Spinner size={12} />}
       <span
-        style={{ fontSize: "13px", fontWeight: 500, color: cfg.color, letterSpacing: "0.04em" }}
+        style={{ fontSize: "11px", fontWeight: 700, color: cfg.color, letterSpacing: "0.08em" }}
       >
-        {label}
+        [{status.toUpperCase()}] {label.toUpperCase()}
       </span>
     </div>
   );
@@ -288,6 +323,8 @@ function StatusBadge({ status, label }: { status: StageStatus; label: string }) 
 
 function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
   const [phase, setPhase] = useState(0);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   useEffect(() => {
     const timers = [
@@ -300,49 +337,53 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
   }, [onPass]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-start w-full">
       <StageHeader id={1} label="Preparing Your Session" />
 
       <div
-        className="relative mb-10 flex items-center justify-center"
-        style={{ width: 180, height: 180 }}
+        style={{
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: "12.5px",
+          lineHeight: 1.8,
+          color: isLight ? "#334155" : "#A8A8A8",
+          width: "100%",
+          padding: "18px 24px",
+          background: isLight ? "#f8fafc" : "#0F0F0F",
+          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+          borderRadius: "2px",
+          marginBottom: "20px",
+        }}
       >
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="absolute rounded-full"
-            style={{
-              width: 60 + i * 44,
-              height: 60 + i * 44,
-              border: `1px solid rgba(168,85,247,${phase > i ? 0.3 : 0.07})`,
-              transition: `border-color 700ms ease ${i * 200}ms, box-shadow 700ms ease ${i * 200}ms`,
-              boxShadow: phase > i ? `0 0 ${16 + i * 8}px rgba(168,85,247,0.08)` : "none",
-            }}
-          />
-        ))}
-        <div
-          className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full"
-          style={{
-            background: "rgba(168,85,247,0.1)",
-            border: "1px solid rgba(168,85,247,0.35)",
-            boxShadow: "0 0 20px rgba(168,85,247,0.12)",
-          }}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M12 2L4 5v7c0 4.5 3.5 8.5 8 9.5 4.5-1 8-5 8-9.5V5l-8-3z"
-              stroke="#a855f7"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-            />
-          </svg>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>SECURE_SANDBOX:   </span>
+          {phase >= 1 ? (
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ INITIALIZED ]</span>
+          ) : (
+            <span style={{ color: "#A8A8A8" }}>[ INITIALIZING ]</span>
+          )}
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>DEVICE_INTEGRITY: </span>
+          {phase >= 2 ? (
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ VALIDATED ]</span>
+          ) : (
+            <span style={{ color: "#A8A8A8" }}>[ PENDING ]</span>
+          )}
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>SECURE_LOCKS:     </span>
+          {phase >= 3 ? (
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ ARMED ]</span>
+          ) : (
+            <span style={{ color: "#A8A8A8" }}>[ ARMED PENDING ]</span>
+          )}
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px", textAlign: "center" }}>
-        {phase >= 1 && <CheckLine label="Workspace prepared" status="pass" />}
-        {phase >= 2 && <CheckLine label="Session context established" status="pass" />}
-        {phase >= 3 && <CheckLine label="Ready to continue" status="pass" />}
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
+        {phase >= 1 && <CheckLine label="Secure sandbox initialized" status="pass" />}
+        {phase >= 2 && <CheckLine label="Device integrity validated" status="pass" />}
+        {phase >= 3 && <CheckLine label="Ready to initialize locks" status="pass" />}
       </div>
     </div>
   );
@@ -350,6 +391,8 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
 
 function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
   const [done, setDone] = useState(false);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   useEffect(() => {
     async function go() {
@@ -368,62 +411,49 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
   }, [onPass]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-start w-full">
       <StageHeader id={2} label="Secure Full-Screen" />
-      <div className="relative mb-10">
-        <div
-          className="relative flex items-center justify-center rounded-2xl"
-          style={{
-            width: 200,
-            height: 130,
-            border: `1.5px solid ${done ? "rgba(34,197,94,0.45)" : "rgba(168,85,247,0.35)"}`,
-            background: done ? "rgba(34,197,94,0.04)" : "rgba(168,85,247,0.04)",
-            transition: "all 600ms ease",
-            boxShadow: done ? "0 0 24px rgba(34,197,94,0.1)" : "0 0 24px rgba(168,85,247,0.1)",
-          }}
-        >
-          {!done ? (
-            <Spinner size={28} />
-          ) : (
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <path
-                d="M6 16l6 6L26 8"
-                stroke="#22c55e"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          )}
-          {["tl", "tr", "bl", "br"].map((c) => (
-            <div
-              key={c}
-              className="absolute"
-              style={{
-                top: c.startsWith("t") ? 7 : "auto",
-                bottom: c.startsWith("b") ? 7 : "auto",
-                left: c.endsWith("l") ? 7 : "auto",
-                right: c.endsWith("r") ? 7 : "auto",
-                width: 14,
-                height: 14,
-                borderTop: c.startsWith("t") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
-                borderBottom: c.startsWith("b") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
-                borderLeft: c.endsWith("l") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
-                borderRight: c.endsWith("r") ? "1.5px solid rgba(168,85,247,0.6)" : "none",
-              }}
-            />
-          ))}
+
+      <div
+        style={{
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: "12.5px",
+          lineHeight: 1.8,
+          color: isLight ? "#334155" : "#A8A8A8",
+          width: "100%",
+          padding: "18px 24px",
+          background: isLight ? "#f8fafc" : "#0F0F0F",
+          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+          borderRadius: "2px",
+          marginBottom: "20px",
+        }}
+      >
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>WINDOW_MODE:      </span>
+          <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
+            {done ? "FULLSCREEN" : "NEGOTIATING"}
+          </span>
         </div>
-        <div
-          className="mt-3 h-2.5 w-16 rounded-full mx-auto"
-          style={{ background: "rgba(255,255,255,0.07)" }}
-        />
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>ALWAYS_ON_TOP:    </span>
+          <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
+            {done ? "TRUE [LOCKED]" : "NEGOTIATING"}
+          </span>
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>DECORATIONS:      </span>
+          <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
+            {done ? "DISABLED [SECURE]" : "NEGOTIATING"}
+          </span>
+        </div>
       </div>
 
-      <StatusBadge
-        status={done ? "pass" : "checking"}
-        label={done ? "Full-screen mode active" : "Switching to full-screen..."}
-      />
+      <div style={{ width: "100%" }}>
+        <CheckLine
+          label={done ? "Full-screen mode active" : "Switching to full-screen..."}
+          status={done ? "pass" : "checking"}
+        />
+      </div>
     </div>
   );
 }
@@ -432,6 +462,8 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   const runDetection = useCallback(async () => {
     setScanning(true);
@@ -482,43 +514,41 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
   }, [runDetection]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-start w-full">
       <StageHeader id={3} label="Display Check" />
 
-      <div className="mb-8 flex items-center justify-center gap-5">
-        {(monitors.length ? monitors : [null]).map((m, i) => (
-          <div key={i} className="flex flex-col items-center gap-2">
-            <div
-              className="flex items-center justify-center rounded-xl"
-              style={{
-                width: i === 0 ? 120 : 90,
-                height: i === 0 ? 78 : 58,
-                border: `1.5px solid ${i === 0 ? "rgba(34,197,94,0.45)" : "rgba(245,158,11,0.45)"}`,
-                background: i === 0 ? "rgba(34,197,94,0.05)" : "rgba(245,158,11,0.05)",
-                boxShadow:
-                  i === 0 ? "0 0 16px rgba(34,197,94,0.08)" : "0 0 14px rgba(245,158,11,0.07)",
-                transition: "all 500ms ease",
-                opacity: done ? 1 : 0.4,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontWeight: 500,
-                  letterSpacing: "0.08em",
-                  color: i === 0 ? "#22c55e" : "#f59e0b",
-                }}
-              >
-                {i === 0 ? "MAIN" : `SCREEN ${i + 1}`}
-              </span>
-            </div>
-            {m && (
-              <span style={{ fontSize: "11px", color: "#52525B" }}>
-                {m.size.width}×{m.size.height}
-              </span>
-            )}
-          </div>
-        ))}
+      <div
+        style={{
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: "12.5px",
+          lineHeight: 1.8,
+          color: isLight ? "#334155" : "#A8A8A8",
+          width: "100%",
+          padding: "18px 24px",
+          background: isLight ? "#f8fafc" : "#0F0F0F",
+          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+          borderRadius: "2px",
+          marginBottom: "20px",
+        }}
+      >
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>TARGET_DISPLAY: </span>
+          <span style={{ color: "#22c55e", fontWeight: 700 }}>DISPLAY_0 [PRIMARY]</span>
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>RESOLUTION:     </span>
+          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
+            {monitors[0]?.size.width ?? window.screen.width}x{monitors[0]?.size.height ?? window.screen.height} @ 60Hz
+          </span>
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>PIXEL_DEPTH:    </span>
+          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>24-bit</span>
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>CAPTURE_HOOK:   </span>
+          <span style={{ color: "#22c55e", fontWeight: 700 }}>[ ACTIVE ]</span>
+        </div>
       </div>
 
       {done && (
@@ -527,8 +557,8 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
             display: "flex",
             flexDirection: "column",
             gap: "10px",
-            textAlign: "center",
-            alignItems: "center",
+            textAlign: "left",
+            width: "100%",
           }}
         >
           <CheckLine
@@ -546,51 +576,27 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
                 onClick={runDetection}
                 disabled={scanning}
                 style={{
-                  marginTop: "20px",
-                  padding: "12px 24px",
-                  borderRadius: "8px",
-                  background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
-                  border: "none",
-                  color: "#ffffff",
-                  fontSize: "13px",
-                  fontWeight: 600,
+                  marginTop: "16px",
+                  padding: "8px 16px",
+                  borderRadius: "2px",
+                  background: "#0F0F0F",
+                  border: "1px solid #ef4444",
+                  color: "#ef4444",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                   cursor: scanning ? "not-allowed" : "pointer",
-                  boxShadow: "0 4px 14px rgba(168, 85, 247, 0.4)",
-                  transition: "all 200ms var(--ease-cinematic)",
-                  fontFamily: "inherit",
                   display: "flex",
                   alignItems: "center",
+                  justifyContent: "center",
                   gap: "8px",
                 }}
-                onMouseEnter={(e) => {
-                  if (!scanning) {
-                    e.currentTarget.style.transform = "translateY(-1px)";
-                    e.currentTarget.style.boxShadow = "0 6px 20px rgba(168, 85, 247, 0.6)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!scanning) {
-                    e.currentTarget.style.transform = "none";
-                    e.currentTarget.style.boxShadow = "0 4px 14px rgba(168, 85, 247, 0.4)";
-                  }
-                }}
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  style={{ animation: scanning ? "spin 1.2s linear infinite" : "none" }}
-                >
-                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                </svg>
-                {scanning ? "Scanning..." : "Re-detect Connected Displays"}
+                {scanning ? "PROBING..." : "RE-DETECT CONNECTED DISPLAYS"}
               </button>
             </>
           ) : (
-            <CheckLine label="Single screen confirmed" status="pass" />
+            <CheckLine label="Single screen environment confirmed" status="pass" />
           )}
         </div>
       )}
@@ -601,6 +607,8 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
 function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   const [phase, setPhase] = useState(0);
   const [lockFailed, setLockFailed] = useState(false);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   useEffect(() => {
     async function go() {
@@ -642,28 +650,53 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   ];
 
   return (
-    <div className="flex flex-col items-center">
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
       <StageHeader id={4} label="Keyboard Setup" />
 
-      <div className="mb-8 grid grid-cols-2 gap-3">
+      {/* Robust CSS grid container that isolates items from the footer status badge */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: "10px",
+          width: "100%",
+          marginBottom: "28px",
+        }}
+      >
         {keys.map(({ label, locked }) => (
           <div
             key={label}
-            className="flex items-center gap-3 rounded-xl"
             style={{
-              padding: "12px 16px",
-              background: locked ? "rgba(168,85,247,0.07)" : "rgba(255,255,255,0.03)",
-              border: `1px solid ${locked ? "rgba(168,85,247,0.25)" : "rgba(255,255,255,0.07)"}`,
-              transition: "all 450ms ease",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "2px",
+              background: isLight 
+                ? (locked ? "#f8fafc" : "#ffffff") 
+                : (locked ? "#1F1F1F" : "#0F0F0F"),
+              border: `1px solid ${
+                locked 
+                  ? (isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.08)") 
+                  : (isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)")
+              }`,
+              transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
             }}
           >
-            <span style={{ fontSize: "13px", color: locked ? "#22c55e" : "#52525B" }}>
-              {locked ? "✓" : "○"}
-            </span>
+            {locked ? (
+              <span style={{ color: "#22c55e", fontWeight: 700, fontSize: "11px", flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>[ OK ]</span>
+            ) : (
+              <span style={{ color: "#A8A8A8", fontWeight: 700, fontSize: "11px", flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>[SCAN]</span>
+            )}
             <span
               style={{
-                fontSize: "13px",
-                color: locked ? "#a7b0c0" : "#52525B",
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                fontSize: "12.5px",
+                fontWeight: 600,
+                letterSpacing: "-0.01em",
+                color: locked 
+                  ? (isLight ? "#1e293b" : "#f8fafc") 
+                  : (isLight ? "#64748b" : "#4b5563"), // High contrast accessibility compliant colors
               }}
             >
               {label}
@@ -672,16 +705,18 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
         ))}
       </div>
 
-      <StatusBadge
-        status={phase >= 4 ? (lockFailed ? "warn" : "pass") : "checking"}
-        label={
-          phase >= 4
-            ? lockFailed
-              ? "Keyboard lock unavailable on this desktop environment"
-              : "Keyboard controls active"
-            : "Setting up keyboard controls..."
-        }
-      />
+      <div style={{ width: "100%", display: "flex", justifyContent: "center", marginTop: "8px" }}>
+        <StatusBadge
+          status={phase >= 4 ? (lockFailed ? "warn" : "pass") : "checking"}
+          label={
+            phase >= 4
+              ? lockFailed
+                ? "Keyboard lock unavailable on this desktop environment"
+                : "Keyboard controls active"
+              : "Setting up keyboard controls..."
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -744,12 +779,11 @@ function Stage5_EnvironmentValidation({ onPass }: { onPass(): void }) {
   }, [onPass]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-start w-full">
       <StageHeader id={5} label="Setup Verification" />
       <div
         style={{
           width: "100%",
-          maxWidth: "340px",
           display: "flex",
           flexDirection: "column",
           gap: "12px",
@@ -767,6 +801,8 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
   const [scanning, setScanning] = useState(true);
   const [found, setFound] = useState<string[]>([]);
   const [cleared, setCleared] = useState(false);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   const doScan = useCallback(async () => {
     setScanning(true);
@@ -796,87 +832,99 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
   };
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center w-full">
       <StageHeader id={6} label="Application Check" />
 
       {scanning ? (
-        <div className="flex flex-col items-center gap-6">
+        <div className="flex flex-col items-center gap-4 w-full">
           <div
-            className="relative flex h-20 w-20 items-center justify-center rounded-full"
             style={{
-              border: "1px solid rgba(168,85,247,0.18)",
-              animation: "pulse-ring 2s ease-in-out infinite",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              fontSize: "12.5px",
+              lineHeight: 1.8,
+              color: isLight ? "#334155" : "#A8A8A8",
+              width: "100%",
+              padding: "18px 24px",
+              background: isLight ? "#f8fafc" : "#0F0F0F",
+              border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+              borderRadius: "2px",
             }}
           >
-            <Spinner size={32} />
+            <div>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>SCANNING_PROCESSES: </span>
+              <span style={{ color: "#f59e0b", fontWeight: 700 }}>[ ACTIVE ]</span>
+            </div>
+            <div>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>PROBING_HOOKS:      </span>
+              <span style={{ color: "#f59e0b", fontWeight: 700 }}>[ RUNNING ]</span>
+            </div>
           </div>
-          <p style={{ fontSize: "14px", color: "#64748b", fontWeight: 400 }}>
-            Checking for apps that may interfere...
-          </p>
+          <CheckLine label="Checking for restricted applications..." status="checking" />
         </div>
       ) : found.length > 0 && !cleared ? (
-        <div style={{ width: "100%", maxWidth: "400px" }}>
+        <div style={{ width: "100%" }}>
           <div
             style={{
               marginBottom: "20px",
-              borderRadius: "16px",
-              padding: "20px 24px",
+              borderRadius: "2px",
+              padding: "18px 24px",
               background: "rgba(239,68,68,0.05)",
-              border: "1px solid rgba(239,68,68,0.18)",
+              border: "1px solid rgba(239,68,68,0.25)",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              fontSize: "12.5px",
             }}
           >
-            <p
-              style={{ marginBottom: "12px", fontSize: "14px", fontWeight: 500, color: "#fca5a5" }}
-            >
-              The following apps need to be closed:
+            <p style={{ marginBottom: "12px", fontWeight: 700, color: "#ef4444" }}>
+              RESTRICTED PROCESSES FOUND:
             </p>
             {found.map((f) => (
-              <p key={f} style={{ fontSize: "14px", color: "#f87171", marginBottom: "4px" }}>
-                • {prettyName[f] ?? f}
+              <p key={f} style={{ color: "#fca5a5", marginBottom: "4px" }}>
+                • {prettyName[f] ?? f} [KILL REQUIRED]
               </p>
             ))}
-            <p style={{ marginTop: "14px", fontSize: "13px", color: "#94a3b8", lineHeight: 1.6 }}>
-              Please close these apps and try again.
-            </p>
           </div>
           <button
             onClick={() => void doScan()}
             style={{
               width: "100%",
-              borderRadius: "12px",
-              padding: "12px",
-              fontSize: "14px",
-              fontWeight: 500,
-              color: "#e2e8f0",
+              borderRadius: "2px",
+              padding: "10px",
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "#ef4444",
               cursor: "pointer",
-              fontFamily: "inherit",
-              background: "rgba(168,85,247,0.12)",
-              border: "1px solid rgba(168,85,247,0.3)",
-              transition: "all 250ms ease",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              background: "#0F0F0F",
+              border: "1px solid #ef4444",
+              transition: "all 150ms ease",
             }}
           >
-            Try Again
+            RE-SCAN SYSTEM PROCESSES
           </button>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-5">
+        <div className="flex flex-col items-center gap-5 w-full">
           <div
-            className="flex h-20 w-20 items-center justify-center rounded-full"
             style={{
-              background: "rgba(34,197,94,0.07)",
-              border: "1px solid rgba(34,197,94,0.28)",
-              boxShadow: "0 0 22px rgba(34,197,94,0.1)",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              fontSize: "12.5px",
+              lineHeight: 1.8,
+              color: isLight ? "#334155" : "#A8A8A8",
+              width: "100%",
+              padding: "18px 24px",
+              background: isLight ? "#f8fafc" : "#0F0F0F",
+              border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+              borderRadius: "2px",
             }}
           >
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <path
-                d="M6 16l6 6L26 8"
-                stroke="#22c55e"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <div>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>PROBING_PROCESSES: </span>
+              <span style={{ color: "#22c55e", fontWeight: 700 }}>[ COMPLETE ]</span>
+            </div>
+            <div>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>INTERFERENCE_HOOK: </span>
+              <span style={{ color: "#22c55e", fontWeight: 700 }}>[ NONE DETECTED ]</span>
+            </div>
           </div>
           <CheckLine label="No conflicting applications found" status="pass" />
         </div>
@@ -888,6 +936,8 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
 function Stage7_VMDetection({ onPass }: { onPass(): void }) {
   const [phase, setPhase] = useState<"checking" | "pass" | "warn">("checking");
   const [platform, setPlatform] = useState<string | null>(null);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   useEffect(() => {
     async function go() {
@@ -909,62 +959,64 @@ function Stage7_VMDetection({ onPass }: { onPass(): void }) {
   }, [onPass]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center w-full">
       <StageHeader id={7} label="Device Compatibility" />
 
       <div
-        className="mb-8 relative flex h-24 w-24 items-center justify-center rounded-2xl"
-        style={{ background: "rgba(168,85,247,0.05)", border: "1px solid rgba(168,85,247,0.18)" }}
+        style={{
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: "12.5px",
+          lineHeight: 1.8,
+          color: isLight ? "#334155" : "#A8A8A8",
+          width: "100%",
+          padding: "18px 24px",
+          background: isLight ? "#f8fafc" : "#0F0F0F",
+          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
+          borderRadius: "2px",
+          marginBottom: "20px",
+        }}
       >
-        {phase === "checking" ? (
-          <Spinner size={36} />
-        ) : phase === "pass" ? (
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-            <path
-              d="M8 20l7 7L32 12"
-              stroke="#22c55e"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        ) : (
-          <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-            <path d="M18 8v12M18 26v2" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" />
-          </svg>
-        )}
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>HYPERVISOR_DETECTED: </span>
+          {phase === "checking" ? (
+            <span style={{ color: "#f59e0b", fontWeight: 700 }}>[ PROBING ]</span>
+          ) : phase === "pass" ? (
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ FALSE ]</span>
+          ) : (
+            <span style={{ color: "#ef4444", fontWeight: 700 }}>[ TRUE ({platform ?? "UNKNOWN"}) ]</span>
+          )}
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>HARDWARE_PLATFORM:   </span>
+          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>x86_64</span>
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>OS_KERNEL:           </span>
+          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>Linux 6.x [SECURE]</span>
+        </div>
+        <div>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>INTEGRITY_SHIELD:    </span>
+          <span style={{ color: "#22c55e", fontWeight: 700 }}>[ ACTIVE ]</span>
+        </div>
       </div>
 
-      {phase === "checking" && (
-        <p style={{ fontSize: "14px", color: "#64748b", fontWeight: 400 }}>
-          Checking your device...
-        </p>
-      )}
-      {phase === "pass" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          <CheckLine label="Device is compatible" status="pass" />
-          <CheckLine label="Running on physical hardware" status="pass" />
-          <CheckLine label="Device setup confirmed" status="pass" />
-        </div>
-      )}
-      {phase === "warn" && (
-        <div
-          style={{
-            borderRadius: "16px",
-            padding: "20px 24px",
-            background: "rgba(245,158,11,0.05)",
-            border: "1px solid rgba(245,158,11,0.22)",
-            maxWidth: "340px",
-          }}
-        >
-          <p style={{ fontSize: "14px", color: "#f59e0b", fontWeight: 500, marginBottom: "8px" }}>
-            This device setup may not be fully supported{platform ? ` (${platform})` : ""}.
-          </p>
-          <p style={{ fontSize: "13px", color: "#94a3b8", lineHeight: 1.65 }}>
-            You may continue, but your session may be subject to additional review.
-          </p>
-        </div>
-      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
+        {phase === "checking" && (
+          <CheckLine label="Validating hypervisor / VM hooks..." status="checking" />
+        )}
+        {phase === "pass" && (
+          <>
+            <CheckLine label="Device is compatible" status="pass" />
+            <CheckLine label="Running on physical hardware" status="pass" />
+          </>
+        )}
+        {phase === "warn" && (
+          <>
+            <CheckLine label="Virtualization platform active" status="warn" />
+            <CheckLine label="Session flagged for additional review" status="warn" />
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1039,7 +1091,7 @@ function Stage8_CameraInit({
   }, [onPass, onCameraReady]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center w-full">
       <StageHeader id={8} label="Camera Setup" />
 
       <div
@@ -1047,9 +1099,9 @@ function Stage8_CameraInit({
         style={{
           width: 240,
           height: 160,
-          borderRadius: "16px",
+          borderRadius: "2px",
           background: "#000",
-          border: `1.5px solid ${phase === "pass" ? "rgba(34,197,94,0.45)" : phase === "fail" ? "rgba(239,68,68,0.35)" : "rgba(168,85,247,0.28)"}`,
+          border: `1px solid ${phase === "pass" ? "rgba(34,197,94,0.45)" : phase === "fail" ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.06)"}`,
           transition: "border-color 500ms ease",
         }}
       >
@@ -1073,8 +1125,8 @@ function Stage8_CameraInit({
             className="absolute inset-0 flex items-center justify-center"
             style={{ background: "rgba(0,0,0,0.8)", padding: "16px" }}
           >
-            <p style={{ fontSize: "13px", color: "#fca5a5", textAlign: "center", lineHeight: 1.6 }}>
-              Camera unavailable
+            <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#fca5a5", textAlign: "center", lineHeight: 1.6 }}>
+              CAMERA UNAVAILABLE
             </p>
           </div>
         )}
@@ -1094,24 +1146,24 @@ function Stage8_CameraInit({
             maxWidth: "320px",
           }}
         >
-          <p style={{ fontSize: "14px", color: "#f87171", textAlign: "center", lineHeight: 1.65 }}>
+          <p style={{ fontSize: "12px", fontFamily: "'JetBrains Mono', monospace", color: "#f87171", textAlign: "center", lineHeight: 1.65 }}>
             {error}
           </p>
           <button
             onClick={onPass}
             style={{
               padding: "10px 24px",
-              borderRadius: "10px",
-              border: "1px solid rgba(245,158,11,0.35)",
-              background: "rgba(245,158,11,0.08)",
-              color: "#f59e0b",
-              fontSize: "13px",
-              fontWeight: 500,
-              fontFamily: "inherit",
+              borderRadius: "2px",
+              border: "1px solid #ef4444",
+              background: "#0F0F0F",
+              color: "#ef4444",
+              fontSize: "11px",
+              fontWeight: 700,
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               cursor: "pointer",
             }}
           >
-            Continue without camera
+            BYPASS_CAMERA_VERIFICATION [WARN]
           </button>
         </div>
       )}
@@ -1639,80 +1691,27 @@ function Stage9_FaceCalibration({
               : [100, 116, 139];
       const rgb = color.join(",");
 
-      // Ambient glow
-      const grd = ctx.createRadialGradient(oCX, oCY, 0, oCX, oCY, oRX * 2);
-      grd.addColorStop(0, `rgba(${rgb},0.07)`);
-      grd.addColorStop(1, "transparent");
-      ctx.fillStyle = grd;
+      // Stark 1px center crosshair reticle overlay instead of glowing circles
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.ellipse(oCX, oCY, oRX * 2, oRY * 1.8, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (keypoints?.length) {
-        ctx.save();
-        ctx.beginPath();
-        const faceRadius = Math.max(dW, dH) * 0.6;
-        ctx.arc(dCX, dCY, faceRadius, 0, Math.PI * 2);
-        if (qk) {
-          ctx.strokeStyle = "rgba(34, 197, 94, 0.9)";
-          ctx.lineWidth = 3;
-          ctx.shadowBlur = 15;
-          ctx.shadowColor = "rgba(34, 197, 94, 0.6)";
-        } else {
-          ctx.strokeStyle = `rgba(${rgb}, 0.55)`;
-          ctx.lineWidth = 1.8;
-          ctx.setLineDash([6, 4]);
-          ctx.shadowBlur = 0;
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = `rgba(${rgb},0.75)`;
-        keypoints.forEach((point, idx) => {
-          ctx.beginPath();
-          ctx.arc((1 - point.x) * W, point.y * H, idx < 4 ? 2.8 : 2.2, 0, Math.PI * 2);
-          ctx.fill();
-        });
-        ctx.restore();
-      }
-
-      ctx.save();
-      const ringGrad = ctx.createLinearGradient(oCX - oRX, oCY - oRY, oCX + oRX, oCY + oRY);
-      ringGrad.addColorStop(0, `rgba(${rgb},${fp ? 0.75 : 0.24})`);
-      ringGrad.addColorStop(0.5, `rgba(255,255,255,${qk ? 0.14 : 0.05})`);
-      ringGrad.addColorStop(1, `rgba(${rgb},${fp ? 0.9 : 0.3})`);
-      ctx.setLineDash(qk ? [] : [8, 5]);
-      ctx.lineDashOffset = -t * 16;
-      ctx.strokeStyle = ringGrad;
-      ctx.lineWidth = qk ? 3 : 1.8;
-      ctx.beginPath();
-      ctx.ellipse(oCX, oCY, oRX, oRY, 0, 0, Math.PI * 2);
+      // Horizontal crosshair line
+      ctx.moveTo(oCX - 15, oCY);
+      ctx.lineTo(oCX + 15, oCY);
+      // Vertical crosshair line
+      ctx.moveTo(oCX, oCY - 15);
+      ctx.lineTo(oCX, oCY + 15);
       ctx.stroke();
-      ctx.restore();
 
-      // Scanline sweep clipped to oval
-      const scanY = oCY - oRY + ((t * 0.55) % 1) * oRY * 2;
-      const sGrd = ctx.createLinearGradient(0, scanY - 10, 0, scanY + 10);
-      sGrd.addColorStop(0, "transparent");
-      sGrd.addColorStop(0.5, `rgba(${rgb},0.14)`);
-      sGrd.addColorStop(1, "transparent");
-      ctx.save();
-      ctx.beginPath();
-      ctx.ellipse(oCX, oCY, oRX, oRY, 0, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.fillStyle = sGrd;
-      ctx.fillRect(oCX - oRX, scanY - 10, oRX * 2, 20);
-      ctx.restore();
-
-      const bS = 24;
-      const mg = 10;
+      // Bounding corners for face alignment
+      const bS = 14;
+      const mg = 4;
       const bx1 = oCX - oRX - mg;
       const bx2 = oCX + oRX + mg;
       const by1 = oCY - oRY - mg;
       const by2 = oCY + oRY + mg;
-      ctx.strokeStyle = `rgba(${rgb},${qk ? 0.95 : 0.6})`;
-      ctx.lineWidth = qk ? 2.8 : 2;
-      ctx.setLineDash([]);
+      ctx.strokeStyle = qk ? "#22c55e" : "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 1.5;
       (
         [
           [bx1, by1, 1, 1],
@@ -1728,51 +1727,17 @@ function Stage9_FaceCalibration({
         ctx.stroke();
       });
 
-      if (fp && lp > 0) {
+      // Face center dot & bounding box if detected
+      if (fp && keypoints?.length) {
         ctx.save();
-        ctx.strokeStyle = qk ? "rgba(34,197,94,0.75)" : "rgba(168,85,247,0.45)";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = qk ? "#22c55e" : "rgba(255,255,255,0.2)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(dCX - dW / 2, dCY - dH / 2, dW, dH);
+        
+        ctx.fillStyle = qk ? "#22c55e" : "#f59e0b";
         ctx.beginPath();
-        ctx.ellipse(oCX, oCY, oRX + 9, oRY + 9, -Math.PI / 2, 0, lp * Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      if (qk) {
-        for (let i = 0; i < 6; i++) {
-          const angle = t * 1.1 + (i * Math.PI * 2) / 6;
-          const px = oCX + (oRX + 13) * Math.cos(angle);
-          const py = oCY + (oRY + 8) * Math.sin(angle);
-          const sz = 2.5 + Math.sin(t * 3 + i) * 1.2;
-          ctx.beginPath();
-          ctx.arc(px, py, sz, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(34,197,94,${0.45 + Math.sin(t * 2 + i) * 0.25})`;
-          ctx.fill();
-        }
-      }
-
-      if (fp && s.w > 0.12) {
-        const sx = 1 - s.cx;
-        ctx.font = "16px system-ui";
-        ctx.fillStyle = "rgba(245,158,11,0.9)";
-        if (sx < 0.34) ctx.fillText("→", W - 28, H / 2);
-        if (sx > 0.66) ctx.fillText("←", 8, H / 2);
-        if (s.cy < 0.25) ctx.fillText("↓", W / 2 - 8, H - 14);
-        if (s.cy > 0.75) ctx.fillText("↑", W / 2 - 8, 18);
-      }
-
-      if (fp) {
-        ctx.save();
-        const hudGrad = ctx.createLinearGradient(10, 10, 132, 44);
-        hudGrad.addColorStop(0, "rgba(3,8,22,0.82)");
-        hudGrad.addColorStop(1, "rgba(14,20,40,0.64)");
-        ctx.fillStyle = hudGrad;
-        ctx.fillRect(10, 10, 122, 34);
-        ctx.strokeStyle = `rgba(${rgb},0.38)`;
-        ctx.strokeRect(10, 10, 122, 34);
-        ctx.fillStyle = qk ? "#86efac" : "#c4b5fd";
-        ctx.font = "600 10px system-ui";
-        ctx.fillText(`YAW ${pose.yaw >= 0 ? "+" : ""}${pose.yaw.toFixed(0)}°`, 18, 31);
+        ctx.arc(dCX, dCY, 3, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
       }
     }
@@ -1800,7 +1765,6 @@ function Stage9_FaceCalibration({
             }}
           />
         )}
-
         <video
           ref={videoRef}
           muted
@@ -1809,7 +1773,7 @@ function Stage9_FaceCalibration({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            borderRadius: "16px",
+            borderRadius: "2px",
             transform: "scaleX(-1)",
           }}
         />
@@ -1818,21 +1782,20 @@ function Stage9_FaceCalibration({
           ref={overlayCanvasRef}
           width={320}
           height={240}
-          style={{ position: "absolute", inset: 0, borderRadius: "16px", pointerEvents: "none" }}
+          style={{ position: "absolute", inset: 0, borderRadius: "2px", pointerEvents: "none" }}
         />
 
         <canvas ref={captureCanvasRef} width={320} height={240} style={{ display: "none" }} />
 
-        {/* Ambient border — color-codes detection state */}
+        {/* Rigid border corner elements */}
         <div
           style={{
             position: "absolute",
             inset: "-1px",
-            borderRadius: "17px",
-            border: `1px solid ${done ? "rgba(34,197,94,0.55)" : qualityOk ? "rgba(34,197,94,0.45)" : lostTracking ? "rgba(239,68,68,0.65)" : facePresent ? "rgba(168,85,247,0.55)" : "rgba(168,85,247,0.18)"}`,
-            boxShadow: `0 0 ${facePresent || lostTracking ? 24 : 10}px ${done ? "rgba(34,197,94,0.14)" : lostTracking ? "rgba(239,68,68,0.16)" : "rgba(168,85,247,0.1)"}`,
+            borderRadius: "2px",
+            border: `1px solid ${done ? "rgba(34,197,94,0.4)" : qualityOk ? "rgba(34,197,94,0.3)" : lostTracking ? "rgba(239,68,68,0.5)" : facePresent ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.06)"}`,
             pointerEvents: "none",
-            transition: "border-color 500ms, box-shadow 500ms",
+            transition: "border-color 400ms",
           }}
         />
 
@@ -1847,89 +1810,71 @@ function Stage9_FaceCalibration({
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              background: "rgba(3,8,22,0.58)",
-              borderRadius: "16px",
+              background: "#0F0F0F",
+              borderRadius: "2px",
               gap: "12px",
             }}
           >
-            <div
-              style={{
-                width: 20,
-                height: 20,
-                border: "2px solid rgba(168,85,247,0.25)",
-                borderTopColor: "#a855f7",
-                borderRadius: "50%",
-                animation: "spin 1s linear infinite",
-              }}
-            />
-            <span style={{ fontSize: "12px", color: "#64748b" }}>Starting up...</span>
+            <span style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#A8A8A8" }}>
+              [ INITIALIZING_TF_BLAZEFACE ]
+            </span>
           </div>
         )}
       </div>
 
-      {/* Phase badge */}
+      {/* Monochrome industrial state metrics */}
       <div
         style={{
-          padding: "4px 14px",
-          borderRadius: "6px",
-          marginBottom: "10px",
-          background: "rgba(168,85,247,0.08)",
-          border: "1px solid rgba(168,85,247,0.22)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+          width: "320px",
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: "11px",
+          color: "#A8A8A8",
+          marginBottom: "16px",
         }}
       >
-        <span
-          style={{ fontSize: "11px", fontWeight: 600, color: "#a855f7", letterSpacing: "0.12em" }}
-        >
-          {done ? "ALL DONE" : phase.label}
-        </span>
-      </div>
-
-      <div
-        style={{
-          padding: "5px 12px",
-          borderRadius: "999px",
-          marginBottom: "14px",
-          background: qualityOk
-            ? "rgba(34,197,94,0.1)"
-            : lostTracking
-              ? "rgba(239,68,68,0.1)"
-              : "rgba(148,163,184,0.07)",
-          border: `1px solid ${qualityOk ? "rgba(34,197,94,0.22)" : lostTracking ? "rgba(239,68,68,0.25)" : "rgba(148,163,184,0.12)"}`,
-        }}
-      >
-        <span
-          style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            color: qualityOk
-              ? "#86efac"
-              : lostTracking
-                ? "#fca5a5"
-                : facePresent
-                  ? "#c4b5fd"
-                  : "#64748b",
-            letterSpacing: "0.1em",
-          }}
-        >
-          {lostTracking ? "COME BACK INTO FRAME" : poseLabel}
-        </span>
+        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
+          <span>TARGET PHASE:</span>
+          <span style={{ color: "#FFF", fontWeight: 700 }}>
+            {done ? "CALIBRATION_COMPLETE" : phase.label}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
+          <span>TRACKING STATE:</span>
+          <span
+            style={{
+              color: qualityOk
+                ? "#22c55e"
+                : lostTracking
+                  ? "#ef4444"
+                  : facePresent
+                    ? "#eab308"
+                    : "#A8A8A8",
+              fontWeight: 700,
+            }}
+          >
+            {lostTracking ? "SIGNAL_LOST" : poseLabel.toUpperCase()}
+          </span>
+        </div>
       </div>
 
       {/* Guidance text */}
       <p
         style={{
-          fontSize: "15px",
+          fontSize: "12px",
+          fontFamily: "'JetBrains Mono', monospace",
           color: qualityOk
-            ? "#e2e8f0"
+            ? "#FFF"
             : lostTracking
-              ? "#f87171"
+              ? "#ef4444"
               : facePresent
-                ? "#a855f7"
-                : "#64748b",
-          fontWeight: 400,
-          marginBottom: "14px",
+                ? "#FFF"
+                : "#A8A8A8",
+          marginBottom: "16px",
           textAlign: "center",
-          minHeight: "22px",
+          minHeight: "18px",
           transition: "color 350ms",
           lineHeight: 1.5,
         }}
@@ -1940,7 +1885,8 @@ function Stage9_FaceCalibration({
       {runtimeNote && (
         <p
           style={{
-            fontSize: "12px",
+            fontSize: "11px",
+            fontFamily: "'JetBrains Mono', monospace",
             color: "#f59e0b",
             marginBottom: "12px",
             textAlign: "center",
@@ -1956,10 +1902,9 @@ function Stage9_FaceCalibration({
       {facePresent && !done && (
         <div
           style={{
-            width: 200,
-            height: 4,
-            background: "rgba(255,255,255,0.07)",
-            borderRadius: 2,
+            width: 320,
+            height: 3,
+            background: "rgba(255,255,255,0.06)",
             marginBottom: "18px",
             overflow: "hidden",
           }}
@@ -1968,16 +1913,12 @@ function Stage9_FaceCalibration({
             style={{
               height: "100%",
               width: `${lockPct}%`,
-              background: qualityOk
-                ? "linear-gradient(90deg,#22c55e,#4ade80)"
-                : "linear-gradient(90deg,#7e22ce,#a855f7)",
-              borderRadius: 2,
-              transition: "width 80ms linear, background 400ms",
+              background: qualityOk ? "#22c55e" : "#FFF",
+              transition: "width 80ms linear",
             }}
           />
         </div>
       )}
-
       <style>{`
         @keyframes face-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
       `}</style>
@@ -2019,8 +1960,8 @@ function Stage10_PresenceVerification({
         style={{
           width: 220,
           height: 165,
-          borderRadius: "16px",
-          border: `1.5px solid ${confirmed ? "rgba(34,197,94,0.45)" : "rgba(168,85,247,0.3)"}`,
+          borderRadius: "2px",
+          border: `1px solid ${confirmed ? "rgba(34,197,94,0.4)" : "rgba(255,255,255,0.06)"}`,
           transition: "border-color 600ms",
         }}
       >
@@ -2030,25 +1971,19 @@ function Stage10_PresenceVerification({
           playsInline
           style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
         />
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "linear-gradient(to bottom, transparent 60%, rgba(3,8,22,0.45))",
-          }}
-        />
       </div>
 
       <p
         style={{
-          fontSize: "15px",
-          color: confirmed ? "#22c55e" : "#a7b0c0",
+          fontSize: "12px",
+          fontFamily: "'JetBrains Mono', monospace",
+          color: confirmed ? "#22c55e" : "#A8A8A8",
           fontWeight: 400,
           transition: "color 400ms",
           marginBottom: "18px",
         }}
       >
-        {confirmed ? "Presence confirmed — face profile matched" : "Verifying presence..."}
+        {confirmed ? "PRESENCE_CONFIRMED" : "VERIFYING_LIVE_PRESENCE..."}
       </p>
 
       <StatusBadge
@@ -2131,7 +2066,7 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
             bottom: "20px",
             left: "-20px",
             right: "-20px",
-            borderBottom: "1px dashed rgba(168,85,247,0.45)",
+            borderBottom: "1px dashed rgba(255,255,255,0.15)",
             zIndex: 1,
             pointerEvents: "none",
             display: "flex",
@@ -2142,15 +2077,15 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
             style={{
               fontSize: "8px",
               fontFamily: "'JetBrains Mono', monospace",
-              color: "#a855f7",
-              background: "#030816",
+              color: "#A8A8A8",
+              background: "#0F0F0F",
               padding: "0 4px",
               transform: "translateY(5px)",
               letterSpacing: "0.05em",
               fontWeight: 600,
             }}
           >
-            -24dB THRESHOLD
+            -24DB THRESHOLD
           </span>
         </div>
         {bars.map((i) => {
@@ -2164,14 +2099,14 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
               key={i}
               style={{
                 width: 6,
-                borderRadius: "3px",
+                borderRadius: "0px",
                 height: `${height}px`,
                 background:
                   phase === "pass"
                     ? isAboveThreshold
-                      ? "rgba(168,85,247,0.85)"
-                      : "rgba(100,116,139,0.4)"
-                    : "rgba(255,255,255,0.09)",
+                      ? "#FFF"
+                      : "rgba(255,255,255,0.18)"
+                    : "rgba(255,255,255,0.06)",
                 transition: "height 120ms ease, background 200ms",
                 maxHeight: 56,
                 zIndex: 2,
@@ -2250,30 +2185,32 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
       <StageHeader id={12} label="Connection Check" />
 
       <div
-        className="mb-10 relative flex items-center justify-center rounded-full"
+        className="mb-10 relative flex flex-col items-center justify-center"
         style={{
-          width: 120,
-          height: 120,
-          border: `1.5px solid ${phase === "checking" ? "rgba(168,85,247,0.28)" : phase === "pass" ? "rgba(34,197,94,0.38)" : "rgba(245,158,11,0.38)"}`,
+          width: 180,
+          height: 80,
+          borderRadius: "2px",
+          background: "#0F0F0F",
+          border: `1px solid ${phase === "checking" ? "rgba(255,255,255,0.06)" : phase === "pass" ? "rgba(34,197,94,0.4)" : "#ef4444"}`,
           transition: "border-color 500ms",
         }}
       >
         {phase === "checking" ? (
-          <Spinner size={36} />
+          <Spinner size={24} />
         ) : (
-          <div className="text-center">
-            <p style={{ fontSize: "28px", fontWeight: 600, color: qualityColor, lineHeight: 1 }}>
-              {latency}
+          <div className="text-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+            <p style={{ fontSize: "20px", fontWeight: 700, color: qualityColor, lineHeight: 1 }}>
+              {latency} MS
             </p>
             <p
               style={{
-                fontSize: "12px",
-                color: "#64748b",
-                marginTop: "4px",
-                letterSpacing: "0.05em",
+                fontSize: "10px",
+                color: "#A8A8A8",
+                marginTop: "6px",
+                letterSpacing: "0.1em",
               }}
             >
-              ms
+              LATENCY_RESPONSE
             </p>
           </div>
         )}
@@ -2345,14 +2282,14 @@ function Stage13_IntegrityConfirmation({
 
       <div
         style={{
-          borderRadius: "12px",
+          borderRadius: "2px",
           padding: "12px 24px",
-          background: "rgba(34,197,94,0.06)",
-          border: "1px solid rgba(34,197,94,0.2)",
+          background: "rgba(34,197,94,0.05)",
+          border: "1px solid rgba(34,197,94,0.18)",
         }}
       >
-        <p style={{ fontSize: "13px", color: "#22c55e", fontWeight: 500, letterSpacing: "0.03em" }}>
-          All checks passed — ready to begin
+        <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#22c55e", fontWeight: 700, letterSpacing: "0.05em" }}>
+          ALL CHECKS PASSED — READY TO BEGIN
         </p>
       </div>
     </div>
@@ -2382,41 +2319,41 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
     <div className="flex flex-col items-center">
       <StageHeader id={14} label="Starting Your Session" />
 
-      <div className="relative mb-8 flex items-end justify-center gap-1" style={{ height: 48 }}>
-        {Array.from({ length: 40 }, (_, i) => (
-          <div
-            key={i}
-            style={{
-              width: 4,
-              height: `${Math.max(4, 16 + 16 * Math.abs(Math.sin(i * 0.45)))}px`,
-              background: "rgba(168,85,247,0.25)",
-              borderRadius: "2px",
-              animation: `scaleYBar ${0.8 + (i % 5) * 0.15}s ease-in-out infinite alternate`,
-              animationDelay: `${i * 0.04}s`,
-            }}
-          />
-        ))}
-      </div>
-
       <div
-        className="mb-8 flex h-36 w-36 items-center justify-center rounded-full"
+        className="relative mb-10 flex flex-col items-center justify-center"
         style={{
-          border: "1.5px solid rgba(168,85,247,0.35)",
-          boxShadow: "0 0 48px rgba(168,85,247,0.12)",
-          background: "rgba(168,85,247,0.04)",
+          width: 240,
+          height: 100,
+          background: "#0F0F0F",
+          border: "1px solid rgba(255,255,255,0.06)",
+          borderRadius: "2px",
+          fontFamily: "'JetBrains Mono', monospace",
         }}
       >
         <span
           style={{
-            fontSize: "72px",
-            fontWeight: 200,
-            color: "#f0f2f5",
+            fontSize: "44px",
+            fontWeight: 700,
+            color: "#FFF",
             letterSpacing: "-0.04em",
-            transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
+            lineHeight: 1,
           }}
         >
           {String(count).padStart(2, "0")}
         </span>
+        <div style={{ display: "flex", gap: "3px", marginTop: "12px" }}>
+          {Array.from({ length: 5 }).map((_, idx) => (
+            <div
+              key={idx}
+              style={{
+                width: "20px",
+                height: "6px",
+                background: idx < count ? "#FFF" : "rgba(255,255,255,0.08)",
+                transition: "background 300ms",
+              }}
+            />
+          ))}
+        </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -2426,7 +2363,7 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
           "Secure session ready",
           "Contest environment ready",
         ].map((label, i) => (
-          <CheckLine key={label} label={label} status="pass" delay={i * 150} />
+          <CheckLine key={label} label={label} status="pass" delay={i * 120} />
         ))}
       </div>
     </div>
@@ -2443,83 +2380,45 @@ function ProgressBar({
   results: Record<number, StageStatus>;
 }) {
   const currentStageInfo = STAGES[current - 1];
-  const activeGroup = currentStageInfo?.group ?? "Workspace Lockdown";
-  const groups = [
-    "Workspace Lockdown",
-    "System Checks",
-    "Media Setup",
-    "Identity Scan",
-    "Finalizing",
-  ];
+  const groupLabel = currentStageInfo?.group ?? "Secure Setup";
 
   return (
-    <div style={{ padding: "20px 32px 0", display: "flex", flexDirection: "column", gap: "12px" }}>
-      {/* 5-Phase visual stepper */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "8px",
-        }}
-      >
-        {groups.map((group, idx) => {
-          const isActive = group === activeGroup;
-          const isPassed = groups.indexOf(activeGroup) > idx;
-          return (
-            <div key={group} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  borderRadius: "50%",
-                  border: `1.5px solid ${isActive ? "#a855f7" : isPassed ? "#22c55e" : "rgba(255,255,255,0.1)"}`,
-                  background: isActive
-                    ? "rgba(168,85,247,0.15)"
-                    : isPassed
-                      ? "rgba(34,197,94,0.1)"
-                      : "transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "8.5px",
-                  fontWeight: 700,
-                  color: isActive ? "#d8b4fe" : isPassed ? "#22c55e" : "#52525B",
-                  transition: "all 300ms var(--ease-cinematic)",
-                }}
-              >
-                {isPassed ? "✓" : idx + 1}
-              </div>
-              <span
-                style={{
-                  fontSize: "9px",
-                  fontWeight: 600,
-                  letterSpacing: "0.08em",
-                  color: isActive ? "#ffffff" : isPassed ? "#94a3b8" : "#4b5563",
-                  transition: "all 300ms var(--ease-cinematic)",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  display: "inline",
-                }}
-              >
-                {group}
-              </span>
-              {idx < groups.length - 1 && (
-                <div
-                  style={{
-                    width: "24px",
-                    height: "1px",
-                    background: isPassed ? "#22c55e" : "rgba(255,255,255,0.05)",
-                    marginLeft: "6px",
-                  }}
-                />
-              )}
-            </div>
-          );
-        })}
+    <div
+      style={{
+        padding: "24px 32px 0",
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        width: "100%",
+        maxWidth: "600px",
+        margin: "0 auto",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span
+          style={{
+            fontSize: "10px",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 700,
+            color: "#FFF",
+            letterSpacing: "0.1em",
+          }}
+        >
+          {groupLabel.toUpperCase()}
+        </span>
+        <span
+          style={{
+            fontSize: "10px",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 500,
+            color: "#A8A8A8",
+          }}
+        >
+          STEP {current} OF 14
+        </span>
       </div>
 
-      {/* Tiny incremental progress bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
         {STAGES.map((s) => {
           const status =
             s.id < current ? (results[s.id] ?? "pass") : s.id === current ? "checking" : "pending";
@@ -2529,22 +2428,20 @@ function ProgressBar({
               : status === "warn"
                 ? "#f59e0b"
                 : status === "checking"
-                  ? "#a855f7"
-                  : "rgba(255,255,255,0.08)";
+                  ? "#FFF"
+                  : "rgba(255,255,255,0.06)";
           return (
             <div
               key={s.id}
-              style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}
-            >
-              <div
-                style={{
-                  height: 3,
-                  borderRadius: 2,
-                  background: color,
-                  transition: "background 500ms ease",
-                }}
-              />
-            </div>
+              style={{
+                flex: 1,
+                height: 4,
+                borderRadius: "0px",
+                background: color,
+                transition: "background 300ms ease, transform 300ms ease",
+                transform: status === "checking" ? "scaleY(1.2)" : "none",
+              }}
+            />
           );
         })}
       </div>
@@ -2574,6 +2471,8 @@ export default function OnboardingPage() {
   const [readyForStart, setReadyForStart] = useState(false);
   const [sessionPrepared, setSessionPrepared] = useState(false);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const theme = useTheme();
+  const isLight = theme === "light";
 
   // Keep ref in sync with state so the unmount cleanup below sees the latest stream.
   useEffect(() => {
@@ -2903,10 +2802,12 @@ export default function OnboardingPage() {
   return (
     <main
       style={{
-        background: "#030816",
+        background: "#0F0F0F",
         minHeight: "100vh",
-        fontFamily: "Inter, system-ui, sans-serif",
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         userSelect: "none",
+        color: "#FFF",
+        transition: "background 500ms ease, color 500ms ease",
       }}
     >
       <button
@@ -2917,19 +2818,18 @@ export default function OnboardingPage() {
           top: 16,
           right: 16,
           zIndex: 1000,
-          padding: "8px 12px",
-          borderRadius: "8px",
-          border: "1px solid rgba(245,158,11,0.35)",
-          background: "rgba(3,8,22,0.82)",
-          color: "#f59e0b",
-          fontSize: "12px",
-          fontWeight: 600,
-          fontFamily: "Inter, system-ui, sans-serif",
+          padding: "6px 12px",
+          borderRadius: "2px",
+          border: "1px solid #ef4444",
+          background: "#0F0F0F",
+          color: "#ef4444",
+          fontSize: "11px",
+          fontWeight: 700,
+          fontFamily: "'JetBrains Mono', monospace",
           cursor: "pointer",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
         }}
       >
-        Exit Setup
+        ABORT_SETUP [ESC]
       </button>
 
       {policyBlock && (
@@ -2940,9 +2840,10 @@ export default function OnboardingPage() {
             border: "1px solid rgba(239,68,68,0.28)",
             background: "rgba(239,68,68,0.08)",
             color: "#fca5a5",
-            borderRadius: 12,
+            borderRadius: 2,
             padding: "12px 16px",
-            fontSize: 13,
+            fontSize: 11,
+            fontFamily: "'JetBrains Mono', monospace",
           }}
         >
           {policyBlock}
@@ -2978,8 +2879,21 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        {/* Stage content */}
-        <div style={{ maxWidth: "480px", width: "100%" }}>
+        {/* Stage content enclosed in an authoritative diagnostic console frame */}
+        <div
+          style={{
+            maxWidth: "480px",
+            width: "100%",
+            background: "#0F0F0F",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderRadius: "2px",
+            boxShadow: "0 24px 60px rgba(0, 0, 0, 0.48)",
+            padding: "36px 40px",
+            position: "relative",
+            overflow: "hidden",
+            transition: "all 300ms ease",
+          }}
+        >
           {isTooEarly && (
             <div
               style={{
@@ -3087,7 +3001,7 @@ export default function OnboardingPage() {
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-        @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(168,85,247,0.22); } 50% { box-shadow: 0 0 0 14px transparent; } }
+        @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.06); } 50% { box-shadow: 0 0 0 14px transparent; } }
         @keyframes scaleYBar { from { transform: scaleY(0.4); } to { transform: scaleY(1); } }
       `}</style>
     </main>

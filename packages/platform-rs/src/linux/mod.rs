@@ -363,8 +363,13 @@ fn gsettings_get(schema: &str, key: &str) -> Option<String> {
 }
 
 fn gsettings_set(schema: &str, key: &str, value: &str) {
+    if gsettings_get(schema, key).is_none() {
+        return;
+    }
+
     let _ = std::process::Command::new("gsettings")
         .args(["set", schema, key, value])
+        .stderr(std::process::Stdio::null())
         .status();
 }
 

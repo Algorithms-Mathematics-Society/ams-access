@@ -1,23 +1,65 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   DESIGN SYSTEM — Tailwind v4 @theme
+   All tokens here generate utility classes automatically.
+   e.g.  bg-obsidian-base  border-indicator-secure  text-accent-light
+   ───────────────────────────────────────────────────────────── */
 @theme {
-  --color-bg-base: #000000;
-  --color-bg-elevated: #09090b;
-  --color-bg-secondary: rgb(14 15 18);
-  --color-accent: #8b5cf6;
-  --color-accent-bright: #a78bfa;
-  --color-accent-deep: #7c3aed;
-  --color-text-primary: #ffffff;
-  --color-text-secondary: rgba(255, 255, 255, 0.6);
-  --color-text-muted: rgba(255, 255, 255, 0.35);
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-error: #ef4444;
-  --color-info: #38bdf8;
+  /* Obsidian palette */
+  --color-obsidian-base:    #0F0F0F;
+  --color-obsidian-raised:  #1F1F1F;
+  --color-obsidian-deep:    #000000;
+  --color-obsidian-inner:   #0A0A0A;
 
+  /* Indicator colours */
+  --color-indicator-secure:  #22c55e;
+  --color-indicator-warn:    #f59e0b;
+  --color-indicator-error:   #ef4444;
+  --color-indicator-info:    #38bdf8;
+
+  /* Accent — violet */
+  --color-accent-base:   #a855f7;
+  --color-accent-light:  #c084fc;
+  --color-accent-faint:  rgba(168,85,247,0.12);
+  --color-accent-border: rgba(168,85,247,0.30);
+  --color-accent-hover:  rgba(168,85,247,0.08);
+
+  /* Text hierarchy */
+  --color-text-primary:  #ffffff;
+  --color-text-muted:    rgba(255,255,255,0.45);
+  --color-text-faint:    rgba(255,255,255,0.28);
+  --color-text-dim:      rgba(255,255,255,0.75);
+
+  /* Borders */
+  --color-border-base:   rgba(255,255,255,0.05);
+  --color-border-input:  rgba(255,255,255,0.08);
+  --color-border-focus:  rgba(168,85,247,0.65);
+  --color-border-error:  rgba(239,68,68,0.25);
+
+  /* Legacy aliases used by other pages */
+  --color-bg-base:        #000000;
+  --color-bg-elevated:    #09090b;
+  --color-bg-secondary:   rgb(14 15 18);
+  --color-accent:         #8b5cf6;
+  --color-accent-bright:  #a78bfa;
+  --color-accent-deep:    #7c3aed;
+  --color-text-secondary: rgba(255,255,255,0.6);
+  --color-success:        #22c55e;
+  --color-warning:        #f59e0b;
+  --color-error:          #ef4444;
+  --color-info:           #38bdf8;
+
+  /* Easing */
   --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Font families surfaced as utilities */
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
+/* ─────────────────────────────────────────────────────────────
+   RESET
+   ───────────────────────────────────────────────────────────── */
 *,
 *::before,
 *::after {
@@ -29,7 +71,7 @@
 html,
 body {
   height: 100%;
-  background-color: #000000;
+  background-color: #0F0F0F;
   color: #ffffff;
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
@@ -37,37 +79,9 @@ body {
   overflow: hidden;
 }
 
-/* Faint matte noise texture */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-size: 256px 256px;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.4;
-}
 
-/* Ambient violet radial glow — top center */
-body::after {
-  content: "";
-  position: fixed;
-  top: -20%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 900px;
-  height: 500px;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(139, 92, 246, 0.08) 0%,
-    rgba(124, 58, 237, 0.03) 45%,
-    transparent 70%
-  );
-  pointer-events: none;
-  z-index: 0;
-}
+
+
 
 #__next,
 main {
@@ -76,111 +90,499 @@ main {
   height: 100%;
 }
 
-/* Input focus ring */
+/* ─────────────────────────────────────────────────────────────
+   INPUTS — browser reset
+   ───────────────────────────────────────────────────────────── */
+input[type="email"],
+input[type="password"],
+input[type="text"] {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  box-shadow: none !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
 input:focus-visible {
   outline: none;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.25);
-  border-radius: 2px;
+input::placeholder {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-weight: 500 !important;
+  letter-spacing: 0px !important;
+  opacity: 0.35 !important;
 }
 
-/* Consolidated Theme Tokens with AAA Compliant Light Mode Contrast Ratios */
+/* ─────────────────────────────────────────────────────────────
+   SCROLLBAR
+   ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.25); border-radius: 2px; }
+
+/* ─────────────────────────────────────────────────────────────
+   CSS CUSTOM PROPERTIES (shared across all pages)
+   ───────────────────────────────────────────────────────────── */
 :root {
-  --theme-bg: #FAF8F5;
-  --theme-sidebar-bg: #F2EDE4;
-  --theme-card-bg: #ffffff;
-  --theme-inner-bg: #F8F5F0;
-  --theme-border: rgba(124, 58, 237, 0.08);
-  --theme-border-strong: rgba(124, 58, 237, 0.16);
-  --theme-text: #3c362e;
-  --theme-text-muted: #544e45; /* Adjusted to guarantee > 4.5:1 contrast against base backgrounds */
-  --theme-text-muted-strong: #403a31; /* Adjusted for maximum high-stress readability */
-  --theme-accent: #7c3aed;
-  --theme-accent-light: rgba(124, 58, 237, 0.08);
-  --theme-accent-border: rgba(124, 58, 237, 0.25);
-  --theme-accent-text: #6d28d9;
-  --theme-console-text: #5c2d91;
-  --theme-shadow: 0 4px 20px rgba(120, 110, 90, 0.06);
-  --theme-shadow-hover: 0 12px 30px rgba(120, 110, 90, 0.12);
-  --theme-dot: #10b981;
+  color-scheme: dark;
+  --theme-bg:                #0F0F0F;
+  --theme-sidebar-bg:        #1F1F1F;
+  --theme-card-bg:           #1F1F1F;
+  --theme-inner-bg:          #0F0F0F;
+  --theme-border:            rgba(255,255,255,0.05);
+  --theme-border-strong:     rgba(168,85,247,0.2);
+  --theme-text:              #ffffff;
+  --theme-text-muted:        rgba(255,255,255,0.45);
+  --theme-text-muted-strong: rgba(255,255,255,0.7);
+  --theme-accent:            #a855f7;
+  --theme-accent-light:      rgba(168,85,247,0.12);
+  --theme-accent-border:     rgba(168,85,247,0.3);
+  --theme-accent-text:       #c084fc;
+  --theme-console-text:      rgba(168,85,247,0.85);
+  --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
+  --theme-shadow-hover:      0 12px 36px rgba(168,85,247,0.08);
+  --theme-dot:               #22c55e;
+
+  --density-compact:  12px;
+  --density-standard: 18px;
+  --density-relaxed:  24px;
 }
 
 .dark {
-  --theme-bg: #02040a;
-  --theme-sidebar-bg: #080b11;
-  --theme-card-bg: #080b11;
-  --theme-inner-bg: #02040a;
-  --theme-border: rgba(255, 255, 255, 0.05);
-  --theme-border-strong: rgba(168, 85, 247, 0.15);
-  --theme-text: #ffffff;
-  --theme-text-muted: rgba(255, 255, 255, 0.35);
-  --theme-text-muted-strong: rgba(255, 255, 255, 0.65);
-  --theme-accent: #a855f7;
-  --theme-accent-light: rgba(168, 85, 247, 0.08);
-  --theme-accent-border: rgba(168, 85, 247, 0.25);
-  --theme-accent-text: #c084fc;
-  --theme-console-text: rgba(168, 85, 247, 0.8);
-  --theme-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  --theme-shadow-hover: 0 12px 36px rgba(168, 85, 247, 0.04);
-  --theme-dot: #22c55e;
+  color-scheme: dark;
+  --theme-bg:                #0F0F0F;
+  --theme-sidebar-bg:        #1F1F1F;
+  --theme-card-bg:           #1F1F1F;
+  --theme-inner-bg:          #0F0F0F;
+  --theme-border:            rgba(255,255,255,0.05);
+  --theme-border-strong:     rgba(168,85,247,0.2);
+  --theme-text:              #ffffff;
+  --theme-text-muted:        rgba(255,255,255,0.45);
+  --theme-text-muted-strong: rgba(255,255,255,0.7);
+  --theme-accent:            #a855f7;
+  --theme-accent-light:      rgba(168,85,247,0.12);
+  --theme-accent-border:     rgba(168,85,247,0.3);
+  --theme-accent-text:       #c084fc;
+  --theme-console-text:      rgba(168,85,247,0.85);
+  --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
+  --theme-shadow-hover:      0 12px 36px rgba(168,85,247,0.08);
+  --theme-dot:               #22c55e;
 }
 
-/* Global Hardware-Accelerated Smooth Transition Helper */
+/* ─────────────────────────────────────────────────────────────
+   TYPOGRAPHY SCALE  (shared, used by other pages)
+   ───────────────────────────────────────────────────────────── */
 .theme-transition,
 .theme-transition * {
-  transition: background-color 280ms var(--ease-cinematic), border-color 280ms var(--ease-cinematic), color 280ms var(--ease-cinematic), box-shadow 280ms var(--ease-cinematic);
+  transition:
+    background-color 280ms var(--ease-cinematic),
+    border-color     280ms var(--ease-cinematic),
+    color            280ms var(--ease-cinematic),
+    box-shadow       280ms var(--ease-cinematic);
 }
 
-/* Typography Hierarchy Scale (4px standard grid system) */
-.text-display-title {
-  font-size: 24px !important;
-  font-weight: 600 !important;
-  letter-spacing: -0.02em !important;
-  line-height: 32px !important;
+.text-display-title   { font-size: 24px !important; font-weight: 600 !important; letter-spacing: -0.02em !important; line-height: 32px !important; }
+.text-subsection-title{ font-size: 16px !important; font-weight: 500 !important; letter-spacing:  0.02em !important; line-height: 24px !important; }
+.text-body-copy        { font-size: 13px !important; font-weight: 400 !important; letter-spacing:  0px   !important; line-height: 20px !important; }
+.text-mono-console     { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 12px !important; font-weight: 400 !important; letter-spacing: 0.04em !important; line-height: 18px !important; }
+.text-micro-label      { font-size: 9px !important; font-weight: 600 !important; letter-spacing: 0.15em !important; line-height: 12px !important; text-transform: uppercase !important; }
+
+/* ─────────────────────────────────────────────────────────────
+   LOGIN PAGE — layout & component classes
+   ───────────────────────────────────────────────────────────── */
+
+/* Page root */
+.login-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 24px 80px; /* bottom pad clears SYSTEM_LOGS pane */
+  background-color: var(--theme-bg);
+  position: relative;
+  transition: background-color 260ms var(--ease-cinematic);
 }
 
-.text-subsection-title {
-  font-size: 16px !important;
-  font-weight: 500 !important;
-  letter-spacing: 0.02em !important;
-  line-height: 24px !important;
+/* Status bar */
+.login-status-bar {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #1F1F1F;
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 6px;
+}
+.login-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 10px #22c55e, 0 0 4px #22c55e;
+  flex-shrink: 0;
+}
+.login-status-label {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.8);
+  letter-spacing: 0.08em;
 }
 
-.text-body-copy {
-  font-size: 13px !important;
-  font-weight: 400 !important;
-  letter-spacing: 0px !important;
-  line-height: 20px !important;
+/* Main card */
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--theme-card-bg);
+  border: 1px solid var(--theme-border);
+  border-radius: 6px;
+  padding: 44px 40px 36px;
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+}
+.login-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+.login-logo {
+  filter: drop-shadow(0 0 16px rgba(168,85,247,0.2));
+  object-fit: contain;
 }
 
-.text-mono-console {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
-  font-size: 12px !important;
-  font-weight: 400 !important;
-  letter-spacing: 0.04em !important;
-  line-height: 18px !important;
+/* Form fields */
+.login-field      { margin-bottom: 24px; }
+.login-field-last { margin-bottom: 28px; }
+
+.login-label {
+  display: flex;
+  align-items: center;
+  color: var(--theme-text-muted);
+  margin-bottom: 10px;
+  transition: color 200ms;
+  position: relative;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.login-label.is-focused { color: var(--theme-accent-text); }
+
+.login-label-cursor {
+  position: absolute;
+  color: var(--theme-accent-text);
+  animation: blink-cursor 0.9s step-end infinite;
+  font-weight: bold;
 }
 
-.text-micro-label {
-  font-size: 9px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.15em !important;
-  line-height: 12px !important;
-  text-transform: uppercase !important;
+.login-input {
+  width: 100%;
+  padding: 13px 16px;
+  background: var(--theme-inner-bg);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 12.5px;
+  font-weight: 400;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  transition: border-color 150ms ease;
+  box-shadow: none;
+  outline: none;
+  box-sizing: border-box;
+}
+.login-input:focus    { border-color: rgba(168,85,247,0.65); }
+.login-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.login-input--password { letter-spacing: 0.08em; }
+
+/* Continue button */
+.login-btn-wrap { margin-top: 24px; }
+
+.continue-btn {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  padding: 13px 20px;
+  background: #1F1F1F;
+  border: 1px solid #a855f7;
+  border-radius: 6px;
+  color: #c084fc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+  transition: all 150ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.continue-btn:hover:not(:disabled) {
+  background: rgba(168,85,247,0.08);
+  border-color: #c084fc;
+  color: #ffffff;
+}
+.continue-btn:disabled {
+  background: rgba(31,31,31,0.5);
+  border-color: rgba(168,85,247,0.2);
+  color: rgba(168,85,247,0.4);
+  cursor: not-allowed;
+}
+.continue-btn::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -150%;
+  width: 50%; height: 100%;
+  background: linear-gradient(to right, transparent, rgba(255,255,255,0.22), transparent);
+  transform: skewX(-25deg);
+  transition: left 0.75s;
+}
+.continue-btn:hover:not(:disabled)::after { left: 150%; }
+
+/* Divider */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0 20px;
+}
+.login-divider-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(255,255,255,0.05);
+}
+.login-divider-label {
+  font-size: 9px;
+  color: rgba(255,255,255,0.28);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', monospace;
 }
 
-/* Standardized Density Scale Variables */
-:root {
-  --density-compact: 12px;
-  --density-standard: 18px;
-  --density-relaxed: 24px;
+/* SSO button */
+.sso-btn {
+  width: 100%;
+  padding: 13px 20px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  cursor: pointer;
+  transition: all 150ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sso-btn:hover {
+  background: rgba(255,255,255,0.02);
+  border-color: rgba(255,255,255,0.1);
+  color: #ffffff;
+}
+
+/* Footer */
+.login-footer {
+  margin-top: 28px;
+  font-size: 10.5px;
+  color: rgba(255,255,255,0.28);
+  text-align: center;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  font-weight: 300;
+}
+
+/* Autofill keycard */
+.secure-keycard {
+  margin-top: 20px;
+  padding: 14px 20px;
+  background: var(--theme-card-bg);
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  max-width: 420px;
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+  transition: all 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  position: relative;
+  overflow: hidden;
+  font: inherit;
+}
+.secure-keycard:hover:not(:disabled) {
+  background: rgba(139,92,246,0.08);
+  border-color: rgba(168,85,247,0.35);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(168,85,247,0.06), 0 4px 16px rgba(0,0,0,0.3);
+}
+.secure-keycard:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.keycard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.keycard-title  { color: var(--theme-accent-text); margin: 0; }
+.keycard-badge {
+  font-size: 8.5px;
+  color: var(--theme-accent);
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(168,85,247,0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.keycard-credentials {
+  font-size: 11.5px;
+  color: var(--theme-text-muted);
+  font-weight: 300;
+  line-height: 1.8;
+  font-family: 'IBM Plex Mono', 'Fira Code', monospace;
+  display: flex;
+  flex-direction: column;
+}
+
+/* SSO Modal */
+.sso-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3,8,22,0.6);
+  backdrop-filter: blur(16px);
+  animation: fadeIn 280ms var(--ease-cinematic) forwards;
+}
+.sso-modal {
+  max-width: 460px;
+  width: 100%;
+  border-radius: 16px;
+  padding: 36px 32px;
+  background: rgba(15,23,42,0.95);
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+  text-align: center;
+}
+.sso-modal-icon-wrap {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+}
+.sso-modal-title  { color: var(--theme-text); margin-bottom: 12px; }
+.sso-modal-body   { color: var(--theme-text-muted); line-height: 1.6; margin-bottom: 28px; }
+.sso-modal-close {
+  width: 100%; padding: 12px;
+  background: #ffffff; color: #0f172a;
+  border: none; border-radius: 6px;
+  font-weight: 600; font-size: 12px;
+  cursor: pointer;
+  transition: opacity 200ms;
+}
+.sso-modal-close:hover { opacity: 0.9; }
+
+/* ── SYSTEM_LOGS pane ───────────────────────────────────────
+   Fixed to the bottom of the viewport. Zero float, no z-index
+   wars. Entries are appended, not floated over the UI.
+   ─────────────────────────────────────────────────────────── */
+.syslog-pane {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: rgba(10,10,10,0.97);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding: 6px 16px 8px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 80px;
+  overflow: hidden;
+}
+.syslog-header {
+  color: rgba(168,85,247,0.7);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  font-size: 8px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  opacity: 0.6;
+}
+.syslog-entry {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  animation: slideUp 120ms var(--ease-cinematic) both;
+}
+.syslog-ts {
+  color: rgba(255,255,255,0.2);
+  flex-shrink: 0;
+  font-size: 9px;
+}
+.syslog-level-err  { color: #ef4444; font-weight: 700; flex-shrink: 0; }
+.syslog-level-info { color: rgba(168,85,247,0.8); font-weight: 700; flex-shrink: 0; }
+.syslog-level-ok   { color: #22c55e; font-weight: 700; flex-shrink: 0; }
+.syslog-msg {
+  color: rgba(255,255,255,0.65);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   KEYFRAMES
+   ───────────────────────────────────────────────────────────── */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1;   transform: scale(1);   }
+  50%       { opacity: 0.4; transform: scale(0.9); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+
+
+.login-spinner {
+  animation: spin 0.8s linear infinite;
 }

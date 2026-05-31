@@ -299,7 +299,7 @@ function getThemeColors(theme: "dark" | "light") {
 
 export default function HomePage() {
   const router = useRouter();
-  const [theme, setTheme] = useState<"dark" | "light">("light");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [activeNav, setActiveNav] = useState("overview");
   const [signingOut, setSigningOut] = useState(false);
   const [contests, setContests] = useState<InvitedContest[]>([]);
@@ -318,22 +318,18 @@ export default function HomePage() {
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
   const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
 
-  // Load theme from localStorage on mount
+  // Load theme from localStorage on mount - Locked strictly to Obsidian Dark by system policy
   useEffect(() => {
-    const saved = localStorage.getItem("ams_theme") as "dark" | "light";
-    if (saved === "dark" || saved === "light") {
-      setTheme(saved);
-    } else {
-      localStorage.setItem("ams_theme", "light");
-    }
+    setTheme("dark");
+    localStorage.setItem("ams_theme", "dark");
   }, []);
 
   // Sync theme class to documentElement for CSS variables
   useEffect(() => {
-    document.documentElement.className = theme;
-  }, [theme]);
+    document.documentElement.className = "dark";
+  }, []);
 
-  const c = getThemeColors(theme);
+  const c = getThemeColors("dark");
 
   // Telemetry Integrity Scan States
   const [readiness, setReadiness] = useState<ReadinessState>({
@@ -719,8 +715,9 @@ export default function HomePage() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <p
                 style={{
-                  fontSize: "12.5px",
-                  fontWeight: 500,
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                  fontSize: "12px",
+                  fontWeight: 600,
                   color: c.text,
                   lineHeight: 1.2,
                   overflow: "hidden",
@@ -763,7 +760,14 @@ export default function HomePage() {
             {activeNav === "security_logs" && "Live Security Operations Feed"}
           </h1>
           <p style={{ fontSize: "13.5px", color: c.textMuted, marginTop: "4px" }}>
-            {activeNav === "overview" && `Authenticated Profile Node: ${userEmail}`}
+            {activeNav === "overview" && (
+              <>
+                Authenticated Profile Node:{" "}
+                <span style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace", color: c.text, fontWeight: 600 }}>
+                  {userEmail}
+                </span>
+              </>
+            )}
             {activeNav === "settings" &&
               "Configure video capture, speaker channels, micro-decibel triggers, and proctor parameters"}
             {activeNav === "diagnostics" &&
@@ -1561,15 +1565,15 @@ function SessionActionsPanel({
   theme: "dark" | "light";
 }) {
   const c = getThemeColors(theme);
-  const inputBg = theme === "light" ? "#ffffff" : "rgba(255,255,255,0.03)";
-  const subtleButtonBg = theme === "light" ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)";
+  const inputBg = "rgba(255,255,255,0.02)";
+  const subtleButtonBg = "rgba(255,255,255,0.03)";
 
   return (
     <div
       style={{
         background: c.cardBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "8px",
+        borderRadius: "6px",
         padding: "20px",
         display: "grid",
         gridTemplateColumns: "1.25fr 0.75fr",
@@ -1612,7 +1616,9 @@ function SessionActionsPanel({
                 background: inputBg,
                 color: c.text,
                 padding: "0 12px",
-                fontSize: "13px",
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                fontSize: "12.5px",
+                fontWeight: 600,
                 outline: "none",
                 cursor: inviteCodeBusy ? "not-allowed" : "text",
                 opacity: inviteCodeBusy ? 0.75 : 1,
@@ -1625,12 +1631,13 @@ function SessionActionsPanel({
                 minWidth: "96px",
                 height: "38px",
                 borderRadius: "6px",
-                border: `1px solid ${c.accentBorder}`,
-                background: c.accentLight,
-                color: c.accentText,
+                border: inviteCodeBusy ? "1px solid rgba(168,85,247,0.2)" : `1px solid ${c.accent}`,
+                background: inviteCodeBusy ? "rgba(168,85,247,0.15)" : "#a855f7",
+                color: inviteCodeBusy ? "rgba(255,255,255,0.4)" : "#ffffff",
                 fontSize: "12px",
                 fontWeight: 600,
                 cursor: inviteCodeBusy ? "not-allowed" : "pointer",
+                transition: "all 200ms ease",
               }}
             >
               {inviteCodeBusy ? "Checking..." : "Validate"}
@@ -1640,7 +1647,7 @@ function SessionActionsPanel({
             <p
               style={{
                 marginTop: "8px",
-                color: theme === "light" ? "#10b981" : "#22c55e",
+                color: "#22c55e",
                 fontSize: "12.5px",
                 lineHeight: 1.45,
                 fontWeight: 600,
@@ -1652,7 +1659,7 @@ function SessionActionsPanel({
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
                   d="M3 7l3 3 5-5"
-                  stroke={theme === "light" ? "#10b981" : "#22c55e"}
+                  stroke="#22c55e"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -1662,7 +1669,7 @@ function SessionActionsPanel({
             </p>
           )}
           {inviteCodeStatus && (
-            <p style={{ marginTop: "8px", color: "#f59e0b", fontSize: "12px", lineHeight: 1.45 }}>
+            <p style={{ marginTop: "8px", color: "#ef4444", fontSize: "12px", lineHeight: 1.45, fontWeight: 500 }}>
               {inviteCodeStatus}
             </p>
           )}
@@ -1686,7 +1693,7 @@ function SessionActionsPanel({
             {sessionsRefreshing ? "Refreshing..." : "Refresh Sessions"}
           </button>
           {sessionsError && (
-            <span style={{ alignSelf: "center", color: "#f87171", fontSize: "12px" }}>
+            <span style={{ alignSelf: "center", color: "#ef4444", fontSize: "12px" }}>
               {sessionsError}
             </span>
           )}
@@ -1716,10 +1723,14 @@ function SessionActionsPanel({
           >
             Resume
           </p>
-          <p style={{ color: c.textMutedStrong, fontSize: "12.5px", lineHeight: 1.45 }}>
-            {activeSession
-              ? (activeSession.contest_title ?? `Contest ${activeSession.contest_id}`)
-              : "No active session stored on this device."}
+          <p style={{ color: c.textMutedStrong, fontSize: "12px", lineHeight: 1.45 }}>
+            {activeSession ? (
+              <span style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontWeight: 600, color: c.text }}>
+                {activeSession.contest_title ?? `CONTEST_${activeSession.contest_id.toUpperCase()}`}
+              </span>
+            ) : (
+              "No active session stored on this device."
+            )}
           </p>
         </div>
         <button
@@ -1728,18 +1739,19 @@ function SessionActionsPanel({
           style={{
             height: "36px",
             borderRadius: "6px",
-            border: `1px solid ${activeSession ? c.accentBorder : c.border}`,
-            background: activeSession ? c.accentLight : subtleButtonBg,
-            color: activeSession ? c.accentText : c.textMuted,
+            border: activeSession ? `1px solid ${c.accent}` : "1px solid rgba(255,255,255,0.06)",
+            background: activeSession ? "#a855f7" : "rgba(255,255,255,0.01)",
+            color: activeSession ? "#ffffff" : "rgba(255,255,255,0.25)",
             fontSize: "12px",
             fontWeight: 600,
             cursor: resumeBusy || !activeSession ? "not-allowed" : "pointer",
+            transition: "all 200ms ease",
           }}
         >
           {resumeBusy ? "Validating..." : "Resume Active Session"}
         </button>
         {resumeStatus && (
-          <p style={{ color: "#f59e0b", fontSize: "12px", lineHeight: 1.4 }}>{resumeStatus}</p>
+          <p style={{ color: "#ef4444", fontSize: "12px", lineHeight: 1.4, fontWeight: 500 }}>{resumeStatus}</p>
         )}
       </div>
     </div>
@@ -1794,10 +1806,11 @@ function ContestsPanel({
           style={{
             fontSize: "11px",
             color: themeColors.textMuted,
-            letterSpacing: "0.1em",
+            letterSpacing: "0.12em",
             textTransform: "uppercase",
             marginBottom: "16px",
-            fontWeight: 500,
+            fontWeight: 700,
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           }}
         >
           Contests
@@ -1806,13 +1819,29 @@ function ContestsPanel({
           <div
             key={i}
             style={{
-              height: "140px",
-              borderRadius: "14px",
-              background: theme === "light" ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.03)",
+              height: "90px",
+              borderRadius: "6px",
+              background: "rgba(255,255,255,0.015)",
+              border: "1px solid rgba(255,255,255,0.04)",
               marginBottom: "12px",
-              animation: "pulse-dot 1.5s ease-in-out infinite",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              animation: "pulse-dot 2.5s ease-in-out infinite",
             }}
-          />
+          >
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                fontSize: "10.5px",
+                color: "rgba(255,255,255,0.22)",
+                letterSpacing: "0.08em",
+                fontWeight: 600,
+              }}
+            >
+              [ AWAITING_SESSION_VALIDATION_REGISTRY ]
+            </span>
+          </div>
         ))}
       </div>
     );
@@ -1823,69 +1852,52 @@ function ContestsPanel({
       <div
         style={{
           border: `1px dashed ${themeColors.border}`,
-          borderRadius: "14px",
-          padding: "80px 40px",
-          textAlign: "center",
+          borderRadius: "6px",
+          padding: "24px 28px",
+          textAlign: "left",
           display: "flex",
-          flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
+          gap: "18px",
           background: themeColors.cardBg,
         }}
       >
         <div
           style={{
-            width: "56px",
-            height: "56px",
-            borderRadius: "14px",
-            background: themeColors.accentLight,
-            border: `1px solid ${themeColors.accentBorder}`,
+            width: "40px",
+            height: "40px",
+            borderRadius: "6px",
+            background: "rgba(255,255,255,0.01)",
+            border: `1px solid ${themeColors.border}`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            marginBottom: "24px",
+            flexShrink: 0,
           }}
         >
-          <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
-            <rect
-              x="4"
-              y="7"
-              width="24"
-              height="21"
-              rx="3"
-              stroke={themeColors.accent}
-              strokeWidth="1.8"
-            />
-            <path
-              d="M10 7V4M22 7V4"
-              stroke={themeColors.accent}
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-            <path d="M4 13h24" stroke={themeColors.accent} strokeWidth="1.8" />
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={themeColors.accent} strokeWidth="1.8">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
           </svg>
         </div>
-        <h2
-          style={{
-            fontSize: "17px",
-            fontWeight: 600,
-            color: themeColors.text,
-            marginBottom: "8px",
-          }}
-        >
-          No contests scheduled
-        </h2>
-        <p
-          style={{
-            fontSize: "14px",
-            color: themeColors.textMuted,
-            fontWeight: 300,
-            lineHeight: 1.6,
-            maxWidth: "320px",
-          }}
-        >
-          Check back closer to your event.
-        </p>
+        <div style={{ flex: 1 }}>
+          <h4
+            style={{
+              fontSize: "12px",
+              fontWeight: 700,
+              color: themeColors.text,
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              margin: 0,
+              letterSpacing: "0.05em",
+            }}
+          >
+            0_SCHEDULED_CONTESTS_REGISTERED
+          </h4>
+          <p style={{ fontSize: "12px", color: themeColors.textMuted, margin: "4px 0 0", lineHeight: 1.4 }}>
+            No active or upcoming contest invites detected on this workstation registry. Check back closer to your event.
+          </p>
+        </div>
       </div>
     );
   }
@@ -1965,11 +1977,11 @@ function ReadinessWidget({
       onMouseLeave={() => setHovered(false)}
       style={{
         background: themeColors.cardBg,
-        border: `1px solid ${themeColors.borderStrong}`,
-        borderRadius: "8px",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+        borderRadius: "6px",
         padding: "24px",
-        boxShadow: hovered ? themeColors.shadowHover : themeColors.shadow,
-        transition: "all 300ms var(--ease-cinematic)",
+        boxShadow: "none",
+        transition: "all 150ms ease",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
@@ -1979,24 +1991,25 @@ function ReadinessWidget({
             height: "5px",
             borderRadius: "50%",
             background: themeColors.accent,
-            boxShadow: `0 0 8px ${themeColors.accent}`,
+            outline: `1px solid ${themeColors.accent}`,
+            outlineOffset: "1.5px",
           }}
         />
         <h3
           style={{
             fontSize: "11px",
-            fontWeight: 600,
+            fontWeight: 700,
             color: themeColors.textMuted,
             letterSpacing: "0.12em",
             textTransform: "uppercase",
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: "var(--font-mono), monospace",
           }}
         >
           System Integrity HUD
         </h3>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "24px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: "24px" }}>
         <ReadinessItem
           label="Network Connection"
           status={readiness.network}
@@ -2041,37 +2054,48 @@ function ReadinessWidget({
         />
       </div>
 
-      {failedChecks.length > 0 && (
-        <div
+      <div
+        style={{
+          marginBottom: "18px",
+          border: failedChecks.length > 0 ? "1px solid rgba(239, 68, 68, 0.22)" : "1px solid rgba(255, 255, 255, 0.05)",
+          background: failedChecks.length > 0 ? "rgba(239, 68, 68, 0.06)" : "transparent",
+          borderRadius: "6px",
+          padding: "12px 16px",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <p
           style={{
-            marginBottom: "18px",
-            border: `1px solid rgba(239,68,68,0.22)`,
-            background: "rgba(239,68,68,0.06)",
-            borderRadius: "6px",
-            padding: "12px",
+            color: failedChecks.length > 0 ? "#fca5a5" : "rgba(255, 255, 255, 0.35)",
+            fontSize: "10px",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontFamily: "var(--font-mono), monospace",
+            marginBottom: failedChecks.length > 0 ? "8px" : "0",
           }}
         >
-          <p
-            style={{
-              color: "#fca5a5",
-              fontSize: "11px",
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              marginBottom: "8px",
-            }}
-          >
-            Blocking Warnings
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          {failedChecks.length > 0 ? "Blocking Warnings" : "[ 0 ACTIVE INTEGRITY WARNINGS ]"}
+        </p>
+        {failedChecks.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
             {failedChecks.map((item) => (
-              <span key={item.key} style={{ color: "#f87171", fontSize: "12px", lineHeight: 1.35 }}>
+              <span
+                key={item.key}
+                style={{
+                  color: "#f87171",
+                  fontSize: "12px",
+                  lineHeight: 1.35,
+                  fontFamily: "var(--font-mono), monospace",
+                }}
+              >
                 {item.label}
               </span>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <button
         onClick={onSettingsRedirect}
@@ -2081,28 +2105,28 @@ function ReadinessWidget({
           alignItems: "center",
           justifyContent: "center",
           gap: "8px",
-          padding: "10px 16px",
+          padding: "11px 16px",
           borderRadius: "6px",
-          border: `1px solid ${themeColors.accentBorder}`,
-          background: themeColors.accentLight,
-          color: themeColors.accentText,
-          fontSize: "12px",
-          fontWeight: 500,
+          border: "1px solid rgba(168, 85, 247, 0.3)",
+          background: "transparent",
+          color: "#c084fc",
+          fontSize: "11px",
+          fontWeight: 600,
           cursor: "pointer",
-          transition: "all 220ms var(--ease-cinematic)",
-          letterSpacing: "0.02em",
+          transition: "all 150ms ease",
+          letterSpacing: "0.06em",
+          fontFamily: "var(--font-mono), monospace",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(168, 85, 247, 0.08)";
+          e.currentTarget.style.borderColor = "#c084fc";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.borderColor = "rgba(168, 85, 247, 0.3)";
         }}
       >
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-          <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3" />
-          <path
-            d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-          />
-        </svg>
-        System Setup & Hardware Tests
+        [ RUN DIAGNOSTICS & SYSTEM SETUP ]
       </button>
     </div>
   );
@@ -2126,106 +2150,111 @@ function ReadinessItem({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "10px 14px",
-        borderRadius: "6px",
-        background: themeColors.innerBg,
-        border: `1px solid ${themeColors.border}`,
+        padding: "13px 0",
+        background: "transparent",
+        border: "none",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
       }}
     >
-      <span style={{ fontSize: "12.5px", color: themeColors.textMutedStrong }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-        {status === "checking" && (
-          <>
-            <span
+      <span
+        style={{
+          fontSize: "12px",
+          fontWeight: 500,
+          fontFamily: "var(--font-mono), monospace",
+          color: themeColors.textMutedStrong,
+          letterSpacing: "0.02em",
+        }}
+      >
+        {label}
+      </span>
+      <div style={{ display: "flex", alignItems: "center" }}>
+        {/* Status Text Column */}
+        <div
+          style={{
+            width: "80px",
+            textAlign: "right",
+            marginRight: "16px",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              fontFamily: "var(--font-mono), monospace",
+              color: status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accentText,
+            }}
+          >
+            {status === "ok" ? "SECURE" : status === "fail" ? "CRITICAL" : "SCANNING"}
+          </span>
+        </div>
+
+        {/* Machined LED Status Dot Column (No drop shadows) */}
+        <div
+          style={{
+            width: "24px",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accent,
+              outline: `1px solid ${status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accent}`,
+              outlineOffset: "2px",
+              animation: status === "checking" ? "pulse-dot 1s ease-in-out infinite" : status === "fail" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+            }}
+          />
+        </div>
+
+        {/* Fixed Width Action Button Slot */}
+        <div
+          style={{
+            width: "80px",
+            display: "flex",
+            justifyContent: "flex-end",
+            marginLeft: "16px",
+          }}
+        >
+          {status === "fail" && onResolve ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onResolve();
+              }}
               style={{
-                fontSize: "10px",
-                color: themeColors.textMuted,
-                fontFamily: "'JetBrains Mono', monospace",
+                background: "rgba(239, 68, 68, 0.12)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                borderRadius: "4px",
+                padding: "3px 10px",
+                fontSize: "9.5px",
+                color: "#fca5a5",
+                fontWeight: 700,
+                letterSpacing: "0.05em",
+                cursor: "pointer",
+                fontFamily: "var(--font-mono), monospace",
+                transition: "all 150ms ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(239, 68, 68, 0.22)";
+                e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.5)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)";
+                e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.3)";
               }}
             >
-              SCANNING
-            </span>
-            <div
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: themeColors.accent,
-                animation: "pulse-dot 1s ease-in-out infinite",
-              }}
-            />
-          </>
-        )}
-        {status === "ok" && (
-          <>
-            <span
-              style={{
-                fontSize: "10px",
-                color: theme === "light" ? "#10b981" : "#22c55e",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-              }}
-            >
-              SECURE
-            </span>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path
-                d="M2.5 6l2 2 5-5"
-                stroke={theme === "light" ? "#10b981" : "#22c55e"}
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </>
-        )}
-        {status === "fail" && (
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span
-              style={{
-                fontSize: "10px",
-                color: "#f59e0b",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-              }}
-            >
-              ACTION REQUIRED
-            </span>
-            {onResolve && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onResolve();
-                }}
-                style={{
-                  background: "rgba(245, 158, 11, 0.12)",
-                  border: "1px solid rgba(245, 158, 11, 0.3)",
-                  borderRadius: "4px",
-                  padding: "2px 8px",
-                  fontSize: "9.5px",
-                  color: "#f59e0b",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  transition: "all 200ms",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(245, 158, 11, 0.22)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(245, 158, 11, 0.12)";
-                }}
-              >
-                RESOLVE
-              </button>
-            )}
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <circle cx="6" cy="6" r="4.5" stroke="#f59e0b" strokeWidth="1.2" />
-              <path d="M6 4v2.5M6 8h.01" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </div>
-        )}
+              RESOLVE
+            </button>
+          ) : (
+            <div style={{ width: "80px" }} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2630,69 +2659,61 @@ function SettingsPanel({
         <div
           style={{
             marginTop: "auto",
-            background: c.cardBg,
+            background: "rgba(255,255,255,0.01)",
             border: `1px solid ${c.border}`,
-            borderRadius: "8px",
+            borderRadius: "6px",
             padding: "14px 16px",
             display: "flex",
             flexDirection: "column",
-            gap: "10px",
+            gap: "8px",
           }}
         >
           <span
             style={{
               fontSize: "11px",
-              fontWeight: 600,
+              fontWeight: 700,
               color: c.textMuted,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             }}
           >
             Interface Theme
           </span>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            <button
-              onClick={() => {
-                setTheme("dark");
-                localStorage.setItem("ams_theme", "dark");
-              }}
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "rgba(168,85,247,0.08)",
+              border: "1px solid rgba(168,85,247,0.2)",
+              borderRadius: "6px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}
+          >
+            <div
               style={{
-                padding: "8px 12px",
-                background: theme === "dark" ? c.accentLight : "transparent",
-                border: `1px solid ${theme === "dark" ? c.accent : c.border}`,
-                borderRadius: "6px",
-                color: theme === "dark" ? c.accentText : c.textMuted,
-                fontSize: "12px",
-                fontWeight: 500,
-                cursor: "pointer",
-                textAlign: "center",
-                transition: "all 200ms",
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#a855f7",
+                boxShadow: "0 0 6px #a855f7",
+              }}
+            />
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                fontSize: "11.5px",
+                fontWeight: 600,
+                color: "#c084fc",
               }}
             >
-              Obsidian Dark
-            </button>
-            <button
-              onClick={() => {
-                setTheme("light");
-                localStorage.setItem("ams_theme", "light");
-              }}
-              style={{
-                padding: "8px 12px",
-                background: theme === "light" ? c.accentLight : "transparent",
-                border: `1px solid ${theme === "light" ? c.accent : c.border}`,
-                borderRadius: "6px",
-                color: theme === "light" ? c.accentText : c.textMuted,
-                fontSize: "12px",
-                fontWeight: 500,
-                cursor: "pointer",
-                textAlign: "center",
-                transition: "all 200ms",
-              }}
-            >
-              Cream Alabaster
-            </button>
+              OBSIDIAN_DARK
+            </span>
           </div>
+          <p style={{ fontSize: "10px", color: c.textMuted, margin: 0, lineHeight: 1.4 }}>
+            Locked by workstation environment policy.
+          </p>
         </div>
       </div>
 
@@ -2890,6 +2911,7 @@ function SettingsPanel({
                         fontSize: "12.5px",
                         outline: "none",
                         cursor: "pointer",
+                        colorScheme: theme === "dark" ? "dark" : "light",
                       }}
                     >
                       {cameras.map((c) => (
@@ -4103,6 +4125,41 @@ function SecurityOperationsLog({ theme }: { theme: "dark" | "light" }) {
   );
 }
 
+function parseLogLine(log: string, dotColor: string) {
+  let splitIndex = log.indexOf("... ");
+  let sep = "... ";
+  if (splitIndex === -1) {
+    splitIndex = log.indexOf(": ");
+    sep = ": ";
+  }
+
+  if (splitIndex === -1) {
+    return <span>{log}</span>;
+  }
+
+  const prefix = log.substring(0, splitIndex + sep.length);
+  const status = log.substring(splitIndex + sep.length);
+
+  let statusColor = dotColor;
+  if (
+    status.includes("ERROR") ||
+    status.includes("CRITICAL") ||
+    status.includes("DENIED") ||
+    status.includes("UNREACHABLE")
+  ) {
+    statusColor = "#ef4444";
+  } else if (status.includes("WARNING") || status.includes("MUTED") || status.includes("pending")) {
+    statusColor = "#f59e0b";
+  }
+
+  return (
+    <>
+      <span style={{ color: "#A8A8A8" }}>{prefix}</span>
+      <span style={{ color: statusColor, fontWeight: 700 }}>{status}</span>
+    </>
+  );
+}
+
 interface SessionReadinessModalProps {
   contestId: string;
   sessionType: "new" | "resume";
@@ -4230,8 +4287,8 @@ function SessionReadinessModal({
         position: "fixed",
         inset: 0,
         zIndex: 9999,
-        background: isLight ? "rgba(250, 248, 255, 0.85)" : "rgba(3, 4, 8, 0.85)",
-        backdropFilter: "blur(20px) saturate(180%)",
+        background: "rgba(0, 0, 0, 0.65)",
+        backdropFilter: "blur(20px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -4242,70 +4299,23 @@ function SessionReadinessModal({
       <div
         style={{
           width: "100%",
-          maxWidth: "880px",
-          background: isLight ? "#ffffff" : "#080b11",
+          maxWidth: "920px",
+          minHeight: "540px",
+          background: isLight ? "#ffffff" : c.cardBg,
           border: `1px solid ${c.borderStrong}`,
-          borderRadius: "16px",
+          borderRadius: "2px",
           padding: "36px",
           boxShadow: isLight
-            ? "0 24px 60px rgba(120, 110, 90, 0.16)"
+            ? "0 24px 60px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04)"
             : "0 24px 64px rgba(168, 85, 247, 0.08)",
           position: "relative",
           overflow: "hidden",
           display: "grid",
-          gridTemplateColumns: "1.1fr 1fr",
+          gridTemplateColumns: "1.3fr 1fr",
           gap: "36px",
         }}
       >
-        {/* L-Shape Corner Decals (Matching Premium Login Page Aesthetics) */}
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "16px",
-            height: "16px",
-            borderTop: `2px solid ${c.accent}`,
-            borderLeft: `2px solid ${c.accent}`,
-            opacity: 0.6,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            width: "16px",
-            height: "16px",
-            borderTop: `2px solid ${c.accent}`,
-            borderRight: `2px solid ${c.accent}`,
-            opacity: 0.6,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            width: "16px",
-            height: "16px",
-            borderBottom: `2px solid ${c.accent}`,
-            borderLeft: `2px solid ${c.accent}`,
-            opacity: 0.6,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            bottom: 0,
-            right: 0,
-            width: "16px",
-            height: "16px",
-            borderBottom: `2px solid ${c.accent}`,
-            borderRight: `2px solid ${c.accent}`,
-            opacity: 0.6,
-          }}
-        />
+
 
         {/* Ambient Spotlights inside Card */}
         <div
@@ -4320,132 +4330,48 @@ function SessionReadinessModal({
           }}
         />
 
-        {/* Left Column: Circular scanner & diagnostics score */}
+        {/* Left Column: tabular readout */}
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            alignItems: "center",
             justifyContent: "center",
-            borderRight: `1px solid ${c.border}`,
+            borderRight: isLight ? "1px solid rgba(0, 0, 0, 0.12)" : "1px solid rgba(255, 255, 255, 0.12)",
             paddingRight: "36px",
+            gap: "6px",
           }}
         >
-          <h2
-            style={{
-              fontSize: "14px",
-              fontWeight: 600,
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              fontFamily: "'JetBrains Mono', monospace",
-              color: c.textMutedStrong,
-              marginBottom: "28px",
-            }}
-          >
-            Session Readiness Scan
-          </h2>
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: c.textMuted, marginBottom: "16px", whiteSpace: "nowrap" }}>
+            SESSION READINESS SCAN
+          </p>
 
-          {/* SVG Circular Ring Scanner */}
-          <div
-            style={{ position: "relative", width: "160px", height: "160px", marginBottom: "24px" }}
-          >
-            <svg
-              width="100%"
-              height="100%"
-              viewBox="0 0 120 120"
-              style={{ transform: "rotate(-90deg)" }}
-            >
-              {/* Underlay Track */}
-              <circle
-                cx="60"
-                cy="60"
-                r={radius}
-                fill="transparent"
-                stroke={isLight ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.02)"}
-                strokeWidth="6"
-              />
-              {/* Dynamic Glow Scanner Ring */}
-              <circle
-                cx="60"
-                cy="60"
-                r={radius}
-                fill="transparent"
-                stroke={accentColor}
-                strokeWidth="6"
-                strokeDasharray={circumference}
-                strokeDashoffset={strokeDashoffset}
-                strokeLinecap="round"
-                style={{
-                  transition:
-                    "stroke-dashoffset 200ms cubic-bezier(0.16, 1, 0.3, 1), stroke 300ms ease",
-                  filter: `drop-shadow(0 0 8px ${glowColor})`,
-                }}
-              />
-            </svg>
-            {/* Center Percentage Display */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "36px",
-                  fontWeight: 800,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  color: c.text,
-                  lineHeight: 1,
-                }}
-              >
+          {/* Dense telemetry block */}
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", lineHeight: 2, color: c.textMutedStrong, whiteSpace: "nowrap" }}>
+            <div style={{ whiteSpace: "nowrap" }}>
+              <span style={{ color: c.textMuted }}>SYS_INTEGRITY: </span>
+              <span style={{ color: score === 100 ? c.dot : "#f59e0b", letterSpacing: "-0.12em", display: "inline-block" }}>
+                {"█".repeat(Math.round(currentProgress / 10)) + "░".repeat(10 - Math.round(currentProgress / 10))}
+              </span>
+              <span style={{ color: score === 100 ? c.dot : "#f59e0b", marginLeft: "6px" }}>
                 {Math.round(currentProgress)}%
               </span>
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontWeight: 600,
-                  letterSpacing: "0.1em",
-                  color: score === 100 ? "#10b981" : "#f59e0b",
-                  marginTop: "4px",
-                }}
-              >
-                {scanStatus === "scanning" ? "CHECKING..." : "READY"}
+            </div>
+            <div style={{ whiteSpace: "nowrap" }}>
+              <span style={{ color: c.textMuted }}>STATUS:        </span>
+              <span style={{ color: scanStatus === "scanning" ? "#f59e0b" : c.dot, fontWeight: 700 }}>
+                {scanStatus === "scanning" ? "PROBING" : "ARMED"}
               </span>
             </div>
-          </div>
-
-          {/* Time to Ready Alert */}
-          <div
-            style={{
-              padding: "10px 20px",
-              background: isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.02)",
-              borderRadius: "20px",
-              border: `1px solid ${c.border}`,
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <circle cx="6" cy="6" r="4.5" stroke={c.textMuted} strokeWidth="1.2" />
-              <path d="M6 3v3h2.5" stroke={c.textMuted} strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-            <span
-              style={{
-                fontSize: "12px",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 500,
-                color: c.textMutedStrong,
-              }}
-            >
-              {estimatedTime === 0
-                ? "0 sec (Fully Armed)"
-                : `Estimated time to ready: ${estimatedTime} sec`}
-            </span>
+            <div style={{ whiteSpace: "nowrap" }}>
+              <span style={{ color: c.textMuted }}>ETA_READY:     </span>
+              <span style={{ color: estimatedTime === 0 ? c.dot : "#f59e0b" }}>
+                {estimatedTime === 0 ? "0s" : `${estimatedTime}s`}
+              </span>
+            </div>
+            <div style={{ whiteSpace: "nowrap" }}>
+              <span style={{ color: c.textMuted }}>SCAN_PROGRESS: </span>
+              <span style={{ color: c.textMutedStrong }}>{Math.round(currentProgress)}/100</span>
+            </div>
           </div>
         </div>
 
@@ -4453,12 +4379,11 @@ function SessionReadinessModal({
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           {/* Header Summary */}
           <div>
-            <h3 style={{ fontSize: "20px", fontWeight: 700, color: c.text, marginBottom: "6px" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em", color: c.text, marginBottom: "6px" }}>
               Secure Enclave Port
             </h3>
-            <p style={{ fontSize: "13px", color: c.textMuted, lineHeight: 1.45 }}>
-              Pre-flight validation of biometric feeds, restricted process hooks, and network
-              topology.
+            <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#999999", lineHeight: 1.6 }}>
+              Pre-flight validation of biometric feeds, restricted process hooks, and network topology.
             </p>
           </div>
 
@@ -4475,14 +4400,14 @@ function SessionReadinessModal({
               label="Audio Telemetry"
               status={readiness.mic}
               successLabel="Audio detected"
-              failLabel="Audio input muted"
+              failLabel="Audio check pending"
               theme={theme}
             />
             <PreflightCheckItem
               label="Optical Stream"
               status={readiness.camera}
               successLabel="Camera active"
-              failLabel="Camera disconnected"
+              failLabel="Camera offline"
               theme={theme}
             />
             <PreflightCheckItem
@@ -4508,15 +4433,15 @@ function SessionReadinessModal({
           {/* Scrolling Monospace Terminal Console */}
           <div
             style={{
-              background: isLight ? "#F8F5F0" : "#02040a",
+              background: isLight ? "#f8fafc" : c.innerBg,
               border: `1px solid ${c.border}`,
-              borderRadius: "8px",
+              borderRadius: "2px",
               padding: "14px",
-              height: "110px",
+              height: "135px",
               overflowY: "auto",
               fontFamily: "'JetBrains Mono', monospace",
               fontSize: "11px",
-              color: isLight ? "#5c2d91" : "rgba(168, 85, 247, 0.85)",
+              color: "#A8A8A8",
               display: "flex",
               flexDirection: "column",
               gap: "4px",
@@ -4527,7 +4452,7 @@ function SessionReadinessModal({
                 key={index}
                 style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}
               >
-                {log}
+                {parseLogLine(log, c.dot)}
               </div>
             ))}
             {scanStatus === "scanning" && (
@@ -4557,15 +4482,17 @@ function SessionReadinessModal({
               style={{
                 flex: 1,
                 height: "42px",
-                borderRadius: "8px",
-                border: "none",
-                background: canProceed ? "#10b981" : "rgba(148,163,184,0.28)",
-                color: "#ffffff",
-                fontSize: "13px",
-                fontWeight: 600,
+                borderRadius: "2px",
+                border: canProceed ? `1px solid ${c.dot}` : `1px solid ${c.border}`,
+                background: c.innerBg,
+                color: canProceed ? c.dot : c.textMuted,
+                fontSize: "11px",
+                fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
                 cursor: canProceed ? "pointer" : "not-allowed",
-                transition: "all 200ms ease",
-                boxShadow: canProceed ? "0 4px 16px rgba(16,185,129,0.2)" : "none",
+                transition: "all 150ms ease",
               }}
             >
               {scanStatus === "scanning"
@@ -4580,10 +4507,10 @@ function SessionReadinessModal({
               style={{
                 width: "42px",
                 height: "42px",
-                borderRadius: "8px",
+                borderRadius: "2px",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
-                color: c.textMutedStrong,
+                color: c.textMuted,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -4616,10 +4543,10 @@ function SessionReadinessModal({
               style={{
                 width: "42px",
                 height: "42px",
-                borderRadius: "8px",
+                borderRadius: "2px",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
-                color: c.textMutedStrong,
+                color: c.textMuted,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -4642,13 +4569,15 @@ function SessionReadinessModal({
               onClick={onClose}
               style={{
                 height: "42px",
-                borderRadius: "8px",
+                borderRadius: "2px",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
                 color: c.textMuted,
                 padding: "0 16px",
-                fontSize: "13px",
-                fontWeight: 500,
+                fontSize: "11px",
+                fontWeight: 600,
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: "0.08em",
                 cursor: "pointer",
                 transition: "all 200ms ease",
               }}
@@ -4680,131 +4609,48 @@ function PreflightCheckItem({
   failLabel: string;
   theme: "dark" | "light";
 }) {
-  const isLight = theme === "light";
+  const c = getThemeColors(theme);
+  const dotColor = status === "ok" ? c.dot : status === "fail" ? "#f59e0b" : c.accent;
+  const valueColor = status === "ok" ? c.dot : status === "fail" ? "#f59e0b" : c.accent;
+  const valueLabel = status === "ok" ? successLabel.toUpperCase() : status === "fail" ? failLabel.toUpperCase() : "PROBING...";
+
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "8px 12px",
-        borderRadius: "6px",
-        background: isLight ? "rgba(0,0,0,0.01)" : "rgba(255,255,255,0.01)",
-        border: `1px solid ${isLight ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}`,
+        padding: "8px 0",
+        borderBottom: `1px solid ${c.border}`,
       }}
     >
-      <span style={{ fontSize: "12px", color: isLight ? "#7c7467" : "rgba(255, 255, 255, 0.45)" }}>
+      <span style={{
+        fontSize: "11px",
+        fontFamily: "'JetBrains Mono', monospace",
+        color: c.textMutedStrong,
+        letterSpacing: "0.02em",
+      }}>
         {label}
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-        {status === "checking" && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "3px 8px",
-              borderRadius: "12px",
-              background: isLight ? "rgba(168,85,247,0.06)" : "rgba(168,85,247,0.08)",
-              border: `1px solid ${isLight ? "rgba(168,85,247,0.15)" : "rgba(168,85,247,0.25)"}`,
-              boxShadow: "0 0 10px rgba(168,85,247,0.05)",
-            }}
-          >
-            <div
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "#a855f7",
-                boxShadow: "0 0 6px #a855f7",
-                animation: "pulse-dot 1.5s ease-in-out infinite",
-              }}
-            />
-            <span
-              style={{
-                fontSize: "9.5px",
-                color: "#a855f7",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-                letterSpacing: "0.06em",
-              }}
-            >
-              PROBING...
-            </span>
-          </div>
-        )}
-        {status === "ok" && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "3px 8px",
-              borderRadius: "12px",
-              background: isLight ? "rgba(16,185,129,0.06)" : "rgba(16,185,129,0.08)",
-              border: `1px solid ${isLight ? "rgba(16,185,129,0.15)" : "rgba(16,185,129,0.25)"}`,
-              boxShadow: "0 0 10px rgba(16,185,129,0.05)",
-            }}
-          >
-            <div
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "#10b981",
-                boxShadow: "0 0 6px #10b981",
-                animation: "pulse-dot 2s ease-in-out infinite",
-              }}
-            />
-            <span
-              style={{
-                fontSize: "9.5px",
-                color: "#10b981",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-                letterSpacing: "0.05em",
-              }}
-            >
-              {successLabel}
-            </span>
-          </div>
-        )}
-        {status === "fail" && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "3px 8px",
-              borderRadius: "12px",
-              background: isLight ? "rgba(245,158,11,0.06)" : "rgba(245,158,11,0.08)",
-              border: `1px solid ${isLight ? "rgba(245,158,11,0.15)" : "rgba(245,158,11,0.25)"}`,
-              boxShadow: "0 0 10px rgba(245,158,11,0.05)",
-            }}
-          >
-            <div
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "#f59e0b",
-                boxShadow: "0 0 6px #f59e0b",
-                animation: "pulse-dot 2s ease-in-out infinite",
-              }}
-            />
-            <span
-              style={{
-                fontSize: "9.5px",
-                color: "#f59e0b",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-                letterSpacing: "0.05em",
-              }}
-            >
-              {failLabel}
-            </span>
-          </div>
-        )}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{
+          width: "5px",
+          height: "5px",
+          borderRadius: "50%",
+          background: dotColor,
+          flexShrink: 0,
+          boxShadow: status !== "checking" ? `0 0 6px ${dotColor}` : "none",
+          animation: status === "checking" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+        }} />
+        <span style={{
+          fontSize: "10px",
+          fontFamily: "'JetBrains Mono', monospace",
+          fontWeight: 600,
+          letterSpacing: "0.06em",
+          color: valueColor,
+        }}>
+          {valueLabel}
+        </span>
       </div>
     </div>
   );
