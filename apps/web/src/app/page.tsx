@@ -135,7 +135,7 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (isTyping) return;
+    if (isTyping || loading) return;
 
     setLoading(true);
     // 1. Dev Bypass Option
@@ -223,7 +223,7 @@ export default function LoginPage() {
                 placeholder="you@institution.edu"
                 autoComplete="email"
                 required
-                disabled={isTyping}
+                disabled={isTyping || loading}
                 className="login-input"
               />
             </div>
@@ -251,7 +251,7 @@ export default function LoginPage() {
                 placeholder="••••••••••••"
                 autoComplete="current-password"
                 required
-                disabled={isTyping}
+                disabled={isTyping || loading}
                 className="login-input login-input--password"
               />
             </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type UIEvent } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
@@ -8,6 +9,13 @@ import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
+
+const EditorPane = dynamic(() => import("./editor-pane"), {
+  ssr: false,
+  loading: () => (
+    <div style={{ flex: 1, background: "#0F0F0F", borderTop: "1px solid #1F1F1F" }} />
+  ),
+});
 
 type Question = {
   id: string;
@@ -419,8 +427,7 @@ export default function ContestPageClient() {
   const [cameraVideoReady, setCameraVideoReady] = useState(false);
   const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processScanInFlightRef = useRef(false);
-  const lastViolationDetailRef = useRef("");
-  const lastViolationAtRef = useRef(0);
+  const activeViolationDetailRef = useRef("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
@@ -972,15 +979,27 @@ export default function ContestPageClient() {
             .join(", ");
           setBlockedApps(result.found.map((f) => prettyName[f.toLowerCase()] ?? f));
           setProctoringOk(false);
-          const now = Date.now();
-          if (
-            detail !== lastViolationDetailRef.current ||
-            now - lastViolationAtRef.current > 30000
-          ) {
-            lastViolationDetailRef.current = detail;
-            lastViolationAtRef.current = now;
+          if (detail !== activeViolationDetailRef.current) {
+            const previousDetail = activeViolationDetailRef.current;
+            if (previousDetail) {
+              sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
+                category: "blocked_app_resolved",
+                detail: previousDetail,
+                telemetry: {
+                  timestamp: new Date().toISOString(),
+                  contest_id: contestId,
+                  session_id: sessionId ?? "unregistered",
+                },
+              });
+              await invoke("log_violation", {
+                kind: "blocked_app_resolved",
+                detail: previousDetail,
+              });
+            }
+
+            activeViolationDetailRef.current = detail;
             sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-              category: "blocked_app",
+              category: "blocked_app_started",
               detail: result.found.join(", "),
               telemetry: {
                 timestamp: new Date().toISOString(),
@@ -989,12 +1008,28 @@ export default function ContestPageClient() {
               },
             });
             await invoke("log_violation", {
-              kind: "blocked_app",
+              kind: "blocked_app_started",
               detail: result.found.join(", "),
             });
           }
         } else {
-          lastViolationDetailRef.current = "";
+          const previousDetail = activeViolationDetailRef.current;
+          if (previousDetail) {
+            activeViolationDetailRef.current = "";
+            sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
+              category: "blocked_app_resolved",
+              detail: previousDetail,
+              telemetry: {
+                timestamp: new Date().toISOString(),
+                contest_id: contestId,
+                session_id: sessionId ?? "unregistered",
+              },
+            });
+            await invoke("log_violation", {
+              kind: "blocked_app_resolved",
+              detail: previousDetail,
+            });
+          }
           setBlockedApps([]);
           setProctoringOk(true);
         }
@@ -1775,55 +1810,16 @@ export default function ContestPageClient() {
             )}
             
             {/* Editor Textarea */}
-            <div style={{ flex: 1, position: "relative", display: "flex", minHeight: 0 }}>
-              <div
-                ref={lineNumberGutterRef}
-                aria-hidden="true"
-                style={{
-                  width: "48px",
-                  padding: "16px 10px",
-                  boxSizing: "border-box",
-                  background: "#0b0b0b",
-                  borderRight: "1px solid #1F1F1F",
-                  color: "#475569",
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  fontSize: "13px",
-                  lineHeight: 1.7,
-                  textAlign: "right",
-                  overflow: "hidden",
-                  userSelect: "none",
-                }}
-              >
-                {lineNumbers.map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-              </div>
-              <textarea
-                aria-label={`${activeTab.toUpperCase()} answer editor with line numbers`}
-                key={`${activeQ}-${activeTab}`}
-                value={currentCode}
-                onChange={(e) => handleCodeChange(e.target.value)}
-                onKeyDown={handleTabKey}
-                onScroll={syncEditorScroll}
-                spellCheck={false}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  height: "100%",
-                  resize: "none",
-                  border: "none",
-                  outline: "2px solid transparent",
-                  background: "#0F0F0F",
-                  color: "#e2e8f0",
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  fontSize: "13px",
-                  lineHeight: 1.7,
-                  padding: "16px 20px",
-                  boxSizing: "border-box",
-                  tabSize: 4,
-                }}
-              />
-            </div>
+            <EditorPane
+              activeQ={activeQ}
+              activeTab={activeTab}
+              currentCode={currentCode}
+              lineNumbers={lineNumbers}
+              lineNumberGutterRef={lineNumberGutterRef}
+              onCodeChange={handleCodeChange}
+              onEditorScroll={syncEditorScroll}
+              onEditorTabKey={handleTabKey}
+            />
           </div>
 
           {/* Bottom Right: Terminal */}

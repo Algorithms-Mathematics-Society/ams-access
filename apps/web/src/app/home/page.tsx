@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, memo } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { invoke, runSessionReadiness, sessionPolicy, type ReadinessReport } from "@ams/api-client";
 import { resolveApiBase } from "@/lib/api-base";
@@ -71,6 +72,14 @@ type SecurityScanSnapshot = {
   env: SecurityEnvironment | null;
   processes: ProcessScanResult | null;
   virt: VirtDetectionResult | null;
+  network: NetworkCheckResult | null;
+};
+
+type FullTelemetry = {
+  platform: PlatformInfo;
+  env: SecurityEnvironment;
+  processes: ProcessScanResult;
+  virt: VirtDetectionResult;
   network: NetworkCheckResult | null;
 };
 
@@ -387,6 +396,8 @@ export default function HomePage() {
   const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
   const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
+  const inviteCodeInFlightRef = useRef(false);
+  const resumeInFlightRef = useRef(false);
 
   // Load theme from localStorage on mount - Locked strictly to Obsidian Dark by system policy
   useEffect(() => {
@@ -557,10 +568,12 @@ export default function HomePage() {
   }, []);
 
   async function handleInviteCodeSubmit() {
-    if (inviteCodeBusy) return;
+    if (inviteCodeBusy || inviteCodeInFlightRef.current) return;
+    inviteCodeInFlightRef.current = true;
     const code = inviteCode.trim();
     setInviteCodeStatus(null);
     if (!code) {
+      inviteCodeInFlightRef.current = false;
       setInviteCodeStatus("Enter a session or invite code.");
       return;
     }
@@ -628,13 +641,17 @@ export default function HomePage() {
     } catch {
       setInviteCodeStatus("Code validation unavailable.");
     } finally {
+      inviteCodeInFlightRef.current = false;
       setInviteCodeBusy(false);
     }
   }
 
   async function handleResumeActiveSession() {
     setResumeStatus(null);
+    if (resumeBusy || resumeInFlightRef.current) return;
+    resumeInFlightRef.current = true;
     if (!activeSession?.id || !activeSession.contest_id) {
+      resumeInFlightRef.current = false;
       setResumeStatus("No active session found on this device.");
       return;
     }
@@ -658,6 +675,7 @@ export default function HomePage() {
     } catch {
       setResumeStatus("Active session validation unavailable.");
     } finally {
+      resumeInFlightRef.current = false;
       setResumeBusy(false);
     }
   }
@@ -1816,14 +1834,17 @@ function SessionActionsPanel({
           >
             Session Code
           </label>
-          <div style={{ display: "flex", gap: "10px" }}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!inviteCodeBusy) onInviteCodeSubmit();
+            }}
+            style={{ display: "flex", gap: "10px" }}
+          >
             <input
               id="session-code"
               value={inviteCode}
               onChange={(e) => onInviteCodeChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !inviteCodeBusy) onInviteCodeSubmit();
-              }}
               disabled={inviteCodeBusy}
               placeholder="Enter invite code"
               style={{
@@ -1844,7 +1865,7 @@ function SessionActionsPanel({
               }}
             />
             <button
-              onClick={onInviteCodeSubmit}
+              type="submit"
               disabled={inviteCodeBusy}
               style={{
                 minWidth: "96px",
@@ -1861,7 +1882,7 @@ function SessionActionsPanel({
             >
               {inviteCodeBusy ? "Checking..." : "Validate"}
             </button>
-          </div>
+          </form>
           {inviteSuccessMsg && (
             <p
               style={{
@@ -2631,24 +2652,16 @@ function SettingsPanel({
 
     setSecurityBusy(true);
     try {
-      const [platform, env, processes, virt, network] = await Promise.all([
-        withUiTimeout(invoke<PlatformInfo>("get_platform"), READINESS_TIMEOUT_MS.platform),
-        withUiTimeout(
-          invoke<SecurityEnvironment>("get_security_environment"),
-          READINESS_TIMEOUT_MS.platform
-        ),
-        withUiTimeout(invoke<ProcessScanResult>("scan_processes"), READINESS_TIMEOUT_MS.process),
-        withUiTimeout(
-          invoke<VirtDetectionResult>("detect_virtualization"),
-          READINESS_TIMEOUT_MS.virtualization
-        ),
-        withUiTimeout(
-          invoke<NetworkCheckResult>("check_network_stability", {
-            host: getNetworkProbeHost(),
-          }),
-          READINESS_TIMEOUT_MS.network
-        ),
-      ]);
+      const telemetry = await withUiTimeout(
+        invoke<FullTelemetry>("get_full_telemetry", { networkHost: getNetworkProbeHost() }),
+        READINESS_TIMEOUT_MS.platform + READINESS_TIMEOUT_MS.process + READINESS_TIMEOUT_MS.network
+      );
+
+      const platform = telemetry?.platform ?? null;
+      const env = telemetry?.env ?? null;
+      const processes = telemetry?.processes ?? null;
+      const virt = telemetry?.virt ?? null;
+      const network = telemetry?.network ?? null;
 
       cachedSecurityScan = { platform, env, processes, virt, network };
       setPlatformInfo(platform);
@@ -3984,24 +3997,19 @@ function DiagnosticsPanel({ readiness, theme }: { readiness: any; theme: "dark" 
   const c = getThemeColors(theme);
 
   useEffect(() => {
-    invoke<PlatformInfo>("get_platform")
-      .then(setPlatformInfo)
-      .catch(() => {});
-    invoke<SecurityEnvironment>("get_security_environment")
-      .then(setSecurityEnv)
-      .catch(() => {});
     void runNetworkScan();
   }, []);
 
   async function runNetworkScan() {
     setCheckingNetwork(true);
     try {
-      const result = await withUiTimeout(
-        invoke<NetworkCheckResult>("check_network_stability", {
-          host: getNetworkProbeHost(),
-        }),
-        READINESS_TIMEOUT_MS.network
+      const telemetry = await withUiTimeout(
+        invoke<FullTelemetry>("get_full_telemetry", { networkHost: getNetworkProbeHost() }),
+        READINESS_TIMEOUT_MS.platform + READINESS_TIMEOUT_MS.process + READINESS_TIMEOUT_MS.network
       );
+      const result = telemetry?.network ?? null;
+      setPlatformInfo(telemetry?.platform ?? null);
+      setSecurityEnv(telemetry?.env ?? null);
       if (!result) {
         setLatency(null);
         setJitter(null);
@@ -4510,15 +4518,14 @@ function SessionReadinessModal({
     setIsRescanning(false);
   }
 
-  function handleProceed() {
-    if (!canProceed) return;
-    if (sessionType === "new") {
-      router.push(`/session/onboarding?contestId=${contestId}`);
-    } else {
-      router.push(`/session/contest?contestId=${contestId}`);
-    }
-    onClose();
-  }
+  const proceedHref =
+    sessionType === "new"
+      ? `/session/onboarding?contestId=${contestId}`
+      : `/session/contest?contestId=${contestId}`;
+
+  useEffect(() => {
+    router.prefetch(proceedHref);
+  }, [proceedHref, router]);
 
   // Radial stroke calculations for SVGs
   const radius = 50;
@@ -4784,28 +4791,57 @@ function SessionReadinessModal({
               marginTop: "8px",
             }}
           >
-            <button
-              onClick={handleProceed}
-              disabled={!canProceed}
-              style={{
-                flex: "1 1 180px",
-                minWidth: "180px",
-                height: "42px",
-                borderRadius: "2px",
-                border: canProceed ? `1px solid ${c.dot}` : `1px solid ${c.border}`,
-                background: c.innerBg,
-                color: canProceed ? c.dot : c.textMuted,
-                fontSize: "11px",
-                fontWeight: 700,
-                fontFamily: "'JetBrains Mono', monospace",
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                cursor: canProceed ? "pointer" : "not-allowed",
-                transition: "all 150ms ease",
-              }}
-            >
-              {scanStatus === "scanning" ? "PROBING..." : "PROCEED TO SESSION"}
-            </button>
+            {canProceed ? (
+              <Link
+                href={proceedHref}
+                prefetch
+                onClick={onClose}
+                style={{
+                  flex: "1 1 180px",
+                  minWidth: "180px",
+                  height: "42px",
+                  borderRadius: "2px",
+                  border: `1px solid ${c.dot}`,
+                  background: c.innerBg,
+                  color: c.dot,
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  transition: "all 150ms ease",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textDecoration: "none",
+                }}
+              >
+                PROCEED TO SESSION
+              </Link>
+            ) : (
+              <button
+                disabled
+                style={{
+                  flex: "1 1 180px",
+                  minWidth: "180px",
+                  height: "42px",
+                  borderRadius: "2px",
+                  border: `1px solid ${c.border}`,
+                  background: c.innerBg,
+                  color: c.textMuted,
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  cursor: "not-allowed",
+                  transition: "all 150ms ease",
+                }}
+              >
+                {scanStatus === "scanning" ? "PROBING..." : "PROCEED TO SESSION"}
+              </button>
+            )}
             {shouldShowFixIssues && (
               <button
                 onClick={onSettingsRedirect}

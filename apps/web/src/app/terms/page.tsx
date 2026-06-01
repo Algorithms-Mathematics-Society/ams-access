@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { LegalList, LegalPage, P } from "../legal-page";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "Terms of Service · AMS Access",
   description: "Terms for using the AMS Access secure exam shell.",

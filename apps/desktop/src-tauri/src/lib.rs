@@ -348,6 +348,46 @@ fn get_security_environment() -> SecurityEnvironment {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct PlatformInfo {
+    pub os: String,
+    pub arch: String,
+    pub family: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FullTelemetry {
+    pub platform: PlatformInfo,
+    pub env: SecurityEnvironment,
+    pub processes: ProcessScanResult,
+    pub virt: VirtDetectionResult,
+    pub network: Option<NetworkCheckResult>,
+}
+
+#[tauri::command]
+async fn get_full_telemetry(network_host: Option<String>) -> FullTelemetry {
+    let platform = PlatformInfo {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        family: std::env::consts::FAMILY.to_string(),
+    };
+    let env = get_security_environment();
+    let processes = scan_processes();
+    let virt = detect_virtualization();
+    let network = match network_host.filter(|host| !host.trim().is_empty()) {
+        Some(host) => Some(check_network_stability(host).await),
+        None => None,
+    };
+
+    FullTelemetry {
+        platform,
+        env,
+        processes,
+        virt,
+        network,
+    }
+}
+
 /// Full exam lockdown — always-on-top + keyboard intercept + sleep prevention.
 #[tauri::command]
 async fn lock_desktop(app: tauri::AppHandle) -> bool {
@@ -539,6 +579,7 @@ pub fn run() {
             get_violation_log,
             log_violation,
             check_network_stability,
+            get_full_telemetry,
             get_platform,
             get_security_environment,
             save_face_image,

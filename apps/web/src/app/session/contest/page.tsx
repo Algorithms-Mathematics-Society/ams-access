@@ -1,5 +1,9 @@
 import { Suspense } from "react";
-import ContestPageClient from "./client";
+import dynamic from "next/dynamic";
+
+const ContestPageClient = dynamic(() => import("./client"), {
+  loading: () => null,
+});
 
 export default function ContestPage() {
   return (
