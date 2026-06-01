@@ -1643,7 +1643,13 @@ const ActiveContestCard = memo(
                 }}
               />
               <span style={{ color: canEnter ? "#10b981" : themeColors.textMuted }}>
-                {canEnter ? "Active Now" : "Session Ended"}
+                {c.status === "ACTIVE"
+                  ? "Active Now"
+                  : c.status === "DRAFT"
+                    ? "Draft (Not Open)"
+                    : c.status === "SCHEDULED"
+                      ? "Scheduled"
+                      : "Session Ended"}
               </span>
             </div>
 
@@ -1726,7 +1732,7 @@ const ActiveContestCard = memo(
                 fontFamily: "'JetBrains Mono', monospace",
               }}
             >
-              CLOSED
+              {c.status === "DRAFT" ? "DRAFT" : c.status === "SCHEDULED" ? "SCHEDULED" : "CLOSED"}
             </span>
           )}
         </div>
