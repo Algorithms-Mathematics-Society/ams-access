@@ -1622,59 +1622,57 @@ const ActiveContestCard = memo(
               </span>
             </div>
 
-            <div
-              style={{
-                width: "4px",
-                height: "4px",
-                borderRadius: "50%",
-                background: themeColors.borderStrong,
-              }}
-            />
+            {c.status !== "DRAFT" && c.status !== "SCHEDULED" && (
+              <>
+                <div
+                  style={{
+                    width: "4px",
+                    height: "4px",
+                    borderRadius: "50%",
+                    background: themeColors.borderStrong,
+                  }}
+                />
 
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "6px",
-                  height: "6px",
-                  borderRadius: "50%",
-                  background: col.dot,
-                  boxShadow: canEnter ? `0 0 8px ${col.dot}` : "none",
-                  animation: canEnter ? "pulse-dot 1.5s ease-in-out infinite" : "none",
-                }}
-              />
-              <span style={{ color: canEnter ? "#10b981" : themeColors.textMuted }}>
-                {c.status === "ACTIVE"
-                  ? "Active Now"
-                  : c.status === "DRAFT"
-                    ? "Draft (Not Open)"
-                    : c.status === "SCHEDULED"
-                      ? "Scheduled"
-                      : "Session Ended"}
-              </span>
-            </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <div
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: col.dot,
+                      boxShadow: canEnter ? `0 0 8px ${col.dot}` : "none",
+                      animation: canEnter ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+                    }}
+                  />
+                  <span style={{ color: canEnter ? "#10b981" : themeColors.textMuted }}>
+                    {c.status === "ACTIVE" ? "Active Now" : "Session Ended"}
+                  </span>
+                </div>
 
-            <div
-              style={{
-                width: "4px",
-                height: "4px",
-                borderRadius: "50%",
-                background: themeColors.borderStrong,
-              }}
-            />
+                <div
+                  style={{
+                    width: "4px",
+                    height: "4px",
+                    borderRadius: "50%",
+                    background: themeColors.borderStrong,
+                  }}
+                />
 
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
-                <path d="M3 5h10M3 8h10M3 11h7" strokeLinecap="round" />
-              </svg>
-              <span>{c.question_count} Questions</span>
-            </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path d="M3 5h10M3 8h10M3 11h7" strokeLinecap="round" />
+                  </svg>
+                  <span>{c.question_count} Questions</span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Right Side: CTA Button or status info */}
@@ -2159,13 +2157,9 @@ function ContestsPanel({
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         {contests.map((c) => {
-          if (c.status === "SCHEDULED") {
-            return (
-              <ScheduledContestCard key={c.id} c={c} onPreflight={onPreflight} theme={theme} />
-            );
-          }
           const col = statusColor(c.status);
-          const canEnter = c.status === "ACTIVE";
+          const canEnter =
+            c.status === "ACTIVE" || c.status === "DRAFT" || c.status === "SCHEDULED";
           return (
             <ActiveContestCard
               key={c.id}
