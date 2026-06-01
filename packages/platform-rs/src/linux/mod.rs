@@ -217,12 +217,44 @@ fn delete_backup() {
 }
 
 /// Call on app startup — restores GSettings if a previous run crashed without cleanup.
+/// Call on app startup — restores GSettings or KDE configs if a previous run crashed without cleanup.
 pub fn recover_keyboard_if_crashed() {
     if let Some(backup) = read_backup() {
+        let mut has_kde = false;
         for (map_key, original) in &backup {
-            if let Some((schema, key)) = map_key.split_once('/') {
-                gsettings_set(schema, key, original);
+            if map_key.starts_with("gnome/") {
+                if let Some(path) = map_key.strip_prefix("gnome/") {
+                    if let Some((schema, key)) = path.split_once('/') {
+                        gsettings_set(schema, key, original);
+                    }
+                }
+            } else if map_key.starts_with("kde/") {
+                if let Some(path) = map_key.strip_prefix("kde/") {
+                    if let Some((group, key)) = path.split_once('/') {
+                        kwriteconfig_set(group, key, original);
+                        has_kde = true;
+                    }
+                }
+            } else if map_key == "kde_meta" {
+                let _ = std::process::Command::new("kwriteconfig5")
+                    .args([
+                        "--file",
+                        "kwinrc",
+                        "--group",
+                        "ModifierOnlyShortcuts",
+                        "--key",
+                        "Meta",
+                        original,
+                    ])
+                    .status();
+                has_kde = true;
             }
+        }
+        if has_kde {
+            kde_reconfigure();
+            let _ = std::process::Command::new("qdbus")
+                .args(["org.kde.KWin", "/KWin", "reconfigure"])
+                .status();
         }
         delete_backup();
     }
@@ -350,6 +382,21 @@ const GNOME_SHORTCUTS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+const KDE_SHORTCUTS: &[(&str, &str, &str)] = &[
+    // Group, Key, Disable Value
+    ("kwin", "Walk Through Windows", "none"),
+    ("kwin", "Walk Through Windows (Reverse)", "none"),
+    ("kwin", "Walk Through Windows Alternative", "none"),
+    ("kwin", "Walk Through Windows Alternative (Reverse)", "none"),
+    ("kwin", "ShowDesktopGrid", "none"),
+    ("kwin", "Expose", "none"),
+    ("kwin", "ExposeAll", "none"),
+    ("kwin", "ExposeClass", "none"),
+    ("kwin", "Overview", "none"),
+    ("org.kde.plasmashell", "manage activities", "none"),
+    ("org.kde.plasmashell", "next activity", "none"),
+];
+
 fn gsettings_get(schema: &str, key: &str) -> Option<String> {
     let out = std::process::Command::new("gsettings")
         .args(["get", schema, key])
@@ -366,35 +413,78 @@ fn gsettings_set(schema: &str, key: &str, value: &str) {
     if gsettings_get(schema, key).is_none() {
         return;
     }
-
     let _ = std::process::Command::new("gsettings")
         .args(["set", schema, key, value])
         .stderr(std::process::Stdio::null())
         .status();
 }
 
-/// Disable GNOME compositor shortcuts (Super, Alt+Tab, Alt+F4, etc.)
-/// by saving current values then setting each to empty/disabled.
+fn kreadconfig_get(group: &str, key: &str) -> Option<String> {
+    let out = std::process::Command::new("kreadconfig5")
+        .args([
+            "--file",
+            "kglobalshortcutsrc",
+            "--group",
+            group,
+            "--key",
+            key,
+        ])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if val.is_empty() {
+            None
+        } else {
+            Some(val)
+        }
+    } else {
+        None
+    }
+}
+
+fn kwriteconfig_set(group: &str, key: &str, value: &str) {
+    let _ = std::process::Command::new("kwriteconfig5")
+        .args([
+            "--file",
+            "kglobalshortcutsrc",
+            "--group",
+            group,
+            "--key",
+            key,
+            value,
+        ])
+        .status();
+}
+
+fn kde_reconfigure() {
+    let _ = std::process::Command::new("qdbus")
+        .args([
+            "org.kde.kglobalaccel",
+            "/kglobalaccel",
+            "org.kde.KGlobalAccel.reconfigure",
+        ])
+        .status();
+}
+
+/// Disable GNOME and KDE compositor shortcuts (Super, Alt+Tab, Alt+F4, launcher, etc.)
+#[allow(clippy::map_entry)]
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-    // XDG_CURRENT_DESKTOP is the canonical variable. On Ubuntu both
-    // XDG_SESSION_DESKTOP and GDMSESSION are "ubuntu", not "gnome", so we
-    // must check XDG_CURRENT_DESKTOP first (Ubuntu sets it to "ubuntu:GNOME").
     let desktop = std::env::var("XDG_CURRENT_DESKTOP")
         .or_else(|_| std::env::var("XDG_SESSION_DESKTOP"))
         .or_else(|_| std::env::var("GDMSESSION"))
         .unwrap_or_default()
         .to_lowercase();
     let is_gnome = desktop.contains("gnome") || desktop.contains("ubuntu");
+    let is_kde = desktop.contains("kde") || desktop.contains("plasma");
 
     if is_gnome {
         let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
-
         let all_settings = GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter());
 
         for &(schema, key, disable_val) in all_settings {
-            let map_key = format!("{schema}/{key}");
-            // Only save once (idempotent re-enable calls)
+            let map_key = format!("gnome/{schema}/{key}");
             if !saved.contains_key(&map_key) {
                 if let Some(current) = gsettings_get(schema, key) {
                     saved.insert(map_key.clone(), current);
@@ -415,11 +505,62 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             method: method.to_string(),
             platform: "linux".to_string(),
         };
-    }
+    } else if is_kde {
+        let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
 
-    #[cfg(feature = "linux-x11")]
-    {
-        // X11 XGrabKeyboard would go here for non-GNOME X11 setups
+        for &(group, key, disable_val) in KDE_SHORTCUTS {
+            let map_key = format!("kde/{group}/{key}");
+            if !saved.contains_key(&map_key) {
+                if let Some(current) = kreadconfig_get(group, key) {
+                    saved.insert(map_key.clone(), current);
+                }
+            }
+            kwriteconfig_set(group, key, disable_val);
+        }
+
+        let meta_key = "kde_meta".to_string();
+        if !saved.contains_key(&meta_key) {
+            let current = std::process::Command::new("kreadconfig5")
+                .args([
+                    "--file",
+                    "kwinrc",
+                    "--group",
+                    "ModifierOnlyShortcuts",
+                    "--key",
+                    "Meta",
+                ])
+                .output()
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .unwrap_or_default();
+            if !current.is_empty() {
+                saved.insert(meta_key, current);
+            }
+        }
+        let _ = std::process::Command::new("kwriteconfig5")
+            .args([
+                "--file",
+                "kwinrc",
+                "--group",
+                "ModifierOnlyShortcuts",
+                "--key",
+                "Meta",
+                "none",
+            ])
+            .status();
+
+        write_backup(&saved);
+
+        kde_reconfigure();
+        let _ = std::process::Command::new("qdbus")
+            .args(["org.kde.KWin", "/KWin", "reconfigure"])
+            .status();
+
+        return KeyboardInterceptResult {
+            active: true,
+            method: "kwriteconfig/kde".to_string(),
+            platform: "linux".to_string(),
+        };
     }
 
     KeyboardInterceptResult {
@@ -429,7 +570,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     }
 }
 
-/// Restore all GNOME keybindings to their pre-exam values.
+/// Restore all DE keybindings to their pre-exam values.
 pub fn lock_desktop() -> bool {
     enable_keyboard_intercept().active
 }
@@ -441,26 +582,94 @@ pub fn unlock_desktop() {
 pub fn disable_keyboard_intercept() {
     let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
 
-    // If in-memory map is empty (e.g. called after crash+relaunch), fall back to disk backup.
     if saved.is_empty() {
         if let Some(backup) = read_backup() {
+            let mut has_kde = false;
             for (map_key, original) in &backup {
-                if let Some((schema, key)) = map_key.split_once('/') {
-                    gsettings_set(schema, key, original);
+                if map_key.starts_with("gnome/") {
+                    if let Some(path) = map_key.strip_prefix("gnome/") {
+                        if let Some((schema, key)) = path.split_once('/') {
+                            gsettings_set(schema, key, original);
+                        }
+                    }
+                } else if map_key.starts_with("kde/") {
+                    if let Some(path) = map_key.strip_prefix("kde/") {
+                        if let Some((group, key)) = path.split_once('/') {
+                            kwriteconfig_set(group, key, original);
+                            has_kde = true;
+                        }
+                    }
+                } else if map_key == "kde_meta" {
+                    let _ = std::process::Command::new("kwriteconfig5")
+                        .args([
+                            "--file",
+                            "kwinrc",
+                            "--group",
+                            "ModifierOnlyShortcuts",
+                            "--key",
+                            "Meta",
+                            original,
+                        ])
+                        .status();
+                    has_kde = true;
                 }
+            }
+            if has_kde {
+                kde_reconfigure();
+                let _ = std::process::Command::new("qdbus")
+                    .args(["org.kde.KWin", "/KWin", "reconfigure"])
+                    .status();
             }
         }
         delete_backup();
         return;
     }
 
-    let all_settings = GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter());
-    for &(schema, key, _) in all_settings {
-        let map_key = format!("{schema}/{key}");
-        if let Some(original) = saved.remove(&map_key) {
-            gsettings_set(schema, key, &original);
+    let mut has_kde = false;
+    let keys: Vec<String> = saved.keys().cloned().collect();
+    for map_key in keys {
+        if map_key.starts_with("gnome/") {
+            if let Some(original) = saved.remove(&map_key) {
+                if let Some(path) = map_key.strip_prefix("gnome/") {
+                    if let Some((schema, key)) = path.split_once('/') {
+                        gsettings_set(schema, key, &original);
+                    }
+                }
+            }
+        } else if map_key.starts_with("kde/") {
+            if let Some(original) = saved.remove(&map_key) {
+                if let Some(path) = map_key.strip_prefix("kde/") {
+                    if let Some((group, key)) = path.split_once('/') {
+                        kwriteconfig_set(group, key, &original);
+                        has_kde = true;
+                    }
+                }
+            }
+        } else if map_key == "kde_meta" {
+            if let Some(original) = saved.remove("kde_meta") {
+                let _ = std::process::Command::new("kwriteconfig5")
+                    .args([
+                        "--file",
+                        "kwinrc",
+                        "--group",
+                        "ModifierOnlyShortcuts",
+                        "--key",
+                        "Meta",
+                        &original,
+                    ])
+                    .status();
+                has_kde = true;
+            }
         }
     }
+
+    if has_kde {
+        kde_reconfigure();
+        let _ = std::process::Command::new("qdbus")
+            .args(["org.kde.KWin", "/KWin", "reconfigure"])
+            .status();
+    }
+
     delete_backup();
 }
 

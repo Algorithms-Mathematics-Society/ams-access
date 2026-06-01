@@ -471,6 +471,26 @@ async fn save_face_image(image_data: String, index: u8) -> Result<String, String
 
 // ── App entry point ───────────────────────────────────────────────────────────
 
+#[cfg(unix)]
+mod unix_signal {
+    use std::os::raw::c_int;
+    extern "C" {
+        pub fn signal(sig: c_int, handler: usize) -> usize;
+    }
+    pub const SIGINT: c_int = 2;
+    pub const SIGTERM: c_int = 15;
+    pub const SIGQUIT: c_int = 3;
+    pub const SIGHUP: c_int = 1;
+}
+
+#[cfg(unix)]
+extern "C" fn handle_sigterm(_sig: std::os::raw::c_int) {
+    eprintln!("AMS Access intercepted termination signal; restoring keyboard shortcuts...");
+    #[cfg(target_os = "linux")]
+    platform_rs::linux::disable_keyboard_intercept();
+    std::process::exit(0);
+}
+
 pub fn run() {
     // The GUI must run inside the user's desktop session for WebKit camera,
     // microphone, DBus, and portal permissions to work correctly. Network
@@ -478,6 +498,13 @@ pub fn run() {
     // its command path if the process cannot modify firewall rules.
     #[cfg(unix)]
     {
+        unsafe {
+            unix_signal::signal(unix_signal::SIGINT, handle_sigterm as usize);
+            unix_signal::signal(unix_signal::SIGTERM, handle_sigterm as usize);
+            unix_signal::signal(unix_signal::SIGQUIT, handle_sigterm as usize);
+            unix_signal::signal(unix_signal::SIGHUP, handle_sigterm as usize);
+        }
+
         let uid_out = std::process::Command::new("id").arg("-u").output();
         if let Ok(out) = uid_out {
             let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
