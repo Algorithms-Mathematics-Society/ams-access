@@ -2,14 +2,19 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { resolveApiBase } from "@/lib/api-base";
 
 // ─── Constants ────────────────────────────────────────────────
-const TEST_EMAIL    = "tester@ams.local";
+const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
 
 // ─── Log entry shape ──────────────────────────────────────────
 type LogLevel = "ERR" | "INF" | "OK";
-interface LogEntry { ts: string; level: LogLevel; msg: string; }
+interface LogEntry {
+  ts: string;
+  level: LogLevel;
+  msg: string;
+}
 
 function nowTs() {
   return new Date().toISOString().slice(11, 23);
@@ -30,11 +35,17 @@ function SyslogPane({ entries }: { entries: LogEntry[] }) {
       {entries.slice(-4).map((e, i) => (
         <div key={i} className="syslog-entry">
           <span className="syslog-ts">{e.ts}</span>
-          <span className={
-            e.level === "ERR" ? "syslog-level-err"
-            : e.level === "OK"  ? "syslog-level-ok"
-            : "syslog-level-info"
-          }>[{e.level}]</span>
+          <span
+            className={
+              e.level === "ERR"
+                ? "syslog-level-err"
+                : e.level === "OK"
+                  ? "syslog-level-ok"
+                  : "syslog-level-info"
+            }
+          >
+            [{e.level}]
+          </span>
           <span className="syslog-msg">{e.msg}</span>
         </div>
       ))}
@@ -47,17 +58,17 @@ function SyslogPane({ entries }: { entries: LogEntry[] }) {
 export default function LoginPage() {
   const router = useRouter();
 
-  const [email,           setEmail]          = useState("");
-  const [password,        setPassword]       = useState("");
-  const [emailFocused,    setEmailFocused]   = useState(false);
-  const [passwordFocused, setPasswordFocused]= useState(false);
-  const [loading,         setLoading]        = useState(false);
-  const [isTyping,        setIsTyping]       = useState(false);
-  const [showSSOModal,    setShowSSOModal]   = useState(false);
-  const [logs,            setLogs]           = useState<LogEntry[]>([]);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
+  const [showSSOModal, setShowSSOModal] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
 
   const addLog = useCallback((level: LogLevel, msg: string) => {
-    setLogs(prev => [...prev, { ts: nowTs(), level, msg }]);
+    setLogs((prev) => [...prev, { ts: nowTs(), level, msg }]);
   }, []);
 
   useEffect(() => {
@@ -68,7 +79,11 @@ export default function LoginPage() {
   // Cancel autofill on any real keypress
   useEffect(() => {
     if (!isTyping) return;
-    const abort = () => { setIsTyping(false); setEmail(TEST_EMAIL); setPassword(TEST_PASSWORD); };
+    const abort = () => {
+      setIsTyping(false);
+      setEmail(TEST_EMAIL);
+      setPassword(TEST_PASSWORD);
+    };
     window.addEventListener("keydown", abort);
     return () => window.removeEventListener("keydown", abort);
   }, [isTyping]);
@@ -82,25 +97,33 @@ export default function LoginPage() {
     addLog("INF", "AUTOFILL_INIT  injecting secure access token...");
 
     const CHAR_MS = 55;
-    let lastTime  = 0;
-    let emailIdx  = 0;
-    let passIdx   = 0;
+    let lastTime = 0;
+    let emailIdx = 0;
+    let passIdx = 0;
     let phase: "email" | "pass" = "email";
 
     const tick = (now: number) => {
-      if (now - lastTime < CHAR_MS) { requestAnimationFrame(tick); return; }
+      if (now - lastTime < CHAR_MS) {
+        requestAnimationFrame(tick);
+        return;
+      }
       lastTime = now;
 
       if (phase === "email") {
         emailIdx++;
         setEmail(TEST_EMAIL.slice(0, emailIdx));
-        if (emailIdx < TEST_EMAIL.length) { requestAnimationFrame(tick); }
-        else { phase = "pass"; requestAnimationFrame(tick); }
+        if (emailIdx < TEST_EMAIL.length) {
+          requestAnimationFrame(tick);
+        } else {
+          phase = "pass";
+          requestAnimationFrame(tick);
+        }
       } else {
         passIdx++;
         setPassword(TEST_PASSWORD.slice(0, passIdx));
-        if (passIdx < TEST_PASSWORD.length) { requestAnimationFrame(tick); }
-        else {
+        if (passIdx < TEST_PASSWORD.length) {
+          requestAnimationFrame(tick);
+        } else {
           setIsTyping(false);
           addLog("OK", "AUTOFILL_DONE  credentials_injected");
         }
@@ -110,17 +133,47 @@ export default function LoginPage() {
     requestAnimationFrame(tick);
   }, [isTyping, loading, addLog]);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (isTyping) return;
 
+    setLoading(true);
+    // 1. Dev Bypass Option
     if (email === TEST_EMAIL && password === TEST_PASSWORD) {
-      setLoading(true);
+      addLog("OK", "AUTH_SUCCESS  (DEV_BYPASS) routing_to=/home");
+      localStorage.setItem("ams_user_email", email);
+      setTimeout(() => router.push("/home"), 850);
+      return;
+    }
+
+    // 2. Real Candidate Authentication against Firebase via Go API
+    addLog("INF", `AUTH_ATTEMPT  email=${email || "<empty>"}`);
+    try {
+      const apiUrl = resolveApiBase();
+      const res = await fetch(`${apiUrl}/students/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        let errData: any = {};
+        try {
+          errData = await res.json();
+        } catch {}
+        addLog("ERR", `INVALID_CREDENTIALS  reason=${errData.error || "Authentication failed."}`);
+        setLoading(false);
+        return;
+      }
+
       addLog("OK", "AUTH_SUCCESS  routing_to=/home");
       localStorage.setItem("ams_user_email", email);
       setTimeout(() => router.push("/home"), 850);
-    } else {
-      addLog("ERR", `INVALID_CREDENTIALS  email=${email || "<empty>"}`);
+    } catch (err) {
+      addLog("ERR", `API_UNREACHABLE  error=${err instanceof Error ? err.message : String(err)}`);
+      setLoading(false);
     }
   }
 
@@ -154,13 +207,17 @@ export default function LoginPage() {
                 className={`login-label text-micro-label${emailFocused ? " is-focused" : ""}`}
               >
                 Email Address
-                {emailFocused && <span className="login-label-cursor" style={{ left: "120px" }}>▎</span>}
+                {emailFocused && (
+                  <span className="login-label-cursor" style={{ left: "120px" }}>
+                    ▎
+                  </span>
+                )}
               </label>
               <input
                 id="login-email"
                 type="email"
                 value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={(e) => setEmail(e.target.value)}
                 onFocus={() => setEmailFocused(true)}
                 onBlur={() => setEmailFocused(false)}
                 placeholder="you@institution.edu"
@@ -178,13 +235,17 @@ export default function LoginPage() {
                 className={`login-label text-micro-label${passwordFocused ? " is-focused" : ""}`}
               >
                 Password
-                {passwordFocused && <span className="login-label-cursor" style={{ left: "85px" }}>▎</span>}
+                {passwordFocused && (
+                  <span className="login-label-cursor" style={{ left: "85px" }}>
+                    ▎
+                  </span>
+                )}
               </label>
               <input
                 id="login-password"
                 type="password"
                 value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={(e) => setPassword(e.target.value)}
                 onFocus={() => setPasswordFocused(true)}
                 onBlur={() => setPasswordFocused(false)}
                 placeholder="••••••••••••"
@@ -242,7 +303,14 @@ export default function LoginPage() {
           >
             <div className="sso-modal">
               <div className="sso-modal-icon-wrap">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                >
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
               </div>
@@ -276,7 +344,16 @@ export default function LoginPage() {
 function ContinueButton({ loading, isTyping }: { loading: boolean; isTyping: boolean }) {
   return (
     <button type="submit" disabled={loading || isTyping} className="continue-btn">
-      {loading ? (<><Spinner />Verifying secure link...</>) : isTyping ? "Syncing credentials..." : "Continue"}
+      {loading ? (
+        <>
+          <Spinner />
+          Verifying secure link...
+        </>
+      ) : isTyping ? (
+        "Syncing credentials..."
+      ) : (
+        "Continue"
+      )}
     </button>
   );
 }
@@ -285,7 +362,12 @@ function Spinner() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="login-spinner">
       <circle cx="7" cy="7" r="5.5" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5" />
-      <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M7 1.5A5.5 5.5 0 0 1 12.5 7"
+        stroke="#a855f7"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
