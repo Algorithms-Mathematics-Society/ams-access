@@ -1,11 +1,13 @@
 "use client";
 
-import { memo, useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { memo, useState, useEffect, useRef, useCallback, useMemo, type UIEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
+import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
+import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 const API_URL = resolveApiBase();
-const ACTIVE_SESSION_KEY = "ams_active_session";
+const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
 
 type Question = {
   id: string;
@@ -121,9 +123,7 @@ function normalizeQuestions(payload: unknown): Question[] {
 
 async function fetchJsonOrNull(url: string): Promise<unknown | null> {
   try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    return await response.json();
+    return await fetchJson<unknown>(url, {}, { dedupeKey: url, retries: 2 });
   } catch {
     return null;
   }
@@ -144,6 +144,36 @@ async function fetchContestQuestions(contestId: string): Promise<Question[]> {
   return [];
 }
 
+async function createContestSession(contestId: string, contestTitle?: string) {
+  const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "candidate@ams.local";
+  const response = await fetchJson<{ id?: string }>(
+    `${API_URL}/sessions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contest_id: contestId,
+        candidate_email: email,
+        candidate_name: email.split("@")[0],
+      }),
+    },
+    { dedupeKey: `session:create:${contestId}:${email}`, retries: 2 }
+  );
+
+  if (response.id) {
+    localStorage.setItem(
+      ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        id: response.id,
+        contest_id: contestId,
+        contest_title: contestTitle,
+        updated_at: new Date().toISOString(),
+      })
+    );
+  }
+
+  return response;
+}
 declare global {
   interface Window {
     __TAURI__?: {
@@ -203,6 +233,60 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
       .catch(reject)
       .finally(() => clearTimeout(timer));
   });
+}
+
+function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void) {
+  const ref = useRef<T>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const rootEl = ref.current;
+    if (!rootEl) return;
+    const trappedRoot: T = rootEl;
+
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const selector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
+    );
+    (focusable[0] ?? trappedRoot).focus({ preventScroll: true });
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && onEscape) {
+        event.preventDefault();
+        onEscape();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const currentFocusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
+        (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
+      );
+      if (currentFocusable.length === 0) {
+        event.preventDefault();
+        trappedRoot.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = currentFocusable[0];
+      const last = currentFocusable[currentFocusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [active, onEscape]);
+
+  return ref;
 }
 
 function isVideoRendering(video: HTMLVideoElement): boolean {
@@ -321,11 +405,14 @@ export default function ContestPageClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
   const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const lineNumberGutterRef = useRef<HTMLDivElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -350,6 +437,7 @@ export default function ContestPageClient() {
   const [faceGraceActive, setFaceGraceActive] = useState(false);
 
   const [softBlockActive, setSoftBlockActive] = useState(false);
+  const prevCameraStatusRef = useRef<{ cameraOk: boolean; blockedCount: number } | null>(null);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
   const [hasToggledMedia, setHasToggledMedia] = useState(false);
@@ -468,14 +556,10 @@ export default function ContestPageClient() {
   async function handleSendSupportReport() {
     setIsSendingReport(true);
     try {
-      await fetch(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category: supportCategory,
-          detail: supportCategory === "other" ? customIssueDetail : "",
-          telemetry: supportTelemetry,
-        }),
+      await postJsonKeepalive(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
+        category: supportCategory,
+        detail: supportCategory === "other" ? customIssueDetail : "",
+        telemetry: supportTelemetry,
       }).catch(() => {});
     } catch {}
 
@@ -543,24 +627,12 @@ export default function ContestPageClient() {
       return;
     }
 
-    async function fetchWithRetry<T>(url: string, attempts = 4, delayMs = 800): Promise<T | null> {
-      for (let i = 0; i < attempts; i += 1) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) return (await res.json()) as T;
-        } catch {}
-        if (i < attempts - 1) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
-        }
-      }
-      return null;
-    }
+    const contestRequest = fetchJsonOrNull(`${API_URL}/contests/${contestId}`);
+    const questionsRequest = fetchContestQuestions(contestId);
+    const sessionRequest = createContestSession(contestId).catch(() => null);
 
-    Promise.all([
-      fetchJsonOrNull(`${API_URL}/contests/${contestId}`),
-      fetchContestQuestions(contestId),
-    ])
-      .then(async ([c, questions]) => {
+    Promise.all([contestRequest, questionsRequest, sessionRequest])
+      .then(([c, questions, session]) => {
         const contestMeta = c ? (c as ContestMeta) : null;
         if (contestMeta) setContest(contestMeta);
         setActiveQ(0);
@@ -572,32 +644,18 @@ export default function ContestPageClient() {
           setLoadError("Questions are not available yet. Please retry in a few seconds.");
         }
 
-        // Create session for this contest
-        const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
-        try {
-          const res = await fetch(`${API_URL}/sessions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+        if (session?.id) {
+          setSessionId(session.id);
+          localStorage.setItem(
+            ACTIVE_SESSION_KEY,
+            JSON.stringify({
+              id: session.id,
               contest_id: contestId,
-              candidate_email: email,
-              candidate_name: email.split("@")[0],
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setSessionId(data.id);
-            localStorage.setItem(
-              ACTIVE_SESSION_KEY,
-              JSON.stringify({
-                id: data.id,
-                contest_id: contestId,
-                contest_title: contestMeta?.title,
-                updated_at: new Date().toISOString(),
-              })
-            );
-          }
-        } catch {}
+              contest_title: contestMeta?.title,
+              updated_at: new Date().toISOString(),
+            })
+          );
+        }
 
         setLoading(false);
       })
@@ -636,7 +694,7 @@ export default function ContestPageClient() {
     previewDebounce.current = setTimeout(() => {
       setPreviewSrc(buildPreview(newHtml, newCss, newJs));
       setPreviewUpdating(false);
-    }, 600);
+    }, 900);
   }
 
   const handleTabKey = useCallback(
@@ -657,34 +715,53 @@ export default function ContestPageClient() {
     [activeTab, html, css, js]
   );
 
-  async function handleSave() {
-    if (!questions[activeQ] || !sessionId) return;
+  const syncEditorScroll = useCallback((event: UIEvent<HTMLTextAreaElement>) => {
+    if (lineNumberGutterRef.current) {
+      lineNumberGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+  }, []);
+
+  async function handleSave(): Promise<boolean> {
+    if (!questions[activeQ] || !sessionId) {
+      setSaveError("No active session is available. Reopen the contest and try again.");
+      return false;
+    }
+
     setSaving(true);
+    setSaveError(null);
     try {
-      await fetch(`${API_URL}/sessions/${sessionId}/answers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question_id: questions[activeQ].id,
-          answer_text: JSON.stringify({ html, css, js }),
-        }),
+      const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/answers`, {
+        question_id: questions[activeQ].id,
+        answer_text: JSON.stringify({ html, css, js }),
       });
-    } catch {}
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+      if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      return true;
+    } catch {
+      setSaved(false);
+      setSaveError("Save failed. Check your connection and retry before submitting.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function handleSubmit() {
-    if (!submitConfirm) {
-      setSubmitConfirm(true);
+  async function handleSubmitConfirmed() {
+    setSubmitError(null);
+    const savedOk = await handleSave();
+    if (!savedOk) {
+      setSubmitError("Final save failed. Resolve this before submitting.");
       return;
     }
-    await handleSave();
     if (sessionId) {
       try {
-        await fetch(`${API_URL}/sessions/${sessionId}/submit`, { method: "POST" });
-      } catch {}
+        const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
+        if (!response.ok) throw new Error("submit failed");
+      } catch {
+        setSubmitError("Submit failed. Your answer was saved; retry submit when connected.");
+        return;
+      }
     }
     localStorage.removeItem(ACTIVE_SESSION_KEY);
     cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -815,9 +892,11 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!sessionId) return;
-    const id = setInterval(() => {
-      fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, { method: "POST" }).catch(() => {});
-    }, 60_000);
+    const sendHeartbeat = () => {
+      fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, { method: "POST", keepalive: true }).catch(() => {});
+    };
+    sendHeartbeat();
+    const id = setInterval(sendHeartbeat, 60_000);
     return () => clearInterval(id);
   }, [sessionId]);
 
@@ -838,6 +917,11 @@ export default function ContestPageClient() {
     const updateCameraStatus = () => {
       const video = cameraVideoRef.current;
       const cameraOk = cameraStream.active && Boolean(video && isVideoRendering(video));
+      const next = { cameraOk, blockedCount: blockedApps.length };
+      const prev = prevCameraStatusRef.current;
+      if (prev?.cameraOk === next.cameraOk && prev.blockedCount === next.blockedCount) return;
+      prevCameraStatusRef.current = next;
+
       setFaceStatus(cameraOk ? "ok" : "away");
       setProctoringOk(cameraOk && blockedApps.length === 0);
       if (cameraOk) {
@@ -895,6 +979,15 @@ export default function ContestPageClient() {
           ) {
             lastViolationDetailRef.current = detail;
             lastViolationAtRef.current = now;
+            sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
+              category: "blocked_app",
+              detail: result.found.join(", "),
+              telemetry: {
+                timestamp: new Date().toISOString(),
+                contest_id: contestId,
+                session_id: sessionId ?? "unregistered",
+              },
+            });
             await invoke("log_violation", {
               kind: "blocked_app",
               detail: result.found.join(", "),
@@ -915,7 +1008,7 @@ export default function ContestPageClient() {
     void scan();
     const id = setInterval(() => void scan(), 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [contestId, sessionId]);
 
   useEffect(() => {
     function blockShortcuts(e: KeyboardEvent) {
@@ -1026,6 +1119,10 @@ export default function ContestPageClient() {
   }
 
   const currentCode = activeTab === "html" ? html : activeTab === "css" ? css : js;
+  const lineNumbers = useMemo(
+    () => currentCode.split("\n").map((_, index) => index + 1),
+    [currentCode]
+  );
   const tabColor = { html: "#f97316", css: "#38bdf8", js: "#facc15" };
   const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
@@ -1035,6 +1132,17 @@ export default function ContestPageClient() {
     : cameraError
       ? cameraError
       : "Waiting for a live camera frame. Check the camera preview before continuing.";
+  const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
+    lockGraceActive && lockGraceCountdown === 0
+  );
+  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(shouldShowFaceBlock);
+  const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
+    showMediaToggleWarning,
+    cancelMediaToggle
+  );
+  const supportDialogRef = useFocusTrap<HTMLDivElement>(showSupportModal, () =>
+    setShowSupportModal(false)
+  );
 
   return (
     <div
@@ -1118,6 +1226,10 @@ export default function ContestPageClient() {
       {/* ── Blocked app violation overlay ── */}
       {lockGraceActive && lockGraceCountdown === 0 && (
         <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-live="assertive"
+          aria-labelledby="blocked-app-title"
           style={{
             position: "fixed",
             inset: 0,
@@ -1130,6 +1242,8 @@ export default function ContestPageClient() {
           }}
         >
           <div
+            ref={lockViolationDialogRef}
+            tabIndex={-1}
             style={{
               maxWidth: "440px",
               width: "100%",
@@ -1170,6 +1284,7 @@ export default function ContestPageClient() {
               </svg>
             </div>
             <p
+              id="blocked-app-title"
               style={{
                 fontSize: "17px",
                 fontWeight: 600,
@@ -1285,30 +1400,74 @@ export default function ContestPageClient() {
               cursor: "pointer",
             }}
           >
-            [ RAISE EXCEPTION ]
+            [ REQUEST SUPPORT ]
           </button>
 
-          {submitConfirm && (
-            <span style={{ fontSize: "11px", color: "#ef4444", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
-              CONFIRM? CLICK AGAIN
-            </span>
-          )}
-          <button
-            onClick={handleSubmit}
-            style={{
-              padding: "6px 12px",
-              border: "1px solid #ef4444",
-              background: "#0F0F0F",
-              color: "#ef4444",
-              fontSize: "11px",
-              fontWeight: 600,
-              fontFamily: "'JetBrains Mono', monospace",
-              cursor: "pointer",
-              textTransform: "uppercase",
-            }}
-          >
-            {submitConfirm ? "[ CONFIRM SUBMIT ]" : "[ SUBMIT & EXIT ]"}
-          </button>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setSubmitConfirm(true)}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #ef4444",
+                background: "#0F0F0F",
+                color: "#ef4444",
+                fontSize: "11px",
+                fontWeight: 600,
+                fontFamily: "'JetBrains Mono', monospace",
+                cursor: "pointer",
+                textTransform: "uppercase",
+              }}
+            >
+              [ SUBMIT & EXIT ]
+            </button>
+            {submitConfirm && (
+              <div
+                role="dialog"
+                aria-modal="false"
+                aria-label="Confirm contest submission"
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 8px)",
+                  right: 0,
+                  zIndex: 12000,
+                  width: "260px",
+                  padding: "12px",
+                  border: "1px solid rgba(239,68,68,0.45)",
+                  background: "#160b0b",
+                  boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
+                }}
+              >
+                <p style={{ margin: "0 0 10px", color: "#fecaca", fontSize: "12px", lineHeight: 1.45 }}>
+                  Submit final answers and exit the contest? This cannot be undone.
+                </p>
+                {submitError && (
+                  <p style={{ margin: "0 0 10px", color: "#fca5a5", fontSize: "11px", lineHeight: 1.35 }}>
+                    {submitError}
+                  </p>
+                )}
+                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmitConfirm(false);
+                      setSubmitError(null);
+                    }}
+                    style={{ padding: "6px 10px", border: "1px solid #334155", background: "transparent", color: "#cbd5e1", cursor: "pointer", fontSize: "11px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSubmitConfirmed}
+                    disabled={saving}
+                    style={{ padding: "6px 10px", border: "1px solid #ef4444", background: "rgba(239,68,68,0.16)", color: "#fecaca", cursor: saving ? "not-allowed" : "pointer", fontSize: "11px", fontWeight: 700 }}
+                  >
+                    {saving ? "Saving..." : "Confirm"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1553,7 +1712,7 @@ export default function ContestPageClient() {
                 [ EDITOR ]
               </span>
               {(["html", "css", "js"] as const).map((t) => {
-                const label = t === "html" ? "main.cpp" : t === "css" ? "order_book.h" : "test_cases.txt";
+                const label = t === "html" ? "index.html" : t === "css" ? "style.css" : "script.js";
                 return (
                   <button
                     key={t}
@@ -1590,31 +1749,70 @@ export default function ContestPageClient() {
                   padding: "4px 10px",
                   border: "1px solid #1F1F1F",
                   background: "#0F0F0F",
-                  color: saved ? "#22c55e" : "#e2e8f0",
+                  color: saveError ? "#ef4444" : saved ? "#22c55e" : "#e2e8f0",
                   fontSize: "11px",
                   fontFamily: "'JetBrains Mono', monospace",
                   cursor: saving ? "not-allowed" : "pointer",
                 }}
               >
-                {saving ? "SAVING..." : saved ? "[ SAVED ]" : "[ SAVE ]"}
+                {saving ? "SAVING..." : saveError ? "[ SAVE FAILED ]" : saved ? "[ SAVED ]" : "[ SAVE ]"}
               </button>
             </div>
+            {saveError && (
+              <div
+                role="status"
+                style={{
+                  padding: "6px 12px",
+                  borderBottom: "1px solid rgba(239,68,68,0.2)",
+                  color: "#fca5a5",
+                  background: "rgba(239,68,68,0.06)",
+                  fontSize: "11px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {saveError}
+              </div>
+            )}
             
             {/* Editor Textarea */}
-            <div style={{ flex: 1, position: "relative" }}>
+            <div style={{ flex: 1, position: "relative", display: "flex", minHeight: 0 }}>
+              <div
+                ref={lineNumberGutterRef}
+                aria-hidden="true"
+                style={{
+                  width: "48px",
+                  padding: "16px 10px",
+                  boxSizing: "border-box",
+                  background: "#0b0b0b",
+                  borderRight: "1px solid #1F1F1F",
+                  color: "#475569",
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                  fontSize: "13px",
+                  lineHeight: 1.7,
+                  textAlign: "right",
+                  overflow: "hidden",
+                  userSelect: "none",
+                }}
+              >
+                {lineNumbers.map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+              </div>
               <textarea
-                aria-label="Answer editor"
+                aria-label={`${activeTab.toUpperCase()} answer editor with line numbers`}
                 key={`${activeQ}-${activeTab}`}
                 value={currentCode}
                 onChange={(e) => handleCodeChange(e.target.value)}
                 onKeyDown={handleTabKey}
+                onScroll={syncEditorScroll}
                 spellCheck={false}
                 style={{
-                  width: "100%",
+                  flex: 1,
+                  minWidth: 0,
                   height: "100%",
                   resize: "none",
                   border: "none",
-                  outline: "none",
+                  outline: "2px solid transparent",
                   background: "#0F0F0F",
                   color: "#e2e8f0",
                   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
@@ -1659,17 +1857,25 @@ export default function ContestPageClient() {
                 </span>
               )}
             </div>
-            <div style={{ flex: 1, padding: "12px 16px", overflowY: "auto", color: "#a8b2d1", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", lineHeight: 1.6, position: "relative" }}>
-              <div style={{ color: "#22c55e" }}>$ make build</div>
-              <div>g++ -O3 -std=c++20 main.cpp order_book.h -o executable</div>
-              <div>Build finished successfully.</div>
-              <div style={{ marginTop: "8px", color: "#22c55e" }}>$ ./executable</div>
-              <div style={{ marginTop: "4px" }}>[HFT_ENGINE] Initializing order book...</div>
-              <div>[HFT_ENGINE] Ready to accept FIX messages.</div>
-              
-              <div style={{ display: "flex", alignItems: "center", marginTop: "16px", background: "#0F0F0F", padding: "4px 8px" }}>
-                <span style={{ color: "#a855f7", marginRight: "8px", fontWeight: "bold" }}>&gt;</span>
-                <span style={{ color: "#a855f7", animation: "blink-cursor 1s step-end infinite", fontWeight: "bold" }}>_</span>
+            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 220px", minHeight: 0, color: "#a8b2d1", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", lineHeight: 1.6, position: "relative" }}>
+              <iframe
+                title="Live HTML CSS JavaScript preview"
+                srcDoc={previewSrc}
+                sandbox="allow-scripts"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  border: "none",
+                  background: "#ffffff",
+                }}
+              />
+              <div style={{ padding: "12px 16px", overflowY: "auto", borderLeft: "1px solid #1F1F1F" }}>
+                <div style={{ color: "#22c55e" }}>$ render preview</div>
+                <div>Bundling index.html, style.css, and script.js</div>
+                <div>{previewUpdating ? "Preview update pending..." : "Preview updated successfully."}</div>
+                <div style={{ marginTop: "8px", color: "#22c55e" }}>$ browser console</div>
+                <div style={{ marginTop: "4px" }}>[PREVIEW] HTML/CSS/JS runtime initialized.</div>
+                <div>[PREVIEW] Ready for interaction.</div>
               </div>
             </div>
           </div>
@@ -1702,6 +1908,8 @@ export default function ContestPageClient() {
             }}
           />
           <span
+            role="status"
+            aria-live="polite"
             style={{
               fontSize: "10px",
               color: proctoringOk ? "#22c55e" : "#ef4444",
@@ -1788,6 +1996,10 @@ export default function ContestPageClient() {
       {/* ── Face proctoring soft-block overlay ── */}
       {shouldShowFaceBlock && (
         <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-live="assertive"
+          aria-labelledby="face-block-title"
           style={{
             position: "fixed",
             inset: 0,
@@ -1795,12 +2007,14 @@ export default function ContestPageClient() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "rgba(15,15,15,0.75)",
-            backdropFilter: "blur(12px)",
+            background: "rgba(2,4,10,0.92)",
+            backdropFilter: "blur(32px) brightness(0.3)",
             animation: "fadeIn 280ms var(--ease-cinematic) forwards",
           }}
         >
           <div
+            ref={faceBlockDialogRef}
+            tabIndex={-1}
             style={{
               maxWidth: "400px",
               width: "100%",
@@ -1838,7 +2052,7 @@ export default function ContestPageClient() {
                 <path d="M9 9h.01M15 9h.01" strokeLinecap="round" strokeWidth="2.5" />
               </svg>
             </div>
-            <h4 className="text-subsection-title" style={{ color: "#f8fafc", marginBottom: "8px" }}>
+            <h4 id="face-block-title" className="text-subsection-title" style={{ color: "#f8fafc", marginBottom: "8px" }}>
               {faceBlockTitle}
             </h4>
             <p className="text-body-copy" style={{ color: "#94a3b8", lineHeight: 1.5, margin: 0 }}>
@@ -1851,6 +2065,9 @@ export default function ContestPageClient() {
             {/* ── Media Toggle Warning Modal ── */}
       {showMediaToggleWarning && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="media-toggle-warning-title"
           style={{
             position: "fixed",
             inset: 0,
@@ -1863,6 +2080,8 @@ export default function ContestPageClient() {
           }}
         >
           <div
+            ref={mediaWarningDialogRef}
+            tabIndex={-1}
             style={{
               maxWidth: "400px",
               width: "100%",
@@ -1874,7 +2093,7 @@ export default function ContestPageClient() {
               fontFamily: "'JetBrains Mono', monospace",
             }}
           >
-            <h4 style={{ color: "#ef4444", margin: "0 0 16px 0", fontSize: "14px" }}>
+            <h4 id="media-toggle-warning-title" style={{ color: "#ef4444", margin: "0 0 16px 0", fontSize: "14px" }}>
               [ LOGGING NOTICE ]
             </h4>
             <p style={{ color: "#a8b2d1", fontSize: "12px", lineHeight: 1.6, margin: "0 0 24px 0" }}>
@@ -1915,6 +2134,9 @@ export default function ContestPageClient() {
 {/* ── Support Incident Modal Overlay ── */}
       {showSupportModal && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="support-modal-title"
           style={{
             position: "fixed",
             inset: 0,
@@ -1928,6 +2150,8 @@ export default function ContestPageClient() {
           }}
         >
           <div
+            ref={supportDialogRef}
+            tabIndex={-1}
             style={{
               width: "100%",
               maxWidth: "800px",
@@ -1948,6 +2172,7 @@ export default function ContestPageClient() {
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
               <div>
                 <h3
+                  id="support-modal-title"
                   className="text-subsection-title"
                   style={{ color: "#ffffff", marginBottom: "var(--density-compact)" }}
                 >
@@ -2075,7 +2300,7 @@ export default function ContestPageClient() {
                         fontSize: "12px",
                         color: "#e2e8f0",
                         fontFamily: "inherit",
-                        outline: "none",
+                        outline: "2px solid transparent",
                       }}
                     />
                   )}
@@ -2194,6 +2419,7 @@ export default function ContestPageClient() {
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
+        button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid #a855f7; outline-offset: 2px; }
         textarea::-webkit-scrollbar { width: 6px; }
         textarea::-webkit-scrollbar-track { background: transparent; }
         textarea::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 3px; }

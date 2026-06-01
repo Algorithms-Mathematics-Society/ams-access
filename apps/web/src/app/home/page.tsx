@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, memo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { invoke, runSessionReadiness, sessionPolicy, type ReadinessReport } from "@ams/api-client";
 import { resolveApiBase } from "@/lib/api-base";
+import { fetchJson, useApiQuery } from "@/lib/api-client";
+import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 const API_URL = resolveApiBase();
 
@@ -18,6 +20,7 @@ type InvitedContest = {
   status: string;
   org_name: string;
   question_count: number;
+  verification_window_minutes?: number | null;
 };
 
 type ReadinessStatus = "ok" | "fail" | "checking";
@@ -63,6 +66,16 @@ type NetworkCheckResult = {
   quality: string;
 };
 
+type SecurityScanSnapshot = {
+  platform: PlatformInfo | null;
+  env: SecurityEnvironment | null;
+  processes: ProcessScanResult | null;
+  virt: VirtDetectionResult | null;
+  network: NetworkCheckResult | null;
+};
+
+let cachedSecurityScan: SecurityScanSnapshot | null = null;
+
 type InviteCodeResolveResponse = {
   contest?: InvitedContest;
   eligibility_status: string;
@@ -78,8 +91,9 @@ type ActiveSession = {
   updated_at?: string;
 };
 
-const ACTIVE_SESSION_KEY = "ams_active_session";
-const UNLOCKED_CONTESTS_KEY = "ams_unlocked_contests";
+const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
+const UNLOCKED_CONTESTS_KEY = STORAGE_KEYS.UNLOCKED_CONTESTS;
+const DEFAULT_VERIFICATION_WINDOW_MINUTES = 20;
 const READINESS_TIMEOUT_MS = {
   media: 2000,
   platform: 2500,
@@ -116,13 +130,13 @@ function saveUnlockedContests(list: InvitedContest[]) {
 }
 
 function getOrCreateDeviceId() {
-  const existing = localStorage.getItem("ams_device_id");
+  const existing = localStorage.getItem(STORAGE_KEYS.DEVICE_ID);
   if (existing) return existing;
   const generated =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  localStorage.setItem("ams_device_id", generated);
+  localStorage.setItem(STORAGE_KEYS.DEVICE_ID, generated);
   return generated;
 }
 
@@ -131,6 +145,60 @@ function getNetworkProbeHost() {
     return new URL(API_URL).hostname;
   } catch {}
   return "localhost";
+}
+
+function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void) {
+  const ref = useRef<T>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const rootEl = ref.current;
+    if (!rootEl) return;
+    const trappedRoot: T = rootEl;
+
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const selector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
+    );
+    (focusable[0] ?? trappedRoot).focus({ preventScroll: true });
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && onEscape) {
+        event.preventDefault();
+        onEscape();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const currentFocusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
+        (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
+      );
+      if (currentFocusable.length === 0) {
+        event.preventDefault();
+        trappedRoot.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = currentFocusable[0];
+      const last = currentFocusable[currentFocusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [active, onEscape]);
+
+  return ref;
 }
 
 function withUiTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
@@ -313,6 +381,7 @@ export default function HomePage() {
   const [resumeStatus, setResumeStatus] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
   const [userEmail, setUserEmail] = useState("tester@ams.local");
+  const [userEmailHydrated, setUserEmailHydrated] = useState(false);
   const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
   const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
@@ -321,7 +390,7 @@ export default function HomePage() {
   // Load theme from localStorage on mount - Locked strictly to Obsidian Dark by system policy
   useEffect(() => {
     setTheme("dark");
-    localStorage.setItem("ams_theme", "dark");
+    localStorage.setItem(STORAGE_KEYS.THEME, "dark");
   }, []);
 
   // Sync theme class to documentElement for CSS variables
@@ -342,22 +411,37 @@ export default function HomePage() {
     platform: "checking",
   });
   const [readinessReport, setReadinessReport] = useState<ReadinessReport | null>(null);
+  const contestsQueryKey = userEmailHydrated ? `contests:invited:${userEmail}` : null;
+  const invitedContestsQuery = useApiQuery<InvitedContest[]>(
+    contestsQueryKey,
+    async () => {
+      const url = `${API_URL}/contests/invited?email=${encodeURIComponent(userEmail)}`;
+      const data = await fetchJson<InvitedContest[]>(url, {}, {
+        dedupeKey: contestsQueryKey ?? url,
+        retries: 2,
+      });
+      return mergeContestLists(data ?? [], loadUnlockedContests());
+    },
+    { enabled: userEmailHydrated, staleMs: 30_000, retries: 0 }
+  );
+
+  useEffect(() => {
+    if (invitedContestsQuery.data) {
+      setContests(invitedContestsQuery.data);
+      setContestsLoading(false);
+    } else if (invitedContestsQuery.error) {
+      setContestsLoading(false);
+    }
+  }, [invitedContestsQuery.data, invitedContestsQuery.error]);
 
   async function loadContests(email: string, mode: "initial" | "refresh" = "refresh") {
     if (mode === "initial") setContestsLoading(true);
     else setSessionsRefreshing(true);
     setSessionsError(null);
     try {
-      const r = await fetchWithTimeout(
-        `${API_URL}/contests/invited?email=${encodeURIComponent(email)}`
-      );
-      if (!r.ok) throw new Error("Session refresh failed");
-      const data = (await r.json()) as InvitedContest[];
-      const unlocked = loadUnlockedContests();
-      setContests(mergeContestLists(data ?? [], unlocked));
+      const data = await invitedContestsQuery.mutate();
+      if (data) setContests(data);
     } catch {
-      // Only surface the error to the user on an explicit refresh action.
-      // On initial auto-load, a missing backend just means no contests yet — fail silently.
       if (mode === "refresh") {
         setSessionsError("Could not refresh sessions. Check your connection and try again.");
       }
@@ -371,6 +455,7 @@ export default function HomePage() {
     const isCancelled = () => cancelledRef?.current ?? false;
 
     if (!isCancelled()) {
+      setReadinessReport(null);
       setReadiness({
         camera: "checking",
         mic: "checking",
@@ -421,8 +506,9 @@ export default function HomePage() {
   }, [preflightContestId]);
 
   useEffect(() => {
-    const email = localStorage.getItem("ams_user_email") ?? "tester@ams.local";
+    const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "tester@ams.local";
     setUserEmail(email);
+    setUserEmailHydrated(true);
     const cancelledRef = { current: false };
     const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
     if (storedSession) {
@@ -433,7 +519,6 @@ export default function HomePage() {
       }
     }
 
-    void loadContests(email, "initial");
     void runIntegrityScan(cancelledRef);
 
     return () => {
@@ -494,8 +579,12 @@ export default function HomePage() {
         setInviteSuccessMsg("Contest added to your list.");
         setInviteCodeStatus(null);
       } else if (eligibility === "wait") {
+        const verificationWindowMinutes = getVerificationWindowMinutes(resolvedContest);
         setInviteSuccessMsg("Contest added to your list.");
-        setInviteCodeStatus(blockedReason || "Verification opens 20 minutes before contest start.");
+        setInviteCodeStatus(
+          blockedReason ||
+            `Verification opens ${verificationWindowMinutes} minutes before contest start.`
+        );
       } else if (eligibility === "blocked") {
         setInviteSuccessMsg("Contest added to your list.");
         setInviteCodeStatus(blockedReason || "Join window is closed for this contest.");
@@ -931,39 +1020,89 @@ function SignOutButton({
 function formatStartsIn(startAt: string, now: number) {
   const diff = new Date(startAt).getTime() - now;
   if (diff <= 0) return "Starting now";
-  const m = Math.floor(diff / 60000);
-  const s = Math.floor((diff % 60000) / 1000);
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  const minutes = Math.ceil(diff / 60000);
+  if (minutes < 60) return minutes === 1 ? "1m" : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 type EntryPhase = "too_early" | "verification_open" | "join_closed" | "ended";
 
-function getEntryPhase(startAt: string, endAt: string, now: number): EntryPhase {
+function getVerificationWindowMinutes(c: InvitedContest) {
+  const value = c.verification_window_minutes;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_VERIFICATION_WINDOW_MINUTES;
+}
+
+function getEntryPhase(
+  startAt: string,
+  endAt: string,
+  now: number,
+  verificationWindowMinutes: number
+): EntryPhase {
   const start = new Date(startAt).getTime();
   const end = new Date(endAt).getTime();
-  const windowOpen = start - 20 * 60 * 1000;
+  const windowOpen = start - verificationWindowMinutes * 60 * 1000;
   if (now >= end) return "ended";
   if (now < windowOpen) return "too_early";
   if (now < start) return "verification_open";
   return "join_closed";
 }
 
-function ScheduledContestCard({
+function getScheduledContestTickDelay(contest: InvitedContest, now: number) {
+  let nextTickAt = Math.ceil((now + 1) / 60000) * 60000;
+  const start = new Date(contest.start_at).getTime();
+  const end = new Date(contest.end_at).getTime();
+  const windowOpen = start - getVerificationWindowMinutes(contest) * 60 * 1000;
+  for (const boundary of [windowOpen, start, end]) {
+    if (boundary > now && boundary < nextTickAt) nextTickAt = boundary;
+  }
+  return Math.max(1000, Math.min(nextTickAt - now, 60000));
+}
+
+const ScheduledContestCard = memo(function ScheduledContestCard({
   c,
-  onJoin,
+  onPreflight,
   theme,
-  now,
 }: {
   c: InvitedContest;
-  onJoin: (type: "new" | "resume") => void;
+  onPreflight: (contestId: string, type: "new" | "resume") => void;
   theme: "dark" | "light";
-  now: number;
 }) {
-  const startsIn = formatStartsIn(c.start_at, now);
   const [hovered, setHovered] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const themeColors = getThemeColors(theme);
   const isLight = theme === "light";
-  const phase = getEntryPhase(c.start_at, c.end_at, now);
+  const verificationWindowMinutes = getVerificationWindowMinutes(c);
+
+  useEffect(() => {
+    let active = true;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNextTick = () => {
+      const current = Date.now();
+      timerId = setTimeout(() => {
+        if (!active) return;
+        setNow(Date.now());
+        scheduleNextTick();
+      }, getScheduledContestTickDelay(c, current));
+    };
+
+    setNow(Date.now());
+    scheduleNextTick();
+
+    return () => {
+      active = false;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [c]);
+  const phase = useMemo(
+    () => getEntryPhase(c.start_at, c.end_at, now, verificationWindowMinutes),
+    [c.end_at, c.start_at, now, verificationWindowMinutes]
+  );
+  const startsIn = useMemo(() => formatStartsIn(c.start_at, now), [c.start_at, now]);
   const canJoin = phase === "verification_open" || phase === "join_closed";
   const joinType: "new" | "resume" = phase === "join_closed" ? "resume" : "new";
   const label =
@@ -1190,18 +1329,19 @@ function ScheduledContestCard({
         {/* Right Side: CTA Button */}
         <button
           onClick={() => {
-            if (canJoin) onJoin(joinType);
+            if (canJoin) onPreflight(c.id, joinType);
           }}
           disabled={!canJoin}
+          title={phase === "too_early" ? "Verification has not opened yet" : undefined}
           style={{
             display: "flex",
             alignItems: "center",
             gap: "10px",
             padding: "12px 28px",
             borderRadius: "10px",
-            border: `1px solid ${canJoin ? themeColors.accent : themeColors.borderStrong}`,
-            background: canJoin && hovered ? themeColors.accent : "transparent",
-            color: canJoin ? (hovered ? "#ffffff" : themeColors.accentText) : themeColors.textMuted,
+            border: `1px solid ${canJoin ? themeColors.accent : "rgba(245,158,11,0.35)"}`,
+            background: canJoin && hovered ? themeColors.accent : phase === "too_early" ? "rgba(245,158,11,0.06)" : "transparent",
+            color: canJoin ? (hovered ? "#ffffff" : themeColors.accentText) : phase === "too_early" ? "#f59e0b" : themeColors.textMuted,
             fontSize: "14px",
             fontWeight: 600,
             fontFamily: "inherit",
@@ -1242,17 +1382,17 @@ function ScheduledContestCard({
       </div>
     </div>
   );
-}
+}, (prev, next) => prev.c === next.c && prev.theme === next.theme && prev.onPreflight === next.onPreflight);
 
-function ActiveContestCard({
+const ActiveContestCard = memo(function ActiveContestCard({
   c,
-  onEnter,
+  onPreflight,
   theme,
   col,
   canEnter,
 }: {
   c: InvitedContest;
-  onEnter: () => void;
+  onPreflight: (contestId: string, type: "new" | "resume") => void;
   theme: "dark" | "light";
   col: any;
   canEnter: boolean;
@@ -1473,7 +1613,7 @@ function ActiveContestCard({
         {/* Right Side: CTA Button or status info */}
         {canEnter ? (
           <button
-            onClick={onEnter}
+            onClick={() => onPreflight(c.id, "new")}
             style={{
               display: "flex",
               alignItems: "center",
@@ -1531,7 +1671,15 @@ function ActiveContestCard({
       </div>
     </div>
   );
-}
+}, (prev, next) =>
+  prev.c === next.c &&
+  prev.theme === next.theme &&
+  prev.canEnter === next.canEnter &&
+  prev.col.dot === next.col.dot &&
+  prev.col.bg === next.col.bg &&
+  prev.col.border === next.col.border &&
+  prev.onPreflight === next.onPreflight
+);
 
 function SessionActionsPanel({
   activeSession,
@@ -1619,7 +1767,7 @@ function SessionActionsPanel({
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                 fontSize: "12.5px",
                 fontWeight: 600,
-                outline: "none",
+                outline: "2px solid transparent",
                 cursor: inviteCodeBusy ? "not-allowed" : "text",
                 opacity: inviteCodeBusy ? 0.75 : 1,
               }}
@@ -1770,12 +1918,6 @@ function ContestsPanel({
   onPreflight: (contestId: string, type: "new" | "resume") => void;
 }) {
   const themeColors = getThemeColors(theme);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   function statusColor(s: string) {
     if (s === "ACTIVE")
@@ -1892,10 +2034,10 @@ function ContestsPanel({
               letterSpacing: "0.05em",
             }}
           >
-            0_SCHEDULED_CONTESTS_REGISTERED
+            No contests yet.
           </h4>
           <p style={{ fontSize: "12px", color: themeColors.textMuted, margin: "4px 0 0", lineHeight: 1.4 }}>
-            No active or upcoming contest invites detected on this workstation registry. Check back closer to your event.
+            If you have an invite code, enter it above. Upcoming contests will appear here after they are added.
           </p>
         </div>
       </div>
@@ -1923,9 +2065,8 @@ function ContestsPanel({
               <ScheduledContestCard
                 key={c.id}
                 c={c}
-                onJoin={(type) => onPreflight(c.id, type)}
+                onPreflight={onPreflight}
                 theme={theme}
-                now={now}
               />
             );
           }
@@ -1937,7 +2078,7 @@ function ContestsPanel({
               c={c}
               canEnter={canEnter}
               col={col}
-              onEnter={() => onPreflight(c.id, "new")}
+              onPreflight={onPreflight}
               theme={theme}
             />
           );
@@ -2371,7 +2512,16 @@ function SettingsPanel({
     void runSecurityScan();
   }, []);
 
-  async function runSecurityScan() {
+  async function runSecurityScan(force = false) {
+    if (!force && cachedSecurityScan) {
+      setPlatformInfo(cachedSecurityScan.platform);
+      setSecurityEnv(cachedSecurityScan.env);
+      setProcessScan(cachedSecurityScan.processes);
+      setVirtScan(cachedSecurityScan.virt);
+      setNetworkCheck(cachedSecurityScan.network);
+      return;
+    }
+
     setSecurityBusy(true);
     try {
       const [platform, env, processes, virt, network] = await Promise.all([
@@ -2393,6 +2543,7 @@ function SettingsPanel({
         ),
       ]);
 
+      cachedSecurityScan = { platform, env, processes, virt, network };
       setPlatformInfo(platform);
       setSecurityEnv(env);
       setProcessScan(processes);
@@ -2592,10 +2743,11 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
+            borderLeft: activeTab === "hardware" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "hardware" ? c.accentLight : "transparent",
             color: activeTab === "hardware" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
-            fontWeight: 500,
+            fontWeight: activeTab === "hardware" ? 700 : 500,
             cursor: "pointer",
             textAlign: "left",
             transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
@@ -2609,10 +2761,11 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
+            borderLeft: activeTab === "permissions" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "permissions" ? c.accentLight : "transparent",
             color: activeTab === "permissions" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
-            fontWeight: 500,
+            fontWeight: activeTab === "permissions" ? 700 : 500,
             cursor: "pointer",
             textAlign: "left",
             transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
@@ -2626,10 +2779,11 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
+            borderLeft: activeTab === "security" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "security" ? c.accentLight : "transparent",
             color: activeTab === "security" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
-            fontWeight: 500,
+            fontWeight: activeTab === "security" ? 700 : 500,
             cursor: "pointer",
             textAlign: "left",
             transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
@@ -2643,10 +2797,11 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
+            borderLeft: activeTab === "about" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "about" ? c.accentLight : "transparent",
             color: activeTab === "about" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
-            fontWeight: 500,
+            fontWeight: activeTab === "about" ? 700 : 500,
             cursor: "pointer",
             textAlign: "left",
             transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
@@ -2909,7 +3064,7 @@ function SettingsPanel({
                         borderRadius: "6px",
                         color: c.text,
                         fontSize: "12.5px",
-                        outline: "none",
+                        outline: "2px solid transparent",
                         cursor: "pointer",
                         colorScheme: theme === "dark" ? "dark" : "light",
                       }}
@@ -3137,7 +3292,7 @@ function SettingsPanel({
                       height: "4px",
                       borderRadius: "2px",
                       cursor: "pointer",
-                      outline: "none",
+                      outline: "2px solid transparent",
                     }}
                   />
                 </div>
@@ -3258,7 +3413,7 @@ function SettingsPanel({
                   Security Environment Checks
                 </h4>
                 <button
-                  onClick={() => void runSecurityScan()}
+                  onClick={() => void runSecurityScan(true)}
                   disabled={securityBusy}
                   style={{
                     padding: "7px 12px",
@@ -4037,8 +4192,10 @@ function TelemetryStat({
   );
 }
 
+type SecurityLogEntry = { id: string; text: string };
+
 function SecurityOperationsLog({ theme }: { theme: "dark" | "light" }) {
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<SecurityLogEntry[]>([]);
   const themeColors = getThemeColors(theme);
 
   useEffect(() => {
@@ -4050,14 +4207,22 @@ function SecurityOperationsLog({ theme }: { theme: "dark" | "light" }) {
       "HARDWARE: Connected audio/video interfaces bound to WebKitGTK namespace",
     ];
 
-    setLogs(baseLogs.map((l, i) => `[04:${12 + i}:02] ${l}`));
+    setLogs(
+      baseLogs.map((l, i) => {
+        const time = new Date(Date.now() + i).toLocaleTimeString([], { hour12: false });
+        return { id: `base-${i}-${time}`, text: `[${time}] ${l}` };
+      })
+    );
 
     const interval = setInterval(() => {
       setLogs((prev) => {
         const next = [...prev];
         if (next.length > 8) next.shift();
         const time = new Date().toLocaleTimeString([], { hour12: false });
-        next.push(`[${time}] TELEMETRY: System heartbeat beacon transmitted`);
+        next.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          text: `[${time}] TELEMETRY: System heartbeat beacon transmitted`,
+        });
         return next;
       });
     }, 14000);
@@ -4112,12 +4277,12 @@ function SecurityOperationsLog({ theme }: { theme: "dark" | "light" }) {
           gap: "6px",
         }}
       >
-        {logs.map((log, i) => (
+        {logs.map((log) => (
           <div
-            key={i}
+            key={log.id}
             style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
           >
-            {log}
+            {log.text}
           </div>
         ))}
       </div>
@@ -4184,77 +4349,50 @@ function SessionReadinessModal({
   const router = useRouter();
   const c = getThemeColors(theme);
   const isLight = theme === "light";
-  const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [scanStatus, setScanStatus] = useState<"scanning" | "done">("scanning");
   const [isRescanning, setIsRescanning] = useState(false);
+  const activeReport = readinessReport?.contest_id === contestId ? readinessReport : null;
+  const hasPendingChecks = Object.values(readiness).some((status) => status === "checking");
+  const scanStatus: "scanning" | "done" =
+    isRescanning || (activeReport === null && hasPendingChecks) ? "scanning" : "done";
 
   const score = calculateReadinessScore(readiness);
   const estimatedTime = getEstimatedTimeToReady(readiness);
-  const canProceed = scanStatus === "done" && readinessReport?.decision === "allowed";
+  const hardRequirementsMet = readiness.camera !== "fail" && readiness.network !== "fail";
+  const canProceed =
+    scanStatus === "done" && activeReport?.decision === "allowed" && hardRequirementsMet;
+  const shouldShowFixIssues = scanStatus === "done" && !canProceed;
 
-  useEffect(() => {
-    let active = true;
+  const consoleLogs = useMemo(() => {
+    if (scanStatus === "scanning") {
+      return [
+        "[SYS] Waiting for readiness report...",
+        "[SCAN] Running active telemetry probe from local device checks.",
+      ];
+    }
 
-    // Reset/start scan sequence
-    setScanStatus("scanning");
-    setScanProgress(0);
-    setConsoleLogs([]);
+    if (!activeReport) {
+      return ["[SYS] Readiness report unavailable.", "[SYS] Policy decision: BLOCKED"];
+    }
 
-    const logTemplates = [
-      { delay: 100, text: "[SYS] Initializing pre-flight secure handshake..." },
-      {
-        delay: 400,
-        text: `[NET] Dispatching TCP ping to gateway... ${readiness.network === "ok" ? "STABLE (22ms)" : "ERROR: DESTINATION UNREACHABLE"}`,
-      },
-      {
-        delay: 800,
-        text: `[AUD] Opening acoustic input buffer... ${readiness.mic === "ok" ? "ACTIVE (44.1kHz)" : "WARNING: MICROPHONE DISCONNECTED OR MUTED"}`,
-      },
-      {
-        delay: 1200,
-        text: `[CAM] Binding secure WebKit camera feed... ${readiness.camera === "ok" ? "RESOLVED (1080p)" : "CRITICAL: CAMERA DISCONNECTED"}`,
-      },
-      {
-        delay: 1600,
-        text: `[SEC] Scanning procfs/kernel hooks for VM footprints... ${readiness.vm === "ok" ? "SHIELD ACTIVE (0 flags)" : "WARNING: VIRTUALIZATION ENGINE DETECTED"}`,
-      },
-      {
-        delay: 2000,
-        text: readinessReport
-          ? `[SYS] Policy decision: ${readinessReport.decision.toUpperCase()}`
-          : "[SYS] Diagnostic signature unavailable.",
-      },
-    ];
-
-    let timerIds: NodeJS.Timeout[] = [];
-
-    const progressInterval = setInterval(() => {
-      if (!active) return;
-      setScanProgress((p) => {
-        if (p >= 100) {
-          clearInterval(progressInterval);
-          setScanStatus("done");
-          return 100;
-        }
-        return p + 4;
-      });
-    }, 80);
-
-    logTemplates.forEach((item) => {
-      const id = setTimeout(() => {
-        if (!active) return;
-        setConsoleLogs((prev) => [...prev, item.text]);
-      }, item.delay);
-      timerIds.push(id);
-    });
-
-    return () => {
-      active = false;
-      clearInterval(progressInterval);
-      timerIds.forEach(clearTimeout);
+    const checkLog = (kind: string, prefix: string, label: string) => {
+      const check = activeReport.checks.find((item) => item.kind === kind);
+      if (!check) return `[${prefix}] ${label}: unavailable`;
+      const outcome = check.outcome === "pass" ? "PASS" : "FAIL";
+      const detail = check.detail ? ` - ${check.detail}` : "";
+      return `[${prefix}] ${label}: ${outcome}${detail}`;
     };
-  }, [contestId, isRescanning, readinessReport]);
+
+    return [
+      `[SYS] Readiness report received at ${new Date(activeReport.generated_at_ms).toLocaleTimeString()}`,
+      checkLog("network", "NET", "Network connectivity"),
+      checkLog("microphone", "AUD", "Audio telemetry"),
+      checkLog("camera", "CAM", "Optical stream"),
+      checkLog("virtualization", "SEC", "Virtualization shield"),
+      checkLog("keyboard_lockdown", "SEC", "Keyboard lockdown"),
+      checkLog("restricted_apps", "SEC", "Restricted process scan"),
+      `[SYS] Policy decision: ${activeReport.decision.toUpperCase()}`,
+    ];
+  }, [activeReport, scanStatus]);
 
   async function handleRescan() {
     setIsRescanning(true);
@@ -4275,14 +4413,18 @@ function SessionReadinessModal({
   // Radial stroke calculations for SVGs
   const radius = 50;
   const circumference = 2 * Math.PI * radius;
-  const currentProgress = scanStatus === "scanning" ? scanProgress : score;
+  const currentProgress = scanStatus === "scanning" ? 0 : score;
   const strokeDashoffset = circumference - (currentProgress / 100) * circumference;
 
   const accentColor = score === 100 ? "#10b981" : "#f59e0b";
   const glowColor = score === 100 ? "rgba(16, 185, 129, 0.4)" : "rgba(245, 158, 11, 0.4)";
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="session-readiness-title"
       style={{
         position: "fixed",
         inset: 0,
@@ -4297,6 +4439,8 @@ function SessionReadinessModal({
     >
       {/* Immersive Pre-Flight Card Panel */}
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         style={{
           width: "100%",
           maxWidth: "920px",
@@ -4379,7 +4523,7 @@ function SessionReadinessModal({
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           {/* Header Summary */}
           <div>
-            <h3 style={{ fontSize: "16px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em", color: c.text, marginBottom: "6px" }}>
+            <h3 id="session-readiness-title" style={{ fontSize: "16px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em", color: c.text, marginBottom: "6px" }}>
               Secure Enclave Port
             </h3>
             <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#999999", lineHeight: 1.6 }}>
@@ -4475,12 +4619,21 @@ function SessionReadinessModal({
           </div>
 
           {/* Actions */}
-          <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "10px",
+              marginTop: "8px",
+            }}
+          >
             <button
               onClick={handleProceed}
               disabled={!canProceed}
               style={{
-                flex: 1,
+                flex: "1 1 180px",
+                minWidth: "180px",
                 height: "42px",
                 borderRadius: "2px",
                 border: canProceed ? `1px solid ${c.dot}` : `1px solid ${c.border}`,
@@ -4495,12 +4648,31 @@ function SessionReadinessModal({
                 transition: "all 150ms ease",
               }}
             >
-              {scanStatus === "scanning"
-                ? "PROBING..."
-                : canProceed
-                  ? "PROCEED TO SESSION"
-                  : "RESOLVE FAILED CHECKS"}
+              {scanStatus === "scanning" ? "PROBING..." : "PROCEED TO SESSION"}
             </button>
+            {shouldShowFixIssues && (
+              <button
+                onClick={onSettingsRedirect}
+                style={{
+                  height: "42px",
+                  borderRadius: "2px",
+                  border: "1px solid #f59e0b",
+                  background: "rgba(245, 158, 11, 0.12)",
+                  color: "#f59e0b",
+                  padding: "0 14px",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                  transition: "all 150ms ease",
+                }}
+              >
+                FIX ISSUES
+              </button>
+            )}
             <button
               onClick={handleRescan}
               disabled={scanStatus === "scanning" || isRescanning}
@@ -4582,7 +4754,7 @@ function SessionReadinessModal({
                 transition: "all 200ms ease",
               }}
             >
-              ABORT
+              CANCEL
             </button>
           </div>
         </div>
@@ -4674,7 +4846,7 @@ function calculateReadinessScore(r: ReadinessState) {
   if (!cameraOk && !micOk) {
     score -= 25;
   } else if (!cameraOk) {
-    score -= 8; // Exactly 92% Ready when only camera is disconnected!
+    score -= 8;
   } else if (!micOk) {
     score -= 6;
   }
@@ -4739,9 +4911,13 @@ function ResolveModal({ isOpen, onClose, checkKey, theme }: ResolveModalProps) {
   };
 
   const info = getDetails();
+  const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="resolve-modal-title"
       style={{
         position: "fixed",
         inset: 0,
@@ -4755,6 +4931,8 @@ function ResolveModal({ isOpen, onClose, checkKey, theme }: ResolveModalProps) {
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         style={{
           maxWidth: "460px",
           width: "100%",
@@ -4792,7 +4970,7 @@ function ResolveModal({ isOpen, onClose, checkKey, theme }: ResolveModalProps) {
             <line x1="12" y1="16" x2="12.01" y2="16" strokeLinecap="round" strokeWidth="2.5" />
           </svg>
         </div>
-        <h3 className="text-subsection-title" style={{ color: c.text, marginBottom: "12px" }}>
+        <h3 id="resolve-modal-title" className="text-subsection-title" style={{ color: c.text, marginBottom: "12px" }}>
           {info.title}
         </h3>
         <p

@@ -586,3 +586,8 @@ input::placeholder {
 .login-spinner {
   animation: spin 0.8s linear infinite;
 }
+
+:where(button, input, textarea, select, a):focus-visible {
+  outline: 2px solid var(--theme-accent, #a855f7);
+  outline-offset: 2px;
+}

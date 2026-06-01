@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
 import { resolveApiBase } from "@/lib/api-base";
+import { fetchJson } from "@/lib/api-client";
 
 function useTheme() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -93,6 +94,10 @@ function withNullableTimeout<T>(promise: Promise<T | null>, ms: number): Promise
   });
 }
 
+function stopMediaStream(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
 function getUserMediaWithTimeout(
   constraints: MediaStreamConstraints,
   ms = 8000
@@ -101,7 +106,7 @@ function getUserMediaWithTimeout(
   const request = navigator.mediaDevices.getUserMedia(constraints);
   request.then((stream) => {
     if (timedOut) {
-      stream.getTracks().forEach((track) => track.stop());
+      stopMediaStream(stream);
     }
   });
 
@@ -1035,6 +1040,7 @@ function Stage8_CameraInit({
   useEffect(() => {
     let cancelled = false;
     let handedOff = false;
+    let passTimer: ReturnType<typeof setTimeout> | null = null;
     let localStream: MediaStream | null = null;
 
     async function init() {
@@ -1047,7 +1053,7 @@ function Stage8_CameraInit({
         });
         localStream = stream;
         if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopMediaStream(stream);
           return;
         }
         if (videoRef.current) {
@@ -1056,16 +1062,19 @@ function Stage8_CameraInit({
           await waitForVideoReady(videoRef.current);
         }
         if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopMediaStream(stream);
           return;
         }
         handedOff = true;
         onCameraReady(stream);
         setPhase("pass");
-        setTimeout(onPass, 1000);
+        passTimer = setTimeout(() => {
+          if (!cancelled) onPass();
+        }, 1000);
       } catch (err) {
-        localStream?.getTracks().forEach((track) => track.stop());
+        stopMediaStream(localStream);
         localStream = null;
+        if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Camera access was denied";
         setError(
           msg.includes("denied") ||
@@ -1084,8 +1093,9 @@ function Stage8_CameraInit({
 
     return () => {
       cancelled = true;
+      if (passTimer) clearTimeout(passTimer);
       if (!handedOff) {
-        localStream?.getTracks().forEach((track) => track.stop());
+        stopMediaStream(localStream);
       }
     };
   }, [onPass, onCameraReady]);
@@ -1422,6 +1432,10 @@ function Stage9_FaceCalibration({
             },
             8000
           ).catch(() => null);
+          if (cancelled) {
+            stopMediaStream(activeStream);
+            return;
+          }
           localStreamRef.current = activeStream;
         }
 
@@ -1429,6 +1443,13 @@ function Stage9_FaceCalibration({
           videoRef.current.srcObject = activeStream;
           await videoRef.current.play().catch(() => {});
           await waitForVideoReady(videoRef.current, 2500).catch(() => {});
+          if (cancelled) {
+            if (localStreamRef.current === activeStream) {
+              stopMediaStream(localStreamRef.current);
+              localStreamRef.current = null;
+            }
+            return;
+          }
         } else {
           beginTimedFallback();
           return;
@@ -1480,7 +1501,7 @@ function Stage9_FaceCalibration({
       cancelled = true;
       detectorRef.current?.dispose();
       detectorRef.current = null;
-      localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      stopMediaStream(localStreamRef.current);
       localStreamRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1488,6 +1509,7 @@ function Stage9_FaceCalibration({
 
   // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
+    let cancelled = false;
     const EMA = 0.08;
     const DETECT_INTERVAL = 250;
 
@@ -1619,6 +1641,7 @@ function Stage9_FaceCalibration({
           }
         } catch (error) {
           detectionErrorsRef.current += 1;
+          if (cancelled) return;
           if (detectionErrorsRef.current >= 2) {
             setRuntimeNote(
               error instanceof Error
@@ -1743,7 +1766,10 @@ function Stage9_FaceCalibration({
     }
 
     rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafRef.current);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const phase = PHASES[phaseIdx];
@@ -2003,12 +2029,24 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    let passTimer: ReturnType<typeof setTimeout> | null = null;
+
     async function init() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("unavailable");
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (cancelled) {
+          stopMediaStream(stream);
+          return;
+        }
         streamRef.current = stream;
         const ctx = new AudioContext();
+        if (cancelled) {
+          stopMediaStream(stream);
+          ctx.close().catch(() => {});
+          return;
+        }
         audioCtxRef.current = ctx;
         const source = ctx.createMediaStreamSource(stream);
         const analyser = ctx.createAnalyser();
@@ -2019,6 +2057,7 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
         const data = new Uint8Array(analyser.frequencyBinCount);
         let lastUiUpdate = 0;
         function tick(now: number) {
+          if (cancelled) return;
           analyser.getByteFrequencyData(data);
           if (now - lastUiUpdate >= 125) {
             lastUiUpdate = now;
@@ -2033,22 +2072,28 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
         rafRef.current = requestAnimationFrame(tick);
 
         setPhase("pass");
-        setTimeout(onPass, 3500);
+        passTimer = setTimeout(() => {
+          if (!cancelled) onPass();
+        }, 3500);
       } catch {
+        if (cancelled) return;
         setPhase("fail");
-        setTimeout(onPass, 2000);
+        passTimer = setTimeout(() => {
+          if (!cancelled) onPass();
+        }, 2000);
       }
     }
     void init();
     return () => {
+      cancelled = true;
+      if (passTimer) clearTimeout(passTimer);
       cancelAnimationFrame(rafRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      stopMediaStream(streamRef.current);
       streamRef.current = null;
       audioCtxRef.current?.close().catch(() => {});
       audioCtxRef.current = null;
     };
   }, [onPass]);
-
   const bars = Array.from({ length: 20 }, (_, i) => i);
 
   return (
@@ -2491,12 +2536,11 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestId) return;
     let cancelled = false;
-    fetch(`${API_URL}/contests/${contestId}`)
-      .then(async (res) =>
-        res.ok
-          ? ((await res.json()) as { start_at?: string; end_at?: string; timezone?: string })
-          : null
-      )
+    fetchJson<{ start_at?: string; end_at?: string; timezone?: string }>(
+      `${API_URL}/contests/${contestId}`,
+      {},
+      { dedupeKey: `contest:${contestId}`, retries: 2 }
+    )
       .then((meta) => {
         if (cancelled || !meta?.start_at || !meta?.end_at) return;
         setContestWindow({ startAt: meta.start_at, endAt: meta.end_at, timezone: meta.timezone });
@@ -2535,16 +2579,16 @@ export default function OnboardingPage() {
   async function evaluateEntryGateFromServer() {
     if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
     try {
-      const res = await fetch(`${API_URL}/contests/${contestId}/session-window`);
-      if (!res.ok)
-        return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
-      const body = (await res.json()) as {
+      const body = await fetchJson<{
         eligibility_status?: string;
         blocked_reason?: string;
         session_window_state?: string;
         start_at?: string;
         end_at?: string;
-      };
+      }>(`${API_URL}/contests/${contestId}/session-window`, {}, {
+        dedupeKey: `contest-window:${contestId}`,
+        retries: 2,
+      });
       if (body.start_at && body.end_at) {
         setContestWindow((prev) => ({
           startAt: body.start_at ?? prev?.startAt ?? "",
@@ -2591,24 +2635,31 @@ export default function OnboardingPage() {
   const finalizeSecureStart = useCallback(async () => {
     setPolicyBlock(null);
     let windowMeta = contestWindow;
-    if (!windowMeta && contestId) {
-      try {
-        const res = await fetch(`${API_URL}/contests/${contestId}`);
-        if (res.ok) {
-          const meta = (await res.json()) as {
+    const windowMetaRequest =
+      !windowMeta && contestId
+        ? fetchJson<{
             start_at?: string;
             end_at?: string;
             timezone?: string;
-          };
-          if (meta?.start_at && meta?.end_at) {
-            windowMeta = { startAt: meta.start_at, endAt: meta.end_at, timezone: meta.timezone };
-            setContestWindow(windowMeta);
-          }
-        }
-      } catch {}
-    }
+          }>(`${API_URL}/contests/${contestId}`, {}, {
+            dedupeKey: `contest:${contestId}`,
+            retries: 2,
+          }).catch(() => null)
+        : Promise.resolve(null);
 
-    const gate = await evaluateEntryGateFromServer();
+    const [fetchedWindowMeta, gate] = await Promise.all([
+      windowMetaRequest,
+      evaluateEntryGateFromServer(),
+    ]);
+
+    if (fetchedWindowMeta?.start_at && fetchedWindowMeta?.end_at) {
+      windowMeta = {
+        startAt: fetchedWindowMeta.start_at,
+        endAt: fetchedWindowMeta.end_at,
+        timezone: fetchedWindowMeta.timezone,
+      };
+      setContestWindow(windowMeta);
+    }
     const localGate = (() => {
       if (!windowMeta) return { ok: true, reason: null as string | null };
       const now = Date.now();
@@ -2656,35 +2707,29 @@ export default function OnboardingPage() {
     try {
       const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
       if (!sessionPrepared) {
-        const sessionRes = await fetch(`${API_URL}/sessions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contest_id: contestId,
-            candidate_email: email,
-            candidate_name: email.split("@")[0],
-          }),
-        });
-        if (!sessionRes.ok) {
-          let body: { error?: string } | null = null;
-          try {
-            body = (await sessionRes.json()) as { error?: string };
-          } catch {}
-          throw new Error(body?.error || "Unable to create contest session.");
+        const body = await fetchJson<{ id?: string }>(
+          `${API_URL}/sessions`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contest_id: contestId,
+              candidate_email: email,
+              candidate_name: email.split("@")[0],
+            }),
+          },
+          { dedupeKey: `session:create:${contestId}:${email}`, retries: 2 }
+        );
+        if (body?.id) {
+          localStorage.setItem(
+            "ams_active_session",
+            JSON.stringify({
+              id: body.id,
+              contest_id: contestId,
+              updated_at: new Date().toISOString(),
+            })
+          );
         }
-        try {
-          const body = (await sessionRes.json()) as { id?: string };
-          if (body?.id) {
-            localStorage.setItem(
-              "ams_active_session",
-              JSON.stringify({
-                id: body.id,
-                contest_id: contestId,
-                updated_at: new Date().toISOString(),
-              })
-            );
-          }
-        } catch {}
         setSessionPrepared(true);
       }
 
