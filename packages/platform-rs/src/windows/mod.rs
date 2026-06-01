@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const RESTRICTED: &[&str] = &[
     "obs64.exe",
@@ -34,6 +35,17 @@ const RESTRICTED: &[&str] = &[
     "mstsc.exe",
     "rdpclip.exe",
 ];
+
+/// Query whether the current process is running with Administrator/Elevated privileges.
+pub fn is_elevated() -> bool {
+    std::process::Command::new("net")
+        .arg("session")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
 pub fn scan_processes() -> ProcessScanResult {
     let mut found = Vec::new();
@@ -99,7 +111,6 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 fn set_sleep_prevention(enable: bool) {
     use windows::Win32::System::Power::{
         SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
-        EXECUTION_STATE,
     };
     unsafe {
         if enable {
@@ -110,14 +121,95 @@ fn set_sleep_prevention(enable: bool) {
     }
 }
 
+/// Modify Registry values to enforce Windows system lockdown (Disable Task Manager, WinKeys).
+fn apply_registry_policies(enable: bool) {
+    if enable {
+        // 1. Disable Task Manager during secure session
+        let _ = std::process::Command::new("reg")
+            .args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
+                "/v",
+                "DisableTaskMgr",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "1",
+                "/f",
+            ])
+            .output();
+
+        // 2. Disable Explorer WinKey shortcuts globally
+        let _ = std::process::Command::new("reg")
+            .args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+                "/v",
+                "NoWinKeys",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "1",
+                "/f",
+            ])
+            .output();
+    } else {
+        // Restore Task Manager
+        let _ = std::process::Command::new("reg")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
+                "/v",
+                "DisableTaskMgr",
+                "/f",
+            ])
+            .output();
+
+        // Restore Explorer WinKeys
+        let _ = std::process::Command::new("reg")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+                "/v",
+                "NoWinKeys",
+                "/f",
+            ])
+            .output();
+    }
+}
+
 pub fn lock_desktop() -> bool {
     set_sleep_prevention(true);
+    apply_registry_policies(true);
+
+    // Active Process Terminating Shield
+    SHIELD_ACTIVE.store(true, Ordering::SeqCst);
+    std::thread::spawn(|| {
+        while SHIELD_ACTIVE.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
+                break;
+            }
+            let scan = scan_processes();
+            if !scan.clean {
+                for proc in scan.found {
+                    let exe = format!("{}.exe", proc);
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/IM", &exe])
+                        .output();
+                }
+            }
+        }
+    });
+
     let result = enable_keyboard_intercept();
     result.active
 }
 
 pub fn unlock_desktop() {
     set_sleep_prevention(false);
+    apply_registry_policies(false);
+    SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
 }
 
@@ -133,7 +225,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     set_sleep_prevention(true);
 
     std::thread::spawn(|| {
-        use windows::Win32::Foundation::HWND;
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::WindowsAndMessaging::{
             GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL,
@@ -187,9 +278,7 @@ unsafe extern "system" fn kbproc(
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::Foundation::LRESULT;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN};
 
     if code >= 0 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
@@ -199,14 +288,24 @@ unsafe extern "system" fn kbproc(
             (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11) as u16 & 0x8000)
                 != 0;
 
-        // Block: Win keys, PrintScreen, Alt+Tab, Alt+F4, Ctrl+Esc, Escape
+        let win_down = (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x5B) as u16
+            & 0x8000)
+            != 0
+            || (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x5C) as u16
+                & 0x8000)
+                != 0;
+
+        // Block: Win keys, PrintScreen, Alt+Tab, Alt+F4, Ctrl+Esc, Escape, Alt+Enter, Alt+Space, or any keys while Win is held down.
         let blocked = vk == 0x5B  // LWin
             || vk == 0x5C          // RWin
             || vk == 0x2C          // PrintScreen
             || (alt_down && vk == 0x09)  // Alt+Tab
             || (alt_down && vk == 0x73)  // Alt+F4
             || (ctrl_down && vk == 0x1B) // Ctrl+Esc
-            || vk == 0x1B; // Escape
+            || vk == 0x1B          // Escape
+            || (alt_down && vk == 0x0D)  // Alt+Enter (window sizing)
+            || (alt_down && vk == 0x20)  // Alt+Space (system menu)
+            || win_down; // Any key combo with Win key (Win+Tab, Win+D, etc.)
 
         if blocked {
             return LRESULT(1);

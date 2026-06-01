@@ -38,6 +38,13 @@ fn push_violation(kind: &str, detail: &str) {
 }
 
 fn collect_fast_device_state() -> DeviceState {
+    #[cfg(target_os = "windows")]
+    let platform = Some(if platform_rs::windows::is_elevated() {
+        "windows".to_string()
+    } else {
+        "windows_no_admin".to_string()
+    });
+    #[cfg(not(target_os = "windows"))]
     let platform = Some(std::env::consts::OS.to_string());
 
     #[cfg(target_os = "linux")]

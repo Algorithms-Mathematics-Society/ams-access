@@ -526,11 +526,26 @@ fn evaluate_requirement(
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
         CheckKind::Platform => match &device_state.platform {
-            Some(platform) if platform == "linux" || platform == "windows" => (
+            Some(platform) if platform == "linux" => (
                 true,
                 None,
-                Some(format!("supported platform: {}", platform)),
+                Some("supported platform: linux".to_string()),
                 vec![],
+            ),
+            Some(platform) if platform == "windows" => (
+                true,
+                None,
+                Some("supported platform: windows (Administrator)".to_string()),
+                vec![],
+            ),
+            Some(platform) if platform == "windows_no_admin" => (
+                false,
+                Some(FailureReasonCode::UnsupportedPlatform),
+                Some("Administrator privileges are required on Windows. Please relaunch the application as Administrator.".to_string()),
+                vec![
+                    RecoveryAction::UseSupportedPlatform,
+                    RecoveryAction::ContactOrganizer,
+                ],
             ),
             Some(platform) => (
                 false,
