@@ -1610,12 +1610,17 @@ const ActiveContestCard = memo(
                 <path d="M5 1v2M11 1v2M2 7h12" />
               </svg>
               <span>
-                {new Date(c.start_at).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
+                {new Date(c.start_at).toLocaleTimeString(undefined, {
+                  hour: "2-digit",
+                  minute: "2-digit",
                 })}{" "}
                 —{" "}
-                {new Date(c.end_at).toLocaleDateString(undefined, {
+                {new Date(c.end_at).toLocaleTimeString(undefined, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+                ,{" "}
+                {new Date(c.start_at).toLocaleDateString(undefined, {
                   month: "short",
                   day: "numeric",
                 })}
