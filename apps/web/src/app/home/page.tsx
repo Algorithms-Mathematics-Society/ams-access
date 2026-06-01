@@ -156,7 +156,8 @@ function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => v
     if (!rootEl) return;
     const trappedRoot: T = rootEl;
 
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const selector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
     const focusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
       (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
@@ -171,9 +172,9 @@ function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => v
       }
       if (event.key !== "Tab") return;
 
-      const currentFocusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
-        (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
-      );
+      const currentFocusable = Array.from(
+        trappedRoot.querySelectorAll<HTMLElement>(selector)
+      ).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
       if (currentFocusable.length === 0) {
         event.preventDefault();
         trappedRoot.focus({ preventScroll: true });
@@ -416,11 +417,40 @@ export default function HomePage() {
     contestsQueryKey,
     async () => {
       const url = `${API_URL}/contests/invited?email=${encodeURIComponent(userEmail)}`;
-      const data = await fetchJson<InvitedContest[]>(url, {}, {
-        dedupeKey: contestsQueryKey ?? url,
-        retries: 2,
-      });
-      return mergeContestLists(data ?? [], loadUnlockedContests());
+      const data = await fetchJson<InvitedContest[]>(
+        url,
+        {},
+        {
+          dedupeKey: contestsQueryKey ?? url,
+          retries: 2,
+        }
+      );
+      const unlocked = loadUnlockedContests();
+      const freshUnlocked = await Promise.all(
+        unlocked.map(async (uc) => {
+          try {
+            const fresh = await fetchJson<any>(`${API_URL}/contests/${uc.id}`);
+            if (fresh && fresh.id) {
+              return {
+                ...uc,
+                title: fresh.title,
+                description: fresh.description,
+                start_at: fresh.start_at,
+                end_at: fresh.end_at,
+                timezone: fresh.timezone,
+                status: fresh.status,
+                org_name: fresh.org_name,
+                plugin_type: fresh.plugin_type,
+              };
+            }
+          } catch (e) {
+            console.error("Failed to fetch fresh contest details for", uc.id, e);
+          }
+          return uc;
+        })
+      );
+      saveUnlockedContests(freshUnlocked);
+      return mergeContestLists(data ?? [], freshUnlocked);
     },
     { enabled: userEmailHydrated, staleMs: 30_000, retries: 0 }
   );
@@ -852,7 +882,13 @@ export default function HomePage() {
             {activeNav === "overview" && (
               <>
                 Authenticated Profile Node:{" "}
-                <span style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace", color: c.text, fontWeight: 600 }}>
+                <span
+                  style={{
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    color: c.text,
+                    fontWeight: 600,
+                  }}
+                >
                   {userEmail}
                 </span>
               </>
@@ -1062,374 +1098,88 @@ function getScheduledContestTickDelay(contest: InvitedContest, now: number) {
   return Math.max(1000, Math.min(nextTickAt - now, 60000));
 }
 
-const ScheduledContestCard = memo(function ScheduledContestCard({
-  c,
-  onPreflight,
-  theme,
-}: {
-  c: InvitedContest;
-  onPreflight: (contestId: string, type: "new" | "resume") => void;
-  theme: "dark" | "light";
-}) {
-  const [hovered, setHovered] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const themeColors = getThemeColors(theme);
-  const isLight = theme === "light";
-  const verificationWindowMinutes = getVerificationWindowMinutes(c);
+const ScheduledContestCard = memo(
+  function ScheduledContestCard({
+    c,
+    onPreflight,
+    theme,
+  }: {
+    c: InvitedContest;
+    onPreflight: (contestId: string, type: "new" | "resume") => void;
+    theme: "dark" | "light";
+  }) {
+    const [hovered, setHovered] = useState(false);
+    const [now, setNow] = useState(() => Date.now());
+    const themeColors = getThemeColors(theme);
+    const isLight = theme === "light";
+    const verificationWindowMinutes = getVerificationWindowMinutes(c);
 
-  useEffect(() => {
-    let active = true;
-    let timerId: ReturnType<typeof setTimeout> | null = null;
+    useEffect(() => {
+      let active = true;
+      let timerId: ReturnType<typeof setTimeout> | null = null;
 
-    const scheduleNextTick = () => {
-      const current = Date.now();
-      timerId = setTimeout(() => {
-        if (!active) return;
-        setNow(Date.now());
-        scheduleNextTick();
-      }, getScheduledContestTickDelay(c, current));
-    };
+      const scheduleNextTick = () => {
+        const current = Date.now();
+        timerId = setTimeout(
+          () => {
+            if (!active) return;
+            setNow(Date.now());
+            scheduleNextTick();
+          },
+          getScheduledContestTickDelay(c, current)
+        );
+      };
 
-    setNow(Date.now());
-    scheduleNextTick();
+      setNow(Date.now());
+      scheduleNextTick();
 
-    return () => {
-      active = false;
-      if (timerId) clearTimeout(timerId);
-    };
-  }, [c]);
-  const phase = useMemo(
-    () => getEntryPhase(c.start_at, c.end_at, now, verificationWindowMinutes),
-    [c.end_at, c.start_at, now, verificationWindowMinutes]
-  );
-  const startsIn = useMemo(() => formatStartsIn(c.start_at, now), [c.start_at, now]);
-  const canJoin = phase === "verification_open" || phase === "join_closed";
-  const joinType: "new" | "resume" = phase === "join_closed" ? "resume" : "new";
-  const label =
-    phase === "verification_open"
-      ? "Begin Verification"
-      : phase === "too_early"
-        ? `Verification opens ${startsIn}`
-        : phase === "join_closed"
-          ? "Enter Contest"
-          : "Ended";
+      return () => {
+        active = false;
+        if (timerId) clearTimeout(timerId);
+      };
+    }, [c]);
+    const phase = useMemo(
+      () => getEntryPhase(c.start_at, c.end_at, now, verificationWindowMinutes),
+      [c.end_at, c.start_at, now, verificationWindowMinutes]
+    );
+    const startsIn = useMemo(() => formatStartsIn(c.start_at, now), [c.start_at, now]);
+    const canJoin = phase === "verification_open" || phase === "join_closed";
+    const joinType: "new" | "resume" = phase === "join_closed" ? "resume" : "new";
+    const label =
+      phase === "verification_open"
+        ? "Begin Verification"
+        : phase === "too_early"
+          ? `Verification opens ${startsIn}`
+          : phase === "join_closed"
+            ? "Enter Contest"
+            : "Ended";
 
-  return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: isLight
-          ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
-          : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
-        border: `1px solid ${hovered ? themeColors.accent : themeColors.borderStrong}`,
-        borderRadius: "14px",
-        padding: "28px 32px",
-        transition: "all 400ms cubic-bezier(0.16, 1, 0.3, 1)",
-        boxShadow: hovered
-          ? isLight
-            ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-            : "0 20px 48px rgba(168, 85, 247, 0.08)"
-          : themeColors.shadow,
-        transform: hovered ? "translateY(-4px)" : "translateY(0)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "20px",
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      {/* Decorative accent top line */}
+    return (
       <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: "3px",
-          background: `linear-gradient(90deg, ${themeColors.accent} 0%, rgba(124, 58, 237, 0.3) 100%)`,
-          opacity: hovered ? 1 : 0.4,
-          transition: "opacity 300ms ease",
-        }}
-      />
-
-      {/* Header section: Title, Status, Org */}
-      <div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "16px",
-            marginBottom: "8px",
-          }}
-        >
-          <h3
-            style={{
-              fontSize: "19px",
-              fontWeight: 700,
-              color: themeColors.text,
-              letterSpacing: "-0.02em",
-              lineHeight: 1.2,
-              margin: 0,
-            }}
-          >
-            {c.title}
-          </h3>
-          <span
-            style={{
-              flexShrink: 0,
-              fontSize: "10.5px",
-              fontWeight: 700,
-              padding: "4px 10px",
-              borderRadius: "20px",
-              background: themeColors.accentLight,
-              border: `1px solid ${themeColors.accentBorder}`,
-              color: themeColors.accentText,
-              letterSpacing: "0.1em",
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            SCHEDULED
-          </span>
-        </div>
-        <p
-          style={{
-            fontSize: "14px",
-            color: themeColors.textMuted,
-            fontWeight: 500,
-            margin: 0,
-          }}
-        >
-          {c.org_name}
-        </p>
-      </div>
-
-      {/* Description section */}
-      {c.description && (
-        <p
-          style={{
-            fontSize: "14px",
-            color: themeColors.textMutedStrong,
-            lineHeight: 1.6,
-            margin: 0,
-            display: "-webkit-box",
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {c.description}
-        </p>
-      )}
-
-      {/* Divider */}
-      <div style={{ height: "1px", background: themeColors.border, margin: "4px 0 0 0" }} />
-
-      {/* Footer: Telemetry parameters and call to action */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "24px",
-          flexWrap: "wrap",
-        }}
-      >
-        {/* Left Side: Metadata with lovely tiny icons */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "20px",
-            fontSize: "12px",
-            color: themeColors.textMutedStrong,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <rect x="2" y="3" width="12" height="11" rx="2" />
-              <path d="M5 1v2M11 1v2M2 7h12" />
-            </svg>
-            <span>
-              {new Date(c.start_at).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })}{" "}
-              —{" "}
-              {new Date(c.end_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-            </span>
-          </div>
-
-          <div
-            style={{
-              width: "4px",
-              height: "4px",
-              borderRadius: "50%",
-              background: themeColors.borderStrong,
-            }}
-          />
-
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <circle cx="8" cy="8" r="6" />
-              <path d="M8 3.5v5h4" />
-            </svg>
-            <span style={{ color: themeColors.accent }}>
-              {phase === "too_early"
-                ? `opens in ${startsIn}`
-                : phase === "verification_open"
-                  ? `starts in ${startsIn}`
-                  : phase === "join_closed"
-                    ? "live now"
-                    : "window closed"}
-            </span>
-          </div>
-
-          <div
-            style={{
-              width: "4px",
-              height: "4px",
-              borderRadius: "50%",
-              background: themeColors.borderStrong,
-            }}
-          />
-
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <path d="M3 5h10M3 8h10M3 11h7" strokeLinecap="round" />
-            </svg>
-            <span>{c.question_count} Questions</span>
-          </div>
-        </div>
-
-        {/* Right Side: CTA Button */}
-        <button
-          onClick={() => {
-            if (canJoin) onPreflight(c.id, joinType);
-          }}
-          disabled={!canJoin}
-          title={phase === "too_early" ? "Verification has not opened yet" : undefined}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "12px 28px",
-            borderRadius: "10px",
-            border: `1px solid ${canJoin ? themeColors.accent : "rgba(245,158,11,0.35)"}`,
-            background: canJoin && hovered ? themeColors.accent : phase === "too_early" ? "rgba(245,158,11,0.06)" : "transparent",
-            color: canJoin ? (hovered ? "#ffffff" : themeColors.accentText) : phase === "too_early" ? "#f59e0b" : themeColors.textMuted,
-            fontSize: "14px",
-            fontWeight: 600,
-            fontFamily: "inherit",
-            cursor: canJoin ? "pointer" : "not-allowed",
-            letterSpacing: "0.02em",
-            whiteSpace: "nowrap",
-            transition: "all 300ms cubic-bezier(0.16, 1, 0.3, 1)",
-            boxShadow:
-              canJoin && hovered
-                ? isLight
-                  ? "0 8px 20px rgba(124, 58, 237, 0.2)"
-                  : "0 8px 24px rgba(168, 85, 247, 0.3)"
-                : "none",
-          }}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 12 12"
-            fill="none"
-            style={{
-              transform: hovered ? "scale(1.1) rotate(5deg)" : "none",
-              transition: "transform 300ms ease",
-            }}
-          >
-            <path
-              d="M6 1L2 3.5v3c0 2.5 2 4.5 4 5 2-.5 4-2.5 4-5v-3L6 1z"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <span>{label}</span>
-        </button>
-      </div>
-      <div style={{ marginTop: "4px", fontSize: "11px", color: themeColors.textMuted }}>
-        Timezone: {c.timezone || "UTC"}
-      </div>
-    </div>
-  );
-}, (prev, next) => prev.c === next.c && prev.theme === next.theme && prev.onPreflight === next.onPreflight);
-
-const ActiveContestCard = memo(function ActiveContestCard({
-  c,
-  onPreflight,
-  theme,
-  col,
-  canEnter,
-}: {
-  c: InvitedContest;
-  onPreflight: (contestId: string, type: "new" | "resume") => void;
-  theme: "dark" | "light";
-  col: any;
-  canEnter: boolean;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const themeColors = getThemeColors(theme);
-  const isLight = theme === "light";
-
-  return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: isLight
-          ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
-          : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
-        border: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
-        borderRadius: "14px",
-        padding: "28px 32px",
-        transition: "all 400ms cubic-bezier(0.16, 1, 0.3, 1)",
-        boxShadow:
-          hovered && canEnter
+          background: isLight
+            ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
+            : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
+          border: `1px solid ${hovered ? themeColors.accent : themeColors.borderStrong}`,
+          borderRadius: "14px",
+          padding: "28px 32px",
+          transition: "all 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+          boxShadow: hovered
             ? isLight
               ? "0 20px 40px rgba(124, 58, 237, 0.08)"
               : "0 20px 48px rgba(168, 85, 247, 0.08)"
             : themeColors.shadow,
-        transform: hovered && canEnter ? "translateY(-4px)" : "translateY(0)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "20px",
-        position: "relative",
-        overflow: "hidden",
-        opacity: canEnter ? 1 : 0.75,
-      }}
-    >
-      {/* Decorative accent top line for active sessions */}
-      {canEnter && (
+          transform: hovered ? "translateY(-4px)" : "translateY(0)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "20px",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {/* Decorative accent top line */}
         <div
           style={{
             position: "absolute",
@@ -1437,204 +1187,228 @@ const ActiveContestCard = memo(function ActiveContestCard({
             left: 0,
             right: 0,
             height: "3px",
-            background: `linear-gradient(90deg, #10b981 0%, rgba(16, 185, 129, 0.3) 100%)`,
+            background: `linear-gradient(90deg, ${themeColors.accent} 0%, rgba(124, 58, 237, 0.3) 100%)`,
             opacity: hovered ? 1 : 0.4,
             transition: "opacity 300ms ease",
           }}
         />
-      )}
 
-      {/* Header section: Title, Status, Org */}
-      <div>
+        {/* Header section: Title, Status, Org */}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              marginBottom: "8px",
+            }}
+          >
+            <h3
+              style={{
+                fontSize: "19px",
+                fontWeight: 700,
+                color: themeColors.text,
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
+                margin: 0,
+              }}
+            >
+              {c.title}
+            </h3>
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: "10.5px",
+                fontWeight: 700,
+                padding: "4px 10px",
+                borderRadius: "20px",
+                background: themeColors.accentLight,
+                border: `1px solid ${themeColors.accentBorder}`,
+                color: themeColors.accentText,
+                letterSpacing: "0.1em",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              SCHEDULED
+            </span>
+          </div>
+          <p
+            style={{
+              fontSize: "14px",
+              color: themeColors.textMuted,
+              fontWeight: 500,
+              margin: 0,
+            }}
+          >
+            {c.org_name}
+          </p>
+        </div>
+
+        {/* Description section */}
+        {c.description && (
+          <p
+            style={{
+              fontSize: "14px",
+              color: themeColors.textMutedStrong,
+              lineHeight: 1.6,
+              margin: 0,
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {c.description}
+          </p>
+        )}
+
+        {/* Divider */}
+        <div style={{ height: "1px", background: themeColors.border, margin: "4px 0 0 0" }} />
+
+        {/* Footer: Telemetry parameters and call to action */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: "16px",
-            marginBottom: "8px",
+            gap: "24px",
+            flexWrap: "wrap",
           }}
         >
-          <h3
+          {/* Left Side: Metadata with lovely tiny icons */}
+          <div
             style={{
-              fontSize: "19px",
-              fontWeight: 700,
-              color: themeColors.text,
-              letterSpacing: "-0.02em",
-              lineHeight: 1.2,
-              margin: 0,
-            }}
-          >
-            {c.title}
-          </h3>
-          <span
-            style={{
-              flexShrink: 0,
-              fontSize: "10.5px",
-              fontWeight: 700,
-              padding: "4px 10px",
-              borderRadius: "20px",
-              background: col.bg,
-              border: `1px solid ${col.border}`,
-              color: col.dot,
-              letterSpacing: "0.1em",
+              display: "flex",
+              alignItems: "center",
+              gap: "20px",
+              fontSize: "12px",
+              color: themeColors.textMutedStrong,
               fontFamily: "'JetBrains Mono', monospace",
             }}
           >
-            {c.status}
-          </span>
-        </div>
-        <p
-          style={{
-            fontSize: "14px",
-            color: themeColors.textMuted,
-            fontWeight: 500,
-            margin: 0,
-          }}
-        >
-          {c.org_name}
-        </p>
-      </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <rect x="2" y="3" width="12" height="11" rx="2" />
+                <path d="M5 1v2M11 1v2M2 7h12" />
+              </svg>
+              <span>
+                {new Date(c.start_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}{" "}
+                —{" "}
+                {new Date(c.end_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+            </div>
 
-      {/* Description section */}
-      {c.description && (
-        <p
-          style={{
-            fontSize: "14px",
-            color: themeColors.textMutedStrong,
-            lineHeight: 1.6,
-            margin: 0,
-            display: "-webkit-box",
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {c.description}
-        </p>
-      )}
-
-      {/* Divider */}
-      <div style={{ height: "1px", background: themeColors.border, margin: "4px 0 0 0" }} />
-
-      {/* Footer: Telemetry parameters and call to action */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "24px",
-          flexWrap: "wrap",
-        }}
-      >
-        {/* Left Side: Metadata with lovely tiny icons */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "20px",
-            fontSize: "12px",
-            color: themeColors.textMutedStrong,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <rect x="2" y="3" width="12" height="11" rx="2" />
-              <path d="M5 1v2M11 1v2M2 7h12" />
-            </svg>
-            <span>
-              {new Date(c.start_at).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })}{" "}
-              —{" "}
-              {new Date(c.end_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-            </span>
-          </div>
-
-          <div
-            style={{
-              width: "4px",
-              height: "4px",
-              borderRadius: "50%",
-              background: themeColors.borderStrong,
-            }}
-          />
-
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <div
               style={{
-                width: "6px",
-                height: "6px",
+                width: "4px",
+                height: "4px",
                 borderRadius: "50%",
-                background: col.dot,
-                boxShadow: canEnter ? `0 0 8px ${col.dot}` : "none",
-                animation: canEnter ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+                background: themeColors.borderStrong,
               }}
             />
-            <span style={{ color: canEnter ? "#10b981" : themeColors.textMuted }}>
-              {canEnter ? "Active Now" : "Session Ended"}
-            </span>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <circle cx="8" cy="8" r="6" />
+                <path d="M8 3.5v5h4" />
+              </svg>
+              <span style={{ color: themeColors.accent }}>
+                {phase === "too_early"
+                  ? `opens in ${startsIn}`
+                  : phase === "verification_open"
+                    ? `starts in ${startsIn}`
+                    : phase === "join_closed"
+                      ? "live now"
+                      : "window closed"}
+              </span>
+            </div>
+
+            <div
+              style={{
+                width: "4px",
+                height: "4px",
+                borderRadius: "50%",
+                background: themeColors.borderStrong,
+              }}
+            />
+
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <path d="M3 5h10M3 8h10M3 11h7" strokeLinecap="round" />
+              </svg>
+              <span>{c.question_count} Questions</span>
+            </div>
           </div>
 
-          <div
-            style={{
-              width: "4px",
-              height: "4px",
-              borderRadius: "50%",
-              background: themeColors.borderStrong,
-            }}
-          />
-
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <path d="M3 5h10M3 8h10M3 11h7" strokeLinecap="round" />
-            </svg>
-            <span>{c.question_count} Questions</span>
-          </div>
-        </div>
-
-        {/* Right Side: CTA Button or status info */}
-        {canEnter ? (
+          {/* Right Side: CTA Button */}
           <button
-            onClick={() => onPreflight(c.id, "new")}
+            onClick={() => {
+              if (canJoin) onPreflight(c.id, joinType);
+            }}
+            disabled={!canJoin}
+            title={phase === "too_early" ? "Verification has not opened yet" : undefined}
             style={{
               display: "flex",
               alignItems: "center",
               gap: "10px",
               padding: "12px 28px",
               borderRadius: "10px",
-              border: "1px solid #10b981",
-              background: hovered ? "#10b981" : "transparent",
-              color: hovered ? "#ffffff" : "#10b981",
+              border: `1px solid ${canJoin ? themeColors.accent : "rgba(245,158,11,0.35)"}`,
+              background:
+                canJoin && hovered
+                  ? themeColors.accent
+                  : phase === "too_early"
+                    ? "rgba(245,158,11,0.06)"
+                    : "transparent",
+              color: canJoin
+                ? hovered
+                  ? "#ffffff"
+                  : themeColors.accentText
+                : phase === "too_early"
+                  ? "#f59e0b"
+                  : themeColors.textMuted,
               fontSize: "14px",
               fontWeight: 600,
               fontFamily: "inherit",
-              cursor: "pointer",
+              cursor: canJoin ? "pointer" : "not-allowed",
               letterSpacing: "0.02em",
               whiteSpace: "nowrap",
               transition: "all 300ms cubic-bezier(0.16, 1, 0.3, 1)",
-              boxShadow: hovered
-                ? isLight
-                  ? "0 8px 20px rgba(16, 185, 129, 0.2)"
-                  : "0 8px 24px rgba(16, 185, 129, 0.3)"
-                : "none",
+              boxShadow:
+                canJoin && hovered
+                  ? isLight
+                    ? "0 8px 20px rgba(124, 58, 237, 0.2)"
+                    : "0 8px 24px rgba(168, 85, 247, 0.3)"
+                  : "none",
             }}
           >
             <svg
@@ -1654,31 +1428,319 @@ const ActiveContestCard = memo(function ActiveContestCard({
                 strokeLinejoin="round"
               />
             </svg>
-            <span>Enter Session</span>
+            <span>{label}</span>
           </button>
-        ) : (
-          <span
+        </div>
+        <div style={{ marginTop: "4px", fontSize: "11px", color: themeColors.textMuted }}>
+          Timezone: {c.timezone || "UTC"}
+        </div>
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.c === next.c && prev.theme === next.theme && prev.onPreflight === next.onPreflight
+);
+
+const ActiveContestCard = memo(
+  function ActiveContestCard({
+    c,
+    onPreflight,
+    theme,
+    col,
+    canEnter,
+  }: {
+    c: InvitedContest;
+    onPreflight: (contestId: string, type: "new" | "resume") => void;
+    theme: "dark" | "light";
+    col: any;
+    canEnter: boolean;
+  }) {
+    const [hovered, setHovered] = useState(false);
+    const themeColors = getThemeColors(theme);
+    const isLight = theme === "light";
+
+    return (
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          background: isLight
+            ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
+            : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
+          border: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
+          borderRadius: "14px",
+          padding: "28px 32px",
+          transition: "all 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+          boxShadow:
+            hovered && canEnter
+              ? isLight
+                ? "0 20px 40px rgba(124, 58, 237, 0.08)"
+                : "0 20px 48px rgba(168, 85, 247, 0.08)"
+              : themeColors.shadow,
+          transform: hovered && canEnter ? "translateY(-4px)" : "translateY(0)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "20px",
+          position: "relative",
+          overflow: "hidden",
+          opacity: canEnter ? 1 : 0.75,
+        }}
+      >
+        {/* Decorative accent top line for active sessions */}
+        {canEnter && (
+          <div
             style={{
-              fontSize: "13px",
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: "3px",
+              background: `linear-gradient(90deg, #10b981 0%, rgba(16, 185, 129, 0.3) 100%)`,
+              opacity: hovered ? 1 : 0.4,
+              transition: "opacity 300ms ease",
+            }}
+          />
+        )}
+
+        {/* Header section: Title, Status, Org */}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              marginBottom: "8px",
+            }}
+          >
+            <h3
+              style={{
+                fontSize: "19px",
+                fontWeight: 700,
+                color: themeColors.text,
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
+                margin: 0,
+              }}
+            >
+              {c.title}
+            </h3>
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: "10.5px",
+                fontWeight: 700,
+                padding: "4px 10px",
+                borderRadius: "20px",
+                background: col.bg,
+                border: `1px solid ${col.border}`,
+                color: col.dot,
+                letterSpacing: "0.1em",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {c.status}
+            </span>
+          </div>
+          <p
+            style={{
+              fontSize: "14px",
               color: themeColors.textMuted,
               fontWeight: 500,
+              margin: 0,
+            }}
+          >
+            {c.org_name}
+          </p>
+        </div>
+
+        {/* Description section */}
+        {c.description && (
+          <p
+            style={{
+              fontSize: "14px",
+              color: themeColors.textMutedStrong,
+              lineHeight: 1.6,
+              margin: 0,
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {c.description}
+          </p>
+        )}
+
+        {/* Divider */}
+        <div style={{ height: "1px", background: themeColors.border, margin: "4px 0 0 0" }} />
+
+        {/* Footer: Telemetry parameters and call to action */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "24px",
+            flexWrap: "wrap",
+          }}
+        >
+          {/* Left Side: Metadata with lovely tiny icons */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "20px",
+              fontSize: "12px",
+              color: themeColors.textMutedStrong,
               fontFamily: "'JetBrains Mono', monospace",
             }}
           >
-            CLOSED
-          </span>
-        )}
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <rect x="2" y="3" width="12" height="11" rx="2" />
+                <path d="M5 1v2M11 1v2M2 7h12" />
+              </svg>
+              <span>
+                {new Date(c.start_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}{" "}
+                —{" "}
+                {new Date(c.end_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+            </div>
+
+            <div
+              style={{
+                width: "4px",
+                height: "4px",
+                borderRadius: "50%",
+                background: themeColors.borderStrong,
+              }}
+            />
+
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  background: col.dot,
+                  boxShadow: canEnter ? `0 0 8px ${col.dot}` : "none",
+                  animation: canEnter ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+                }}
+              />
+              <span style={{ color: canEnter ? "#10b981" : themeColors.textMuted }}>
+                {canEnter ? "Active Now" : "Session Ended"}
+              </span>
+            </div>
+
+            <div
+              style={{
+                width: "4px",
+                height: "4px",
+                borderRadius: "50%",
+                background: themeColors.borderStrong,
+              }}
+            />
+
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <path d="M3 5h10M3 8h10M3 11h7" strokeLinecap="round" />
+              </svg>
+              <span>{c.question_count} Questions</span>
+            </div>
+          </div>
+
+          {/* Right Side: CTA Button or status info */}
+          {canEnter ? (
+            <button
+              onClick={() => onPreflight(c.id, "new")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "12px 28px",
+                borderRadius: "10px",
+                border: "1px solid #10b981",
+                background: hovered ? "#10b981" : "transparent",
+                color: hovered ? "#ffffff" : "#10b981",
+                fontSize: "14px",
+                fontWeight: 600,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                letterSpacing: "0.02em",
+                whiteSpace: "nowrap",
+                transition: "all 300ms cubic-bezier(0.16, 1, 0.3, 1)",
+                boxShadow: hovered
+                  ? isLight
+                    ? "0 8px 20px rgba(16, 185, 129, 0.2)"
+                    : "0 8px 24px rgba(16, 185, 129, 0.3)"
+                  : "none",
+              }}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 12 12"
+                fill="none"
+                style={{
+                  transform: hovered ? "scale(1.1) rotate(5deg)" : "none",
+                  transition: "transform 300ms ease",
+                }}
+              >
+                <path
+                  d="M6 1L2 3.5v3c0 2.5 2 4.5 4 5 2-.5 4-2.5 4-5v-3L6 1z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span>Enter Session</span>
+            </button>
+          ) : (
+            <span
+              style={{
+                fontSize: "13px",
+                color: themeColors.textMuted,
+                fontWeight: 500,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              CLOSED
+            </span>
+          )}
+        </div>
       </div>
-    </div>
-  );
-}, (prev, next) =>
-  prev.c === next.c &&
-  prev.theme === next.theme &&
-  prev.canEnter === next.canEnter &&
-  prev.col.dot === next.col.dot &&
-  prev.col.bg === next.col.bg &&
-  prev.col.border === next.col.border &&
-  prev.onPreflight === next.onPreflight
+    );
+  },
+  (prev, next) =>
+    prev.c === next.c &&
+    prev.theme === next.theme &&
+    prev.canEnter === next.canEnter &&
+    prev.col.dot === next.col.dot &&
+    prev.col.bg === next.col.bg &&
+    prev.col.border === next.col.border &&
+    prev.onPreflight === next.onPreflight
 );
 
 function SessionActionsPanel({
@@ -1817,7 +1879,15 @@ function SessionActionsPanel({
             </p>
           )}
           {inviteCodeStatus && (
-            <p style={{ marginTop: "8px", color: "#ef4444", fontSize: "12px", lineHeight: 1.45, fontWeight: 500 }}>
+            <p
+              style={{
+                marginTop: "8px",
+                color: "#ef4444",
+                fontSize: "12px",
+                lineHeight: 1.45,
+                fontWeight: 500,
+              }}
+            >
               {inviteCodeStatus}
             </p>
           )}
@@ -1873,7 +1943,13 @@ function SessionActionsPanel({
           </p>
           <p style={{ color: c.textMutedStrong, fontSize: "12px", lineHeight: 1.45 }}>
             {activeSession ? (
-              <span style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontWeight: 600, color: c.text }}>
+              <span
+                style={{
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                  fontWeight: 600,
+                  color: c.text,
+                }}
+              >
                 {activeSession.contest_title ?? `CONTEST_${activeSession.contest_id.toUpperCase()}`}
               </span>
             ) : (
@@ -1899,7 +1975,9 @@ function SessionActionsPanel({
           {resumeBusy ? "Validating..." : "Resume Active Session"}
         </button>
         {resumeStatus && (
-          <p style={{ color: "#ef4444", fontSize: "12px", lineHeight: 1.4, fontWeight: 500 }}>{resumeStatus}</p>
+          <p style={{ color: "#ef4444", fontSize: "12px", lineHeight: 1.4, fontWeight: 500 }}>
+            {resumeStatus}
+          </p>
         )}
       </div>
     </div>
@@ -2016,7 +2094,14 @@ function ContestsPanel({
             flexShrink: 0,
           }}
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={themeColors.accent} strokeWidth="1.8">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={themeColors.accent}
+            strokeWidth="1.8"
+          >
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
             <line x1="16" y1="2" x2="16" y2="6" />
             <line x1="8" y1="2" x2="8" y2="6" />
@@ -2036,8 +2121,16 @@ function ContestsPanel({
           >
             No contests yet.
           </h4>
-          <p style={{ fontSize: "12px", color: themeColors.textMuted, margin: "4px 0 0", lineHeight: 1.4 }}>
-            If you have an invite code, enter it above. Upcoming contests will appear here after they are added.
+          <p
+            style={{
+              fontSize: "12px",
+              color: themeColors.textMuted,
+              margin: "4px 0 0",
+              lineHeight: 1.4,
+            }}
+          >
+            If you have an invite code, enter it above. Upcoming contests will appear here after
+            they are added.
           </p>
         </div>
       </div>
@@ -2062,12 +2155,7 @@ function ContestsPanel({
         {contests.map((c) => {
           if (c.status === "SCHEDULED") {
             return (
-              <ScheduledContestCard
-                key={c.id}
-                c={c}
-                onPreflight={onPreflight}
-                theme={theme}
-              />
+              <ScheduledContestCard key={c.id} c={c} onPreflight={onPreflight} theme={theme} />
             );
           }
           const col = statusColor(c.status);
@@ -2198,7 +2286,10 @@ function ReadinessWidget({
       <div
         style={{
           marginBottom: "18px",
-          border: failedChecks.length > 0 ? "1px solid rgba(239, 68, 68, 0.22)" : "1px solid rgba(255, 255, 255, 0.05)",
+          border:
+            failedChecks.length > 0
+              ? "1px solid rgba(239, 68, 68, 0.22)"
+              : "1px solid rgba(255, 255, 255, 0.05)",
           background: failedChecks.length > 0 ? "rgba(239, 68, 68, 0.06)" : "transparent",
           borderRadius: "6px",
           padding: "12px 16px",
@@ -2323,7 +2414,12 @@ function ReadinessItem({
               fontWeight: 700,
               letterSpacing: "0.08em",
               fontFamily: "var(--font-mono), monospace",
-              color: status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accentText,
+              color:
+                status === "ok"
+                  ? "#22c55e"
+                  : status === "fail"
+                    ? "#ef4444"
+                    : themeColors.accentText,
             }}
           >
             {status === "ok" ? "SECURE" : status === "fail" ? "CRITICAL" : "SCANNING"}
@@ -2344,10 +2440,16 @@ function ReadinessItem({
               width: "6px",
               height: "6px",
               borderRadius: "50%",
-              background: status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accent,
+              background:
+                status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accent,
               outline: `1px solid ${status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : themeColors.accent}`,
               outlineOffset: "2px",
-              animation: status === "checking" ? "pulse-dot 1s ease-in-out infinite" : status === "fail" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+              animation:
+                status === "checking"
+                  ? "pulse-dot 1s ease-in-out infinite"
+                  : status === "fail"
+                    ? "pulse-dot 1.5s ease-in-out infinite"
+                    : "none",
             }}
           />
         </div>
@@ -2743,7 +2845,8 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
-            borderLeft: activeTab === "hardware" ? `3px solid ${c.accent}` : "3px solid transparent",
+            borderLeft:
+              activeTab === "hardware" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "hardware" ? c.accentLight : "transparent",
             color: activeTab === "hardware" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
@@ -2761,7 +2864,8 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
-            borderLeft: activeTab === "permissions" ? `3px solid ${c.accent}` : "3px solid transparent",
+            borderLeft:
+              activeTab === "permissions" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "permissions" ? c.accentLight : "transparent",
             color: activeTab === "permissions" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
@@ -2779,7 +2883,8 @@ function SettingsPanel({
             padding: "12px 16px",
             borderRadius: "6px",
             border: "none",
-            borderLeft: activeTab === "security" ? `3px solid ${c.accent}` : "3px solid transparent",
+            borderLeft:
+              activeTab === "security" ? `3px solid ${c.accent}` : "3px solid transparent",
             background: activeTab === "security" ? c.accentLight : "transparent",
             color: activeTab === "security" ? c.accentText : c.textMuted,
             fontSize: "13.5px",
@@ -4459,8 +4564,6 @@ function SessionReadinessModal({
           gap: "36px",
         }}
       >
-
-
         {/* Ambient Spotlights inside Card */}
         <div
           style={{
@@ -4480,34 +4583,64 @@ function SessionReadinessModal({
             display: "flex",
             flexDirection: "column",
             justifyContent: "center",
-            borderRight: isLight ? "1px solid rgba(0, 0, 0, 0.12)" : "1px solid rgba(255, 255, 255, 0.12)",
+            borderRight: isLight
+              ? "1px solid rgba(0, 0, 0, 0.12)"
+              : "1px solid rgba(255, 255, 255, 0.12)",
             paddingRight: "36px",
             gap: "6px",
           }}
         >
-          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: c.textMuted, marginBottom: "16px", whiteSpace: "nowrap" }}>
+          <p
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: "9px",
+              fontWeight: 700,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: c.textMuted,
+              marginBottom: "16px",
+              whiteSpace: "nowrap",
+            }}
+          >
             SESSION READINESS SCAN
           </p>
 
           {/* Dense telemetry block */}
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", lineHeight: 2, color: c.textMutedStrong, whiteSpace: "nowrap" }}>
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: "12px",
+              lineHeight: 2,
+              color: c.textMutedStrong,
+              whiteSpace: "nowrap",
+            }}
+          >
             <div style={{ whiteSpace: "nowrap" }}>
               <span style={{ color: c.textMuted }}>SYS_INTEGRITY: </span>
-              <span style={{ color: score === 100 ? c.dot : "#f59e0b", letterSpacing: "-0.12em", display: "inline-block" }}>
-                {"█".repeat(Math.round(currentProgress / 10)) + "░".repeat(10 - Math.round(currentProgress / 10))}
+              <span
+                style={{
+                  color: score === 100 ? c.dot : "#f59e0b",
+                  letterSpacing: "-0.12em",
+                  display: "inline-block",
+                }}
+              >
+                {"█".repeat(Math.round(currentProgress / 10)) +
+                  "░".repeat(10 - Math.round(currentProgress / 10))}
               </span>
               <span style={{ color: score === 100 ? c.dot : "#f59e0b", marginLeft: "6px" }}>
                 {Math.round(currentProgress)}%
               </span>
             </div>
             <div style={{ whiteSpace: "nowrap" }}>
-              <span style={{ color: c.textMuted }}>STATUS:        </span>
-              <span style={{ color: scanStatus === "scanning" ? "#f59e0b" : c.dot, fontWeight: 700 }}>
+              <span style={{ color: c.textMuted }}>STATUS: </span>
+              <span
+                style={{ color: scanStatus === "scanning" ? "#f59e0b" : c.dot, fontWeight: 700 }}
+              >
                 {scanStatus === "scanning" ? "PROBING" : "ARMED"}
               </span>
             </div>
             <div style={{ whiteSpace: "nowrap" }}>
-              <span style={{ color: c.textMuted }}>ETA_READY:     </span>
+              <span style={{ color: c.textMuted }}>ETA_READY: </span>
               <span style={{ color: estimatedTime === 0 ? c.dot : "#f59e0b" }}>
                 {estimatedTime === 0 ? "0s" : `${estimatedTime}s`}
               </span>
@@ -4523,11 +4656,29 @@ function SessionReadinessModal({
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           {/* Header Summary */}
           <div>
-            <h3 id="session-readiness-title" style={{ fontSize: "16px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em", color: c.text, marginBottom: "6px" }}>
+            <h3
+              id="session-readiness-title"
+              style={{
+                fontSize: "16px",
+                fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: "0.04em",
+                color: c.text,
+                marginBottom: "6px",
+              }}
+            >
               Secure Enclave Port
             </h3>
-            <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#999999", lineHeight: 1.6 }}>
-              Pre-flight validation of biometric feeds, restricted process hooks, and network topology.
+            <p
+              style={{
+                fontSize: "11px",
+                fontFamily: "'JetBrains Mono', monospace",
+                color: "#999999",
+                lineHeight: 1.6,
+              }}
+            >
+              Pre-flight validation of biometric feeds, restricted process hooks, and network
+              topology.
             </p>
           </div>
 
@@ -4784,7 +4935,12 @@ function PreflightCheckItem({
   const c = getThemeColors(theme);
   const dotColor = status === "ok" ? c.dot : status === "fail" ? "#f59e0b" : c.accent;
   const valueColor = status === "ok" ? c.dot : status === "fail" ? "#f59e0b" : c.accent;
-  const valueLabel = status === "ok" ? successLabel.toUpperCase() : status === "fail" ? failLabel.toUpperCase() : "PROBING...";
+  const valueLabel =
+    status === "ok"
+      ? successLabel.toUpperCase()
+      : status === "fail"
+        ? failLabel.toUpperCase()
+        : "PROBING...";
 
   return (
     <div
@@ -4796,31 +4952,37 @@ function PreflightCheckItem({
         borderBottom: `1px solid ${c.border}`,
       }}
     >
-      <span style={{
-        fontSize: "11px",
-        fontFamily: "'JetBrains Mono', monospace",
-        color: c.textMutedStrong,
-        letterSpacing: "0.02em",
-      }}>
+      <span
+        style={{
+          fontSize: "11px",
+          fontFamily: "'JetBrains Mono', monospace",
+          color: c.textMutedStrong,
+          letterSpacing: "0.02em",
+        }}
+      >
         {label}
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <div style={{
-          width: "5px",
-          height: "5px",
-          borderRadius: "50%",
-          background: dotColor,
-          flexShrink: 0,
-          boxShadow: status !== "checking" ? `0 0 6px ${dotColor}` : "none",
-          animation: status === "checking" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
-        }} />
-        <span style={{
-          fontSize: "10px",
-          fontFamily: "'JetBrains Mono', monospace",
-          fontWeight: 600,
-          letterSpacing: "0.06em",
-          color: valueColor,
-        }}>
+        <div
+          style={{
+            width: "5px",
+            height: "5px",
+            borderRadius: "50%",
+            background: dotColor,
+            flexShrink: 0,
+            boxShadow: status !== "checking" ? `0 0 6px ${dotColor}` : "none",
+            animation: status === "checking" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+          }}
+        />
+        <span
+          style={{
+            fontSize: "10px",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 600,
+            letterSpacing: "0.06em",
+            color: valueColor,
+          }}
+        >
           {valueLabel}
         </span>
       </div>
@@ -4970,7 +5132,11 @@ function ResolveModal({ isOpen, onClose, checkKey, theme }: ResolveModalProps) {
             <line x1="12" y1="16" x2="12.01" y2="16" strokeLinecap="round" strokeWidth="2.5" />
           </svg>
         </div>
-        <h3 id="resolve-modal-title" className="text-subsection-title" style={{ color: c.text, marginBottom: "12px" }}>
+        <h3
+          id="resolve-modal-title"
+          className="text-subsection-title"
+          style={{ color: c.text, marginBottom: "12px" }}
+        >
           {info.title}
         </h3>
         <p
