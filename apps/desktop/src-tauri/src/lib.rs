@@ -4,10 +4,29 @@ use core_rs::exam::{
     NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy, VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::io::Write;
 use std::net::ToSocketAddrs;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tauri::Manager;
 
+const MAX_FACE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_FACE_IMAGE_PIXELS: u64 = 2_000_000;
+const EXPECTED_BLAZEFACE_ASSETS: &[(&str, &str, u64)] = &[
+    (
+        "group1-shard1of1.bin",
+        "60b481ab6c19352673cdb21e02e639f90883db1393ac52d07c7ea4e1e11cb2cd",
+        401768,
+    ),
+    (
+        "model.json",
+        "7b6bb6f35e5a7899232de51dda8bf514ef9664ca7ec58388c9fecc088c883b58",
+        64036,
+    ),
+];
 // ── Violation log ─────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -17,24 +36,99 @@ struct ViolationEntry {
     ts: u64,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct ProctoringEventEntry {
+    kind: String,
+    detail: String,
+    ts: u64,
+    payload: serde_json::Value,
+}
+
 static VIOLATION_LOG: OnceLock<Mutex<Vec<ViolationEntry>>> = OnceLock::new();
+static PROCTORING_LOG: OnceLock<Mutex<Vec<ProctoringEventEntry>>> = OnceLock::new();
 
 fn violation_log() -> &'static Mutex<Vec<ViolationEntry>> {
     VIOLATION_LOG.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn push_violation(kind: &str, detail: &str) {
-    let ts = std::time::SystemTime::now()
+fn proctoring_log() -> &'static Mutex<Vec<ProctoringEventEntry>> {
+    PROCTORING_LOG.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn unix_ts_ms() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64;
-    if let Ok(mut log) = violation_log().lock() {
-        log.push(ViolationEntry {
-            kind: kind.to_string(),
-            detail: detail.to_string(),
-            ts,
-        });
+        .as_millis() as u64
+}
+
+fn violation_entry(kind: &str, detail: &str) -> ViolationEntry {
+    ViolationEntry {
+        kind: kind.to_string(),
+        detail: detail.to_string(),
+        ts: unix_ts_ms(),
     }
+}
+
+fn proctoring_log_dir(app: Option<&tauri::AppHandle>) -> PathBuf {
+    if let Some(app) = app {
+        if let Ok(dir) = app.path().app_data_dir() {
+            return dir.join("proctoring");
+        }
+    }
+
+    std::env::temp_dir().join("ams_access").join("proctoring")
+}
+
+fn persist_violation(app: Option<&tauri::AppHandle>, entry: &ViolationEntry) {
+    persist_jsonl(app, "violations.jsonl", entry);
+}
+
+fn persist_proctoring_event(app: Option<&tauri::AppHandle>, entry: &ProctoringEventEntry) {
+    persist_jsonl(app, "proctoring-events.jsonl", entry);
+}
+
+fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, entry: &T) {
+    let dir = proctoring_log_dir(app);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join(filename);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        if let Ok(line) = serde_json::to_string(entry) {
+            let _ = writeln!(file, "{line}");
+        }
+    }
+}
+
+fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
+    let entry = violation_entry(kind, detail);
+    if let Ok(mut log) = violation_log().lock() {
+        log.push(entry.clone());
+    }
+    persist_violation(app, &entry);
+}
+
+fn record_proctoring_event(
+    app: Option<&tauri::AppHandle>,
+    kind: &str,
+    detail: &str,
+    payload: serde_json::Value,
+) {
+    let entry = ProctoringEventEntry {
+        kind: kind.to_string(),
+        detail: detail.to_string(),
+        ts: unix_ts_ms(),
+        payload,
+    };
+    if let Ok(mut log) = proctoring_log().lock() {
+        log.push(entry.clone());
+    }
+    persist_proctoring_event(app, &entry);
 }
 
 fn collect_fast_device_state() -> DeviceState {
@@ -420,18 +514,87 @@ async fn unlock_desktop(app: tauri::AppHandle) {
 
 /// Return all recorded violations for this session.
 #[tauri::command]
-fn get_violation_log() -> Vec<ViolationEntry> {
-    violation_log()
+fn get_violation_log(app: tauri::AppHandle) -> Vec<ViolationEntry> {
+    let mut entries = violation_log()
         .lock()
         .ok()
         .map(|v| v.clone())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let path = proctoring_log_dir(Some(&app)).join("violations.jsonl");
+    if let Ok(raw) = std::fs::read_to_string(path) {
+        for line in raw.lines() {
+            if let Ok(entry) = serde_json::from_str::<ViolationEntry>(line) {
+                if !entries
+                    .iter()
+                    .any(|existing| existing.ts == entry.ts && existing.kind == entry.kind)
+                {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+    entries.sort_by_key(|entry| entry.ts);
+    entries
 }
 
 /// Record a violation from the frontend (blocked app opened during exam, focus lost, etc).
 #[tauri::command]
-fn log_violation(kind: String, detail: String) {
-    push_violation(&kind, &detail);
+fn log_violation(app: tauri::AppHandle, kind: String, detail: String) {
+    record_violation(Some(&app), &kind, &detail);
+}
+
+/// Persist a structured proctoring audit event from the frontend.
+#[tauri::command]
+fn log_proctoring_event(
+    app: tauri::AppHandle,
+    kind: Option<String>,
+    event: Option<String>,
+    detail: Option<String>,
+    reason: Option<String>,
+    timestamp: Option<u64>,
+    payload: Option<serde_json::Value>,
+) {
+    let event_kind = kind
+        .or(event)
+        .unwrap_or_else(|| "proctoring_event".to_string());
+    let event_detail = detail
+        .or(reason)
+        .unwrap_or_else(|| "frontend_proctoring_event".to_string());
+    let mut event_payload = payload.unwrap_or_else(|| serde_json::json!({}));
+    if let serde_json::Value::Object(ref mut object) = event_payload {
+        if let Some(ts) = timestamp {
+            object.insert("frontend_ts".to_string(), serde_json::json!(ts));
+        }
+    }
+    record_proctoring_event(Some(&app), &event_kind, &event_detail, event_payload);
+}
+
+/// Return persisted structured proctoring events for this session.
+#[tauri::command]
+fn get_proctoring_log(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
+    let mut entries = proctoring_log()
+        .lock()
+        .ok()
+        .map(|v| v.clone())
+        .unwrap_or_default();
+    let mut seen: HashSet<(u64, String)> = entries
+        .iter()
+        .map(|entry| (entry.ts, entry.kind.clone()))
+        .collect();
+
+    let path = proctoring_log_dir(Some(&app)).join("proctoring-events.jsonl");
+    if let Ok(raw) = std::fs::read_to_string(path) {
+        for line in raw.lines() {
+            if let Ok(entry) = serde_json::from_str::<ProctoringEventEntry>(line) {
+                if seen.insert((entry.ts, entry.kind.clone())) {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+    entries.sort_by_key(|entry| entry.ts);
+    entries
 }
 
 /// Lock outbound network to `allowed_domains` only (resolved to IPs at call time).
@@ -486,13 +649,413 @@ async fn disable_network_lockdown() -> Result<bool, String> {
     Err("Network lockdown not supported on this platform".to_string())
 }
 
-/// Save a base64-encoded face image to the faces directory.
+/// Result returned by `save_face_image` — includes backend image validation outcome.
+#[derive(Serialize)]
+struct FaceSaveResult {
+    path: String,
+    face_verified: bool,
+    rejection_reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ModelManifest {
+    files: Vec<ModelManifestFile>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ModelManifestFile {
+    path: String,
+    sha256: String,
+    bytes: u64,
+}
+
+#[derive(Serialize)]
+struct ModelAssetVerification {
+    ok: bool,
+    base_dir: Option<String>,
+    checked_files: usize,
+    error: Option<String>,
+}
+
+fn candidate_model_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        dirs.push(resource_dir.join("models").join("blazeface"));
+    }
+    #[cfg(debug_assertions)]
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd.join("apps/web/public/models/blazeface"));
+        dirs.push(cwd.join("../../web/public/models/blazeface"));
+    }
+    dirs
+}
+
+fn sha256_file(path: &Path) -> Result<(String, u64), String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let size = bytes.len() as u64;
+    let digest = Sha256::digest(&bytes);
+    Ok((hex::encode(digest), size))
+}
+
+fn safe_relative_manifest_path(path: &str) -> Option<&Path> {
+    let relative = Path::new(path);
+    if path.trim().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    Some(relative)
+}
+
+fn manifest_file_set(manifest: &ModelManifest) -> Option<HashSet<String>> {
+    let mut files = HashSet::new();
+    for file in &manifest.files {
+        let relative = safe_relative_manifest_path(&file.path)?;
+        files.insert(relative.to_string_lossy().replace('\\', "/"));
+    }
+    Some(files)
+}
+
+fn verify_blazeface_model_shape(base: &Path, manifest: &ModelManifest) -> Result<(), String> {
+    let manifest_files =
+        manifest_file_set(manifest).ok_or_else(|| "invalid_manifest_path".to_string())?;
+    let expected_files: HashSet<String> = EXPECTED_BLAZEFACE_ASSETS
+        .iter()
+        .map(|(path, _, _)| (*path).to_string())
+        .collect();
+    if manifest_files != expected_files {
+        return Err("manifest_assets_do_not_match_pinned_set".to_string());
+    }
+
+    for (expected_path, expected_hash, expected_bytes) in EXPECTED_BLAZEFACE_ASSETS {
+        let Some(file) = manifest
+            .files
+            .iter()
+            .find(|file| file.path == *expected_path)
+        else {
+            return Err(format!("missing_expected_asset: {expected_path}"));
+        };
+        if file.sha256 != *expected_hash || file.bytes != *expected_bytes {
+            return Err(format!("unexpected_manifest_digest: {expected_path}"));
+        }
+    }
+
+    let model_path = base.join("model.json");
+    let raw =
+        std::fs::read_to_string(&model_path).map_err(|e| format!("model_json_read_failed: {e}"))?;
+    let model_json: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("model_json_parse_failed: {e}"))?;
+    if model_json.get("format").and_then(|v| v.as_str()) != Some("graph-model") {
+        return Err("unexpected_model_format".to_string());
+    }
+
+    let mut referenced_weights = HashSet::new();
+    let groups = model_json
+        .get("weightsManifest")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "weights_manifest_missing".to_string())?;
+    for group in groups {
+        let paths = group
+            .get("paths")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "weights_paths_missing".to_string())?;
+        for path_value in paths {
+            let path = path_value
+                .as_str()
+                .ok_or_else(|| "weights_path_not_string".to_string())?;
+            let relative = safe_relative_manifest_path(path)
+                .ok_or_else(|| format!("invalid_weight_path: {path}"))?;
+            let normalized = relative.to_string_lossy().replace('\\', "/");
+            if !manifest_files.contains(&normalized) {
+                return Err(format!("weight_missing_from_manifest: {normalized}"));
+            }
+
+            let bytes = std::fs::read(base.join(relative))
+                .map_err(|e| format!("weight_read_failed: {normalized}: {e}"))?;
+            let prefix_len = bytes.len().min(256);
+            let prefix = String::from_utf8_lossy(&bytes[..prefix_len]).to_ascii_lowercase();
+            if prefix.contains("<html") || prefix.contains("<!doctype") {
+                return Err(format!("weight_asset_is_html: {normalized}"));
+            }
+            referenced_weights.insert(normalized);
+        }
+    }
+
+    if referenced_weights.is_empty() {
+        return Err("no_weight_assets_referenced".to_string());
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
-async fn save_face_image(image_data: String, index: u8) -> Result<String, String> {
+fn verify_face_model_assets(app: tauri::AppHandle) -> ModelAssetVerification {
+    for base in candidate_model_dirs(&app) {
+        let manifest_path = base.join("manifest.json");
+        if !manifest_path.exists() {
+            continue;
+        }
+
+        let raw = match std::fs::read_to_string(&manifest_path) {
+            Ok(raw) => raw,
+            Err(e) => {
+                return ModelAssetVerification {
+                    ok: false,
+                    base_dir: Some(base.display().to_string()),
+                    checked_files: 0,
+                    error: Some(format!("manifest_read_failed: {e}")),
+                };
+            }
+        };
+        let manifest: ModelManifest = match serde_json::from_str(&raw) {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                return ModelAssetVerification {
+                    ok: false,
+                    base_dir: Some(base.display().to_string()),
+                    checked_files: 0,
+                    error: Some(format!("manifest_parse_failed: {e}")),
+                };
+            }
+        };
+
+        if manifest.files.is_empty() {
+            return ModelAssetVerification {
+                ok: false,
+                base_dir: Some(base.display().to_string()),
+                checked_files: 0,
+                error: Some("manifest_empty".to_string()),
+            };
+        }
+
+        for file in &manifest.files {
+            let relative = match safe_relative_manifest_path(&file.path) {
+                Some(relative) => relative,
+                None => {
+                    return ModelAssetVerification {
+                        ok: false,
+                        base_dir: Some(base.display().to_string()),
+                        checked_files: 0,
+                        error: Some(format!("invalid_manifest_path: {}", file.path)),
+                    };
+                }
+            };
+            let path = base.join(relative);
+            let (actual_hash, actual_size) = match sha256_file(&path) {
+                Ok(result) => result,
+                Err(e) => {
+                    return ModelAssetVerification {
+                        ok: false,
+                        base_dir: Some(base.display().to_string()),
+                        checked_files: 0,
+                        error: Some(format!("asset_read_failed: {}: {e}", file.path)),
+                    };
+                }
+            };
+            if actual_size != file.bytes || actual_hash != file.sha256 {
+                return ModelAssetVerification {
+                    ok: false,
+                    base_dir: Some(base.display().to_string()),
+                    checked_files: 0,
+                    error: Some(format!("asset_integrity_failed: {}", file.path)),
+                };
+            }
+        }
+
+        if let Err(error) = verify_blazeface_model_shape(&base, &manifest) {
+            return ModelAssetVerification {
+                ok: false,
+                base_dir: Some(base.display().to_string()),
+                checked_files: manifest.files.len(),
+                error: Some(error),
+            };
+        }
+
+        return ModelAssetVerification {
+            ok: true,
+            base_dir: Some(base.display().to_string()),
+            checked_files: manifest.files.len(),
+            error: None,
+        };
+    }
+
+    ModelAssetVerification {
+        ok: false,
+        base_dir: None,
+        checked_files: 0,
+        error: Some("face_model_manifest_missing".to_string()),
+    }
+}
+
+/// Validate a decoded PNG image to defend against blank/dark/uniform captures.
+///
+/// Uses Welford's online algorithm for a single-pass mean/variance over luma,
+/// plus a dark-pixel ratio check.  Thresholds are conservative enough not to
+/// reject a real face under poor lighting, but will reject a black canvas, a
+/// covered camera, or any near-uniform image that cannot contain a face.
+fn validate_face_image_bytes(bytes: &[u8]) -> (bool, Option<String>) {
+    if bytes.len() > MAX_FACE_IMAGE_BYTES {
+        return (false, Some("image_too_large".to_string()));
+    }
+
+    let img = match image::load_from_memory(bytes) {
+        Ok(img) => img,
+        Err(_) => return (false, Some("corrupt_image".to_string())),
+    };
+
+    let rgb = img.to_rgb8();
+    let (w, h) = rgb.dimensions();
+    if (w as u64) * (h as u64) > MAX_FACE_IMAGE_PIXELS {
+        return (false, Some("image_dimensions_too_large".to_string()));
+    }
+
+    // Must be at least the size of our capture canvas (320x240), with margin.
+    if w < 160 || h < 120 {
+        return (false, Some("image_too_small".to_string()));
+    }
+
+    let total_pixels = (w as usize) * (h as usize);
+    let total = total_pixels as f64;
+    let mut lumas = Vec::with_capacity(total_pixels);
+    let mut dark_count: u64 = 0;
+    let mut clipped_count: u64 = 0;
+    let center_x1 = w / 4;
+    let center_x2 = (w * 3) / 4;
+    let center_y1 = h / 5;
+    let center_y2 = (h * 4) / 5;
+
+    let mut mean: f64 = 0.0;
+    let mut m2: f64 = 0.0;
+    let mut n: f64 = 0.0;
+    let mut center_mean: f64 = 0.0;
+    let mut center_m2: f64 = 0.0;
+    let mut center_n: f64 = 0.0;
+
+    for (x, y, p) in rgb.enumerate_pixels() {
+        let luma = 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
+        lumas.push(luma as f32);
+
+        n += 1.0;
+        let delta = luma - mean;
+        mean += delta / n;
+        m2 += delta * (luma - mean);
+
+        if x >= center_x1 && x <= center_x2 && y >= center_y1 && y <= center_y2 {
+            center_n += 1.0;
+            let center_delta = luma - center_mean;
+            center_mean += center_delta / center_n;
+            center_m2 += center_delta * (luma - center_mean);
+        }
+
+        if luma < 20.0 {
+            dark_count += 1;
+        }
+        if luma > 245.0 {
+            clipped_count += 1;
+        }
+    }
+
+    if (dark_count as f64) / total > 0.85 {
+        return (false, Some("image_too_dark".to_string()));
+    }
+    if (clipped_count as f64) / total > 0.85 {
+        return (false, Some("image_overexposed".to_string()));
+    }
+
+    let std_dev = if n > 1.0 { (m2 / n).sqrt() } else { 0.0 };
+    if std_dev < 15.0 {
+        return (false, Some("blank_or_uniform_image".to_string()));
+    }
+
+    let center_std_dev = if center_n > 1.0 {
+        (center_m2 / center_n).sqrt()
+    } else {
+        0.0
+    };
+    if center_std_dev < 10.0 {
+        return (false, Some("center_region_uniform".to_string()));
+    }
+
+    let idx = |x: u32, y: u32| -> usize { (y as usize) * (w as usize) + (x as usize) };
+    let mut edge_count: u64 = 0;
+    let mut center_edge_count: u64 = 0;
+    let mut center_pixels: u64 = 0;
+    for y in 0..h.saturating_sub(1) {
+        for x in 0..w.saturating_sub(1) {
+            let current = lumas[idx(x, y)] as f64;
+            let dx = (current - lumas[idx(x + 1, y)] as f64).abs();
+            let dy = (current - lumas[idx(x, y + 1)] as f64).abs();
+            let edge_like = dx + dy > 35.0;
+            if edge_like {
+                edge_count += 1;
+            }
+            if x >= center_x1 && x <= center_x2 && y >= center_y1 && y <= center_y2 {
+                center_pixels += 1;
+                if edge_like {
+                    center_edge_count += 1;
+                }
+            }
+        }
+    }
+
+    let edge_density = (edge_count as f64) / total;
+    let center_edge_density = if center_pixels > 0 {
+        (center_edge_count as f64) / (center_pixels as f64)
+    } else {
+        0.0
+    };
+
+    // A valid calibration capture should contain a structured subject in the
+    // center. This is intentionally image-statistical, not skin-tone based.
+    if edge_density < 0.004 || center_edge_density < 0.008 {
+        return (false, Some("no_structured_face_region".to_string()));
+    }
+
+    (true, None)
+}
+
+/// Save a base64-encoded face image to the faces directory.
+///
+/// Validates the image content before writing: rejects corrupt, blank,
+/// near-uniform, or predominantly dark images so the frontend cannot advance
+/// the stage without a real face present in the capture.
+#[tauri::command]
+async fn save_face_image(
+    app: tauri::AppHandle,
+    image_data: String,
+    index: u8,
+) -> Result<FaceSaveResult, String> {
     let b64 = image_data.split(',').nth(1).unwrap_or(image_data.as_str());
-    let bytes = base64::prelude::BASE64_STANDARD
-        .decode(b64)
-        .map_err(|e| e.to_string())?;
+    let bytes = base64::prelude::BASE64_STANDARD.decode(b64).map_err(|e| {
+        record_violation(
+            Some(&app),
+            "face_capture_rejected",
+            &format!("base64_decode_failed: {e}"),
+        );
+        e.to_string()
+    })?;
+
+    let (face_verified, rejection_reason) = validate_face_image_bytes(&bytes);
+    if !face_verified {
+        let reason = rejection_reason
+            .clone()
+            .unwrap_or_else(|| "invalid_capture".to_string());
+        record_violation(
+            Some(&app),
+            "face_capture_rejected",
+            &format!("save_face_image rejected index {index}: {reason}"),
+        );
+        record_proctoring_event(
+            Some(&app),
+            "face_capture_rejected",
+            &reason,
+            serde_json::json!({ "index": index, "reason": reason.clone() }),
+        );
+        return Err(reason);
+    }
 
     let dir = if cfg!(target_os = "windows") {
         format!(
@@ -500,13 +1063,24 @@ async fn save_face_image(image_data: String, index: u8) -> Result<String, String
             std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into())
         )
     } else {
-        "/tmp/ams_faces".to_string()
+        std::env::temp_dir().join("ams_faces").display().to_string()
     };
 
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = format!("{}/face_{}.png", dir, index);
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-    Ok(path)
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    record_proctoring_event(
+        Some(&app),
+        "face_capture_saved",
+        "backend_face_validation_passed",
+        serde_json::json!({ "index": index, "path": path.clone() }),
+    );
+
+    Ok(FaceSaveResult {
+        path,
+        face_verified,
+        rejection_reason,
+    })
 }
 
 // ── App entry point ───────────────────────────────────────────────────────────
@@ -539,10 +1113,10 @@ pub fn run() {
     #[cfg(unix)]
     {
         unsafe {
-            unix_signal::signal(unix_signal::SIGINT, handle_sigterm as usize);
-            unix_signal::signal(unix_signal::SIGTERM, handle_sigterm as usize);
-            unix_signal::signal(unix_signal::SIGQUIT, handle_sigterm as usize);
-            unix_signal::signal(unix_signal::SIGHUP, handle_sigterm as usize);
+            unix_signal::signal(unix_signal::SIGINT, handle_sigterm as *const () as usize);
+            unix_signal::signal(unix_signal::SIGTERM, handle_sigterm as *const () as usize);
+            unix_signal::signal(unix_signal::SIGQUIT, handle_sigterm as *const () as usize);
+            unix_signal::signal(unix_signal::SIGHUP, handle_sigterm as *const () as usize);
         }
 
         let uid_out = std::process::Command::new("id").arg("-u").output();
@@ -577,12 +1151,15 @@ pub fn run() {
             lock_desktop,
             unlock_desktop,
             get_violation_log,
+            get_proctoring_log,
             log_violation,
+            log_proctoring_event,
             check_network_stability,
             get_full_telemetry,
             get_platform,
             get_security_environment,
             save_face_image,
+            verify_face_model_assets,
             enable_network_lockdown,
             disable_network_lockdown,
         ])

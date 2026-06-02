@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/setup-mediapipe.mjs --if-used",
+    "predev": "node scripts/setup-tfjs-wasm.mjs && node scripts/setup-blazeface-model.mjs",
+    "prebuild": "node scripts/setup-tfjs-wasm.mjs && node scripts/setup-blazeface-model.mjs && node scripts/setup-mediapipe.mjs --if-used",
     "build": "next build && node scripts/check-size-budgets.mjs",
     "lint": "next typegen && tsc --noEmit",
     "typecheck": "next typegen && tsc --noEmit",
@@ -18,8 +19,10 @@
     "@mediapipe/tasks-vision": "^0.10.35",
     "@tensorflow-models/blazeface": "^0.1.0",
     "@tensorflow/tfjs-backend-cpu": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "framer-motion": "^11.0.0",
+    "marked": "^18.0.4",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

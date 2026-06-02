@@ -2,6 +2,7 @@
 
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type UIEvent } from "react";
 import dynamic from "next/dynamic";
+import { marked, type MarkedExtension } from "marked";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
@@ -9,6 +10,35 @@ import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
+
+// Configure marked once at module level — pays cost on first import, never again.
+const mathInlineExt: MarkedExtension = {
+  extensions: [
+    {
+      name: "mathInline",
+      level: "inline" as const,
+      start: (src: string) => src.indexOf("$"),
+      tokenizer(src: string) {
+        const m = /^\$([^$\n]+?)\$/.exec(src);
+        if (m) return { type: "mathInline", raw: m[0], text: m[1].trim() };
+      },
+      renderer(token) {
+        return `<var class="pb-math">${(token as unknown as { text: string }).text}</var>`;
+      },
+    },
+  ],
+};
+marked.use(mathInlineExt, { breaks: true, gfm: true });
+
+function parseDescription(md: string): string {
+  const tex = md
+    .replace(/\\leq?\b/g, "≤").replace(/\\geq?\b/g, "≥")
+    .replace(/\\neq\b/g, "≠").replace(/\\times\b/g, "×")
+    .replace(/\\cdot\b/g, "·").replace(/\\infty\b/g, "∞")
+    .replace(/\\ldots\b|\\dots\b/g, "…").replace(/\\pm\b/g, "±")
+    .replace(/\\\\/g, "\n");
+  return marked.parse(tex) as string;
+}
 
 const EditorPane = dynamic(() => import("./editor-pane"), {
   ssr: false,
@@ -21,10 +51,14 @@ type Question = {
   id: string;
   title: string;
   description: string | null;
-  html_starter: string | null;
-  css_starter: string | null;
-  js_starter: string | null;
+  starter_code: string | null;
   order_index: number;
+};
+
+type EditorFile = {
+  id: string;
+  name: string;
+  content: string;
 };
 
 type ContestMeta = {
@@ -41,13 +75,22 @@ type QuestionPayload = Partial<Question> & {
   statement?: string | null;
   prompt?: string | null;
   body?: string | null;
+  code?: string | null;
+  cpp?: string | null;
+  starter_code?: string | null;
+  cpp_starter?: string | null;
   html?: string | null;
   css?: string | null;
   js?: string | null;
+  html_starter?: string | null;
+  css_starter?: string | null;
+  js_starter?: string | null;
   starter_html?: string | null;
   starter_css?: string | null;
   starter_js?: string | null;
   starter?: {
+    code?: string | null;
+    cpp?: string | null;
     html?: string | null;
     css?: string | null;
     js?: string | null;
@@ -72,6 +115,42 @@ function pickNumber(...values: unknown[]): number | null {
     if (typeof value === "number" && Number.isFinite(value)) return value;
   }
   return null;
+}
+
+function looksLikeCpp(code: string | null | undefined): code is string {
+  if (!code) return false;
+  return /#include\s*<|using\s+namespace\s+std|int\s+main\s*\(/.test(code);
+}
+
+function defaultCppStarter(): string {
+  return [
+    "#include <bits/stdc++.h>",
+    "using namespace std;",
+    "",
+    "int main() {",
+    "  ios::sync_with_stdio(false);",
+    "  cin.tie(nullptr);",
+    "",
+    "  return 0;",
+    "}",
+  ].join("\n");
+}
+
+function sanitizeCppFileName(title: string, fallback: string): string {
+  const letterMatch = /^([A-Z])(?:[.)\]:-]|\s+-|\s)/i.exec(title.trim());
+  if (letterMatch) return `${letterMatch[1].toUpperCase()}.cpp`;
+
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${slug || fallback}.cpp`;
+}
+
+function questionFileName(question: Question): string {
+  const fallbackLetter = String.fromCharCode(65 + Math.max(0, question.order_index));
+  return sanitizeCppFileName(question.title, fallbackLetter);
 }
 
 function unwrapQuestionList(payload: unknown): unknown[] {
@@ -110,14 +189,12 @@ function normalizeQuestion(value: unknown, index: number): Question | null {
     id: id ?? `question-${orderIndex + 1}`,
     title: title ?? `Question ${orderIndex + 1}`,
     description: pickString(payload.description, payload.statement, payload.prompt, payload.body),
-    html_starter: pickString(
-      payload.html_starter,
-      payload.starter_html,
-      starter?.html,
-      payload.html
-    ),
-    css_starter: pickString(payload.css_starter, payload.starter_css, starter?.css, payload.css),
-    js_starter: pickString(payload.js_starter, payload.starter_js, starter?.js, payload.js),
+    starter_code:
+      pickString(payload.starter_code, payload.cpp_starter, payload.code, payload.cpp, starter?.code, starter?.cpp) ??
+      (looksLikeCpp(payload.html_starter) ? payload.html_starter : null) ??
+      (looksLikeCpp(payload.starter_html) ? payload.starter_html : null) ??
+      (looksLikeCpp(starter?.html) ? starter.html : null) ??
+      (looksLikeCpp(payload.html) ? payload.html : null),
     order_index: orderIndex,
   };
 }
@@ -204,33 +281,6 @@ declare global {
       };
     };
   }
-}
-
-const DEFAULT_HTML = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <style>/* CSS injected */</style>
-</head>
-<body>
-  <h1>Hello World</h1>
-</body>
-</html>`;
-
-function buildPreview(html: string, css: string, js: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8" />
-<style>${css}</style>
-</head>
-<body>
-${html}
-<script>
-try { ${js} } catch(e) { console.error(e); }
-</script>
-</body>
-</html>`;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -404,11 +454,11 @@ export default function ContestPageClient() {
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeQ, setActiveQ] = useState(0);
-  const [activeTab, setActiveTab] = useState<"html" | "css" | "js">("html");
-  const [html, setHtml] = useState("");
-  const [css, setCss] = useState("");
-  const [js, setJs] = useState("");
-  const [previewSrc, setPreviewSrc] = useState("");
+  const [editorFiles, setEditorFiles] = useState<EditorFile[]>([]);
+  const [activeFileId, setActiveFileId] = useState("");
+  const [compileNote, setCompileNote] = useState(
+    "C++ runner is not configured for this build. Save or submit to send code for judging."
+  );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -425,7 +475,6 @@ export default function ContestPageClient() {
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraVideoReady, setCameraVideoReady] = useState(false);
-  const previewDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processScanInFlightRef = useRef(false);
   const activeViolationDetailRef = useRef("");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -434,9 +483,7 @@ export default function ContestPageClient() {
   const [customIssueDetail, setCustomIssueDetail] = useState("");
   const [isSendingReport, setIsSendingReport] = useState(false);
   const [reportSentSuccess, setReportSentSuccess] = useState(false);
-
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [previewUpdating, setPreviewUpdating] = useState(false);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
   const [cameraCollapsed, setCameraCollapsed] = useState(false);
@@ -601,30 +648,19 @@ export default function ContestPageClient() {
       const mockQuestions: Question[] = [
         {
           id: "mock-q-1",
-          title: "Hello World Page",
-          description: "Build a simple Hello World HTML page with styled heading",
-          html_starter: `<div class="container">\n  <h1>Hello, World!</h1>\n  <p>Welcome to AMS Access dev test.</p>\n</div>`,
-          css_starter: `body {\n  margin: 0;\n  font-family: system-ui, sans-serif;\n  background: #0f172a;\n  color: #f1f5f9;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n}\n\n.container {\n  text-align: center;\n  padding: 2rem;\n}\n\nh1 {\n  font-size: 2.5rem;\n  color: #a855f7;\n  margin-bottom: 0.5rem;\n}`,
-          js_starter: `console.log("AMS contest session active");`,
+          title: "A. Binary Search",
+          description:
+            "You are given a non-decreasing array $A$ of $N$ integers and $Q$ query values. For each query $x$, print the 1-based index of the first element $A[i]$ such that $A[i] >= x$. If no such element exists, print $-1$.",
+          starter_code: defaultCppStarter(),
           order_index: 0,
         },
         {
           id: "mock-q-2",
-          title: "Interactive Counter",
-          description: "Build a counter with increment and decrement buttons",
-          html_starter: `<div class="counter">\n  <button id="dec">−</button>\n  <span id="count">0</span>\n  <button id="inc">+</button>\n</div>`,
-          css_starter: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n  font-family: system-ui, sans-serif;\n}\n\n.counter {\n  display: flex;\n  align-items: center;\n  gap: 1.5rem;\n}\n\nbutton {\n  width: 48px;\n  height: 48px;\n  border-radius: 50%;\n  border: 1px solid rgba(168,85,247,0.5);\n  background: rgba(168,85,247,0.1);\n  color: #a855f7;\n  font-size: 1.5rem;\n  cursor: pointer;\n}\n\n#count {\n  font-size: 3rem;\n  font-weight: 300;\n  color: #f5f7fa;\n  min-width: 60px;\n  text-align: center;\n}`,
-          js_starter: `let n = 0;\nconst el = document.getElementById("count");\ndocument.getElementById("inc").onclick = () => el.textContent = ++n;\ndocument.getElementById("dec").onclick = () => el.textContent = --n;`,
+          title: "B. Alice and Bob",
+          description:
+            "Given two integers $a$ and $b$, determine the winner under the rules in the statement. Read input from stdin and print the required answer for each test case.",
+          starter_code: defaultCppStarter(),
           order_index: 1,
-        },
-        {
-          id: "mock-q-3",
-          title: "CSS Animation",
-          description: "Create a pulsing circle animation using pure CSS",
-          html_starter: `<div class="pulse"></div>`,
-          css_starter: `body {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-height: 100vh;\n  background: #030816;\n}\n\n.pulse {\n  width: 80px;\n  height: 80px;\n  border-radius: 50%;\n  background: #a855f7;\n  animation: pulse 1.5s ease-in-out infinite;\n}\n\n@keyframes pulse {\n  0%, 100% { transform: scale(1); opacity: 1; }\n  50% { transform: scale(1.4); opacity: 0.5; }\n}`,
-          js_starter: ``,
-          order_index: 2,
         },
       ];
       setQuestions(mockQuestions);
@@ -674,34 +710,44 @@ export default function ContestPageClient() {
   }, [contestId]);
 
   function loadQuestion(q: Question) {
-    setHtml(q.html_starter ?? "");
-    setCss(q.css_starter ?? "");
-    setJs(q.js_starter ?? "");
-    setPreviewSrc(buildPreview(q.html_starter ?? "", q.css_starter ?? "", q.js_starter ?? ""));
+    const file: EditorFile = {
+      id: `${q.id}:main`,
+      name: questionFileName(q),
+      content: q.starter_code ?? defaultCppStarter(),
+    };
+    setEditorFiles([file]);
+    setActiveFileId(file.id);
+    setCompileNote("C++ runner is not configured for this build. Save or submit to send code for judging.");
   }
 
   function switchQuestion(idx: number) {
     setActiveQ(idx);
     loadQuestion(questions[idx]);
-    setActiveTab("html");
   }
 
   function handleCodeChange(value: string) {
-    if (activeTab === "html") setHtml(value);
-    else if (activeTab === "css") setCss(value);
-    else setJs(value);
+    setEditorFiles((files) =>
+      files.map((file) => (file.id === activeFileId ? { ...file, content: value } : file))
+    );
+  }
 
-    const newHtml = activeTab === "html" ? value : html;
-    const newCss = activeTab === "css" ? value : css;
-    const newJs = activeTab === "js" ? value : js;
+  function addEditorFile() {
+    setEditorFiles((files) => {
+      const nextIndex = files.length + 1;
+      const file: EditorFile = {
+        id: `${questions[activeQ]?.id ?? "question"}:scratch-${Date.now()}`,
+        name: `scratch${nextIndex}.cpp`,
+        content: defaultCppStarter(),
+      };
+      setActiveFileId(file.id);
+      return [...files, file];
+    });
+  }
 
-    setPreviewUpdating(true);
-
-    if (previewDebounce.current) clearTimeout(previewDebounce.current);
-    previewDebounce.current = setTimeout(() => {
-      setPreviewSrc(buildPreview(newHtml, newCss, newJs));
-      setPreviewUpdating(false);
-    }, 900);
+  function triggerRun() {
+    setCompileNote(
+      "Local C++ compilation is not enabled in this build. The editor saves C++17 source files for the judge/submission pipeline."
+    );
   }
 
   const handleTabKey = useCallback(
@@ -717,9 +763,8 @@ export default function ContestPageClient() {
         ta.selectionStart = ta.selectionEnd = start + 2;
         handleCodeChange(newVal);
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [activeTab, html, css, js]
+    [activeFileId]
   );
 
   const syncEditorScroll = useCallback((event: UIEvent<HTMLTextAreaElement>) => {
@@ -739,7 +784,11 @@ export default function ContestPageClient() {
     try {
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/answers`, {
         question_id: questions[activeQ].id,
-        answer_text: JSON.stringify({ html, css, js }),
+        answer_text: JSON.stringify({
+          language: "cpp17",
+          files: editorFiles,
+          active_file_id: activeFileId,
+        }),
       });
       if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
       setSaved(true);
@@ -1068,6 +1117,33 @@ export default function ContestPageClient() {
     return () => window.removeEventListener("keydown", blockShortcuts, { capture: true });
   }, []);
 
+  const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
+  const isEditorEmpty = !activeFile?.content;
+  const currentCode = activeFile?.content ?? "";
+  const lineNumbers = useMemo(
+    () => currentCode.split("\n").map((_, index) => index + 1),
+    [currentCode]
+  );
+  const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
+  const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
+  const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
+  const faceBlockMessage = cameraHealthy
+    ? "Please face the camera to resume your exam."
+    : cameraError
+      ? cameraError
+      : "Waiting for a live camera frame. Check the camera preview before continuing.";
+  const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
+    lockGraceActive && lockGraceCountdown === 0
+  );
+  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(shouldShowFaceBlock);
+  const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
+    showMediaToggleWarning,
+    cancelMediaToggle
+  );
+  const supportDialogRef = useFocusTrap<HTMLDivElement>(showSupportModal, () =>
+    setShowSupportModal(false)
+  );
+
   if (loading) {
     return (
       <div
@@ -1152,32 +1228,6 @@ export default function ContestPageClient() {
       </div>
     );
   }
-
-  const currentCode = activeTab === "html" ? html : activeTab === "css" ? css : js;
-  const lineNumbers = useMemo(
-    () => currentCode.split("\n").map((_, index) => index + 1),
-    [currentCode]
-  );
-  const tabColor = { html: "#f97316", css: "#38bdf8", js: "#facc15" };
-  const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
-  const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
-  const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
-  const faceBlockMessage = cameraHealthy
-    ? "Please face the camera to resume your exam."
-    : cameraError
-      ? cameraError
-      : "Waiting for a live camera frame. Check the camera preview before continuing.";
-  const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
-    lockGraceActive && lockGraceCountdown === 0
-  );
-  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(shouldShowFaceBlock);
-  const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
-    showMediaToggleWarning,
-    cancelMediaToggle
-  );
-  const supportDialogRef = useFocusTrap<HTMLDivElement>(showSupportModal, () =>
-    setShowSupportModal(false)
-  );
 
   return (
     <div
@@ -1713,7 +1763,12 @@ export default function ContestPageClient() {
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "24px", color: "#e2e8f0", fontSize: "14px", lineHeight: 1.6, fontFamily: "system-ui, sans-serif" }}>
             <h2 style={{ marginTop: 0, marginBottom: "16px", fontSize: "20px", fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{questions[activeQ]?.title}</h2>
-            <div style={{ whiteSpace: "pre-wrap" }}>{questions[activeQ]?.description || "No description provided."}</div>
+            <div
+              className="pb-body"
+              dangerouslySetInnerHTML={{
+                __html: parseDescription(questions[activeQ]?.description ?? "*No description provided.*"),
+              }}
+            />
           </div>
         </div>
 
@@ -1746,53 +1801,131 @@ export default function ContestPageClient() {
               >
                 [ EDITOR ]
               </span>
-              {(["html", "css", "js"] as const).map((t) => {
-                const label = t === "html" ? "index.html" : t === "css" ? "style.css" : "script.js";
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setActiveTab(t)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "0 16px",
-                      border: "1px solid",
-                      borderColor: activeTab === t ? "#1F1F1F" : "transparent",
-                      borderBottom: "none",
-                      background: activeTab === t ? "#1F1F1F" : "transparent",
-                      color: activeTab === t ? "#ffffff" : "#475569",
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      cursor: "pointer",
-                      height: "100%",
-                      borderRadius: "2px 2px 0 0",
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-              <div style={{ flex: 1 }} />
+              {editorFiles.map((file) => (
+                <button
+                  key={file.id}
+                  type="button"
+                  onClick={() => setActiveFileId(file.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "0 16px",
+                    border: "1px solid",
+                    borderColor: activeFileId === file.id ? "#1F1F1F" : "transparent",
+                    borderBottom: "none",
+                    background: activeFileId === file.id ? "#1F1F1F" : "transparent",
+                    color: activeFileId === file.id ? "#ffffff" : "#475569",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    cursor: "pointer",
+                    height: "100%",
+                    borderRadius: "2px 2px 0 0",
+                    maxWidth: "180px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={file.name}
+                >
+                  {file.name}
+                </button>
+              ))}
               <button
-                onClick={handleSave}
-                disabled={saving}
+                type="button"
+                onClick={addEditorFile}
+                aria-label="Create new C++ file tab"
+                title="Create new C++ file tab"
                 style={{
+                  width: "28px",
+                  height: "28px",
                   display: "flex",
                   alignItems: "center",
-                  padding: "4px 10px",
+                  justifyContent: "center",
                   border: "1px solid #1F1F1F",
                   background: "#0F0F0F",
-                  color: saveError ? "#ef4444" : saved ? "#22c55e" : "#e2e8f0",
-                  fontSize: "11px",
+                  color: "#94a3b8",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  lineHeight: 1,
                   fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                +
+              </button>
+              <div style={{ flex: 1 }} />
+            </div>
+
+            {/* Execution control strip */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                padding: "0 12px",
+                gap: "6px",
+                height: "32px",
+                background: "#0a0a0a",
+                borderBottom: "1px solid #1F1F1F",
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: "#475569",
+                  letterSpacing: "0.06em",
+                  marginRight: "4px",
+                }}
+              >
+                ENV:
+              </span>
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: "#475569",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                [ C++17 ]
+              </span>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={triggerRun}
+                style={{
+                  padding: "2px 10px",
+                  border: "1px solid #1F1F1F",
+                  background: "#0F0F0F",
+                  color: "#94a3b8",
+                  fontSize: "10px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.08em",
+                  cursor: "pointer",
+                }}
+              >
+                [ COMPILE &amp; RUN ]
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving}
+                style={{
+                  padding: "2px 10px",
+                  border: "1px solid rgba(168,85,247,0.35)",
+                  background: "transparent",
+                  color: saveError ? "#ef4444" : saved ? "#22c55e" : "#c084fc",
+                  fontSize: "10px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.08em",
                   cursor: saving ? "not-allowed" : "pointer",
                 }}
               >
-                {saving ? "SAVING..." : saveError ? "[ SAVE FAILED ]" : saved ? "[ SAVED ]" : "[ SAVE ]"}
+                {saving ? "SAVING..." : saveError ? "[ SAVE FAILED ]" : saved ? "[ SAVED ]" : "[ SUBMIT SOLUTION ]"}
               </button>
             </div>
+
             {saveError && (
               <div
                 role="status"
@@ -1808,11 +1941,11 @@ export default function ContestPageClient() {
                 {saveError}
               </div>
             )}
-            
+
             {/* Editor Textarea */}
             <EditorPane
               activeQ={activeQ}
-              activeTab={activeTab}
+              activeTab={activeFile?.name ?? "main.cpp"}
               currentCode={currentCode}
               lineNumbers={lineNumbers}
               lineNumberGutterRef={lineNumberGutterRef}
@@ -1846,32 +1979,41 @@ export default function ContestPageClient() {
               >
                 [ STDOUT // COMPILE LOGS ]
               </span>
-              <div style={{ flex: 1 }} />
-              {previewUpdating && (
-                <span style={{ fontSize: "10px", color: "#f59e0b", fontFamily: "'JetBrains Mono', monospace" }}>
-                  COMPILING...
-                </span>
-              )}
             </div>
-            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 220px", minHeight: 0, color: "#a8b2d1", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", lineHeight: 1.6, position: "relative" }}>
-              <iframe
-                title="Live HTML CSS JavaScript preview"
-                srcDoc={previewSrc}
-                sandbox="allow-scripts"
+            <div
+              style={{
+                flex: 1,
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 0.42fr)",
+                minHeight: 0,
+                color: "#a8b2d1",
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: "12px",
+                lineHeight: 1.6,
+              }}
+            >
+              <div style={{ padding: "12px 16px", overflowY: "auto" }}>
+                <div style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em", marginBottom: "8px" }}>
+                  [ STDOUT ]
+                </div>
+                <div style={{ color: isEditorEmpty ? "#334155" : "#94a3b8", whiteSpace: "pre-wrap" }}>
+                  {isEditorEmpty
+                    ? "Write C++ code to prepare a submission."
+                    : "No local stdout yet. Compile/run is pending a sandboxed judge runner."}
+                </div>
+              </div>
+              <div
                 style={{
-                  width: "100%",
-                  height: "100%",
-                  border: "none",
-                  background: "#ffffff",
+                  padding: "12px 16px",
+                  overflowY: "auto",
+                  borderLeft: "1px solid #1F1F1F",
+                  background: "#0a0a0a",
                 }}
-              />
-              <div style={{ padding: "12px 16px", overflowY: "auto", borderLeft: "1px solid #1F1F1F" }}>
-                <div style={{ color: "#22c55e" }}>$ render preview</div>
-                <div>Bundling index.html, style.css, and script.js</div>
-                <div>{previewUpdating ? "Preview update pending..." : "Preview updated successfully."}</div>
-                <div style={{ marginTop: "8px", color: "#22c55e" }}>$ browser console</div>
-                <div style={{ marginTop: "4px" }}>[PREVIEW] HTML/CSS/JS runtime initialized.</div>
-                <div>[PREVIEW] Ready for interaction.</div>
+              >
+                <div style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em", marginBottom: "8px" }}>
+                  [ COMPILE LOGS ]
+                </div>
+                <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>{compileNote}</div>
               </div>
             </div>
           </div>
@@ -2415,10 +2557,70 @@ export default function ContestPageClient() {
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
-        button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid #a855f7; outline-offset: 2px; }
+        button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid rgba(168,85,247,0.3); outline-offset: 0; }
         textarea::-webkit-scrollbar { width: 6px; }
         textarea::-webkit-scrollbar-track { background: transparent; }
         textarea::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 3px; }
+
+        /* Problem description markdown */
+        .pb-body { color: #cbd5e1; font-size: 14px; line-height: 1.7; }
+        .pb-body p { margin: 0 0 12px; }
+        .pb-body h1,.pb-body h2,.pb-body h3,.pb-body h4 { color: #f1f5f9; font-family: 'JetBrains Mono', monospace; font-weight: 600; margin: 20px 0 8px; line-height: 1.3; }
+        .pb-body h1 { font-size: 18px; } .pb-body h2 { font-size: 16px; } .pb-body h3 { font-size: 14px; }
+        .pb-body strong { color: #f1f5f9; font-weight: 600; }
+        .pb-body em { color: #a5b4fc; font-style: italic; }
+        .pb-body code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: rgba(168,85,247,0.1); color: #c4b5fd; padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(168,85,247,0.2); }
+        .pb-body pre { background: #071124; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
+        .pb-body pre code { background: none; border: none; padding: 0; color: #94a3b8; font-size: 12.5px; }
+        .pb-body ul,.pb-body ol { padding-left: 20px; margin: 0 0 12px; }
+        .pb-body li { margin-bottom: 4px; color: #cbd5e1; }
+        .pb-body a { color: #a855f7; text-decoration: underline; text-decoration-color: rgba(168,85,247,0.4); }
+        .pb-body a:hover { color: #c084fc; }
+        .pb-body img { max-width: 100%; border-radius: 8px; margin: 8px 0; border: 1px solid rgba(255,255,255,0.06); }
+        .pb-body blockquote { border-left: 3px solid rgba(168,85,247,0.4); margin: 12px 0; padding: 4px 0 4px 14px; color: #94a3b8; }
+        .pb-body hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 16px 0; }
+        .pb-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+        .pb-body th,.pb-body td { border: 1px solid rgba(255,255,255,0.06); padding: 6px 10px; text-align: left; }
+        .pb-body th { background: rgba(168,85,247,0.08); color: #e2e8f0; font-weight: 600; }
+        .pb-body var.pb-math { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: rgba(56,189,248,0.1); color: #7dd3fc; padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.2); }
+
+        /* Interactive widgets embedded in <code> blocks — strip inline-code boxing */
+        .pb-body code:has(div),
+        .pb-body code:has(input),
+        .pb-body code:has(button) {
+          background: none; border: none; padding: 0; color: inherit; border-radius: 0; font-size: inherit;
+        }
+        /* Widget container: terminal-grade card */
+        .pb-body code > div {
+          background: #071124;
+          border: 1px solid rgba(255,255,255,0.06);
+          padding: 14px 16px;
+          margin: 12px 0;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          color: #94a3b8;
+        }
+        .pb-body code > div * { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: inherit; }
+        /* Machine the range input into a 2px linear meter with a hard square thumb */
+        .pb-body input[type="range"] {
+          -webkit-appearance: none; appearance: none;
+          width: 100%; height: 2px;
+          background: rgba(255,255,255,0.08);
+          outline: none; border: none; cursor: pointer; margin: 10px 0; display: block;
+        }
+        .pb-body input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none;
+          width: 10px; height: 10px;
+          background: #a855f7; border-radius: 0; cursor: pointer;
+        }
+        .pb-body input[type="range"]::-moz-range-thumb {
+          width: 10px; height: 10px;
+          background: #a855f7; border-radius: 0; border: none; cursor: pointer;
+        }
+        .pb-body input[type="range"]::-webkit-slider-runnable-track { background: rgba(255,255,255,0.08); height: 2px; }
+        /* Nested output spans inside widgets */
+        .pb-body code > div span { color: #64748b; }
+        .pb-body code > div span[id] { color: #c4b5fd; }
       `}</style>
     </div>
   );

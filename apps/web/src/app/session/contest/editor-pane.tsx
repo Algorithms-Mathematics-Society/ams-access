@@ -4,7 +4,7 @@ import type { KeyboardEvent, RefObject, UIEvent } from "react";
 
 type EditorPaneProps = {
   activeQ: number;
-  activeTab: "html" | "css" | "js";
+  activeTab: string;
   currentCode: string;
   lineNumbers: number[];
   lineNumberGutterRef: RefObject<HTMLDivElement | null>;
@@ -35,7 +35,7 @@ export default function EditorPane({
         ))}
       </div>
       <textarea
-        aria-label={`${activeTab.toUpperCase()} answer editor with line numbers`}
+        aria-label={`${activeTab} answer editor with line numbers`}
         key={`${activeQ}-${activeTab}`}
         value={currentCode}
         onChange={(event) => onCodeChange(event.target.value)}

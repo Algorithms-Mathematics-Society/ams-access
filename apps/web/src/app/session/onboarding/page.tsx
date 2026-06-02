@@ -16,6 +16,7 @@ function useTheme() {
 }
 
 const API_URL = resolveApiBase();
+const BLAZEFACE_MODEL_URL = "/models/blazeface/model.json";
 
 function getNetworkProbeHost() {
   try {
@@ -33,6 +34,21 @@ function getOrCreateDeviceId() {
       : `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   localStorage.setItem("ams_device_id", generated);
   return generated;
+}
+
+function normalizeVerificationWindowMinutes(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function verificationWindowLabel(minutes: number | null | undefined) {
+  return minutes ? `${minutes}-minute` : "configured";
+}
+
+function getVerificationOpenMs(windowMeta: ContestWindowMeta | null) {
+  if (!windowMeta) return null;
+  const start = new Date(windowMeta.startAt).getTime();
+  if (!Number.isFinite(start) || !windowMeta.verificationWindowMinutes) return null;
+  return start - windowMeta.verificationWindowMinutes * 60 * 1000;
 }
 
 // ─── Tauri bridge ─────────────────────────────────────────────────────────────
@@ -152,6 +168,13 @@ interface Stage {
   status: StageStatus;
   note?: string;
 }
+
+type ContestWindowMeta = {
+  startAt: string;
+  endAt: string;
+  timezone?: string;
+  verificationWindowMinutes: number | null;
+};
 
 const STAGES: Omit<Stage, "status">[] = [
   { id: 1, label: "Preparing Your Session", group: "Workspace Lockdown" },
@@ -1218,6 +1241,7 @@ function Stage9_FaceCalibration({
   const PHASES = [
     { key: "front" as const, label: "FRONT", instruction: "Look directly at the camera" },
   ];
+  type FaceScanState = "loading" | "ready" | "tracking" | "validating" | "complete" | "blocked";
 
   // ── Hot-path refs (no re-render on change) ─────────────────────
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1260,6 +1284,8 @@ function Stage9_FaceCalibration({
   const [done, setDone] = useState(false);
   const [runtimeNote, setRuntimeNote] = useState<string | null>(null);
   const [lostTracking, setLostTracking] = useState(false);
+  const [stageBlocked, setStageBlocked] = useState(false);
+  const [scanState, setScanState] = useState<FaceScanState>("loading");
 
   const PHASE_HOLD_MS = 700;
 
@@ -1275,9 +1301,31 @@ function Stage9_FaceCalibration({
     } catch {}
   }
 
+  function resetCaptureAttempt(note: string, guidanceText = "Capture failed — reposition and hold still") {
+    capturingRef.current = false;
+    holdMsRef.current = 0;
+    facePresentRef.current = false;
+    qualityOkRef.current = false;
+    smooth.current = { cx: 0.5, cy: 0.5, w: 0, h: 0 };
+    lockPctRef.current = 0;
+    setFacePresent(false);
+    setQualityOk(false);
+    setLockPct(0);
+    setScanState("ready");
+    setGuidance(guidanceText);
+    setRuntimeNote(note);
+  }
+
   // ── Capture (ref-assigned so detection loop always gets latest) ─
   const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
   capturePhaseRef.current = async (_idx: number) => {
+    // Hard guard: never capture after the stage has been hard-blocked.
+    if (fallbackStartedRef.current) return;
+
+    let captureAccepted = false;
+    setScanState("validating");
+    setGuidance("Validating capture...");
+    setRuntimeNote(null);
     const video = videoRef.current;
     const cap = captureCanvasRef.current;
     if (video && cap) {
@@ -1299,15 +1347,52 @@ function Stage9_FaceCalibration({
               reader.onerror = () => reject(reader.error ?? new Error("Face capture read failed"));
               reader.readAsDataURL(blob);
             });
-            await window.__TAURI__?.core.invoke("save_face_image", {
-              imageData: dataUrl,
-              index: 0,
-            });
+
+            // ── SEC-3: validate backend result before advancing ────────────
+            // When running inside Tauri the backend performs image validation
+            // (size, luma variance, dark-pixel ratio).  In browser dev mode
+            // (no Tauri) the check is skipped so the dev flow still works.
+            if (window.__TAURI__) {
+              type FaceSaveResult = {
+                path: string;
+                face_verified: boolean;
+                rejection_reason: string | null;
+              };
+              const result = await invoke<FaceSaveResult>("save_face_image", {
+                imageData: dataUrl,
+                index: 0,
+              });
+
+              if (!result?.face_verified) {
+                const reason = result?.rejection_reason ?? "save_failed";
+                void invoke("log_violation", {
+                  kind: "face_capture_rejected",
+                  detail: `Backend rejected face image: ${reason}`,
+                });
+                resetCaptureAttempt(`Capture rejected: ${reason.replace(/_/g, " ")}`);
+                return; // do not advance stage
+              }
+              captureAccepted = true;
+            } else {
+              // Dev/browser mode — fire-and-forget, no validation.
+              await invoke("save_face_image", { imageData: dataUrl, index: 0 });
+              captureAccepted = true;
+            }
           }
-        } catch {}
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "capture_validation_failed";
+          resetCaptureAttempt(`Capture validation failed: ${message}`, "Capture failed — try again");
+          return;
+        }
       }
     }
 
+    if (!captureAccepted) {
+      resetCaptureAttempt("Capture could not be validated.", "Capture failed — try again");
+      return;
+    }
+
+    // ── Reached only when face_verified is true (or dev mode) ─────────────
     setFlash(true);
     setCaptured([true]);
     setGuidance("Got it!");
@@ -1326,6 +1411,7 @@ function Stage9_FaceCalibration({
     setLockPct(0);
 
     setDone(true);
+    setScanState("complete");
     setGuidance("Face scan complete");
     setTimeout(() => onPassRef.current(), 1400);
   };
@@ -1392,19 +1478,18 @@ function Stage9_FaceCalibration({
     if (fallbackStartedRef.current) return;
     fallbackStartedRef.current = true;
     setDetectorFailed(true);
-    setRuntimeNote((prev) => prev ?? "Live detection unavailable. Using timed capture instead.");
-    setGuidance(PHASES[0].instruction);
-    speak(PHASES[0].instruction);
+    setScanState("blocked");
 
-    void (async () => {
-      phaseIdxRef.current = 0;
-      setPhaseIdx(0);
-      setGuidance(PHASES[0].instruction);
-      speak(PHASES[0].instruction);
-      await new Promise<void>((r) => setTimeout(r, 1200));
-      capturingRef.current = true;
-      await capturePhaseRef.current(0);
-    })();
+    // Log this as a security event — stage is hard-blocked, not silently bypassed.
+    void invoke("log_violation", {
+      kind: "face_detection_fallback",
+      detail: `BlazeFace unavailable after ${detectionErrorsRef.current} consecutive errors. Stage 9 hard-blocked; proctor intervention required.`,
+    });
+
+    setStageBlocked(true);
+    setGuidance("DETECTION_UNAVAILABLE");
+    setRuntimeNote("Face detection unavailable. Contact your proctor to proceed.");
+    // Do NOT auto-capture or call onPass — the stage is blocked.
   }
 
   function setTrackingLost(next: boolean) {
@@ -1460,15 +1545,50 @@ function Stage9_FaceCalibration({
         const det = await withTimeout(
           (async () => {
             const tf = await import("@tensorflow/tfjs-core");
-            await import("@tensorflow/tfjs-backend-cpu");
-            await tf.setBackend("cpu");
-            await tf.ready();
+
+            // Prefer WASM backend (25–50 ms/frame with SIMD) over pure-JS CPU
+            // (200–900 ms/frame).  WASM files are bundled under /tfjs-wasm/ by
+            // scripts/setup-tfjs-wasm.mjs so no CDN fetch is needed at runtime.
+            // TF.js auto-selects the fastest WASM variant the CPU supports:
+            //   threaded-simd (needs SharedArrayBuffer) → simd → plain wasm.
+            // If WASM init fails for any reason, we fall back to CPU so the
+            // stage can still function (albeit slower) rather than hard-failing.
+            let backendReady = false;
+            try {
+              const wasmBackend = await import("@tensorflow/tfjs-backend-wasm");
+              wasmBackend.setWasmPaths("/tfjs-wasm/");
+              await tf.setBackend("wasm");
+              await tf.ready();
+              backendReady = true;
+            } catch {
+              // WASM unavailable in this environment — fall through to CPU.
+            }
+
+            if (!backendReady) {
+              await import("@tensorflow/tfjs-backend-cpu");
+              await tf.setBackend("cpu");
+              await tf.ready();
+            }
+
+            if (window.__TAURI__) {
+              type ModelAssetVerification = {
+                ok: boolean;
+                checked_files: number;
+                error: string | null;
+              };
+              const verification = await invoke<ModelAssetVerification>("verify_face_model_assets");
+              if (!verification?.ok) {
+                throw new Error(verification?.error ?? "face_model_integrity_failed");
+              }
+            }
+
             const blazeface = (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike;
             return blazeface.load({
               maxFaces: 1,
               inputWidth: 128,
               inputHeight: 128,
               scoreThreshold: 0.75,
+              modelUrl: BLAZEFACE_MODEL_URL,
             });
           })(),
           7000,
@@ -1481,6 +1601,7 @@ function Stage9_FaceCalibration({
         detectorRef.current = det;
         detectCanvasRef.current = document.createElement("canvas");
         setDetectorReady(true);
+        setScanState("ready");
         setRuntimeNote(null);
         setGuidance(PHASES[0].instruction);
         speak(PHASES[0].instruction);
@@ -1510,7 +1631,7 @@ function Stage9_FaceCalibration({
   // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    const EMA = 0.08;
+    const EMA = 0.28;
     const DETECT_INTERVAL = 250;
 
     let prevFP = false;
@@ -1543,8 +1664,8 @@ function Stage9_FaceCalibration({
       void (async () => {
         try {
           let res: FacePredictionLike[] = [];
-          const sourceWidth = 160;
-          const sourceHeight = 120;
+          const sourceWidth = 128;
+          const sourceHeight = 128;
           if (dc.width !== sourceWidth || dc.height !== sourceHeight) {
             dc.width = sourceWidth;
             dc.height = sourceHeight;
@@ -1615,11 +1736,15 @@ function Stage9_FaceCalibration({
             setFacePresent(facePresentRef.current);
             setQualityOk(qualityOkRef.current);
             setPoseLabel(nextPoseLabel);
-            if (!facePresentRef.current) {
+            if (capturingRef.current) {
+              setScanState("validating");
+            } else if (!facePresentRef.current) {
+              setScanState("ready");
               setTrackingLost(true);
               setPoseLabel("SCANNING");
               setGuidance("Please come back into frame");
             } else {
+              setScanState(qualityOkRef.current ? "tracking" : "ready");
               setTrackingLost(false);
               setGuidance(hint);
             }
@@ -1635,21 +1760,22 @@ function Stage9_FaceCalibration({
           lockPctRef.current = Math.round((holdMsRef.current / PHASE_HOLD_MS) * 100);
           setLockPct(lockPctRef.current);
 
-          if (holdMsRef.current >= PHASE_HOLD_MS && !capturingRef.current) {
+          if (holdMsRef.current >= PHASE_HOLD_MS && !capturingRef.current && !fallbackStartedRef.current) {
             capturingRef.current = true;
+            setScanState("validating");
             void capturePhaseRef.current(0);
           }
         } catch (error) {
           detectionErrorsRef.current += 1;
           if (cancelled) return;
-          if (detectionErrorsRef.current >= 2) {
+          if (detectionErrorsRef.current >= 4) {
             setRuntimeNote(
               error instanceof Error
                 ? `Detector inference failed: ${error.message}`
                 : "Detector inference failed in this runtime."
             );
           }
-          if (detectionErrorsRef.current >= 5) {
+          if (detectionErrorsRef.current >= 15) {
             beginTimedFallback();
           }
         } finally {
@@ -1688,7 +1814,6 @@ function Stage9_FaceCalibration({
       const s = smooth.current;
       const fp = facePresentRef.current;
       const qk = qualityOkRef.current;
-      const lp = lockPctRef.current / 100;
       const pose = poseRef.current;
       const keypoints = keypointsRef.current;
 
@@ -1773,6 +1898,15 @@ function Stage9_FaceCalibration({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const phase = PHASES[phaseIdx];
+  const scanStateLabel: Record<FaceScanState, string> = {
+    loading: "MODEL_LOADING",
+    ready: "AWAITING_FACE",
+    tracking: "FACE_LOCKING",
+    validating: "CAPTURE_VALIDATING",
+    complete: "CALIBRATION_COMPLETE",
+    blocked: "DETECTION_BLOCKED",
+  };
+  const displayedLockPct = scanState === "validating" ? 100 : lockPct;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -1846,6 +1980,48 @@ function Stage9_FaceCalibration({
             </span>
           </div>
         )}
+
+        {/* Hard-block overlay — shown when detection is unavailable and stage cannot auto-proceed */}
+        {stageBlocked && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 10,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(3, 8, 22, 0.94)",
+              borderRadius: "2px",
+              gap: "10px",
+              border: "1px solid rgba(239, 68, 68, 0.45)",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "11px",
+                fontFamily: "'JetBrains Mono', monospace",
+                color: "#ef4444",
+                letterSpacing: "0.08em",
+              }}
+            >
+              DETECTION_UNAVAILABLE
+            </span>
+            <span
+              style={{
+                fontSize: "10px",
+                fontFamily: "'JetBrains Mono', monospace",
+                color: "#64748B",
+                textAlign: "center",
+                maxWidth: "220px",
+                lineHeight: 1.65,
+              }}
+            >
+              Contact your proctor to proceed
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Monochrome industrial state metrics */}
@@ -1868,6 +2044,24 @@ function Stage9_FaceCalibration({
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
+          <span>SCANNER STATE:</span>
+          <span
+            style={{
+              color:
+                scanState === "complete"
+                  ? "#22c55e"
+                  : scanState === "blocked"
+                    ? "#ef4444"
+                    : scanState === "validating"
+                      ? "#f59e0b"
+                      : "#A8A8A8",
+              fontWeight: 700,
+            }}
+          >
+            {scanStateLabel[scanState]}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
           <span>TRACKING STATE:</span>
           <span
             style={{
@@ -1881,7 +2075,13 @@ function Stage9_FaceCalibration({
               fontWeight: 700,
             }}
           >
-            {lostTracking ? "SIGNAL_LOST" : poseLabel.toUpperCase()}
+            {scanState === "validating" ? "CAPTURE_LOCKED" : lostTracking ? "SIGNAL_LOST" : poseLabel.toUpperCase()}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
+          <span>CAPTURE LOCK:</span>
+          <span style={{ color: displayedLockPct >= 100 ? "#22c55e" : "#A8A8A8", fontWeight: 700 }}>
+            {displayedLockPct}%
           </span>
         </div>
       </div>
@@ -1925,7 +2125,7 @@ function Stage9_FaceCalibration({
       )}
 
       {/* Lock progress bar */}
-      {facePresent && !done && (
+      {(facePresent || scanState === "validating") && !done && (
         <div
           style={{
             width: 320,
@@ -1938,7 +2138,7 @@ function Stage9_FaceCalibration({
           <div
             style={{
               height: "100%",
-              width: `${lockPct}%`,
+              width: `${displayedLockPct}%`,
               background: qualityOk ? "#22c55e" : "#FFF",
               transition: "width 80ms linear",
             }}
@@ -2459,7 +2659,7 @@ function ProgressBar({
             color: "#A8A8A8",
           }}
         >
-          STEP {current} OF 14
+          STEP {current} OF {STAGES.length}
         </span>
       </div>
 
@@ -2507,11 +2707,7 @@ export default function OnboardingPage() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
-  const [contestWindow, setContestWindow] = useState<{
-    startAt: string;
-    endAt: string;
-    timezone?: string;
-  } | null>(null);
+  const [contestWindow, setContestWindow] = useState<ContestWindowMeta | null>(null);
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const [sessionPrepared, setSessionPrepared] = useState(false);
@@ -2536,14 +2732,21 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestId) return;
     let cancelled = false;
-    fetchJson<{ start_at?: string; end_at?: string; timezone?: string }>(
+    fetchJson<{ start_at?: string; end_at?: string; timezone?: string; verification_window_minutes?: number | null }>(
       `${API_URL}/contests/${contestId}`,
       {},
       { dedupeKey: `contest:${contestId}`, retries: 2 }
     )
       .then((meta) => {
         if (cancelled || !meta?.start_at || !meta?.end_at) return;
-        setContestWindow({ startAt: meta.start_at, endAt: meta.end_at, timezone: meta.timezone });
+        setContestWindow({
+          startAt: meta.start_at,
+          endAt: meta.end_at,
+          timezone: meta.timezone,
+          verificationWindowMinutes: normalizeVerificationWindowMinutes(
+            meta.verification_window_minutes
+          ),
+        });
       })
       .catch(() => {});
     return () => {
@@ -2568,10 +2771,15 @@ export default function OnboardingPage() {
     const now = Date.now();
     const start = new Date(contestWindow.startAt).getTime();
     const end = new Date(contestWindow.endAt).getTime();
-    const open = start - 20 * 60 * 1000;
+    const open = getVerificationOpenMs(contestWindow);
     if (now >= end) return { ok: false, reason: "Contest has ended." };
-    if (now < open)
-      return { ok: false, reason: "Verification opens 20 minutes before contest start." };
+    if (open !== null && now < open)
+      return {
+        ok: false,
+        reason: `Verification opens in the ${verificationWindowLabel(
+          contestWindow.verificationWindowMinutes
+        )} window before contest start.`,
+      };
     if (now >= start) return { ok: false, reason: "Join window is closed once contest starts." };
     return { ok: true, reason: null as string | null };
   }
@@ -2585,6 +2793,7 @@ export default function OnboardingPage() {
         session_window_state?: string;
         start_at?: string;
         end_at?: string;
+        verification_window_minutes?: number | null;
       }>(`${API_URL}/contests/${contestId}/session-window`, {}, {
         dedupeKey: `contest-window:${contestId}`,
         retries: 2,
@@ -2594,6 +2803,10 @@ export default function OnboardingPage() {
           startAt: body.start_at ?? prev?.startAt ?? "",
           endAt: body.end_at ?? prev?.endAt ?? "",
           timezone: prev?.timezone,
+          verificationWindowMinutes:
+            normalizeVerificationWindowMinutes(body.verification_window_minutes) ??
+            prev?.verificationWindowMinutes ??
+            null,
         }));
       }
       const status = String(body.eligibility_status ?? "blocked").toLowerCase();
@@ -2606,7 +2819,7 @@ export default function OnboardingPage() {
       if (status === "wait")
         return {
           ok: false,
-          reason: body.blocked_reason || "Verification opens 20 minutes before contest start.",
+          reason: body.blocked_reason || "Verification is not open for this contest yet.",
           state: body.session_window_state ?? "NOT_OPEN",
         };
       // If candidate already finished verification and prepared a session, allow
@@ -2641,6 +2854,7 @@ export default function OnboardingPage() {
             start_at?: string;
             end_at?: string;
             timezone?: string;
+            verification_window_minutes?: number | null;
           }>(`${API_URL}/contests/${contestId}`, {}, {
             dedupeKey: `contest:${contestId}`,
             retries: 2,
@@ -2657,6 +2871,9 @@ export default function OnboardingPage() {
         startAt: fetchedWindowMeta.start_at,
         endAt: fetchedWindowMeta.end_at,
         timezone: fetchedWindowMeta.timezone,
+        verificationWindowMinutes: normalizeVerificationWindowMinutes(
+          fetchedWindowMeta.verification_window_minutes
+        ),
       };
       setContestWindow(windowMeta);
     }
@@ -2665,10 +2882,15 @@ export default function OnboardingPage() {
       const now = Date.now();
       const start = new Date(windowMeta.startAt).getTime();
       const end = new Date(windowMeta.endAt).getTime();
-      const open = start - 20 * 60 * 1000;
+      const open = getVerificationOpenMs(windowMeta);
       if (now >= end) return { ok: false, reason: "Contest has ended." };
-      if (now < open)
-        return { ok: false, reason: "Verification opens 20 minutes before contest start." };
+      if (open !== null && now < open)
+        return {
+          ok: false,
+          reason: `Verification opens in the ${verificationWindowLabel(
+            windowMeta.verificationWindowMinutes
+          )} window before contest start.`,
+        };
       if (now >= start && !readyForStart)
         return { ok: false, reason: "Join window is closed once contest starts." };
       return { ok: true, reason: null as string | null };
@@ -2837,11 +3059,11 @@ export default function OnboardingPage() {
   const nowMs = Date.now();
   const startMs = contestWindow ? new Date(contestWindow.startAt).getTime() : 0;
   const endMs = contestWindow ? new Date(contestWindow.endAt).getTime() : 0;
-  const verifyOpenMs = startMs - 20 * 60 * 1000;
-  const isTooEarly = contestWindow ? nowMs < verifyOpenMs : false;
+  const verifyOpenMs = getVerificationOpenMs(contestWindow);
+  const isTooEarly = verifyOpenMs !== null ? nowMs < verifyOpenMs : false;
   const isAfterStart = contestWindow ? nowMs >= startMs && nowMs < endMs : false;
   const isEnded = contestWindow ? nowMs >= endMs : false;
-  const verifyOpensInMs = contestWindow ? Math.max(0, verifyOpenMs - nowMs) : 0;
+  const verifyOpensInMs = verifyOpenMs !== null ? Math.max(0, verifyOpenMs - nowMs) : 0;
   const showWaitLock = currentStage === 15 && readyForStart;
 
   return (
@@ -2958,7 +3180,7 @@ export default function OnboardingPage() {
                 Opens in {formatCountdown(verifyOpensInMs)} ({contestWindow?.timezone || "UTC"})
               </div>
               <div style={{ fontSize: 12, color: "#a1a1aa" }}>
-                You can start setup only in the 20-minute window before contest start.
+                You can start setup only in the configured verification window before contest start.
               </div>
             </div>
           )}
@@ -2997,22 +3219,78 @@ export default function OnboardingPage() {
               {currentStage === 15 && contestWindow && waitMs > 0 && (
                 <div
                   style={{
-                    border: "1px solid rgba(168,85,247,0.32)",
-                    background: "rgba(168,85,247,0.08)",
-                    borderRadius: 12,
-                    padding: "18px 16px",
-                    color: "#ddd6fe",
-                    textAlign: "center",
+                    border: "1px solid rgba(255, 255, 255, 0.05)",
+                    background: "#0F0F0F",
+                    borderRadius: 0,
+                    padding: "32px 32px",
+                    textAlign: "left",
+                    fontFamily: "var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace",
+                    width: "100%",
                   }}
                 >
-                  <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-                    Verification complete
+                  <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: "14px", fontSize: "13px", alignItems: "center" }}>
+                    <div style={{ color: "#A8A8A8" }}>[SYS_STATE]</div>
+                    <div style={{ color: "#22c55e" }}>VERIFICATION_COMPLETE</div>
+                    
+                    <div style={{ color: "#A8A8A8" }}>[TARGET]</div>
+                    <div style={{ color: "#FFF" }}>AMS_DERIVE_EXECUTION_NODE</div>
+                    
+                    <div style={{ color: "#A8A8A8" }}>[HOOKS]</div>
+                    <div style={{ color: "#FFF" }}>ARMED_AND_LOCKED</div>
+                    
+                    <div style={{ color: "#A8A8A8" }}>[ACTION]</div>
+                    <div style={{ color: "#a855f7" }}>AWAITING_AUTO_REDIRECT...</div>
+
+                    <div style={{ gridColumn: "1 / -1", height: "1px", background: "rgba(255,255,255,0.05)", margin: "16px 0 8px 0" }} />
+
+                    <div style={{ color: "#A8A8A8" }}>[T-MINUS]</div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
+                      <span style={{ fontSize: "42px", fontWeight: 700, color: "#FFFFFF", lineHeight: 1, letterSpacing: "-0.02em" }}>
+                        {formatCountdown(waitMs)}
+                      </span>
+                      <span style={{ fontSize: "13px", color: "#A8A8A8" }}>
+                        ({contestWindow.timezone || "UTC"})
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 13, color: "#c4b5fd", marginBottom: 8 }}>
-                    Contest starts in {formatCountdown(waitMs)} ({contestWindow.timezone || "UTC"})
-                  </div>
-                  <div style={{ fontSize: 12, color: "#a1a1aa" }}>
-                    You will be redirected automatically at start time.
+                </div>
+              )}
+              {currentStage === 15 && (!contestWindow || waitMs <= 0) && (
+                <div
+                  style={{
+                    border: "1px solid rgba(255, 255, 255, 0.05)",
+                    background: "#0F0F0F",
+                    borderRadius: 0,
+                    padding: "32px 32px",
+                    textAlign: "left",
+                    fontFamily: "var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace",
+                    width: "100%",
+                  }}
+                >
+                  <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: "14px", fontSize: "13px", alignItems: "center" }}>
+                    <div style={{ color: "#A8A8A8" }}>[SYS_STATE]</div>
+                    <div style={{ color: "#22c55e" }}>VERIFICATION_COMPLETE</div>
+                    
+                    <div style={{ color: "#A8A8A8" }}>[TARGET]</div>
+                    <div style={{ color: "#FFF" }}>AMS_DERIVE_EXECUTION_NODE</div>
+                    
+                    <div style={{ color: "#A8A8A8" }}>[HOOKS]</div>
+                    <div style={{ color: "#FFF" }}>ARMED_AND_LOCKED</div>
+                    
+                    <div style={{ color: "#A8A8A8" }}>[ACTION]</div>
+                    <div style={{ color: "#a855f7", display: "flex", alignItems: "center", gap: "8px" }}>
+                      LAUNCHING_SECURE_SESSION...
+                      <div
+                        style={{
+                          width: 12,
+                          height: 12,
+                          border: "2px solid rgba(168,85,247,0.3)",
+                          borderTopColor: "#a855f7",
+                          borderRadius: "50%",
+                          animation: "spin 0.9s linear infinite",
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
