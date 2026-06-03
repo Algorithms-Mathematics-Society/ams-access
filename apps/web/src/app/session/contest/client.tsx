@@ -28,6 +28,10 @@ const LANGUAGE_ID_MAP: Record<string, string> = {
   Rust: "rust",
 };
 
+// Languages the judge worker actually handles. Go and Rust are not yet
+// implemented in runner.go — filter them from the UI until they are.
+const WORKER_SUPPORTED_LANGUAGES = new Set(["C++17", "C++20", "Python3", "Java17", "PyPy3"]);
+
 function toLanguageId(displayLabel: string): string {
   return LANGUAGE_ID_MAP[displayLabel] ?? displayLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -661,17 +665,6 @@ public class Main {
   },
 };
 
-function mapToSubmissionLang(lang: string): string {
-  const l = lang.toLowerCase().trim();
-  if (l.includes("c++17") || l === "cpp17") return "cpp17";
-  if (l.includes("c++20") || l === "cpp20") return "cpp20";
-  if (l.includes("python3") || l === "python3") return "python3";
-  if (l.includes("pypy3") || l === "pypy3" || l.includes("pypy")) return "pypy3";
-  if (l.includes("java17") || l === "java17" || l.includes("java") || l === "java17")
-    return "java17";
-  return l;
-}
-
 function FollowUpPane({
   question,
   sessionId,
@@ -984,8 +977,6 @@ export default function ContestPageClient() {
     type: "camera" | "mic";
     value: boolean;
   } | null>(null);
-  // DMOJ Submissions & Language State
-  const [selectedLang, setSelectedLang] = useState<string>("cpp17");
   const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
   const [submissionsList, setSubmissionsList] = useState<any[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
@@ -1023,19 +1014,6 @@ export default function ContestPageClient() {
       },
     }));
   }
-
-  const allowedLanguages = useMemo(() => {
-    if (!contest?.allowed_languages || contest.allowed_languages.length === 0) {
-      return ["cpp17", "cpp20", "python3", "java17", "pypy3"];
-    }
-    return contest.allowed_languages.map(mapToSubmissionLang);
-  }, [contest?.allowed_languages]);
-
-  useEffect(() => {
-    if (allowedLanguages.length > 0 && !allowedLanguages.includes(selectedLang)) {
-      setSelectedLang(allowedLanguages[0]);
-    }
-  }, [allowedLanguages]);
 
   const fetchSubmissions = useCallback(async () => {
     if (!sessionId || !questions[activeQ]) return;
@@ -1626,9 +1604,10 @@ export default function ContestPageClient() {
 
       const qId = questions[activeQ].id;
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submissions`, {
-        problem_id: qId,
-        language: selectedLang,
-        source_code: currentCode,
+        question_id: qId,
+        language: toLanguageId(selectedLanguage),
+        files: editorFiles,
+        active_file_id: activeFileId,
       });
 
       if (!response.ok) {
