@@ -32,19 +32,21 @@ marked.use(mathInlineExt, { breaks: true, gfm: true });
 
 function parseDescription(md: string): string {
   const tex = md
-    .replace(/\\leq?\b/g, "≤").replace(/\\geq?\b/g, "≥")
-    .replace(/\\neq\b/g, "≠").replace(/\\times\b/g, "×")
-    .replace(/\\cdot\b/g, "·").replace(/\\infty\b/g, "∞")
-    .replace(/\\ldots\b|\\dots\b/g, "…").replace(/\\pm\b/g, "±")
+    .replace(/\\leq?\b/g, "≤")
+    .replace(/\\geq?\b/g, "≥")
+    .replace(/\\neq\b/g, "≠")
+    .replace(/\\times\b/g, "×")
+    .replace(/\\cdot\b/g, "·")
+    .replace(/\\infty\b/g, "∞")
+    .replace(/\\ldots\b|\\dots\b/g, "…")
+    .replace(/\\pm\b/g, "±")
     .replace(/\\\\/g, "\n");
   return marked.parse(tex) as string;
 }
 
 const EditorPane = dynamic(() => import("./editor-pane"), {
   ssr: false,
-  loading: () => (
-    <div style={{ flex: 1, background: "#0F0F0F", borderTop: "1px solid #1F1F1F" }} />
-  ),
+  loading: () => <div style={{ flex: 1, background: "#0F0F0F", borderTop: "1px solid #1F1F1F" }} />,
 });
 
 type Question = {
@@ -67,6 +69,7 @@ type ContestMeta = {
   start_at?: string;
   end_at: string;
   status: string;
+  allowed_languages?: string[];
 };
 
 type QuestionPayload = Partial<Question> & {
@@ -190,7 +193,14 @@ function normalizeQuestion(value: unknown, index: number): Question | null {
     title: title ?? `Question ${orderIndex + 1}`,
     description: pickString(payload.description, payload.statement, payload.prompt, payload.body),
     starter_code:
-      pickString(payload.starter_code, payload.cpp_starter, payload.code, payload.cpp, starter?.code, starter?.cpp) ??
+      pickString(
+        payload.starter_code,
+        payload.cpp_starter,
+        payload.code,
+        payload.cpp,
+        starter?.code,
+        starter?.cpp
+      ) ??
       (looksLikeCpp(payload.html_starter) ? payload.html_starter : null) ??
       (looksLikeCpp(payload.starter_html) ? payload.starter_html : null) ??
       (looksLikeCpp(starter?.html) ? starter.html : null) ??
@@ -302,7 +312,8 @@ function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => v
     if (!rootEl) return;
     const trappedRoot: T = rootEl;
 
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const selector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
     const focusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
       (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
@@ -317,9 +328,9 @@ function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => v
       }
       if (event.key !== "Tab") return;
 
-      const currentFocusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
-        (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
-      );
+      const currentFocusable = Array.from(
+        trappedRoot.querySelectorAll<HTMLElement>(selector)
+      ).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
       if (currentFocusable.length === 0) {
         event.preventDefault();
         trappedRoot.focus({ preventScroll: true });
@@ -446,6 +457,83 @@ const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }
   );
 });
 
+const LANGUAGE_META = {
+  cpp17: {
+    ext: "cpp",
+    name: "C++17",
+    starter: `#include <iostream>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // Write your C++17 solution here
+    return 0;
+}`,
+  },
+  cpp20: {
+    ext: "cpp",
+    name: "C++20",
+    starter: `#include <iostream>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // Write your C++20 solution here
+    return 0;
+}`,
+  },
+  python3: {
+    ext: "py",
+    name: "Python 3",
+    starter: `import sys
+
+def solve():
+    # Write your Python 3 solution here
+    pass
+
+if __name__ == '__main__':
+    solve()`,
+  },
+  pypy3: {
+    ext: "py",
+    name: "PyPy 3",
+    starter: `import sys
+
+def solve():
+    # Write your PyPy 3 solution here
+    pass
+
+if __name__ == '__main__':
+    solve()`,
+  },
+  java17: {
+    ext: "java",
+    name: "Java 17",
+    starter: `import java.io.*;
+import java.util.*;
+
+public class Main {
+    public static void main(String[] args) throws IOException {
+        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+        // Write your Java 17 solution here
+    }
+}`,
+  },
+};
+
+function mapToSubmissionLang(lang: string): string {
+  const l = lang.toLowerCase().trim();
+  if (l.includes("c++17") || l === "cpp17") return "cpp17";
+  if (l.includes("c++20") || l === "cpp20") return "cpp20";
+  if (l.includes("python3") || l === "python3") return "python3";
+  if (l.includes("pypy3") || l === "pypy3" || l.includes("pypy")) return "pypy3";
+  if (l.includes("java17") || l === "java17" || l.includes("java") || l === "java17")
+    return "java17";
+  return l;
+}
+
 export default function ContestPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -496,10 +584,120 @@ export default function ContestPageClient() {
   const [micEnabled, setMicEnabled] = useState(true);
   const [hasToggledMedia, setHasToggledMedia] = useState(false);
   const [showMediaToggleWarning, setShowMediaToggleWarning] = useState(false);
-  const [pendingMediaToggle, setPendingMediaToggle] = useState<{type: 'camera' | 'mic', value: boolean} | null>(null);
+  const [pendingMediaToggle, setPendingMediaToggle] = useState<{
+    type: "camera" | "mic";
+    value: boolean;
+  } | null>(null);
+  // DMOJ Submissions & Language State
+  const [selectedLang, setSelectedLang] = useState<string>("cpp17");
+  const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
+  const [submissionsList, setSubmissionsList] = useState<any[]>([]);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+  const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, any[]>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [savedAnswers, setSavedAnswers] = useState<
+    Record<string, { language: string; content: string }>
+  >({});
 
-  function applyMediaToggle(type: 'camera' | 'mic', value: boolean) {
-    if (type === 'camera') {
+  const allowedLanguages = useMemo(() => {
+    if (!contest?.allowed_languages || contest.allowed_languages.length === 0) {
+      return ["cpp17", "cpp20", "python3", "java17", "pypy3"];
+    }
+    return contest.allowed_languages.map(mapToSubmissionLang);
+  }, [contest?.allowed_languages]);
+
+  useEffect(() => {
+    if (allowedLanguages.length > 0 && !allowedLanguages.includes(selectedLang)) {
+      setSelectedLang(allowedLanguages[0]);
+    }
+  }, [allowedLanguages]);
+
+  const fetchSubmissions = useCallback(async () => {
+    if (!sessionId || !questions[activeQ]) return;
+    setLoadingSubmissions(true);
+    try {
+      const response = await fetchJson<any[]>(
+        `${API_URL}/sessions/${sessionId}/submissions`,
+        {},
+        { dedupeKey: `submissions-${sessionId}-${activeQ}`, retries: 1 }
+      );
+      const qId = questions[activeQ].id;
+      const filtered = (response || []).filter((sub) => sub.problem_id === qId);
+      filtered.sort((a, b) => b.attempt_no - a.attempt_no);
+      setSubmissionsList(filtered);
+    } catch (err) {
+      console.error("Failed to fetch submissions:", err);
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  }, [sessionId, activeQ, questions]);
+
+  useEffect(() => {
+    fetchSubmissions();
+  }, [activeQ, sessionId, fetchSubmissions]);
+
+  useEffect(() => {
+    const hasPending = submissionsList.some(
+      (sub) => sub.status === "QUEUED" || sub.status === "RUNNING"
+    );
+    if (!hasPending) return;
+
+    const interval = setInterval(() => {
+      fetchSubmissions();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [submissionsList, fetchSubmissions]);
+
+  const fetchTestResults = async (attemptId: string) => {
+    if (!sessionId) return;
+    try {
+      const response = await fetchJson<any[]>(
+        `${API_URL}/sessions/${sessionId}/submissions/${attemptId}/test-results`,
+        {},
+        { dedupeKey: `test-results-${attemptId}`, retries: 1 }
+      );
+      setTestResults((prev) => ({
+        ...prev,
+        [attemptId]: response || [],
+      }));
+    } catch (err) {
+      console.error("Failed to fetch test results:", err);
+    }
+  };
+
+  const toggleExpandAttempt = (attemptId: string) => {
+    if (expandedAttemptId === attemptId) {
+      setExpandedAttemptId(null);
+    } else {
+      setExpandedAttemptId(attemptId);
+      if (!testResults[attemptId]) {
+        fetchTestResults(attemptId);
+      }
+    }
+  };
+
+  const prevSubmissionsRef = useRef<any[]>([]);
+  useEffect(() => {
+    if (submissionsList.length > 0) {
+      const latest = submissionsList[0];
+      const prevLatest = prevSubmissionsRef.current[0];
+      if (
+        latest &&
+        latest.status === "DONE" &&
+        (!prevLatest || prevLatest.id !== latest.id || prevLatest.status !== "DONE")
+      ) {
+        setExpandedAttemptId(latest.id);
+        fetchTestResults(latest.id);
+      }
+    }
+    prevSubmissionsRef.current = submissionsList;
+  }, [submissionsList]);
+
+  function applyMediaToggle(type: "camera" | "mic", value: boolean) {
+    if (type === "camera") {
       setCameraEnabled(value);
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = value));
@@ -512,7 +710,7 @@ export default function ContestPageClient() {
     }
   }
 
-  function handleToggleMedia(type: 'camera' | 'mic', value: boolean) {
+  function handleToggleMedia(type: "camera" | "mic", value: boolean) {
     if (!hasToggledMedia) {
       setPendingMediaToggle({ type, value });
       setShowMediaToggleWarning(true);
@@ -534,7 +732,6 @@ export default function ContestPageClient() {
     setShowMediaToggleWarning(false);
     setPendingMediaToggle(null);
   }
-
 
   // Monitor faceStatus to trigger face grace period countdown
   useEffect(() => {
@@ -675,18 +872,11 @@ export default function ContestPageClient() {
     const sessionRequest = createContestSession(contestId).catch(() => null);
 
     Promise.all([contestRequest, questionsRequest, sessionRequest])
-      .then(([c, questions, session]) => {
+      .then(async ([c, questions, session]) => {
         const contestMeta = c ? (c as ContestMeta) : null;
         if (contestMeta) setContest(contestMeta);
-        setActiveQ(0);
-        setQuestions(questions);
-        if (questions.length > 0) {
-          loadQuestion(questions[0]);
-          setLoadError(null);
-        } else {
-          setLoadError("Questions are not available yet. Please retry in a few seconds.");
-        }
 
+        let answersMap: Record<string, { language: string; content: string }> = {};
         if (session?.id) {
           setSessionId(session.id);
           localStorage.setItem(
@@ -698,6 +888,41 @@ export default function ContestPageClient() {
               updated_at: new Date().toISOString(),
             })
           );
+
+          try {
+            const answersData = await fetchJson<any[]>(`${API_URL}/sessions/${session.id}/answers`);
+            if (answersData && Array.isArray(answersData)) {
+              for (const ans of answersData) {
+                try {
+                  const parsed = JSON.parse(ans.answer_text);
+                  const files = parsed.files || [];
+                  const activeFile =
+                    files.find((f: any) => f.id === parsed.active_file_id) || files[0];
+                  answersMap[ans.question_id] = {
+                    language: parsed.language || "cpp17",
+                    content: activeFile ? activeFile.content : "",
+                  };
+                } catch {
+                  answersMap[ans.question_id] = {
+                    language: "cpp17",
+                    content: ans.answer_text,
+                  };
+                }
+              }
+              setSavedAnswers(answersMap);
+            }
+          } catch (err) {
+            console.error("Failed to load saved answers:", err);
+          }
+        }
+
+        setActiveQ(0);
+        setQuestions(questions);
+        if (questions.length > 0) {
+          loadQuestionWithAnswers(questions[0], answersMap);
+          setLoadError(null);
+        } else {
+          setLoadError("Questions are not available yet. Please retry in a few seconds.");
         }
 
         setLoading(false);
@@ -709,20 +934,42 @@ export default function ContestPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestId]);
 
-  function loadQuestion(q: Question) {
+  function loadQuestionWithAnswers(
+    q: Question,
+    answersMap: Record<string, { language: string; content: string }>
+  ) {
+    const saved = answersMap[q.id];
+    let lang = selectedLang;
+    let content = "";
+
+    if (saved) {
+      lang = saved.language;
+      content = saved.content;
+      setSelectedLang(lang);
+    } else {
+      const meta = LANGUAGE_META[lang as keyof typeof LANGUAGE_META];
+      content = q.starter_code ?? meta?.starter ?? "";
+    }
+
+    const meta = LANGUAGE_META[lang as keyof typeof LANGUAGE_META];
+    const ext = meta?.ext || "cpp";
     const file: EditorFile = {
       id: `${q.id}:main`,
-      name: questionFileName(q),
-      content: q.starter_code ?? defaultCppStarter(),
+      name: `solution.${ext}`,
+      content: content,
     };
     setEditorFiles([file]);
     setActiveFileId(file.id);
-    setCompileNote("C++ runner is not configured for this build. Save or submit to send code for judging.");
+    setCompileNote(`Compiler set to ${meta?.name || lang}.`);
+  }
+
+  function loadQuestion(q: Question) {
+    loadQuestionWithAnswers(q, savedAnswers);
   }
 
   function switchQuestion(idx: number) {
     setActiveQ(idx);
-    loadQuestion(questions[idx]);
+    loadQuestionWithAnswers(questions[idx], savedAnswers);
   }
 
   function handleCodeChange(value: string) {
@@ -785,12 +1032,21 @@ export default function ContestPageClient() {
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/answers`, {
         question_id: questions[activeQ].id,
         answer_text: JSON.stringify({
-          language: "cpp17",
+          language: selectedLang,
           files: editorFiles,
           active_file_id: activeFileId,
         }),
       });
       if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
+
+      setSavedAnswers((prev) => ({
+        ...prev,
+        [questions[activeQ].id]: {
+          language: selectedLang,
+          content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
+        },
+      }));
+
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       return true;
@@ -800,6 +1056,71 @@ export default function ContestPageClient() {
       return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  function handleLangChange(newLang: string) {
+    setSelectedLang(newLang);
+    setEditorFiles((files) =>
+      files.map((file) => {
+        if (file.id === `${questions[activeQ]?.id}:main`) {
+          const meta = LANGUAGE_META[newLang as keyof typeof LANGUAGE_META];
+          const ext = meta?.ext || "cpp";
+          const starter = meta?.starter || "";
+
+          const prevMeta = LANGUAGE_META[selectedLang as keyof typeof LANGUAGE_META];
+          const isDefault =
+            !file.content ||
+            file.content.trim() === "" ||
+            file.content.trim() === prevMeta?.starter?.trim();
+
+          return {
+            ...file,
+            name: `solution.${ext}`,
+            content: isDefault ? starter : file.content,
+          };
+        }
+        return file;
+      })
+    );
+    setCompileNote(
+      `Compiler switched to ${LANGUAGE_META[newLang as keyof typeof LANGUAGE_META]?.name || newLang}.`
+    );
+  }
+
+  async function handleSubmitSolution() {
+    if (!questions[activeQ] || !sessionId) {
+      setSubmissionError("No active session is available.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmissionError(null);
+    setTerminalTab("submissions");
+
+    try {
+      const savedOk = await handleSave();
+      if (!savedOk) {
+        throw new Error("Failed to save answer prior to submission.");
+      }
+
+      const qId = questions[activeQ].id;
+      const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submissions`, {
+        problem_id: qId,
+        language: selectedLang,
+        source_code: currentCode,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Submission failed with HTTP ${response.status}`);
+      }
+
+      await fetchSubmissions();
+    } catch (err: any) {
+      setSubmissionError(err.message || "An unexpected error occurred.");
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -949,7 +1270,10 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!sessionId) return;
     const sendHeartbeat = () => {
-      fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, { method: "POST", keepalive: true }).catch(() => {});
+      fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, {
+        method: "POST",
+        keepalive: true,
+      }).catch(() => {});
     };
     sendHeartbeat();
     const id = setInterval(sendHeartbeat, 60_000);
@@ -1522,11 +1846,25 @@ export default function ContestPageClient() {
                   boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
                 }}
               >
-                <p style={{ margin: "0 0 10px", color: "#fecaca", fontSize: "12px", lineHeight: 1.45 }}>
+                <p
+                  style={{
+                    margin: "0 0 10px",
+                    color: "#fecaca",
+                    fontSize: "12px",
+                    lineHeight: 1.45,
+                  }}
+                >
                   Submit final answers and exit the contest? This cannot be undone.
                 </p>
                 {submitError && (
-                  <p style={{ margin: "0 0 10px", color: "#fca5a5", fontSize: "11px", lineHeight: 1.35 }}>
+                  <p
+                    style={{
+                      margin: "0 0 10px",
+                      color: "#fca5a5",
+                      fontSize: "11px",
+                      lineHeight: 1.35,
+                    }}
+                  >
                     {submitError}
                   </p>
                 )}
@@ -1537,7 +1875,14 @@ export default function ContestPageClient() {
                       setSubmitConfirm(false);
                       setSubmitError(null);
                     }}
-                    style={{ padding: "6px 10px", border: "1px solid #334155", background: "transparent", color: "#cbd5e1", cursor: "pointer", fontSize: "11px" }}
+                    style={{
+                      padding: "6px 10px",
+                      border: "1px solid #334155",
+                      background: "transparent",
+                      color: "#cbd5e1",
+                      cursor: "pointer",
+                      fontSize: "11px",
+                    }}
                   >
                     Cancel
                   </button>
@@ -1545,7 +1890,15 @@ export default function ContestPageClient() {
                     type="button"
                     onClick={handleSubmitConfirmed}
                     disabled={saving}
-                    style={{ padding: "6px 10px", border: "1px solid #ef4444", background: "rgba(239,68,68,0.16)", color: "#fecaca", cursor: saving ? "not-allowed" : "pointer", fontSize: "11px", fontWeight: 700 }}
+                    style={{
+                      padding: "6px 10px",
+                      border: "1px solid #ef4444",
+                      background: "rgba(239,68,68,0.16)",
+                      color: "#fecaca",
+                      cursor: saving ? "not-allowed" : "pointer",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                    }}
                   >
                     {saving ? "Saving..." : "Confirm"}
                   </button>
@@ -1612,11 +1965,23 @@ export default function ContestPageClient() {
             >
               {sidebarCollapsed ? (
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M6 12l4-4-4-4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               ) : (
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M10 12L6 8l4-4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               )}
             </button>
@@ -1632,7 +1997,15 @@ export default function ContestPageClient() {
             }}
           >
             {questions.length === 0 && !sidebarCollapsed && (
-              <p style={{ fontSize: "12px", color: "#475569", textAlign: "center", marginTop: "24px", fontFamily: "'JetBrains Mono', monospace" }}>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "#475569",
+                  textAlign: "center",
+                  marginTop: "24px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
                 No questions
               </p>
             )}
@@ -1658,15 +2031,37 @@ export default function ContestPageClient() {
                 title={sidebarCollapsed ? q.title : undefined}
               >
                 {sidebarCollapsed ? (
-                  <span style={{ fontSize: "12px", fontWeight: 600, color: activeQ === i ? "#ffffff" : "#64748b" }}>
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: activeQ === i ? "#ffffff" : "#64748b",
+                    }}
+                  >
                     {i + 1}
                   </span>
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 600, color: activeQ === i ? "#ffffff" : "#64748b", flexShrink: 0 }}>
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        fontWeight: 600,
+                        color: activeQ === i ? "#ffffff" : "#64748b",
+                        flexShrink: 0,
+                      }}
+                    >
                       [{i + 1}]
                     </span>
-                    <span style={{ fontSize: "12px", fontWeight: 500, color: activeQ === i ? "#f5f7fa" : "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 500,
+                        color: activeQ === i ? "#f5f7fa" : "#94a3b8",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {q.title}
                     </span>
                   </div>
@@ -1674,7 +2069,7 @@ export default function ContestPageClient() {
               </button>
             ))}
           </div>
-          
+
           {/* Docked Camera feed */}
           <div
             style={{
@@ -1687,41 +2082,110 @@ export default function ContestPageClient() {
             }}
           >
             {!sidebarCollapsed && (
-              <div style={{ display: "flex", alignItems: "center", padding: "6px", gap: "6px", borderBottom: "1px solid #1F1F1F" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "6px",
+                  gap: "6px",
+                  borderBottom: "1px solid #1F1F1F",
+                }}
+              >
                 <button
                   type="button"
-                  onClick={() => handleToggleMedia('camera', !cameraEnabled)}
-                  style={{ flex: 1, padding: "4px", fontSize: "10px", fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${cameraEnabled ? '#1F1F1F' : '#ef4444'}`, background: cameraEnabled ? '#1F1F1F' : 'rgba(239,68,68,0.1)', color: cameraEnabled ? '#e2e8f0' : '#ef4444', cursor: "pointer" }}
+                  onClick={() => handleToggleMedia("camera", !cameraEnabled)}
+                  style={{
+                    flex: 1,
+                    padding: "4px",
+                    fontSize: "10px",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    border: `1px solid ${cameraEnabled ? "#1F1F1F" : "#ef4444"}`,
+                    background: cameraEnabled ? "#1F1F1F" : "rgba(239,68,68,0.1)",
+                    color: cameraEnabled ? "#e2e8f0" : "#ef4444",
+                    cursor: "pointer",
+                  }}
                 >
                   {cameraEnabled ? "CAM ON" : "CAM OFF"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleToggleMedia('mic', !micEnabled)}
-                  style={{ flex: 1, padding: "4px", fontSize: "10px", fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${micEnabled ? '#1F1F1F' : '#ef4444'}`, background: micEnabled ? '#1F1F1F' : 'rgba(239,68,68,0.1)', color: micEnabled ? '#e2e8f0' : '#ef4444', cursor: "pointer" }}
+                  onClick={() => handleToggleMedia("mic", !micEnabled)}
+                  style={{
+                    flex: 1,
+                    padding: "4px",
+                    fontSize: "10px",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    border: `1px solid ${micEnabled ? "#1F1F1F" : "#ef4444"}`,
+                    background: micEnabled ? "#1F1F1F" : "rgba(239,68,68,0.1)",
+                    color: micEnabled ? "#e2e8f0" : "#ef4444",
+                    cursor: "pointer",
+                  }}
                 >
                   {micEnabled ? "MIC ON" : "MIC OFF"}
                 </button>
               </div>
             )}
-            <div style={{ width: "100%", height: sidebarCollapsed ? "52px" : "150px", border: "1px solid #1F1F1F", boxSizing: "border-box", position: "relative" }}>
+            <div
+              style={{
+                width: "100%",
+                height: sidebarCollapsed ? "52px" : "150px",
+                border: "1px solid #1F1F1F",
+                boxSizing: "border-box",
+                position: "relative",
+              }}
+            >
               <video
                 ref={cameraVideoRef}
                 muted
                 playsInline
                 autoPlay
-                style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: sidebarCollapsed ? "none" : "block", borderRadius: "0" }}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scaleX(-1)",
+                  display: sidebarCollapsed ? "none" : "block",
+                  borderRadius: "0",
+                }}
               />
               {sidebarCollapsed && (
-                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                   <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: faceStatus === "ok" ? "#22c55e" : "#ef4444" }} />
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: faceStatus === "ok" ? "#22c55e" : "#ef4444",
+                    }}
+                  />
                 </div>
               )}
             </div>
-            
+
             {!sidebarCollapsed && (
-              <div style={{ position: "absolute", bottom: "8px", left: "8px", padding: "2px 4px", background: "#0F0F0F", border: "1px solid #1F1F1F", fontSize: "9px", color: faceStatus === "ok" ? "#22c55e" : "#ef4444", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
-                 {faceStatus === "ok" ? "OPTICAL: SECURE" : "OPTICAL: ALERT"}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "8px",
+                  left: "8px",
+                  padding: "2px 4px",
+                  background: "#0F0F0F",
+                  border: "1px solid #1F1F1F",
+                  fontSize: "9px",
+                  color: faceStatus === "ok" ? "#22c55e" : "#ef4444",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600,
+                }}
+              >
+                {faceStatus === "ok" ? "OPTICAL: SECURE" : "OPTICAL: ALERT"}
               </div>
             )}
           </div>
@@ -1761,21 +2225,59 @@ export default function ContestPageClient() {
               [ PROBLEM DESCRIPTION ]
             </span>
           </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", color: "#e2e8f0", fontSize: "14px", lineHeight: 1.6, fontFamily: "system-ui, sans-serif" }}>
-            <h2 style={{ marginTop: 0, marginBottom: "16px", fontSize: "20px", fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{questions[activeQ]?.title}</h2>
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "24px",
+              color: "#e2e8f0",
+              fontSize: "14px",
+              lineHeight: 1.6,
+              fontFamily: "system-ui, sans-serif",
+            }}
+          >
+            <h2
+              style={{
+                marginTop: 0,
+                marginBottom: "16px",
+                fontSize: "20px",
+                fontWeight: 600,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {questions[activeQ]?.title}
+            </h2>
             <div
               className="pb-body"
               dangerouslySetInnerHTML={{
-                __html: parseDescription(questions[activeQ]?.description ?? "*No description provided.*"),
+                __html: parseDescription(
+                  questions[activeQ]?.description ?? "*No description provided.*"
+                ),
               }}
             />
           </div>
         </div>
 
         {/* Right panel: Editor (Top) + Terminal (Bottom) */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#0F0F0F", minWidth: 0 }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            background: "#0F0F0F",
+            minWidth: 0,
+          }}
+        >
           {/* Top Right: Code Editor */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)", boxShadow: "none" }}>
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+              boxShadow: "none",
+            }}
+          >
             {/* Editor Tabs & Header */}
             <div
               style={{
@@ -1880,16 +2382,30 @@ export default function ContestPageClient() {
               >
                 ENV:
               </span>
-              <span
+              <select
+                value={selectedLang}
+                onChange={(e) => handleLangChange(e.target.value)}
                 style={{
+                  background: "#0F0F0F",
+                  color: "#a855f7",
+                  border: "1px solid rgba(168,85,247,0.3)",
                   fontSize: "10px",
                   fontFamily: "'JetBrains Mono', monospace",
-                  color: "#475569",
-                  letterSpacing: "0.04em",
+                  padding: "2px 6px",
+                  cursor: "pointer",
+                  outline: "none",
                 }}
               >
-                [ C++17 ]
-              </span>
+                {allowedLanguages.map((lang) => (
+                  <option
+                    key={lang}
+                    value={lang}
+                    style={{ background: "#0F0F0F", color: "#a8b2d1" }}
+                  >
+                    {LANGUAGE_META[lang as keyof typeof LANGUAGE_META]?.name || lang}
+                  </option>
+                ))}
+              </select>
               <div style={{ flex: 1 }} />
               <button
                 type="button"
@@ -1909,22 +2425,46 @@ export default function ContestPageClient() {
               </button>
               <button
                 type="button"
-                onClick={() => void handleSave()}
-                disabled={saving}
+                onClick={handleSubmitSolution}
+                disabled={saving || isSubmitting}
                 style={{
                   padding: "2px 10px",
                   border: "1px solid rgba(168,85,247,0.35)",
                   background: "transparent",
-                  color: saveError ? "#ef4444" : saved ? "#22c55e" : "#c084fc",
+                  color: submissionError || saveError ? "#ef4444" : saved ? "#22c55e" : "#c084fc",
                   fontSize: "10px",
                   fontFamily: "'JetBrains Mono', monospace",
                   letterSpacing: "0.08em",
-                  cursor: saving ? "not-allowed" : "pointer",
+                  cursor: saving || isSubmitting ? "not-allowed" : "pointer",
                 }}
               >
-                {saving ? "SAVING..." : saveError ? "[ SAVE FAILED ]" : saved ? "[ SAVED ]" : "[ SUBMIT SOLUTION ]"}
+                {isSubmitting
+                  ? "SUBMITTING..."
+                  : saving
+                    ? "SAVING..."
+                    : submissionError
+                      ? "[ SUBMIT FAILED ]"
+                      : saved
+                        ? "[ SUBMITTED ]"
+                        : "[ SUBMIT SOLUTION ]"}
               </button>
             </div>
+
+            {submissionError && (
+              <div
+                role="status"
+                style={{
+                  padding: "6px 12px",
+                  borderBottom: "1px solid rgba(239,68,68,0.2)",
+                  color: "#fca5a5",
+                  background: "rgba(239,68,68,0.06)",
+                  fontSize: "11px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {submissionError}
+              </div>
+            )}
 
             {saveError && (
               <div
@@ -1956,7 +2496,15 @@ export default function ContestPageClient() {
           </div>
 
           {/* Bottom Right: Terminal */}
-          <div style={{ height: "30%", minHeight: "200px", display: "flex", flexDirection: "column", background: "#0F0F0F" }}>
+          <div
+            style={{
+              height: "30%",
+              minHeight: "200px",
+              display: "flex",
+              flexDirection: "column",
+              background: "#0F0F0F",
+            }}
+          >
             <div
               style={{
                 display: "flex",
@@ -1966,55 +2514,313 @@ export default function ContestPageClient() {
                 padding: "0 16px",
                 flexShrink: 0,
                 height: "38px",
+                gap: "16px",
               }}
             >
-              <span
+              <button
+                type="button"
+                onClick={() => setTerminalTab("stdout")}
                 style={{
                   fontSize: "11px",
-                  color: "#64748b",
+                  color: terminalTab === "stdout" ? "#a855f7" : "#64748b",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom:
+                    terminalTab === "stdout" ? "2px solid #a855f7" : "2px solid transparent",
                   letterSpacing: "0.06em",
                   fontFamily: "'JetBrains Mono', monospace",
                   fontWeight: 600,
+                  cursor: "pointer",
+                  height: "100%",
+                  padding: "0 4px",
                 }}
               >
-                [ STDOUT // COMPILE LOGS ]
-              </span>
+                STDOUT
+              </button>
+              <button
+                type="button"
+                onClick={() => setTerminalTab("logs")}
+                style={{
+                  fontSize: "11px",
+                  color: terminalTab === "logs" ? "#a855f7" : "#64748b",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom:
+                    terminalTab === "logs" ? "2px solid #a855f7" : "2px solid transparent",
+                  letterSpacing: "0.06em",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  height: "100%",
+                  padding: "0 4px",
+                }}
+              >
+                COMPILE LOGS
+              </button>
+              <button
+                type="button"
+                onClick={() => setTerminalTab("submissions")}
+                style={{
+                  fontSize: "11px",
+                  color: terminalTab === "submissions" ? "#a855f7" : "#64748b",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom:
+                    terminalTab === "submissions" ? "2px solid #a855f7" : "2px solid transparent",
+                  letterSpacing: "0.06em",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  height: "100%",
+                  padding: "0 4px",
+                }}
+              >
+                SUBMISSIONS {submissionsList.length > 0 ? `(${submissionsList.length})` : ""}
+              </button>
             </div>
             <div
               style={{
                 flex: 1,
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 0.42fr)",
                 minHeight: 0,
                 color: "#a8b2d1",
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: "12px",
                 lineHeight: 1.6,
+                background: "#0F0F0F",
+                overflowY: "auto",
               }}
             >
-              <div style={{ padding: "12px 16px", overflowY: "auto" }}>
-                <div style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em", marginBottom: "8px" }}>
-                  [ STDOUT ]
+              {terminalTab === "stdout" && (
+                <div style={{ padding: "12px 16px" }}>
+                  <div
+                    style={{
+                      color: "#64748b",
+                      fontSize: "10px",
+                      letterSpacing: "0.08em",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    [ STDOUT ]
+                  </div>
+                  <div
+                    style={{ color: isEditorEmpty ? "#334155" : "#94a3b8", whiteSpace: "pre-wrap" }}
+                  >
+                    {isEditorEmpty
+                      ? "Write code to prepare a submission."
+                      : `No local stdout yet. Compile/run is pending a sandboxed judge runner for ${LANGUAGE_META[selectedLang as keyof typeof LANGUAGE_META]?.name || selectedLang}.`}
+                  </div>
                 </div>
-                <div style={{ color: isEditorEmpty ? "#334155" : "#94a3b8", whiteSpace: "pre-wrap" }}>
-                  {isEditorEmpty
-                    ? "Write C++ code to prepare a submission."
-                    : "No local stdout yet. Compile/run is pending a sandboxed judge runner."}
+              )}
+
+              {terminalTab === "logs" && (
+                <div style={{ padding: "12px 16px" }}>
+                  <div
+                    style={{
+                      color: "#64748b",
+                      fontSize: "10px",
+                      letterSpacing: "0.08em",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    [ COMPILE LOGS ]
+                  </div>
+                  <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>{compileNote}</div>
                 </div>
-              </div>
-              <div
-                style={{
-                  padding: "12px 16px",
-                  overflowY: "auto",
-                  borderLeft: "1px solid #1F1F1F",
-                  background: "#0a0a0a",
-                }}
-              >
-                <div style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em", marginBottom: "8px" }}>
-                  [ COMPILE LOGS ]
+              )}
+
+              {terminalTab === "submissions" && (
+                <div style={{ padding: "12px 16px" }}>
+                  <div
+                    style={{
+                      color: "#64748b",
+                      fontSize: "10px",
+                      letterSpacing: "0.08em",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    [ SUBMISSIONS HISTORY ]
+                  </div>
+                  {loadingSubmissions && submissionsList.length === 0 ? (
+                    <div style={{ color: "#64748b", fontSize: "11px" }}>Loading submissions...</div>
+                  ) : submissionsList.length === 0 ? (
+                    <div style={{ color: "#64748b", fontSize: "11px" }}>
+                      No submissions yet for this problem. Click "Submit Solution" to run your code
+                      on the judge.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {submissionsList.map((sub) => {
+                        const isExpanded = expandedAttemptId === sub.id;
+                        const finalVerdict = sub.final_verdict || "Pending";
+                        const status = sub.status;
+                        const isPending = status === "QUEUED" || status === "RUNNING";
+
+                        let verdictColor = "#94a3b8";
+                        if (finalVerdict === "AC") verdictColor = "#22c55e";
+                        else if (finalVerdict === "WA") verdictColor = "#ef4444";
+                        else if (finalVerdict === "TLE") verdictColor = "#f59e0b";
+                        else if (finalVerdict === "MLE") verdictColor = "#3b82f6";
+                        else if (finalVerdict === "CE") verdictColor = "#a855f7";
+                        else if (finalVerdict === "RE") verdictColor = "#ec4899";
+                        else if (isPending) verdictColor = "#06b6d4";
+
+                        return (
+                          <div
+                            key={sub.id}
+                            style={{ borderBottom: "1px solid #1F1F1F", paddingBottom: "8px" }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                cursor: "pointer",
+                              }}
+                              onClick={() => toggleExpandAttempt(sub.id)}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                <span style={{ fontSize: "11px", color: "#64748b" }}>
+                                  Attempt #{sub.attempt_no}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "10px",
+                                    padding: "1px 5px",
+                                    background: "#1F1F1F",
+                                    borderRadius: "3px",
+                                    color: "#94a3b8",
+                                  }}
+                                >
+                                  {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]
+                                    ?.name || sub.language}
+                                </span>
+                                <span style={{ fontSize: "11px", color: "#64748b" }}>
+                                  {new Date(sub.created_at).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                <span
+                                  style={{
+                                    fontSize: "11px",
+                                    fontWeight: "bold",
+                                    color: verdictColor,
+                                  }}
+                                >
+                                  {isPending ? `${status}...` : finalVerdict}
+                                </span>
+                                <span style={{ fontSize: "10px", color: "#64748b" }}>
+                                  {isExpanded ? "▲" : "▼"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {isExpanded && (
+                              <div
+                                style={{
+                                  marginTop: "6px",
+                                  padding: "8px",
+                                  background: "#0a0a0a",
+                                  border: "1px solid #1F1F1F",
+                                  borderRadius: "4px",
+                                }}
+                              >
+                                {isPending ? (
+                                  <div style={{ fontSize: "11px", color: "#64748b" }}>
+                                    Grading in progress... Live results will update automatically.
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        gap: "16px",
+                                        marginBottom: "8px",
+                                        fontSize: "10px",
+                                        color: "#64748b",
+                                      }}
+                                    >
+                                      <span>
+                                        Runtime:{" "}
+                                        {sub.runtime_ms !== null ? `${sub.runtime_ms} ms` : "N/A"}
+                                      </span>
+                                      <span>
+                                        Memory:{" "}
+                                        {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
+                                      </span>
+                                      <span>Score: {sub.score}</span>
+                                    </div>
+
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                                      {testResults[sub.id] ? (
+                                        testResults[sub.id].map((tr: any) => {
+                                          let trColor = "rgba(148,163,184,0.1)";
+                                          let trBorder = "rgba(148,163,184,0.3)";
+                                          let trTextColor = "#94a3b8";
+
+                                          if (tr.verdict === "AC") {
+                                            trColor = "rgba(34,197,94,0.1)";
+                                            trBorder = "rgba(34,197,94,0.3)";
+                                            trTextColor = "#22c55e";
+                                          } else if (tr.verdict === "WA") {
+                                            trColor = "rgba(239,68,68,0.1)";
+                                            trBorder = "rgba(239,68,68,0.3)";
+                                            trTextColor = "#ef4444";
+                                          } else if (tr.verdict === "TLE") {
+                                            trColor = "rgba(245,158,11,0.1)";
+                                            trBorder = "rgba(245,158,11,0.3)";
+                                            trTextColor = "#f59e0b";
+                                          } else {
+                                            trColor = "rgba(236,72,153,0.1)";
+                                            trBorder = "rgba(236,72,153,0.3)";
+                                            trTextColor = "#ec4899";
+                                          }
+
+                                          return (
+                                            <div
+                                              key={tr.test_number}
+                                              title={
+                                                tr.checker_message ||
+                                                `Test ${tr.test_number}: ${tr.verdict}`
+                                              }
+                                              style={{
+                                                padding: "3px 6px",
+                                                background: trColor,
+                                                border: `1px solid ${trBorder}`,
+                                                borderRadius: "3px",
+                                                fontSize: "10px",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "4px",
+                                                color: trTextColor,
+                                              }}
+                                            >
+                                              <span>#{tr.test_number}</span>
+                                              <strong>{tr.verdict}</strong>
+                                              {tr.runtime_ms !== null && (
+                                                <span style={{ opacity: 0.7, fontSize: "9px" }}>
+                                                  ({tr.runtime_ms}ms)
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })
+                                      ) : (
+                                        <div style={{ fontSize: "10px", color: "#64748b" }}>
+                                          Loading test results...
+                                        </div>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>{compileNote}</div>
-              </div>
+              )}
             </div>
           </div>
         </div>
@@ -2190,7 +2996,11 @@ export default function ContestPageClient() {
                 <path d="M9 9h.01M15 9h.01" strokeLinecap="round" strokeWidth="2.5" />
               </svg>
             </div>
-            <h4 id="face-block-title" className="text-subsection-title" style={{ color: "#f8fafc", marginBottom: "8px" }}>
+            <h4
+              id="face-block-title"
+              className="text-subsection-title"
+              style={{ color: "#f8fafc", marginBottom: "8px" }}
+            >
               {faceBlockTitle}
             </h4>
             <p className="text-body-copy" style={{ color: "#94a3b8", lineHeight: 1.5, margin: 0 }}>
@@ -2200,7 +3010,7 @@ export default function ContestPageClient() {
         </div>
       )}
 
-            {/* ── Media Toggle Warning Modal ── */}
+      {/* ── Media Toggle Warning Modal ── */}
       {showMediaToggleWarning && (
         <div
           role="dialog"
@@ -2231,11 +3041,17 @@ export default function ContestPageClient() {
               fontFamily: "'JetBrains Mono', monospace",
             }}
           >
-            <h4 id="media-toggle-warning-title" style={{ color: "#ef4444", margin: "0 0 16px 0", fontSize: "14px" }}>
+            <h4
+              id="media-toggle-warning-title"
+              style={{ color: "#ef4444", margin: "0 0 16px 0", fontSize: "14px" }}
+            >
               [ LOGGING NOTICE ]
             </h4>
-            <p style={{ color: "#a8b2d1", fontSize: "12px", lineHeight: 1.6, margin: "0 0 24px 0" }}>
-              Please note: Disabling your camera or microphone will be permanently logged in our system with the exact timestamp. This may affect proctoring validation.
+            <p
+              style={{ color: "#a8b2d1", fontSize: "12px", lineHeight: 1.6, margin: "0 0 24px 0" }}
+            >
+              Please note: Disabling your camera or microphone will be permanently logged in our
+              system with the exact timestamp. This may affect proctoring validation.
             </p>
             <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
               <button
@@ -2269,7 +3085,7 @@ export default function ContestPageClient() {
         </div>
       )}
 
-{/* ── Support Incident Modal Overlay ── */}
+      {/* ── Support Incident Modal Overlay ── */}
       {showSupportModal && (
         <div
           role="dialog"
@@ -2305,7 +3121,6 @@ export default function ContestPageClient() {
               gap: "32px",
             }}
           >
-
             {/* Left Column: Form & Categories */}
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
               <div>
