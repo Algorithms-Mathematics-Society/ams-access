@@ -642,3 +642,39 @@ input::placeholder {
   background: rgba(168,85,247,0.2);
   border-radius: 3px;
 }
+
+/* ── Contest area icon buttons ─────────────────────────────────────────── */
+.ic-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 5px;
+  transition: background 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+  flex-shrink: 0;
+}
+.ic-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.ic-btn-muted   { color: #475569; }
+.ic-btn-muted:hover:not(:disabled)   { color: #cbd5e1; background: rgba(255,255,255,0.06); }
+
+.ic-btn-white   { color: #94a3b8; }
+.ic-btn-white:hover:not(:disabled)   { color: #f1f5f9; background: rgba(255,255,255,0.07); }
+
+.ic-btn-amber   { color: #f59e0b; }
+.ic-btn-amber:hover:not(:disabled)   { color: #fbbf24; background: rgba(245,158,11,0.12); }
+
+.ic-btn-red     { color: #ef4444; }
+.ic-btn-red:hover:not(:disabled)     { color: #f87171; background: rgba(239,68,68,0.12); }
+
+.ic-btn-violet  { color: #a855f7; }
+.ic-btn-violet:hover:not(:disabled)  { color: #c084fc; background: rgba(168,85,247,0.12); }
+
+.ic-btn-green   { color: #22c55e; }
+.ic-btn-green:hover:not(:disabled)   { color: #4ade80; background: rgba(34,197,94,0.12); }
+
+@keyframes ic-spin { to { transform: rotate(360deg); } }
+.ic-spin { animation: ic-spin 0.75s linear infinite; }

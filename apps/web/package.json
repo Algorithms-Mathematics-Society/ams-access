@@ -32,6 +32,7 @@
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "framer-motion": "^11.0.0",
+    "lucide-react": "^1.17.0",
     "marked": "^18.0.4",
     "next": "^15.0.0",
     "react": "^19.0.0",

@@ -8,6 +8,21 @@ import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "./editor-pane";
+import {
+  Play,
+  Loader2,
+  Send,
+  LifeBuoy,
+  LogOut,
+  Video,
+  VideoOff,
+  Mic,
+  MicOff,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle,
+  Check,
+} from "lucide-react";
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
@@ -2059,7 +2074,7 @@ export default function ContestPageClient() {
         height: "100vh",
         overflow: "hidden",
         background: "#0F0F0F",
-        fontFamily: "Inter, 'IBM Plex Sans', system-ui, sans-serif",
+        fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
       }}
     >
       {/* Floating warning toast during grace period */}
@@ -2276,9 +2291,11 @@ export default function ContestPageClient() {
           <div style={{ width: "1px", height: "20px", background: "rgba(255,255,255,0.1)" }} />
           <span
             style={{
-              fontSize: "13px",
-              fontWeight: 500,
-              color: "#e2e8f0",
+              fontSize: "12px",
+              fontWeight: 700,
+              color: "#ffffff",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -2295,37 +2312,24 @@ export default function ContestPageClient() {
         {/* Right: Submit */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <button
+            type="button"
             onClick={() => setShowSupportModal(true)}
-            style={{
-              padding: "6px 12px",
-              border: "1px solid #f59e0b",
-              background: "#0F0F0F",
-              color: "#f59e0b",
-              fontSize: "11px",
-              fontWeight: 600,
-              fontFamily: "'JetBrains Mono', monospace",
-              cursor: "pointer",
-            }}
+            className="ic-btn ic-btn-amber"
+            title="Request support"
+            aria-label="Request support"
           >
-            [ REQUEST SUPPORT ]
+            <LifeBuoy size={18} strokeWidth={1.75} />
           </button>
 
           <div style={{ position: "relative" }}>
             <button
+              type="button"
               onClick={() => setSubmitConfirm(true)}
-              style={{
-                padding: "6px 12px",
-                border: "1px solid #ef4444",
-                background: "#0F0F0F",
-                color: "#ef4444",
-                fontSize: "11px",
-                fontWeight: 600,
-                fontFamily: "'JetBrains Mono', monospace",
-                cursor: "pointer",
-                textTransform: "uppercase",
-              }}
+              className="ic-btn ic-btn-red"
+              title="Submit & exit contest"
+              aria-label="Submit and exit contest"
             >
-              [ SUBMIT & EXIT ]
+              <LogOut size={18} strokeWidth={1.75} />
             </button>
             {submitConfirm && (
               <div
@@ -2462,25 +2466,9 @@ export default function ContestPageClient() {
               title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
             >
               {sidebarCollapsed ? (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M6 12l4-4-4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <ChevronRight size={14} strokeWidth={2} />
               ) : (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M10 12L6 8l4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <ChevronLeft size={14} strokeWidth={2} />
               )}
             </button>
           </div>
@@ -2515,16 +2503,16 @@ export default function ContestPageClient() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
                   width: "100%",
                   padding: sidebarCollapsed ? "8px 0" : "10px 12px",
                   borderRadius: "2px",
-                  border: `1px solid ${activeQ === i ? "#1F1F1F" : "transparent"}`,
-                  background: activeQ === i ? "#1F1F1F" : "transparent",
+                  border: `1px solid ${activeQ === i ? "rgba(168,85,247,0.30)" : "transparent"}`,
+                  background: activeQ === i ? "rgba(168,85,247,0.08)" : "transparent",
                   cursor: "pointer",
                   fontFamily: "'JetBrains Mono', monospace",
-                  transition: "all 150ms",
-                  height: sidebarCollapsed ? "36px" : "auto",
+                  textAlign: "left",
+                  color: activeQ === i ? "#c084fc" : "#64748b",
+                  transition: "all 0.2s",
                 }}
                 title={sidebarCollapsed ? q.title : undefined}
               >
@@ -2533,7 +2521,7 @@ export default function ContestPageClient() {
                     style={{
                       fontSize: "12px",
                       fontWeight: 600,
-                      color: activeQ === i ? "#ffffff" : "#64748b",
+                      color: activeQ === i ? "#c084fc" : "#64748b",
                     }}
                   >
                     {i + 1}
@@ -2544,7 +2532,7 @@ export default function ContestPageClient() {
                       style={{
                         fontSize: "10px",
                         fontWeight: 600,
-                        color: activeQ === i ? "#ffffff" : "#64748b",
+                        color: activeQ === i ? "#c084fc" : "#64748b",
                         flexShrink: 0,
                       }}
                     >
@@ -2554,7 +2542,7 @@ export default function ContestPageClient() {
                       style={{
                         fontSize: "12px",
                         fontWeight: 500,
-                        color: activeQ === i ? "#f5f7fa" : "#94a3b8",
+                        color: activeQ === i ? "#ffffff" : "#94a3b8",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -2592,34 +2580,36 @@ export default function ContestPageClient() {
                 <button
                   type="button"
                   onClick={() => handleToggleMedia("camera", !cameraEnabled)}
-                  style={{
-                    flex: 1,
-                    padding: "4px",
-                    fontSize: "10px",
-                    fontFamily: "'JetBrains Mono', monospace",
-                    border: `1px solid ${cameraEnabled ? "#1F1F1F" : "#ef4444"}`,
-                    background: cameraEnabled ? "#1F1F1F" : "rgba(239,68,68,0.1)",
-                    color: cameraEnabled ? "#e2e8f0" : "#ef4444",
-                    cursor: "pointer",
-                  }}
+                  className={`ic-btn ${cameraEnabled ? "ic-btn-white" : "ic-btn-red"}`}
+                  title={
+                    cameraEnabled
+                      ? "Camera on — click to turn off"
+                      : "Camera off — click to turn on"
+                  }
+                  aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
                 >
-                  {cameraEnabled ? "CAM ON" : "CAM OFF"}
+                  {cameraEnabled ? (
+                    <Video size={15} strokeWidth={1.75} />
+                  ) : (
+                    <VideoOff size={15} strokeWidth={1.75} />
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleToggleMedia("mic", !micEnabled)}
-                  style={{
-                    flex: 1,
-                    padding: "4px",
-                    fontSize: "10px",
-                    fontFamily: "'JetBrains Mono', monospace",
-                    border: `1px solid ${micEnabled ? "#1F1F1F" : "#ef4444"}`,
-                    background: micEnabled ? "#1F1F1F" : "rgba(239,68,68,0.1)",
-                    color: micEnabled ? "#e2e8f0" : "#ef4444",
-                    cursor: "pointer",
-                  }}
+                  className={`ic-btn ${micEnabled ? "ic-btn-white" : "ic-btn-red"}`}
+                  title={
+                    micEnabled
+                      ? "Microphone on — click to turn off"
+                      : "Microphone off — click to turn on"
+                  }
+                  aria-label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
                 >
-                  {micEnabled ? "MIC ON" : "MIC OFF"}
+                  {micEnabled ? (
+                    <Mic size={15} strokeWidth={1.75} />
+                  ) : (
+                    <MicOff size={15} strokeWidth={1.75} />
+                  )}
                 </button>
               </div>
             )}
