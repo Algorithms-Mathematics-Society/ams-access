@@ -80,7 +80,31 @@ type Question = {
   description: string | null;
   starter_code: string | null;
   order_index: number;
+  question_type: string;
 };
+
+type ClientFollowUpPart = {
+  id?: string;
+  statement: string;
+  points: number;
+};
+
+type FollowUpPartState = {
+  inputText: string;
+  loading: boolean;
+  submitted: boolean;
+  correct: boolean;
+};
+
+function parseFollowUpParts(desc: string): ClientFollowUpPart[] {
+  try {
+    const parsed = JSON.parse(desc);
+    if (Array.isArray(parsed)) return parsed as ClientFollowUpPart[];
+  } catch {
+    /* empty */
+  }
+  return [];
+}
 
 type EditorFile = {
   id: string;
@@ -318,6 +342,8 @@ function normalizeQuestion(value: unknown, index: number): Question | null {
       (looksLikeCpp(starter?.html) ? starter.html : null) ??
       (looksLikeCpp(payload.html) ? payload.html : null),
     order_index: orderIndex,
+    question_type:
+      typeof (payload as any).question_type === "string" ? (payload as any).question_type : "code",
   };
 }
 
@@ -646,6 +672,262 @@ function mapToSubmissionLang(lang: string): string {
   return l;
 }
 
+function FollowUpPane({
+  question,
+  sessionId,
+  apiUrl,
+  questionLetter,
+  partStates,
+  onPartUpdate,
+}: {
+  question: Question;
+  sessionId: string;
+  apiUrl: string;
+  questionLetter: string;
+  partStates: Record<number, FollowUpPartState>;
+  onPartUpdate: (partIndex: number, patch: Partial<FollowUpPartState>) => void;
+}) {
+  const parts = parseFollowUpParts(question.description ?? "");
+
+  async function handleSubmit(partIndex: number) {
+    const state = partStates[partIndex];
+    const answer = state?.inputText ?? "";
+    if (!answer.trim()) return;
+    onPartUpdate(partIndex, { loading: true });
+    try {
+      const res = await fetch(`${apiUrl}/sessions/${sessionId}/followup-answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question_id: question.id, part_index: partIndex, answer }),
+      });
+      const data = await res.json();
+      onPartUpdate(partIndex, { loading: false, submitted: true, correct: data.correct === true });
+    } catch {
+      onPartUpdate(partIndex, { loading: false });
+    }
+  }
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+        background: "#0F0F0F",
+        padding: "24px 32px",
+        gap: "0",
+      }}
+    >
+      <div
+        style={{
+          marginBottom: "24px",
+          paddingBottom: "16px",
+          borderBottom: "1px solid #1F1F1F",
+        }}
+      >
+        <span
+          style={{
+            fontSize: "11px",
+            color: "#64748b",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 600,
+          }}
+        >
+          [ FOLLOW-UP QUESTION ]
+        </span>
+        <h2
+          style={{
+            margin: "8px 0 0",
+            fontSize: "20px",
+            fontWeight: 600,
+            color: "#e2e8f0",
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          {question.title}
+        </h2>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        {parts.map((part, idx) => {
+          const label = `${questionLetter}${idx + 1}`;
+          const state = partStates[idx] ?? {
+            inputText: "",
+            loading: false,
+            submitted: false,
+            correct: false,
+          };
+          const prevAccepted = idx === 0 || partStates[idx - 1]?.correct === true;
+          const locked = !prevAccepted;
+          const accepted = state.correct && state.submitted;
+
+          return (
+            <div
+              key={idx}
+              style={{
+                borderRadius: "10px",
+                border: accepted
+                  ? "1px solid rgba(34,197,94,0.3)"
+                  : locked
+                    ? "1px solid #1F1F1F"
+                    : "1px solid rgba(168,85,247,0.2)",
+                background: accepted
+                  ? "rgba(34,197,94,0.04)"
+                  : locked
+                    ? "#111111"
+                    : "rgba(168,85,247,0.03)",
+                overflow: "hidden",
+                opacity: locked ? 0.55 : 1,
+                transition: "all 250ms",
+              }}
+            >
+              {/* Part header */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 16px",
+                  borderBottom: locked ? "none" : "1px solid rgba(255,255,255,0.05)",
+                  background: accepted
+                    ? "rgba(34,197,94,0.06)"
+                    : locked
+                      ? "transparent"
+                      : "rgba(168,85,247,0.06)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontWeight: 700,
+                      fontSize: "13px",
+                      color: accepted ? "#22c55e" : locked ? "#475569" : "#a855f7",
+                    }}
+                  >
+                    {label}
+                  </span>
+                  {locked && (
+                    <span style={{ fontSize: "11px", color: "#475569" }}>
+                      🔒 locked — complete {questionLetter}
+                      {idx} first
+                    </span>
+                  )}
+                  {accepted && (
+                    <span style={{ fontSize: "11px", color: "#22c55e", fontWeight: 600 }}>
+                      ✓ Accepted
+                    </span>
+                  )}
+                  {state.submitted && !state.correct && !locked && (
+                    <span style={{ fontSize: "11px", color: "#ef4444" }}>
+                      ✗ Incorrect — try again
+                    </span>
+                  )}
+                </div>
+                <span
+                  style={{
+                    fontSize: "11px",
+                    color: accepted ? "#22c55e" : "#64748b",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {part.points} pts
+                </span>
+              </div>
+
+              {!locked && (
+                <div style={{ padding: "16px" }}>
+                  {/* Statement */}
+                  <div
+                    className="pb-body"
+                    style={{
+                      color: "#cbd5e1",
+                      fontSize: "14px",
+                      lineHeight: 1.65,
+                      marginBottom: "14px",
+                    }}
+                    dangerouslySetInnerHTML={{ __html: parseDescription(part.statement || "") }}
+                  />
+
+                  {/* Answer input */}
+                  {!accepted && (
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <input
+                        type="text"
+                        value={state.inputText}
+                        onChange={(e) => onPartUpdate(idx, { inputText: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !state.loading) handleSubmit(idx);
+                        }}
+                        placeholder="Your answer…"
+                        disabled={state.loading}
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          background: "#1A1A1A",
+                          border:
+                            state.submitted && !state.correct
+                              ? "1px solid rgba(239,68,68,0.4)"
+                              : "1px solid rgba(255,255,255,0.08)",
+                          borderRadius: "6px",
+                          color: "#e2e8f0",
+                          fontSize: "13px",
+                          fontFamily: "system-ui, sans-serif",
+                          outline: "none",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSubmit(idx)}
+                        disabled={state.loading || !state.inputText.trim()}
+                        style={{
+                          padding: "8px 16px",
+                          background: state.loading
+                            ? "rgba(168,85,247,0.2)"
+                            : "rgba(168,85,247,0.15)",
+                          border: "1px solid rgba(168,85,247,0.35)",
+                          borderRadius: "6px",
+                          color: "#c084fc",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          cursor:
+                            state.loading || !state.inputText.trim() ? "not-allowed" : "pointer",
+                          opacity: state.loading || !state.inputText.trim() ? 0.6 : 1,
+                          transition: "all 150ms",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {state.loading ? "Checking…" : "Submit"}
+                      </button>
+                    </div>
+                  )}
+                  {accepted && (
+                    <div
+                      style={{
+                        padding: "8px 12px",
+                        background: "rgba(34,197,94,0.08)",
+                        border: "1px solid rgba(34,197,94,0.2)",
+                        borderRadius: "6px",
+                        color: "#4ade80",
+                        fontSize: "13px",
+                      }}
+                    >
+                      {state.inputText}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function ContestPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -714,6 +996,33 @@ export default function ContestPageClient() {
   const [savedAnswers, setSavedAnswers] = useState<
     Record<string, { language: string; content: string }>
   >({});
+
+  // Follow-up question state: questionId → partIndex → FollowUpPartState
+  const [followUpState, setFollowUpState] = useState<
+    Record<string, Record<number, FollowUpPartState>>
+  >({});
+
+  function updateFollowUpPart(
+    questionId: string,
+    partIndex: number,
+    patch: Partial<FollowUpPartState>
+  ) {
+    setFollowUpState((prev) => ({
+      ...prev,
+      [questionId]: {
+        ...(prev[questionId] ?? {}),
+        [partIndex]: {
+          ...(prev[questionId]?.[partIndex] ?? {
+            inputText: "",
+            loading: false,
+            submitted: false,
+            correct: false,
+          }),
+          ...patch,
+        },
+      },
+    }));
+  }
 
   const allowedLanguages = useMemo(() => {
     if (!contest?.allowed_languages || contest.allowed_languages.length === 0) {
@@ -983,6 +1292,7 @@ export default function ContestPageClient() {
             "You are given a non-decreasing array $A$ of $N$ integers and $Q$ query values. For each query $x$, print the 1-based index of the first element $A[i]$ such that $A[i] >= x$. If no such element exists, print $-1$.",
           starter_code: defaultCppStarter(),
           order_index: 0,
+          question_type: "code",
         },
         {
           id: "mock-q-2",
@@ -991,6 +1301,7 @@ export default function ContestPageClient() {
             "Given two integers $a$ and $b$, determine the winner under the rules in the statement. Read input from stdin and print the required answer for each test case.",
           starter_code: defaultCppStarter(),
           order_index: 1,
+          question_type: "code",
         },
       ];
       setQuestions(mockQuestions);
@@ -1032,13 +1343,27 @@ export default function ContestPageClient() {
               for (const ans of answersData) {
                 try {
                   const parsed = JSON.parse(ans.answer_text);
-                  const files = parsed.files || [];
-                  const activeFile =
-                    files.find((f: any) => f.id === parsed.active_file_id) || files[0];
-                  answersMap[ans.question_id] = {
-                    language: parsed.language || "cpp17",
-                    content: activeFile ? activeFile.content : "",
-                  };
+                  // Follow-up answers: stored as array of {part_index, answer, correct}
+                  if (Array.isArray(parsed)) {
+                    const fuState: Record<number, FollowUpPartState> = {};
+                    for (const sub of parsed) {
+                      fuState[sub.part_index as number] = {
+                        inputText: (sub.answer as string) ?? "",
+                        loading: false,
+                        submitted: true,
+                        correct: (sub.correct as boolean) ?? false,
+                      };
+                    }
+                    setFollowUpState((prev) => ({ ...prev, [ans.question_id]: fuState }));
+                  } else {
+                    const files = parsed.files || [];
+                    const activeFile =
+                      files.find((f: any) => f.id === parsed.active_file_id) || files[0];
+                    answersMap[ans.question_id] = {
+                      language: parsed.language || "cpp17",
+                      content: activeFile ? activeFile.content : "",
+                    };
+                  }
                 } catch {
                   answersMap[ans.question_id] = {
                     language: "cpp17",
@@ -2385,839 +2710,906 @@ export default function ContestPageClient() {
           </div>
         </aside>
 
-        {/* Middle pane: Problem Description */}
-        <div
-          style={{
-            width: "35%",
-            display: "flex",
-            flexDirection: "column",
-            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
-            background: "#0F0F0F",
-            boxShadow: "none",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              borderBottom: "1px solid #1F1F1F",
-              background: "#0F0F0F",
-              padding: "0 16px",
-              flexShrink: 0,
-              height: "38px",
-            }}
-          >
-            <span
-              style={{
-                fontSize: "11px",
-                color: "#64748b",
-                letterSpacing: "0.06em",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-              }}
-            >
-              [ PROBLEM DESCRIPTION ]
-            </span>
-          </div>
-          <div
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "24px",
-              color: "#e2e8f0",
-              fontSize: "14px",
-              lineHeight: 1.6,
-              fontFamily: "system-ui, sans-serif",
-            }}
-          >
-            <h2
-              style={{
-                marginTop: 0,
-                marginBottom: "16px",
-                fontSize: "20px",
-                fontWeight: 600,
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              {questions[activeQ]?.title}
-            </h2>
-            <div
-              className="pb-body"
-              dangerouslySetInnerHTML={{
-                __html: parseDescription(
-                  questions[activeQ]?.description ?? "*No description provided.*"
-                ),
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Right panel: Editor (Top) + Terminal (Bottom) */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            background: "#0F0F0F",
-            minWidth: 0,
-          }}
-        >
-          {/* Top Right: Code Editor */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
-              boxShadow: "none",
-            }}
-          >
-            {/* Editor Tabs & Header */}
+        {questions[activeQ]?.question_type === "follow_up" ? (
+          <FollowUpPane
+            question={questions[activeQ]!}
+            sessionId={sessionId ?? ""}
+            apiUrl={API_URL}
+            questionLetter={String.fromCharCode(65 + (questions[activeQ]?.order_index ?? 0))}
+            partStates={followUpState[questions[activeQ]?.id ?? ""] ?? {}}
+            onPartUpdate={(partIndex, patch) =>
+              updateFollowUpPart(questions[activeQ]?.id ?? "", partIndex, patch)
+            }
+          />
+        ) : (
+          <>
+            {/* Middle pane: Problem Description */}
             <div
               style={{
+                width: "35%",
                 display: "flex",
-                alignItems: "center",
-                borderBottom: "1px solid #1F1F1F",
+                flexDirection: "column",
+                borderRight: "1px solid rgba(255, 255, 255, 0.05)",
                 background: "#0F0F0F",
-                padding: "0 12px",
-                gap: "4px",
-                flexShrink: 0,
-                height: "38px",
+                boxShadow: "none",
               }}
             >
-              <span
+              <div
                 style={{
-                  fontSize: "11px",
-                  color: "#64748b",
-                  letterSpacing: "0.06em",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontWeight: 600,
-                  marginRight: "12px",
+                  display: "flex",
+                  alignItems: "center",
+                  borderBottom: "1px solid #1F1F1F",
+                  background: "#0F0F0F",
+                  padding: "0 16px",
+                  flexShrink: 0,
+                  height: "38px",
                 }}
               >
-                [ EDITOR ]
-              </span>
-              {editorFiles.map((file) => {
-                const isActive = activeFileId === file.id;
-                const isScratch = !file.id.endsWith(":main");
-                const pendingClose = pendingCloseFileId === file.id;
-                return (
-                  <div
-                    key={file.id}
+                <span
+                  style={{
+                    fontSize: "11px",
+                    color: "#64748b",
+                    letterSpacing: "0.06em",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontWeight: 600,
+                  }}
+                >
+                  [ PROBLEM DESCRIPTION ]
+                </span>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "24px",
+                  color: "#e2e8f0",
+                  fontSize: "14px",
+                  lineHeight: 1.6,
+                  fontFamily: "system-ui, sans-serif",
+                }}
+              >
+                <h2
+                  style={{
+                    marginTop: 0,
+                    marginBottom: "16px",
+                    fontSize: "20px",
+                    fontWeight: 600,
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {questions[activeQ]?.title}
+                </h2>
+                <div
+                  className="pb-body"
+                  dangerouslySetInnerHTML={{
+                    __html: parseDescription(
+                      questions[activeQ]?.description ?? "*No description provided.*"
+                    ),
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Right panel: Editor (Top) + Terminal (Bottom) */}
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                background: "#0F0F0F",
+                minWidth: 0,
+              }}
+            >
+              {/* Top Right: Code Editor */}
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+                  boxShadow: "none",
+                }}
+              >
+                {/* Editor Tabs & Header */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    borderBottom: "1px solid #1F1F1F",
+                    background: "#0F0F0F",
+                    padding: "0 12px",
+                    gap: "4px",
+                    flexShrink: 0,
+                    height: "38px",
+                  }}
+                >
+                  <span
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      border: "1px solid",
-                      borderColor: isActive ? "#1F1F1F" : "transparent",
-                      borderBottom: "none",
-                      background: isActive ? "#1F1F1F" : "transparent",
-                      borderRadius: "2px 2px 0 0",
-                      height: "100%",
-                      flexShrink: 0,
+                      fontSize: "11px",
+                      color: "#64748b",
+                      letterSpacing: "0.06em",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontWeight: 600,
+                      marginRight: "12px",
                     }}
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPendingCloseFileId(null);
-                        setQuestionActiveFile((prev) => ({ ...prev, [currentQId]: file.id }));
-                      }}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        padding: isScratch ? "0 6px 0 12px" : "0 16px",
-                        background: "transparent",
-                        border: "none",
-                        color: isActive ? "#ffffff" : "#475569",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        fontFamily: "'JetBrains Mono', monospace",
-                        cursor: "pointer",
-                        height: "100%",
-                        maxWidth: "160px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={file.name}
-                    >
-                      {file.name}
-                    </button>
-                    {isScratch && !pendingClose && (
-                      <button
-                        type="button"
-                        aria-label={`Close ${file.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPendingCloseFileId(file.id);
-                        }}
+                    [ EDITOR ]
+                  </span>
+                  {editorFiles.map((file) => {
+                    const isActive = activeFileId === file.id;
+                    const isScratch = !file.id.endsWith(":main");
+                    const pendingClose = pendingCloseFileId === file.id;
+                    return (
+                      <div
+                        key={file.id}
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          justifyContent: "center",
-                          width: "16px",
-                          height: "16px",
-                          marginRight: "6px",
-                          border: "none",
-                          background: "transparent",
-                          color: "#475569",
-                          fontSize: "12px",
-                          lineHeight: 1,
-                          cursor: "pointer",
-                          borderRadius: "2px",
+                          border: "1px solid",
+                          borderColor: isActive ? "#1F1F1F" : "transparent",
+                          borderBottom: "none",
+                          background: isActive ? "#1F1F1F" : "transparent",
+                          borderRadius: "2px 2px 0 0",
+                          height: "100%",
                           flexShrink: 0,
                         }}
-                        onMouseEnter={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
-                        }}
-                        onMouseLeave={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.color = "#475569";
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPendingCloseFileId(null);
+                            setQuestionActiveFile((prev) => ({ ...prev, [currentQId]: file.id }));
+                          }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            padding: isScratch ? "0 6px 0 12px" : "0 16px",
+                            background: "transparent",
+                            border: "none",
+                            color: isActive ? "#ffffff" : "#475569",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            fontFamily: "'JetBrains Mono', monospace",
+                            cursor: "pointer",
+                            height: "100%",
+                            maxWidth: "160px",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                          title={file.name}
+                        >
+                          {file.name}
+                        </button>
+                        {isScratch && !pendingClose && (
+                          <button
+                            type="button"
+                            aria-label={`Close ${file.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingCloseFileId(file.id);
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: "16px",
+                              height: "16px",
+                              marginRight: "6px",
+                              border: "none",
+                              background: "transparent",
+                              color: "#475569",
+                              fontSize: "12px",
+                              lineHeight: 1,
+                              cursor: "pointer",
+                              borderRadius: "2px",
+                              flexShrink: 0,
+                            }}
+                            onMouseEnter={(e) => {
+                              (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
+                            }}
+                            onMouseLeave={(e) => {
+                              (e.currentTarget as HTMLButtonElement).style.color = "#475569";
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
+                        {isScratch && pendingClose && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "2px",
+                              marginRight: "6px",
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: "9px",
+                                fontFamily: "'JetBrains Mono', monospace",
+                                color: "#f59e0b",
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              close?
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="Confirm close"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingCloseFileId(null);
+                                removeEditorFile(file.id);
+                              }}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "#22c55e",
+                                fontSize: "12px",
+                                cursor: "pointer",
+                                padding: "0 2px",
+                                lineHeight: 1,
+                              }}
+                            >
+                              ✓
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Cancel close"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingCloseFileId(null);
+                              }}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "#ef4444",
+                                fontSize: "12px",
+                                cursor: "pointer",
+                                padding: "0 2px",
+                                lineHeight: 1,
+                              }}
+                            >
+                              ✗
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={addEditorFile}
+                    aria-label="Create new C++ file tab"
+                    title="Create new C++ file tab"
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: "1px solid #1F1F1F",
+                      background: "#0F0F0F",
+                      color: "#94a3b8",
+                      cursor: "pointer",
+                      fontSize: "16px",
+                      lineHeight: 1,
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    +
+                  </button>
+                  <div style={{ flex: 1 }} />
+                </div>
+
+                {/* Execution control strip */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "0 12px",
+                    gap: "6px",
+                    height: "32px",
+                    background: "#0a0a0a",
+                    borderBottom: "1px solid #1F1F1F",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      color: "#475569",
+                      letterSpacing: "0.06em",
+                      marginRight: "4px",
+                    }}
+                  >
+                    ENV:
+                  </span>
+                  <select
+                    aria-label="Programming language"
+                    value={selectedLanguage}
+                    onChange={(e) => handleLanguageChange(e.target.value)}
+                    style={{
+                      height: "22px",
+                      border: "1px solid #1F1F1F",
+                      background: "#0F0F0F",
+                      color: "#94a3b8",
+                      fontSize: "10px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: "0.03em",
+                      padding: "0 8px",
+                      outline: "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {(contest?.allowed_languages?.length
+                      ? contest.allowed_languages
+                      : ["C++17"]
+                    ).map((lang) => (
+                      <option key={lang} value={lang}>
+                        {lang}
+                      </option>
+                    ))}
+                  </select>
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      color: "#475569",
+                      letterSpacing: "0.06em",
+                      marginLeft: "10px",
+                    }}
+                  >
+                    THEME:
+                  </span>
+                  <select
+                    aria-label="Editor theme"
+                    value={editorTheme}
+                    onChange={(event) => handleEditorThemeChange(event.target.value)}
+                    style={{
+                      height: "22px",
+                      maxWidth: "152px",
+                      border: "1px solid #1F1F1F",
+                      background: "#0F0F0F",
+                      color: "#94a3b8",
+                      fontSize: "10px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: "0.03em",
+                      padding: "0 8px",
+                      outline: "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {CONTEST_EDITOR_THEMES.map((theme) => (
+                      <option key={theme.id} value={theme.id}>
+                        {theme.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ flex: 1 }} />
+                  <button
+                    type="button"
+                    onClick={() => void triggerRun()}
+                    disabled={isRunning || !sessionId}
+                    style={{
+                      padding: "2px 10px",
+                      border: `1px solid ${isRunning ? "#334155" : "#1F1F1F"}`,
+                      background: "#0F0F0F",
+                      color: isRunning ? "#475569" : "#94a3b8",
+                      fontSize: "10px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: "0.08em",
+                      cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
+                      opacity: isRunning || !sessionId ? 0.6 : 1,
+                    }}
+                  >
+                    {isRunning ? "[ RUNNING... ]" : "[ COMPILE &amp; RUN ]"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSubmitSolution}
+                    disabled={saving || isSubmitting}
+                    style={{
+                      padding: "2px 10px",
+                      border: "1px solid rgba(168,85,247,0.35)",
+                      background: "transparent",
+                      color:
+                        submissionError || saveError ? "#ef4444" : saved ? "#22c55e" : "#c084fc",
+                      fontSize: "10px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: "0.08em",
+                      cursor: saving || isSubmitting ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {isSubmitting
+                      ? "SUBMITTING..."
+                      : saving
+                        ? "SAVING..."
+                        : submissionError
+                          ? "[ SUBMIT FAILED ]"
+                          : saved
+                            ? "[ SUBMITTED ]"
+                            : "[ SUBMIT SOLUTION ]"}
+                  </button>
+                </div>
+
+                {submissionError && (
+                  <div
+                    role="status"
+                    style={{
+                      padding: "6px 12px",
+                      borderBottom: "1px solid rgba(239,68,68,0.2)",
+                      color: "#fca5a5",
+                      background: "rgba(239,68,68,0.06)",
+                      fontSize: "11px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    {submissionError}
+                  </div>
+                )}
+
+                {saveError && (
+                  <div
+                    role="status"
+                    style={{
+                      padding: "6px 12px",
+                      borderBottom: "1px solid rgba(239,68,68,0.2)",
+                      color: "#fca5a5",
+                      background: "rgba(239,68,68,0.06)",
+                      fontSize: "11px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    {saveError}
+                  </div>
+                )}
+
+                {/* Editor Textarea */}
+                <EditorPane
+                  activeQ={activeQ}
+                  activeTab={activeFile?.name ?? "main.cpp"}
+                  currentCode={currentCode}
+                  onCodeChange={handleCodeChange}
+                  editorTheme={editorTheme}
+                  selectedLanguage={selectedLanguage}
+                />
+              </div>
+
+              {/* Bottom Right: Terminal */}
+              <div
+                style={{
+                  height: "30%",
+                  minHeight: "200px",
+                  display: "flex",
+                  flexDirection: "column",
+                  background: "#0F0F0F",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    borderBottom: "1px solid #1F1F1F",
+                    background: "#0F0F0F",
+                    padding: "0 16px",
+                    flexShrink: 0,
+                    height: "38px",
+                    gap: "16px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setTerminalTab("stdout")}
+                    style={{
+                      fontSize: "11px",
+                      color: terminalTab === "stdout" ? "#a855f7" : "#64748b",
+                      background: "transparent",
+                      border: "none",
+                      borderBottom:
+                        terminalTab === "stdout" ? "2px solid #a855f7" : "2px solid transparent",
+                      letterSpacing: "0.06em",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      height: "100%",
+                      padding: "0 4px",
+                    }}
+                  >
+                    STDOUT
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTerminalTab("logs")}
+                    style={{
+                      fontSize: "11px",
+                      color: terminalTab === "logs" ? "#a855f7" : "#64748b",
+                      background: "transparent",
+                      border: "none",
+                      borderBottom:
+                        terminalTab === "logs" ? "2px solid #a855f7" : "2px solid transparent",
+                      letterSpacing: "0.06em",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      height: "100%",
+                      padding: "0 4px",
+                    }}
+                  >
+                    COMPILE LOGS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTerminalTab("submissions")}
+                    style={{
+                      fontSize: "11px",
+                      color: terminalTab === "submissions" ? "#a855f7" : "#64748b",
+                      background: "transparent",
+                      border: "none",
+                      borderBottom:
+                        terminalTab === "submissions"
+                          ? "2px solid #a855f7"
+                          : "2px solid transparent",
+                      letterSpacing: "0.06em",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      height: "100%",
+                      padding: "0 4px",
+                    }}
+                  >
+                    SUBMISSIONS {submissionsList.length > 0 ? `(${submissionsList.length})` : ""}
+                  </button>
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    color: "#a8b2d1",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: "12px",
+                    lineHeight: 1.6,
+                    background: "#0F0F0F",
+                    overflowY: "auto",
+                  }}
+                >
+                  {terminalTab === "stdout" && (
+                    <div style={{ padding: "12px 16px" }}>
+                      <div
+                        style={{
+                          color: "#64748b",
+                          fontSize: "10px",
+                          letterSpacing: "0.08em",
+                          marginBottom: "8px",
                         }}
                       >
-                        ×
-                      </button>
-                    )}
-                    {isScratch && pendingClose && (
+                        [ STDOUT ]
+                      </div>
+                      {isRunning ? (
+                        <div style={{ color: "#475569" }}>Running…</div>
+                      ) : runResult?.status === "CE" ? (
+                        <div style={{ color: "#475569" }}>
+                          Compilation failed — see compile logs.
+                        </div>
+                      ) : runResult?.stdout ? (
+                        <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>
+                          {runResult.stdout}
+                        </div>
+                      ) : runResult?.stderr ? (
+                        <div style={{ color: "#f97316", whiteSpace: "pre-wrap" }}>
+                          {runResult.stderr}
+                        </div>
+                      ) : runResult ? (
+                        <div style={{ color: "#475569" }}>No output.</div>
+                      ) : runError ? (
+                        <div style={{ color: "#ef4444" }}>{runError}</div>
+                      ) : (
+                        <div style={{ color: isEditorEmpty ? "#334155" : "#475569" }}>
+                          {isEditorEmpty
+                            ? "Write code to prepare a run."
+                            : "Press [ COMPILE & RUN ] to execute."}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {terminalTab === "logs" && (
+                    <div style={{ padding: "12px 16px" }}>
                       <div
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          gap: "2px",
-                          marginRight: "6px",
+                          gap: "8px",
+                          marginBottom: "8px",
                         }}
                       >
                         <span
-                          style={{
-                            fontSize: "9px",
-                            fontFamily: "'JetBrains Mono', monospace",
-                            color: "#f59e0b",
-                            letterSpacing: "0.04em",
-                          }}
+                          style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em" }}
                         >
-                          close?
+                          [ COMPILE LOGS ]
                         </span>
-                        <button
-                          type="button"
-                          aria-label="Confirm close"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPendingCloseFileId(null);
-                            removeEditorFile(file.id);
-                          }}
-                          style={{
-                            border: "none",
-                            background: "transparent",
-                            color: "#22c55e",
-                            fontSize: "12px",
-                            cursor: "pointer",
-                            padding: "0 2px",
-                            lineHeight: 1,
-                          }}
-                        >
-                          ✓
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Cancel close"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPendingCloseFileId(null);
-                          }}
-                          style={{
-                            border: "none",
-                            background: "transparent",
-                            color: "#ef4444",
-                            fontSize: "12px",
-                            cursor: "pointer",
-                            padding: "0 2px",
-                            lineHeight: 1,
-                          }}
-                        >
-                          ✗
-                        </button>
+                        {runResult && !isRunning && (
+                          <span
+                            style={{
+                              fontSize: "9px",
+                              fontWeight: 700,
+                              letterSpacing: "0.1em",
+                              color: VERDICT_COLORS[runResult.status] ?? "#64748b",
+                            }}
+                          >
+                            {runResult.status}
+                            {runResult.runtime_ms != null && ` · ${runResult.runtime_ms}ms`}
+                            {runResult.memory_kb != null &&
+                              ` · ${Math.round(runResult.memory_kb / 1024)}MB`}
+                          </span>
+                        )}
+                        {isRunning && (
+                          <span
+                            style={{ fontSize: "9px", color: "#a855f7", letterSpacing: "0.1em" }}
+                          >
+                            RUNNING…
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-              <button
-                type="button"
-                onClick={addEditorFile}
-                aria-label="Create new C++ file tab"
-                title="Create new C++ file tab"
-                style={{
-                  width: "28px",
-                  height: "28px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "1px solid #1F1F1F",
-                  background: "#0F0F0F",
-                  color: "#94a3b8",
-                  cursor: "pointer",
-                  fontSize: "16px",
-                  lineHeight: 1,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                +
-              </button>
-              <div style={{ flex: 1 }} />
-            </div>
-
-            {/* Execution control strip */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "0 12px",
-                gap: "6px",
-                height: "32px",
-                background: "#0a0a0a",
-                borderBottom: "1px solid #1F1F1F",
-                flexShrink: 0,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  color: "#475569",
-                  letterSpacing: "0.06em",
-                  marginRight: "4px",
-                }}
-              >
-                ENV:
-              </span>
-              <select
-                aria-label="Programming language"
-                value={selectedLanguage}
-                onChange={(e) => handleLanguageChange(e.target.value)}
-                style={{
-                  height: "22px",
-                  border: "1px solid #1F1F1F",
-                  background: "#0F0F0F",
-                  color: "#94a3b8",
-                  fontSize: "10px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: "0.03em",
-                  padding: "0 8px",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {(contest?.allowed_languages?.length ? contest.allowed_languages : ["C++17"]).map(
-                  (lang) => (
-                    <option key={lang} value={lang}>
-                      {lang}
-                    </option>
-                  )
-                )}
-              </select>
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  color: "#475569",
-                  letterSpacing: "0.06em",
-                  marginLeft: "10px",
-                }}
-              >
-                THEME:
-              </span>
-              <select
-                aria-label="Editor theme"
-                value={editorTheme}
-                onChange={(event) => handleEditorThemeChange(event.target.value)}
-                style={{
-                  height: "22px",
-                  maxWidth: "152px",
-                  border: "1px solid #1F1F1F",
-                  background: "#0F0F0F",
-                  color: "#94a3b8",
-                  fontSize: "10px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: "0.03em",
-                  padding: "0 8px",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {CONTEST_EDITOR_THEMES.map((theme) => (
-                  <option key={theme.id} value={theme.id}>
-                    {theme.label}
-                  </option>
-                ))}
-              </select>
-              <div style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={() => void triggerRun()}
-                disabled={isRunning || !sessionId}
-                style={{
-                  padding: "2px 10px",
-                  border: `1px solid ${isRunning ? "#334155" : "#1F1F1F"}`,
-                  background: "#0F0F0F",
-                  color: isRunning ? "#475569" : "#94a3b8",
-                  fontSize: "10px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: "0.08em",
-                  cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
-                  opacity: isRunning || !sessionId ? 0.6 : 1,
-                }}
-              >
-                {isRunning ? "[ RUNNING... ]" : "[ COMPILE &amp; RUN ]"}
-              </button>
-              <button
-                type="button"
-                onClick={handleSubmitSolution}
-                disabled={saving || isSubmitting}
-                style={{
-                  padding: "2px 10px",
-                  border: "1px solid rgba(168,85,247,0.35)",
-                  background: "transparent",
-                  color: submissionError || saveError ? "#ef4444" : saved ? "#22c55e" : "#c084fc",
-                  fontSize: "10px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: "0.08em",
-                  cursor: saving || isSubmitting ? "not-allowed" : "pointer",
-                }}
-              >
-                {isSubmitting
-                  ? "SUBMITTING..."
-                  : saving
-                    ? "SAVING..."
-                    : submissionError
-                      ? "[ SUBMIT FAILED ]"
-                      : saved
-                        ? "[ SUBMITTED ]"
-                        : "[ SUBMIT SOLUTION ]"}
-              </button>
-            </div>
-
-            {submissionError && (
-              <div
-                role="status"
-                style={{
-                  padding: "6px 12px",
-                  borderBottom: "1px solid rgba(239,68,68,0.2)",
-                  color: "#fca5a5",
-                  background: "rgba(239,68,68,0.06)",
-                  fontSize: "11px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                {submissionError}
-              </div>
-            )}
-
-            {saveError && (
-              <div
-                role="status"
-                style={{
-                  padding: "6px 12px",
-                  borderBottom: "1px solid rgba(239,68,68,0.2)",
-                  color: "#fca5a5",
-                  background: "rgba(239,68,68,0.06)",
-                  fontSize: "11px",
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                {saveError}
-              </div>
-            )}
-
-            {/* Editor Textarea */}
-            <EditorPane
-              activeQ={activeQ}
-              activeTab={activeFile?.name ?? "main.cpp"}
-              currentCode={currentCode}
-              onCodeChange={handleCodeChange}
-              editorTheme={editorTheme}
-              selectedLanguage={selectedLanguage}
-            />
-          </div>
-
-          {/* Bottom Right: Terminal */}
-          <div
-            style={{
-              height: "30%",
-              minHeight: "200px",
-              display: "flex",
-              flexDirection: "column",
-              background: "#0F0F0F",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                borderBottom: "1px solid #1F1F1F",
-                background: "#0F0F0F",
-                padding: "0 16px",
-                flexShrink: 0,
-                height: "38px",
-                gap: "16px",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setTerminalTab("stdout")}
-                style={{
-                  fontSize: "11px",
-                  color: terminalTab === "stdout" ? "#a855f7" : "#64748b",
-                  background: "transparent",
-                  border: "none",
-                  borderBottom:
-                    terminalTab === "stdout" ? "2px solid #a855f7" : "2px solid transparent",
-                  letterSpacing: "0.06em",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  height: "100%",
-                  padding: "0 4px",
-                }}
-              >
-                STDOUT
-              </button>
-              <button
-                type="button"
-                onClick={() => setTerminalTab("logs")}
-                style={{
-                  fontSize: "11px",
-                  color: terminalTab === "logs" ? "#a855f7" : "#64748b",
-                  background: "transparent",
-                  border: "none",
-                  borderBottom:
-                    terminalTab === "logs" ? "2px solid #a855f7" : "2px solid transparent",
-                  letterSpacing: "0.06em",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  height: "100%",
-                  padding: "0 4px",
-                }}
-              >
-                COMPILE LOGS
-              </button>
-              <button
-                type="button"
-                onClick={() => setTerminalTab("submissions")}
-                style={{
-                  fontSize: "11px",
-                  color: terminalTab === "submissions" ? "#a855f7" : "#64748b",
-                  background: "transparent",
-                  border: "none",
-                  borderBottom:
-                    terminalTab === "submissions" ? "2px solid #a855f7" : "2px solid transparent",
-                  letterSpacing: "0.06em",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  height: "100%",
-                  padding: "0 4px",
-                }}
-              >
-                SUBMISSIONS {submissionsList.length > 0 ? `(${submissionsList.length})` : ""}
-              </button>
-            </div>
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                color: "#a8b2d1",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: "12px",
-                lineHeight: 1.6,
-                background: "#0F0F0F",
-                overflowY: "auto",
-              }}
-            >
-              {terminalTab === "stdout" && (
-                <div style={{ padding: "12px 16px" }}>
-                  <div
-                    style={{
-                      color: "#64748b",
-                      fontSize: "10px",
-                      letterSpacing: "0.08em",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    [ STDOUT ]
-                  </div>
-                  {isRunning ? (
-                    <div style={{ color: "#475569" }}>Running…</div>
-                  ) : runResult?.status === "CE" ? (
-                    <div style={{ color: "#475569" }}>Compilation failed — see compile logs.</div>
-                  ) : runResult?.stdout ? (
-                    <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>
-                      {runResult.stdout}
-                    </div>
-                  ) : runResult?.stderr ? (
-                    <div style={{ color: "#f97316", whiteSpace: "pre-wrap" }}>
-                      {runResult.stderr}
-                    </div>
-                  ) : runResult ? (
-                    <div style={{ color: "#475569" }}>No output.</div>
-                  ) : runError ? (
-                    <div style={{ color: "#ef4444" }}>{runError}</div>
-                  ) : (
-                    <div style={{ color: isEditorEmpty ? "#334155" : "#475569" }}>
-                      {isEditorEmpty
-                        ? "Write code to prepare a run."
-                        : "Press [ COMPILE & RUN ] to execute."}
+                      {runResult?.compile_output ? (
+                        <div
+                          style={{
+                            color: runResult.status === "CE" ? "#fca5a5" : "#94a3b8",
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {runResult.compile_output}
+                        </div>
+                      ) : runResult && !isRunning ? (
+                        <div style={{ color: "#475569" }}>No compiler output.</div>
+                      ) : !isRunning ? (
+                        <div style={{ color: "#334155" }}>Compiler output will appear here.</div>
+                      ) : null}
                     </div>
                   )}
-                </div>
-              )}
 
-              {terminalTab === "logs" && (
-                <div style={{ padding: "12px 16px" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    <span style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em" }}>
-                      [ COMPILE LOGS ]
-                    </span>
-                    {runResult && !isRunning && (
-                      <span
+                  {terminalTab === "submissions" && (
+                    <div style={{ padding: "12px 16px" }}>
+                      <div
                         style={{
-                          fontSize: "9px",
-                          fontWeight: 700,
-                          letterSpacing: "0.1em",
-                          color: VERDICT_COLORS[runResult.status] ?? "#64748b",
+                          color: "#64748b",
+                          fontSize: "10px",
+                          letterSpacing: "0.08em",
+                          marginBottom: "8px",
                         }}
                       >
-                        {runResult.status}
-                        {runResult.runtime_ms != null && ` · ${runResult.runtime_ms}ms`}
-                        {runResult.memory_kb != null &&
-                          ` · ${Math.round(runResult.memory_kb / 1024)}MB`}
-                      </span>
-                    )}
-                    {isRunning && (
-                      <span style={{ fontSize: "9px", color: "#a855f7", letterSpacing: "0.1em" }}>
-                        RUNNING…
-                      </span>
-                    )}
-                  </div>
-                  {runResult?.compile_output ? (
-                    <div
-                      style={{
-                        color: runResult.status === "CE" ? "#fca5a5" : "#94a3b8",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {runResult.compile_output}
-                    </div>
-                  ) : runResult && !isRunning ? (
-                    <div style={{ color: "#475569" }}>No compiler output.</div>
-                  ) : !isRunning ? (
-                    <div style={{ color: "#334155" }}>Compiler output will appear here.</div>
-                  ) : null}
-                </div>
-              )}
+                        [ SUBMISSIONS HISTORY ]
+                      </div>
+                      {loadingSubmissions && submissionsList.length === 0 ? (
+                        <div style={{ color: "#64748b", fontSize: "11px" }}>
+                          Loading submissions...
+                        </div>
+                      ) : submissionsList.length === 0 ? (
+                        <div style={{ color: "#64748b", fontSize: "11px" }}>
+                          No submissions yet for this problem. Click "Submit Solution" to run your
+                          code on the judge.
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                          {submissionsList.map((sub) => {
+                            const isExpanded = expandedAttemptId === sub.id;
+                            const finalVerdict = sub.final_verdict || "Pending";
+                            const status = sub.status;
+                            const isPending = status === "QUEUED" || status === "RUNNING";
 
-              {terminalTab === "submissions" && (
-                <div style={{ padding: "12px 16px" }}>
-                  <div
-                    style={{
-                      color: "#64748b",
-                      fontSize: "10px",
-                      letterSpacing: "0.08em",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    [ SUBMISSIONS HISTORY ]
-                  </div>
-                  {loadingSubmissions && submissionsList.length === 0 ? (
-                    <div style={{ color: "#64748b", fontSize: "11px" }}>Loading submissions...</div>
-                  ) : submissionsList.length === 0 ? (
-                    <div style={{ color: "#64748b", fontSize: "11px" }}>
-                      No submissions yet for this problem. Click "Submit Solution" to run your code
-                      on the judge.
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {submissionsList.map((sub) => {
-                        const isExpanded = expandedAttemptId === sub.id;
-                        const finalVerdict = sub.final_verdict || "Pending";
-                        const status = sub.status;
-                        const isPending = status === "QUEUED" || status === "RUNNING";
+                            let verdictColor = "#94a3b8";
+                            if (finalVerdict === "AC") verdictColor = "#22c55e";
+                            else if (finalVerdict === "WA") verdictColor = "#ef4444";
+                            else if (finalVerdict === "TLE") verdictColor = "#f59e0b";
+                            else if (finalVerdict === "MLE") verdictColor = "#3b82f6";
+                            else if (finalVerdict === "CE") verdictColor = "#a855f7";
+                            else if (finalVerdict === "RE") verdictColor = "#ec4899";
+                            else if (isPending) verdictColor = "#06b6d4";
 
-                        let verdictColor = "#94a3b8";
-                        if (finalVerdict === "AC") verdictColor = "#22c55e";
-                        else if (finalVerdict === "WA") verdictColor = "#ef4444";
-                        else if (finalVerdict === "TLE") verdictColor = "#f59e0b";
-                        else if (finalVerdict === "MLE") verdictColor = "#3b82f6";
-                        else if (finalVerdict === "CE") verdictColor = "#a855f7";
-                        else if (finalVerdict === "RE") verdictColor = "#ec4899";
-                        else if (isPending) verdictColor = "#06b6d4";
-
-                        return (
-                          <div
-                            key={sub.id}
-                            style={{ borderBottom: "1px solid #1F1F1F", paddingBottom: "8px" }}
-                          >
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                cursor: "pointer",
-                              }}
-                              onClick={() => toggleExpandAttempt(sub.id)}
-                            >
-                              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                                <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                  Attempt #{sub.attempt_no}
-                                </span>
-                                <span
-                                  style={{
-                                    fontSize: "10px",
-                                    padding: "1px 5px",
-                                    background: "#1F1F1F",
-                                    borderRadius: "3px",
-                                    color: "#94a3b8",
-                                  }}
-                                >
-                                  {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]
-                                    ?.name || sub.language}
-                                </span>
-                                <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                  {new Date(sub.created_at).toLocaleTimeString()}
-                                </span>
-                              </div>
-                              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                                <span
-                                  style={{
-                                    fontSize: "11px",
-                                    fontWeight: "bold",
-                                    color: verdictColor,
-                                  }}
-                                >
-                                  {isPending ? `${status}...` : finalVerdict}
-                                </span>
-                                <span style={{ fontSize: "10px", color: "#64748b" }}>
-                                  {isExpanded ? "▲" : "▼"}
-                                </span>
-                              </div>
-                            </div>
-
-                            {isExpanded && (
+                            return (
                               <div
-                                style={{
-                                  marginTop: "6px",
-                                  padding: "8px",
-                                  background: "#0a0a0a",
-                                  border: "1px solid #1F1F1F",
-                                  borderRadius: "4px",
-                                }}
+                                key={sub.id}
+                                style={{ borderBottom: "1px solid #1F1F1F", paddingBottom: "8px" }}
                               >
-                                {isPending ? (
-                                  <div style={{ fontSize: "11px", color: "#64748b" }}>
-                                    Grading in progress... Live results will update automatically.
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    cursor: "pointer",
+                                  }}
+                                  onClick={() => toggleExpandAttempt(sub.id)}
+                                >
+                                  <div
+                                    style={{ display: "flex", alignItems: "center", gap: "12px" }}
+                                  >
+                                    <span style={{ fontSize: "11px", color: "#64748b" }}>
+                                      Attempt #{sub.attempt_no}
+                                    </span>
+                                    <span
                                       style={{
-                                        display: "flex",
-                                        gap: "16px",
-                                        marginBottom: "8px",
                                         fontSize: "10px",
-                                        color: "#64748b",
+                                        padding: "1px 5px",
+                                        background: "#1F1F1F",
+                                        borderRadius: "3px",
+                                        color: "#94a3b8",
                                       }}
                                     >
-                                      <span>
-                                        Runtime:{" "}
-                                        {sub.runtime_ms !== null ? `${sub.runtime_ms} ms` : "N/A"}
-                                      </span>
-                                      <span>
-                                        Memory:{" "}
-                                        {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
-                                      </span>
-                                      <span>Score: {sub.score}</span>
-                                    </div>
+                                      {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]
+                                        ?.name || sub.language}
+                                    </span>
+                                    <span style={{ fontSize: "11px", color: "#64748b" }}>
+                                      {new Date(sub.created_at).toLocaleTimeString()}
+                                    </span>
+                                  </div>
+                                  <div
+                                    style={{ display: "flex", alignItems: "center", gap: "12px" }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: "11px",
+                                        fontWeight: "bold",
+                                        color: verdictColor,
+                                      }}
+                                    >
+                                      {isPending ? `${status}...` : finalVerdict}
+                                    </span>
+                                    <span style={{ fontSize: "10px", color: "#64748b" }}>
+                                      {isExpanded ? "▲" : "▼"}
+                                    </span>
+                                  </div>
+                                </div>
 
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                                      {testResults[sub.id] ? (
-                                        testResults[sub.id].map((tr: any) => {
-                                          let trColor = "rgba(148,163,184,0.1)";
-                                          let trBorder = "rgba(148,163,184,0.3)";
-                                          let trTextColor = "#94a3b8";
-
-                                          if (tr.verdict === "AC") {
-                                            trColor = "rgba(34,197,94,0.1)";
-                                            trBorder = "rgba(34,197,94,0.3)";
-                                            trTextColor = "#22c55e";
-                                          } else if (tr.verdict === "WA") {
-                                            trColor = "rgba(239,68,68,0.1)";
-                                            trBorder = "rgba(239,68,68,0.3)";
-                                            trTextColor = "#ef4444";
-                                          } else if (tr.verdict === "TLE") {
-                                            trColor = "rgba(245,158,11,0.1)";
-                                            trBorder = "rgba(245,158,11,0.3)";
-                                            trTextColor = "#f59e0b";
-                                          } else {
-                                            trColor = "rgba(236,72,153,0.1)";
-                                            trBorder = "rgba(236,72,153,0.3)";
-                                            trTextColor = "#ec4899";
-                                          }
-
-                                          return (
-                                            <div
-                                              key={tr.test_number}
-                                              title={
-                                                tr.checker_message ||
-                                                `Test ${tr.test_number}: ${tr.verdict}`
-                                              }
-                                              style={{
-                                                padding: "3px 6px",
-                                                background: trColor,
-                                                border: `1px solid ${trBorder}`,
-                                                borderRadius: "3px",
-                                                fontSize: "10px",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: "4px",
-                                                color: trTextColor,
-                                              }}
-                                            >
-                                              <span>#{tr.test_number}</span>
-                                              <strong>{tr.verdict}</strong>
-                                              {tr.runtime_ms !== null && (
-                                                <span style={{ opacity: 0.7, fontSize: "9px" }}>
-                                                  ({tr.runtime_ms}ms)
-                                                </span>
-                                              )}
-                                            </div>
-                                          );
-                                        })
-                                      ) : (
-                                        <div style={{ fontSize: "10px", color: "#64748b" }}>
-                                          Loading test results...
+                                {isExpanded && (
+                                  <div
+                                    style={{
+                                      marginTop: "6px",
+                                      padding: "8px",
+                                      background: "#0a0a0a",
+                                      border: "1px solid #1F1F1F",
+                                      borderRadius: "4px",
+                                    }}
+                                  >
+                                    {isPending ? (
+                                      <div style={{ fontSize: "11px", color: "#64748b" }}>
+                                        Grading in progress... Live results will update
+                                        automatically.
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            gap: "16px",
+                                            marginBottom: "8px",
+                                            fontSize: "10px",
+                                            color: "#64748b",
+                                          }}
+                                        >
+                                          <span>
+                                            Runtime:{" "}
+                                            {sub.runtime_ms !== null
+                                              ? `${sub.runtime_ms} ms`
+                                              : "N/A"}
+                                          </span>
+                                          <span>
+                                            Memory:{" "}
+                                            {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
+                                          </span>
+                                          <span>Score: {sub.score}</span>
                                         </div>
-                                      )}
-                                    </div>
-                                  </>
+
+                                        <div>
+                                          {testResults[sub.id] ? (
+                                            (() => {
+                                              const trs = testResults[sub.id];
+                                              const passedCount = trs.filter(
+                                                (tr: any) => tr.verdict === "AC"
+                                              ).length;
+                                              return (
+                                                <>
+                                                  <div
+                                                    style={{
+                                                      fontSize: "10px",
+                                                      color: "#64748b",
+                                                      marginBottom: "6px",
+                                                    }}
+                                                  >
+                                                    <span
+                                                      style={{
+                                                        color:
+                                                          passedCount === trs.length
+                                                            ? "#22c55e"
+                                                            : "#94a3b8",
+                                                        fontWeight: 600,
+                                                      }}
+                                                    >
+                                                      {passedCount} / {trs.length}
+                                                    </span>{" "}
+                                                    test cases passed
+                                                  </div>
+                                                  <div
+                                                    style={{
+                                                      display: "flex",
+                                                      flexWrap: "wrap",
+                                                      gap: "5px",
+                                                    }}
+                                                  >
+                                                    {trs.map((tr: any, idx: number) => {
+                                                      const isAC = tr.verdict === "AC";
+                                                      let trColor = isAC
+                                                        ? "rgba(34,197,94,0.1)"
+                                                        : tr.verdict === "TLE" ||
+                                                            tr.verdict === "MLE"
+                                                          ? "rgba(245,158,11,0.08)"
+                                                          : "rgba(239,68,68,0.1)";
+                                                      let trBorder = isAC
+                                                        ? "rgba(34,197,94,0.3)"
+                                                        : tr.verdict === "TLE" ||
+                                                            tr.verdict === "MLE"
+                                                          ? "rgba(245,158,11,0.3)"
+                                                          : "rgba(239,68,68,0.3)";
+                                                      let trTextColor = isAC
+                                                        ? "#22c55e"
+                                                        : tr.verdict === "TLE" ||
+                                                            tr.verdict === "MLE"
+                                                          ? "#f59e0b"
+                                                          : "#ef4444";
+                                                      return (
+                                                        <div
+                                                          key={idx}
+                                                          title={
+                                                            isAC
+                                                              ? `Test #${tr.test_number}: Accepted${tr.runtime_ms != null ? ` (${tr.runtime_ms}ms)` : ""}`
+                                                              : tr.verdict
+                                                          }
+                                                          style={{
+                                                            width: "22px",
+                                                            height: "22px",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            justifyContent: "center",
+                                                            background: trColor,
+                                                            border: `1px solid ${trBorder}`,
+                                                            borderRadius: "3px",
+                                                            fontSize: "9px",
+                                                            fontWeight: 700,
+                                                            color: trTextColor,
+                                                            cursor: "default",
+                                                          }}
+                                                        >
+                                                          {isAC ? "✓" : "✗"}
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </>
+                                              );
+                                            })()
+                                          ) : (
+                                            <div style={{ fontSize: "10px", color: "#64748b" }}>
+                                              Loading test results...
+                                            </div>
+                                          )}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
 
       {/* ── Proctoring footer ── */}
