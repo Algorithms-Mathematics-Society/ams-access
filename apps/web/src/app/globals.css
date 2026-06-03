@@ -621,36 +621,24 @@ input::placeholder {
 .contest-editor-pane {
   flex: 1;
   position: relative;
-  display: flex;
   min-height: 0;
-}
-.contest-editor-gutter {
-  width: 48px;
-  padding: 16px 10px;
-  box-sizing: border-box;
-  background: #0b0b0b;
-  border-right: 1px solid #1F1F1F;
-  color: #475569;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  text-align: right;
-  overflow: hidden;
-  user-select: none;
-}
-.contest-editor-textarea {
-  flex: 1;
   min-width: 0;
-  height: 100%;
-  resize: none;
-  border: 1px solid transparent;
-  outline: 2px solid transparent;
   background: #0F0F0F;
-  color: #e2e8f0;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  padding: 15px 19px;
-  box-sizing: border-box;
-  tab-size: 4;
+}
+.contest-editor-pane--codemirror .cm-editor {
+  height: 100%;
+}
+.contest-editor-pane--codemirror .cm-scroller {
+  overflow: auto;
+}
+.contest-editor-pane--codemirror .cm-scroller::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.contest-editor-pane--codemirror .cm-scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+.contest-editor-pane--codemirror .cm-scroller::-webkit-scrollbar-thumb {
+  background: rgba(168,85,247,0.2);
+  border-radius: 3px;
 }

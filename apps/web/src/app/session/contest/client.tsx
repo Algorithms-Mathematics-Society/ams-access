@@ -1,15 +1,40 @@
 "use client";
 
-import { memo, useState, useEffect, useRef, useCallback, useMemo, type UIEvent } from "react";
+import { memo, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { marked, type MarkedExtension } from "marked";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "./editor-pane";
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
+const EDITOR_THEME_KEY = "ams_contest_editor_theme";
+const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
+
+/**
+ * Maps the display label used in the UI and stored in `allowed_languages`
+ * to the wire identifier expected by the judge worker.
+ * The worker matches by substring so "cpp17" satisfies both the `c++` and `cpp` checks.
+ */
+const LANGUAGE_ID_MAP: Record<string, string> = {
+  "C++17": "cpp17",
+  "C++20": "cpp20",
+  Python3: "python3",
+  Java17: "java17",
+  Go: "go",
+  Rust: "rust",
+};
+
+function toLanguageId(displayLabel: string): string {
+  return LANGUAGE_ID_MAP[displayLabel] ?? displayLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isContestEditorTheme(value: string | null): value is ContestEditorThemeId {
+  return Boolean(value && CONTEST_EDITOR_THEMES.some((theme) => theme.id === value));
+}
 
 // Configure marked once at module level — pays cost on first import, never again.
 const mathInlineExt: MarkedExtension = {
@@ -61,6 +86,32 @@ type EditorFile = {
   id: string;
   name: string;
   content: string;
+};
+
+type RunVerdict = "QUEUED" | "RUNNING" | "AC" | "WA" | "TLE" | "MLE" | "RE" | "CE" | "OLE" | "IE";
+
+type RunAttempt = {
+  id: string;
+  attempt_no: number;
+  status: RunVerdict;
+  runtime_ms?: number | null;
+  memory_kb?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  compile_output?: string | null;
+};
+
+const VERDICT_COLORS: Record<string, string> = {
+  AC: "#22c55e",
+  WA: "#ef4444",
+  TLE: "#f59e0b",
+  MLE: "#f59e0b",
+  RE: "#f97316",
+  CE: "#ef4444",
+  OLE: "#f59e0b",
+  IE: "#64748b",
+  QUEUED: "#a855f7",
+  RUNNING: "#a855f7",
 };
 
 type ContestMeta = {
@@ -139,21 +190,82 @@ function defaultCppStarter(): string {
   ].join("\n");
 }
 
-function sanitizeCppFileName(title: string, fallback: string): string {
-  const letterMatch = /^([A-Z])(?:[.)\]:-]|\s+-|\s)/i.exec(title.trim());
-  if (letterMatch) return `${letterMatch[1].toUpperCase()}.cpp`;
+function defaultPythonStarter(): string {
+  return [
+    "import sys",
+    "input = sys.stdin.readline",
+    "",
+    "def solve():",
+    "    pass",
+    "",
+    "solve()",
+  ].join("\n");
+}
 
-  const slug = title
+function defaultJavaStarter(): string {
+  return [
+    "import java.util.*;",
+    "import java.io.*;",
+    "",
+    "public class Main {",
+    "    public static void main(String[] args) throws IOException {",
+    "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));",
+    "        ",
+    "    }",
+    "}",
+  ].join("\n");
+}
+
+function defaultStarterFor(language: string): string {
+  if (language === "Python3") return defaultPythonStarter();
+  if (language === "Java17") return defaultJavaStarter();
+  return defaultCppStarter();
+}
+
+/**
+ * Returns true if content has never been meaningfully edited — i.e. it still
+ * matches any of the known default starters or is empty. Safe to replace when
+ * the user switches languages.
+ */
+function isPristineStarter(content: string): boolean {
+  return (
+    content === "" ||
+    content === defaultCppStarter() ||
+    content === defaultPythonStarter() ||
+    content === defaultJavaStarter()
+  );
+}
+
+const LANGUAGE_EXTENSIONS: Record<string, string> = {
+  "C++17": "cpp",
+  "C++20": "cpp",
+  Python3: "py",
+  Java17: "java",
+  Go: "go",
+  Rust: "rs",
+};
+
+/**
+ * Derives the editor filename for a question's main file.
+ * Java is a hard special-case: the worker compiles `javac Main.java` and runs
+ * `java -cp . Main`, so the class name — and therefore the filename — must be
+ * `Main.java` regardless of the question title.
+ */
+function questionFileName(question: Question, language: string): string {
+  if (language === "Java17") return "Main.java";
+
+  const ext = LANGUAGE_EXTENSIONS[language] ?? "cpp";
+  const fallbackLetter = String.fromCharCode(65 + Math.max(0, question.order_index));
+
+  const letterMatch = /^([A-Z])(?:[.)\]:-]|\s+-|\s)/i.exec(question.title.trim());
+  if (letterMatch) return `${letterMatch[1].toUpperCase()}.${ext}`;
+
+  const slug = question.title
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return `${slug || fallback}.cpp`;
-}
-
-function questionFileName(question: Question): string {
-  const fallbackLetter = String.fromCharCode(65 + Math.max(0, question.order_index));
-  return sanitizeCppFileName(question.title, fallbackLetter);
+  return `${slug || fallbackLetter}.${ext}`;
 }
 
 function unwrapQuestionList(payload: unknown): unknown[] {
@@ -542,11 +654,13 @@ export default function ContestPageClient() {
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeQ, setActiveQ] = useState(0);
-  const [editorFiles, setEditorFiles] = useState<EditorFile[]>([]);
-  const [activeFileId, setActiveFileId] = useState("");
-  const [compileNote, setCompileNote] = useState(
-    "C++ runner is not configured for this build. Save or submit to send code for judging."
-  );
+  const [questionFiles, setQuestionFiles] = useState<Record<string, EditorFile[]>>({});
+  const [questionActiveFile, setQuestionActiveFile] = useState<Record<string, string>>({});
+  const [editorTheme, setEditorTheme] = useState<ContestEditorThemeId>(DEFAULT_EDITOR_THEME);
+  const [selectedLanguage, setSelectedLanguage] = useState("C++17");
+  const [runResult, setRunResult] = useState<RunAttempt | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -558,7 +672,6 @@ export default function ContestPageClient() {
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
   const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
-  const lineNumberGutterRef = useRef<HTMLDivElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -572,6 +685,7 @@ export default function ContestPageClient() {
   const [isSendingReport, setIsSendingReport] = useState(false);
   const [reportSentSuccess, setReportSentSuccess] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [pendingCloseFileId, setPendingCloseFileId] = useState<string | null>(null);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
   const [cameraCollapsed, setCameraCollapsed] = useState(false);
@@ -733,6 +847,17 @@ export default function ContestPageClient() {
     setPendingMediaToggle(null);
   }
 
+  useEffect(() => {
+    const storedTheme = localStorage.getItem(EDITOR_THEME_KEY);
+    if (isContestEditorTheme(storedTheme)) setEditorTheme(storedTheme);
+  }, []);
+
+  function handleEditorThemeChange(value: string) {
+    if (isContestEditorTheme(value) === false) return;
+    setEditorTheme(value);
+    localStorage.setItem(EDITOR_THEME_KEY, value);
+  }
+
   // Monitor faceStatus to trigger face grace period countdown
   useEffect(() => {
     if (faceStatus === "away") {
@@ -841,7 +966,15 @@ export default function ContestPageClient() {
         "mock-contest-dev": "AMS Internal — Dev Test",
         "mock-contest-scheduled": "AMS Internal — Scheduled Test",
       };
-      setContest({ id: contestId, title: titles[contestId], end_at: mockEnd, status: "ACTIVE" });
+      const mockMeta: ContestMeta = {
+        id: contestId,
+        title: titles[contestId],
+        end_at: mockEnd,
+        status: "ACTIVE",
+        allowed_languages: ["C++17", "Python3", "Java17"],
+      };
+      setContest(mockMeta);
+      setSelectedLanguage(mockMeta.allowed_languages![0]);
       const mockQuestions: Question[] = [
         {
           id: "mock-q-1",
@@ -861,7 +994,7 @@ export default function ContestPageClient() {
         },
       ];
       setQuestions(mockQuestions);
-      loadQuestion(mockQuestions[0]);
+      loadQuestion(mockQuestions[0], mockMeta.allowed_languages![0]);
       setLoadError(null);
       setLoading(false);
       return;
@@ -874,7 +1007,11 @@ export default function ContestPageClient() {
     Promise.all([contestRequest, questionsRequest, sessionRequest])
       .then(async ([c, questions, session]) => {
         const contestMeta = c ? (c as ContestMeta) : null;
-        if (contestMeta) setContest(contestMeta);
+        const firstLang = contestMeta?.allowed_languages?.[0] ?? "C++17";
+        if (contestMeta) {
+          setContest(contestMeta);
+          setSelectedLanguage(firstLang);
+        }
 
         let answersMap: Record<string, { language: string; content: string }> = {};
         if (session?.id) {
@@ -919,7 +1056,7 @@ export default function ContestPageClient() {
         setActiveQ(0);
         setQuestions(questions);
         if (questions.length > 0) {
-          loadQuestionWithAnswers(questions[0], answersMap);
+          loadQuestionWithAnswers(questions[0], answersMap, firstLang);
           setLoadError(null);
         } else {
           setLoadError("Questions are not available yet. Please retry in a few seconds.");
@@ -936,89 +1073,176 @@ export default function ContestPageClient() {
 
   function loadQuestionWithAnswers(
     q: Question,
-    answersMap: Record<string, { language: string; content: string }>
+    answersMap: Record<string, { language: string; content: string }>,
+    language: string
   ) {
     const saved = answersMap[q.id];
-    let lang = selectedLang;
-    let content = "";
+    let lang = language;
+    let content: string;
 
     if (saved) {
-      lang = saved.language;
+      // Wire format → display format (e.g. "cpp17" → "C++17")
+      const displayLang =
+        Object.entries(LANGUAGE_ID_MAP).find(([, id]) => id === saved.language)?.[0] ??
+        saved.language;
+      lang = displayLang;
       content = saved.content;
-      setSelectedLang(lang);
+      setSelectedLanguage(lang);
     } else {
-      const meta = LANGUAGE_META[lang as keyof typeof LANGUAGE_META];
-      content = q.starter_code ?? meta?.starter ?? "";
+      content = q.starter_code ?? defaultStarterFor(lang);
     }
 
-    const meta = LANGUAGE_META[lang as keyof typeof LANGUAGE_META];
-    const ext = meta?.ext || "cpp";
-    const file: EditorFile = {
-      id: `${q.id}:main`,
-      name: `solution.${ext}`,
-      content: content,
-    };
-    setEditorFiles([file]);
-    setActiveFileId(file.id);
-    setCompileNote(`Compiler set to ${meta?.name || lang}.`);
-  }
-
-  function loadQuestion(q: Question) {
-    loadQuestionWithAnswers(q, savedAnswers);
-  }
-
-  function switchQuestion(idx: number) {
-    setActiveQ(idx);
-    loadQuestionWithAnswers(questions[idx], savedAnswers);
-  }
-
-  function handleCodeChange(value: string) {
-    setEditorFiles((files) =>
-      files.map((file) => (file.id === activeFileId ? { ...file, content: value } : file))
-    );
-  }
-
-  function addEditorFile() {
-    setEditorFiles((files) => {
-      const nextIndex = files.length + 1;
+    setQuestionFiles((prev) => {
+      if (prev[q.id]) return prev;
       const file: EditorFile = {
-        id: `${questions[activeQ]?.id ?? "question"}:scratch-${Date.now()}`,
-        name: `scratch${nextIndex}.cpp`,
-        content: defaultCppStarter(),
+        id: `${q.id}:main`,
+        name: questionFileName(q, lang),
+        content,
       };
-      setActiveFileId(file.id);
-      return [...files, file];
+      return { ...prev, [q.id]: [file] };
+    });
+    setQuestionActiveFile((prev) => {
+      if (prev[q.id]) return prev;
+      return { ...prev, [q.id]: `${q.id}:main` };
     });
   }
 
-  function triggerRun() {
-    setCompileNote(
-      "Local C++ compilation is not enabled in this build. The editor saves C++17 source files for the judge/submission pipeline."
-    );
+  function loadQuestion(q: Question, language: string) {
+    loadQuestionWithAnswers(q, savedAnswers, language);
   }
 
-  const handleTabKey = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        const ta = e.currentTarget;
-        const start = ta.selectionStart;
-        const end = ta.selectionEnd;
-        const val = ta.value;
-        const newVal = val.substring(0, start) + "  " + val.substring(end);
-        ta.value = newVal;
-        ta.selectionStart = ta.selectionEnd = start + 2;
-        handleCodeChange(newVal);
-      }
-    },
-    [activeFileId]
-  );
-
-  const syncEditorScroll = useCallback((event: UIEvent<HTMLTextAreaElement>) => {
-    if (lineNumberGutterRef.current) {
-      lineNumberGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+  function switchQuestion(idx: number) {
+    if (questions[activeQ] && sessionId) {
+      handleSave();
     }
-  }, []);
+    setActiveQ(idx);
+    loadQuestion(questions[idx], selectedLanguage);
+    setRunResult(null);
+    setRunError(null);
+  }
+
+  function handleLanguageChange(newLanguage: string) {
+    setSelectedLanguage(newLanguage);
+    const q = questions[activeQ];
+    if (!q) return;
+    setQuestionFiles((prev) => {
+      const files = prev[q.id];
+      if (!files) return prev;
+      return {
+        ...prev,
+        [q.id]: files.map((f) => {
+          if (!f.id.endsWith(":main")) return f;
+          return {
+            ...f,
+            name: questionFileName(q, newLanguage),
+            content: isPristineStarter(f.content) ? defaultStarterFor(newLanguage) : f.content,
+          };
+        }),
+      };
+    });
+  }
+
+  function handleCodeChange(value: string) {
+    const qId = questions[activeQ]?.id ?? "";
+    const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
+    setQuestionFiles((prev) => ({
+      ...prev,
+      [qId]: (prev[qId] ?? []).map((f) =>
+        f.id === currentActiveId ? { ...f, content: value } : f
+      ),
+    }));
+  }
+
+  function addEditorFile() {
+    const qId = questions[activeQ]?.id ?? "question";
+    setQuestionFiles((prev) => {
+      const files = prev[qId] ?? [];
+      const nextIndex = files.length + 1;
+      const file: EditorFile = {
+        id: `${qId}:scratch-${Date.now()}`,
+        name: `scratch${nextIndex}.cpp`,
+        content: defaultCppStarter(),
+      };
+      setQuestionActiveFile((qaf) => ({ ...qaf, [qId]: file.id }));
+      return { ...prev, [qId]: [...files, file] };
+    });
+  }
+
+  function removeEditorFile(fileId: string) {
+    const qId = questions[activeQ]?.id ?? "";
+    setQuestionFiles((prev) => {
+      const files = (prev[qId] ?? []).filter((f) => f.id !== fileId);
+      return { ...prev, [qId]: files };
+    });
+    setQuestionActiveFile((prev) => {
+      if (prev[qId] !== fileId) return prev;
+      const remaining = (questionFiles[qId] ?? []).filter((f) => f.id !== fileId);
+      return { ...prev, [qId]: remaining[remaining.length - 1]?.id ?? "" };
+    });
+  }
+
+  async function triggerRun() {
+    if (!questions[activeQ] || !sessionId || isRunning) return;
+
+    setIsRunning(true);
+    setRunResult(null);
+    setRunError(null);
+
+    // Persist the current code before dispatching to the judge.
+    const savedOk = await handleSave();
+    if (!savedOk) {
+      setIsRunning(false);
+      setRunError("Save failed — check your connection and retry.");
+      return;
+    }
+
+    // Create the submission attempt.
+    let attemptId: string;
+    try {
+      const res = await fetch(`${API_URL}/sessions/${sessionId}/submissions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: questions[activeQ].id,
+          language: toLanguageId(selectedLanguage),
+          files: editorFiles,
+          active_file_id: activeFileId,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const created = (await res.json()) as { id: string; attempt_no: number };
+      attemptId = created.id;
+      setRunResult({ id: created.id, attempt_no: created.attempt_no, status: "QUEUED" });
+    } catch {
+      setIsRunning(false);
+      setRunError("Could not reach the judge. Check your connection and retry.");
+      return;
+    }
+
+    // Poll for the result with exponential back-off (max ~25 s total).
+    const delays = [600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500];
+    for (const ms of delays) {
+      await new Promise<void>((r) => setTimeout(r, ms));
+      try {
+        const pollRes = await fetch(`${API_URL}/sessions/${sessionId}/submissions`);
+        if (!pollRes.ok) continue; // transient — keep polling
+        const attempts = (await pollRes.json()) as RunAttempt[];
+        const attempt = attempts.find((a) => a.id === attemptId);
+        if (attempt) {
+          setRunResult(attempt);
+          if (attempt.status !== "QUEUED" && attempt.status !== "RUNNING") {
+            setIsRunning(false);
+            return;
+          }
+        }
+      } catch {
+        // transient network error — keep polling
+      }
+    }
+
+    setIsRunning(false);
+    setRunError("Judge is taking longer than expected. Your code was queued — check back shortly.");
+  }
 
   async function handleSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) {
@@ -1032,7 +1256,7 @@ export default function ContestPageClient() {
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/answers`, {
         question_id: questions[activeQ].id,
         answer_text: JSON.stringify({
-          language: selectedLang,
+          language: toLanguageId(selectedLanguage),
           files: editorFiles,
           active_file_id: activeFileId,
         }),
@@ -1042,7 +1266,7 @@ export default function ContestPageClient() {
       setSavedAnswers((prev) => ({
         ...prev,
         [questions[activeQ].id]: {
-          language: selectedLang,
+          language: toLanguageId(selectedLanguage),
           content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
         },
       }));
@@ -1057,35 +1281,6 @@ export default function ContestPageClient() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function handleLangChange(newLang: string) {
-    setSelectedLang(newLang);
-    setEditorFiles((files) =>
-      files.map((file) => {
-        if (file.id === `${questions[activeQ]?.id}:main`) {
-          const meta = LANGUAGE_META[newLang as keyof typeof LANGUAGE_META];
-          const ext = meta?.ext || "cpp";
-          const starter = meta?.starter || "";
-
-          const prevMeta = LANGUAGE_META[selectedLang as keyof typeof LANGUAGE_META];
-          const isDefault =
-            !file.content ||
-            file.content.trim() === "" ||
-            file.content.trim() === prevMeta?.starter?.trim();
-
-          return {
-            ...file,
-            name: `solution.${ext}`,
-            content: isDefault ? starter : file.content,
-          };
-        }
-        return file;
-      })
-    );
-    setCompileNote(
-      `Compiler switched to ${LANGUAGE_META[newLang as keyof typeof LANGUAGE_META]?.name || newLang}.`
-    );
   }
 
   async function handleSubmitSolution() {
@@ -1441,13 +1636,12 @@ export default function ContestPageClient() {
     return () => window.removeEventListener("keydown", blockShortcuts, { capture: true });
   }, []);
 
+  const currentQId = questions[activeQ]?.id ?? "";
+  const editorFiles = questionFiles[currentQId] ?? [];
+  const activeFileId = questionActiveFile[currentQId] ?? editorFiles[0]?.id ?? "";
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
-  const lineNumbers = useMemo(
-    () => currentCode.split("\n").map((_, index) => index + 1),
-    [currentCode]
-  );
   const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
   const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
@@ -2303,36 +2497,149 @@ export default function ContestPageClient() {
               >
                 [ EDITOR ]
               </span>
-              {editorFiles.map((file) => (
-                <button
-                  key={file.id}
-                  type="button"
-                  onClick={() => setActiveFileId(file.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    padding: "0 16px",
-                    border: "1px solid",
-                    borderColor: activeFileId === file.id ? "#1F1F1F" : "transparent",
-                    borderBottom: "none",
-                    background: activeFileId === file.id ? "#1F1F1F" : "transparent",
-                    color: activeFileId === file.id ? "#ffffff" : "#475569",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    fontFamily: "'JetBrains Mono', monospace",
-                    cursor: "pointer",
-                    height: "100%",
-                    borderRadius: "2px 2px 0 0",
-                    maxWidth: "180px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={file.name}
-                >
-                  {file.name}
-                </button>
-              ))}
+              {editorFiles.map((file) => {
+                const isActive = activeFileId === file.id;
+                const isScratch = !file.id.endsWith(":main");
+                const pendingClose = pendingCloseFileId === file.id;
+                return (
+                  <div
+                    key={file.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      border: "1px solid",
+                      borderColor: isActive ? "#1F1F1F" : "transparent",
+                      borderBottom: "none",
+                      background: isActive ? "#1F1F1F" : "transparent",
+                      borderRadius: "2px 2px 0 0",
+                      height: "100%",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingCloseFileId(null);
+                        setQuestionActiveFile((prev) => ({ ...prev, [currentQId]: file.id }));
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: isScratch ? "0 6px 0 12px" : "0 16px",
+                        background: "transparent",
+                        border: "none",
+                        color: isActive ? "#ffffff" : "#475569",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        cursor: "pointer",
+                        height: "100%",
+                        maxWidth: "160px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={file.name}
+                    >
+                      {file.name}
+                    </button>
+                    {isScratch && !pendingClose && (
+                      <button
+                        type="button"
+                        aria-label={`Close ${file.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingCloseFileId(file.id);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: "16px",
+                          height: "16px",
+                          marginRight: "6px",
+                          border: "none",
+                          background: "transparent",
+                          color: "#475569",
+                          fontSize: "12px",
+                          lineHeight: 1,
+                          cursor: "pointer",
+                          borderRadius: "2px",
+                          flexShrink: 0,
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.color = "#475569";
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                    {isScratch && pendingClose && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "2px",
+                          marginRight: "6px",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "9px",
+                            fontFamily: "'JetBrains Mono', monospace",
+                            color: "#f59e0b",
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          close?
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Confirm close"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingCloseFileId(null);
+                            removeEditorFile(file.id);
+                          }}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "#22c55e",
+                            fontSize: "12px",
+                            cursor: "pointer",
+                            padding: "0 2px",
+                            lineHeight: 1,
+                          }}
+                        >
+                          ✓
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Cancel close"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingCloseFileId(null);
+                          }}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "#ef4444",
+                            fontSize: "12px",
+                            cursor: "pointer",
+                            padding: "0 2px",
+                            lineHeight: 1,
+                          }}
+                        >
+                          ✗
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <button
                 type="button"
                 onClick={addEditorFile}
@@ -2383,45 +2690,83 @@ export default function ContestPageClient() {
                 ENV:
               </span>
               <select
-                value={selectedLang}
-                onChange={(e) => handleLangChange(e.target.value)}
+                aria-label="Programming language"
+                value={selectedLanguage}
+                onChange={(e) => handleLanguageChange(e.target.value)}
                 style={{
+                  height: "22px",
+                  border: "1px solid #1F1F1F",
                   background: "#0F0F0F",
-                  color: "#a855f7",
-                  border: "1px solid rgba(168,85,247,0.3)",
+                  color: "#94a3b8",
                   fontSize: "10px",
                   fontFamily: "'JetBrains Mono', monospace",
-                  padding: "2px 6px",
-                  cursor: "pointer",
+                  letterSpacing: "0.03em",
+                  padding: "0 8px",
                   outline: "none",
+                  cursor: "pointer",
                 }}
               >
-                {allowedLanguages.map((lang) => (
-                  <option
-                    key={lang}
-                    value={lang}
-                    style={{ background: "#0F0F0F", color: "#a8b2d1" }}
-                  >
-                    {LANGUAGE_META[lang as keyof typeof LANGUAGE_META]?.name || lang}
+                {(contest?.allowed_languages?.length ? contest.allowed_languages : ["C++17"]).map(
+                  (lang) => (
+                    <option key={lang} value={lang}>
+                      {lang}
+                    </option>
+                  )
+                )}
+              </select>
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: "#475569",
+                  letterSpacing: "0.06em",
+                  marginLeft: "10px",
+                }}
+              >
+                THEME:
+              </span>
+              <select
+                aria-label="Editor theme"
+                value={editorTheme}
+                onChange={(event) => handleEditorThemeChange(event.target.value)}
+                style={{
+                  height: "22px",
+                  maxWidth: "152px",
+                  border: "1px solid #1F1F1F",
+                  background: "#0F0F0F",
+                  color: "#94a3b8",
+                  fontSize: "10px",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.03em",
+                  padding: "0 8px",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {CONTEST_EDITOR_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {theme.label}
                   </option>
                 ))}
               </select>
               <div style={{ flex: 1 }} />
               <button
                 type="button"
-                onClick={triggerRun}
+                onClick={() => void triggerRun()}
+                disabled={isRunning || !sessionId}
                 style={{
                   padding: "2px 10px",
-                  border: "1px solid #1F1F1F",
+                  border: `1px solid ${isRunning ? "#334155" : "#1F1F1F"}`,
                   background: "#0F0F0F",
-                  color: "#94a3b8",
+                  color: isRunning ? "#475569" : "#94a3b8",
                   fontSize: "10px",
                   fontFamily: "'JetBrains Mono', monospace",
                   letterSpacing: "0.08em",
-                  cursor: "pointer",
+                  cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
+                  opacity: isRunning || !sessionId ? 0.6 : 1,
                 }}
               >
-                [ COMPILE &amp; RUN ]
+                {isRunning ? "[ RUNNING... ]" : "[ COMPILE &amp; RUN ]"}
               </button>
               <button
                 type="button"
@@ -2487,11 +2832,9 @@ export default function ContestPageClient() {
               activeQ={activeQ}
               activeTab={activeFile?.name ?? "main.cpp"}
               currentCode={currentCode}
-              lineNumbers={lineNumbers}
-              lineNumberGutterRef={lineNumberGutterRef}
               onCodeChange={handleCodeChange}
-              onEditorScroll={syncEditorScroll}
-              onEditorTabKey={handleTabKey}
+              editorTheme={editorTheme}
+              selectedLanguage={selectedLanguage}
             />
           </div>
 
@@ -2602,13 +2945,29 @@ export default function ContestPageClient() {
                   >
                     [ STDOUT ]
                   </div>
-                  <div
-                    style={{ color: isEditorEmpty ? "#334155" : "#94a3b8", whiteSpace: "pre-wrap" }}
-                  >
-                    {isEditorEmpty
-                      ? "Write code to prepare a submission."
-                      : `No local stdout yet. Compile/run is pending a sandboxed judge runner for ${LANGUAGE_META[selectedLang as keyof typeof LANGUAGE_META]?.name || selectedLang}.`}
-                  </div>
+                  {isRunning ? (
+                    <div style={{ color: "#475569" }}>Running…</div>
+                  ) : runResult?.status === "CE" ? (
+                    <div style={{ color: "#475569" }}>Compilation failed — see compile logs.</div>
+                  ) : runResult?.stdout ? (
+                    <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>
+                      {runResult.stdout}
+                    </div>
+                  ) : runResult?.stderr ? (
+                    <div style={{ color: "#f97316", whiteSpace: "pre-wrap" }}>
+                      {runResult.stderr}
+                    </div>
+                  ) : runResult ? (
+                    <div style={{ color: "#475569" }}>No output.</div>
+                  ) : runError ? (
+                    <div style={{ color: "#ef4444" }}>{runError}</div>
+                  ) : (
+                    <div style={{ color: isEditorEmpty ? "#334155" : "#475569" }}>
+                      {isEditorEmpty
+                        ? "Write code to prepare a run."
+                        : "Press [ COMPILE & RUN ] to execute."}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2616,15 +2975,50 @@ export default function ContestPageClient() {
                 <div style={{ padding: "12px 16px" }}>
                   <div
                     style={{
-                      color: "#64748b",
-                      fontSize: "10px",
-                      letterSpacing: "0.08em",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
                       marginBottom: "8px",
                     }}
                   >
-                    [ COMPILE LOGS ]
+                    <span style={{ color: "#64748b", fontSize: "10px", letterSpacing: "0.08em" }}>
+                      [ COMPILE LOGS ]
+                    </span>
+                    {runResult && !isRunning && (
+                      <span
+                        style={{
+                          fontSize: "9px",
+                          fontWeight: 700,
+                          letterSpacing: "0.1em",
+                          color: VERDICT_COLORS[runResult.status] ?? "#64748b",
+                        }}
+                      >
+                        {runResult.status}
+                        {runResult.runtime_ms != null && ` · ${runResult.runtime_ms}ms`}
+                        {runResult.memory_kb != null &&
+                          ` · ${Math.round(runResult.memory_kb / 1024)}MB`}
+                      </span>
+                    )}
+                    {isRunning && (
+                      <span style={{ fontSize: "9px", color: "#a855f7", letterSpacing: "0.1em" }}>
+                        RUNNING…
+                      </span>
+                    )}
                   </div>
-                  <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>{compileNote}</div>
+                  {runResult?.compile_output ? (
+                    <div
+                      style={{
+                        color: runResult.status === "CE" ? "#fca5a5" : "#94a3b8",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {runResult.compile_output}
+                    </div>
+                  ) : runResult && !isRunning ? (
+                    <div style={{ color: "#475569" }}>No compiler output.</div>
+                  ) : !isRunning ? (
+                    <div style={{ color: "#334155" }}>Compiler output will appear here.</div>
+                  ) : null}
                 </div>
               )}
 
