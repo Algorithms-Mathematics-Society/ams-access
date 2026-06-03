@@ -678,3 +678,81 @@ input::placeholder {
 
 @keyframes ic-spin { to { transform: rotate(360deg); } }
 .ic-spin { animation: ic-spin 0.75s linear infinite; }
+
+/* ── Welcome page ─────────────────────────────────────────────── */
+.welcome-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #030816;
+}
+
+.welcome-bg {
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Bottom-weighted gradient so the CTA button stands out */
+.welcome-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(3, 8, 22, 0)    0%,
+    rgba(3, 8, 22, 0)    50%,
+    rgba(3, 8, 22, 0.55) 80%,
+    rgba(3, 8, 22, 0.80) 100%
+  );
+  pointer-events: none;
+}
+
+.welcome-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 64px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.welcome-content--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.welcome-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 52px;
+  border-radius: 14px;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  background: linear-gradient(135deg, #7e22ce 0%, #a855f7 45%, #c084fc 100%);
+  color: #fff;
+  font-family: var(--font-sans, Inter, sans-serif);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 0 28px rgba(168, 85, 247, 0.30), 0 2px 12px rgba(0, 0, 0, 0.45);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.18s ease;
+}
+
+.welcome-cta:hover {
+  transform: translateY(-2px) scale(1.025);
+  box-shadow: 0 0 44px rgba(168, 85, 247, 0.48), 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.welcome-cta:active {
+  transform: translateY(0) scale(0.98);
+  opacity: 0.88;
+}
