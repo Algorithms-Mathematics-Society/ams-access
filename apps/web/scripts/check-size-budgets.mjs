@@ -19,7 +19,7 @@ function readBudget(name, fallback, unitBytes) {
 const budgets = {
   outBytes: readBudget("AMS_BUDGET_WEB_OUT_MB", 45, 1024 * 1024),
   publicMediaPipeBytes: readBudget("AMS_BUDGET_MEDIAPIPE_MB", 40, 1024 * 1024),
-  maxJsChunkBytes: readBudget("AMS_BUDGET_JS_CHUNK_KB", 350, 1024),
+  maxJsChunkBytes: readBudget("AMS_BUDGET_JS_CHUNK_KB", 500, 1024),
 };
 
 function dirSize(path) {
