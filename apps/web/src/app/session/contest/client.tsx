@@ -36,9 +36,11 @@ const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
  * The worker matches by substring so "cpp17" satisfies both the `c++` and `cpp` checks.
  */
 const LANGUAGE_ID_MAP: Record<string, string> = {
+  C: "c",
   "C++17": "cpp17",
   "C++20": "cpp20",
   Python3: "python3",
+  PyPy3: "pypy3",
   Java17: "java17",
   Go: "go",
   Rust: "rust",
@@ -46,7 +48,7 @@ const LANGUAGE_ID_MAP: Record<string, string> = {
 
 // Languages the judge worker actually handles. Go and Rust are not yet
 // implemented in runner.go — filter them from the UI until they are.
-const WORKER_SUPPORTED_LANGUAGES = new Set(["C++17", "C++20", "Python3", "Java17", "PyPy3"]);
+const WORKER_SUPPORTED_LANGUAGES = new Set(["C", "C++17", "C++20", "Python3", "PyPy3", "Java17"]);
 
 function toLanguageId(displayLabel: string): string {
   return LANGUAGE_ID_MAP[displayLabel] ?? displayLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -616,6 +618,16 @@ const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }
 });
 
 const LANGUAGE_META = {
+  c: {
+    ext: "c",
+    name: "C",
+    starter: `#include <stdio.h>
+
+int main() {
+    // Write your C solution here
+    return 0;
+}`,
+  },
   cpp17: {
     ext: "cpp",
     name: "C++17",
