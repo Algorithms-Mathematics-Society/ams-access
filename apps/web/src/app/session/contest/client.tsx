@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState, useEffect, useRef, useCallback, useMemo } from "react";
-import MarkovEditor, { type MarkovChain } from "@/components/MarkovEditor";
+import MarkovEditor, { type MarkovChain, normalizeChain } from "@/components/MarkovEditor";
 import dynamic from "next/dynamic";
 import { marked, type MarkedExtension } from "marked";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -969,7 +969,10 @@ function MarkovPane({
       const res = await fetch(`${apiUrl}/sessions/${sessionId}/markov-answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question_id: question.id, submitted_json: JSON.stringify(chain) }),
+        body: JSON.stringify({
+          question_id: question.id,
+          submitted_json: JSON.stringify(normalizeChain(chain)),
+        }),
       });
       if (!res.ok) throw new Error("Server error");
       const data = (await res.json()) as { correct: boolean; feedback: string; points: number };
