@@ -145,7 +145,9 @@ fn collect_fast_device_state() -> DeviceState {
     let restricted_processes = Some(platform_rs::linux::scan_processes());
     #[cfg(target_os = "windows")]
     let restricted_processes = Some(platform_rs::windows::scan_processes());
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    let restricted_processes = Some(platform_rs::macos::scan_processes());
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     let restricted_processes = Some(ProcessScanResult {
         found: vec![],
         clean: true,
@@ -155,7 +157,9 @@ fn collect_fast_device_state() -> DeviceState {
     let virtualization = Some(platform_rs::linux::detect_virtualization());
     #[cfg(target_os = "windows")]
     let virtualization = Some(platform_rs::windows::detect_virtualization());
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    let virtualization = Some(platform_rs::macos::detect_virtualization());
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     let virtualization = Some(VirtDetectionResult {
         detected: false,
         platform: None,
@@ -253,7 +257,9 @@ fn scan_processes() -> ProcessScanResult {
     return platform_rs::linux::scan_processes();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::scan_processes();
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::scan_processes();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     ProcessScanResult {
         found: vec![],
         clean: true,
@@ -267,7 +273,9 @@ fn detect_virtualization() -> VirtDetectionResult {
     return platform_rs::linux::detect_virtualization();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::detect_virtualization();
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::detect_virtualization();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     VirtDetectionResult {
         detected: false,
         platform: None,
@@ -282,7 +290,9 @@ fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     return platform_rs::linux::enable_keyboard_intercept();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::enable_keyboard_intercept();
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::enable_keyboard_intercept();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     KeyboardInterceptResult {
         active: false,
         method: "none".to_string(),
@@ -297,6 +307,28 @@ fn disable_keyboard_intercept() {
     platform_rs::linux::disable_keyboard_intercept();
     #[cfg(target_os = "windows")]
     platform_rs::windows::disable_keyboard_intercept();
+    #[cfg(target_os = "macos")]
+    platform_rs::macos::disable_keyboard_intercept();
+}
+
+/// Check whether Accessibility permission is granted (macOS only).
+///
+/// CGEventTap requires this permission. Returns true on non-macOS platforms.
+#[tauri::command]
+fn check_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::check_accessibility_permission();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+/// Check whether an active screen-sharing / remote desktop session is present (macOS only).
+#[tauri::command]
+fn check_screen_sharing() -> bool {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::detect_remote_desktop();
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// Measure network reachability and latency using a multi-probe strategy
@@ -494,7 +526,9 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
     return platform_rs::linux::lock_desktop();
     #[cfg(target_os = "windows")]
     return platform_rs::windows::lock_desktop();
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::lock_desktop();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     false
 }
 
@@ -510,6 +544,8 @@ async fn unlock_desktop(app: tauri::AppHandle) {
     platform_rs::linux::unlock_desktop();
     #[cfg(target_os = "windows")]
     platform_rs::windows::unlock_desktop();
+    #[cfg(target_os = "macos")]
+    platform_rs::macos::unlock_desktop();
 }
 
 /// Return all recorded violations for this session.
@@ -632,8 +668,10 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
     return platform_rs::linux::enable_network_lockdown(&ips).map(|_| true);
     #[cfg(target_os = "windows")]
     return platform_rs::windows::enable_network_lockdown(&ips).map(|_| true);
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::enable_network_lockdown(&ips).map(|_| true);
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     Err("Network lockdown not supported on this platform".to_string())
 }
 
@@ -644,8 +682,10 @@ async fn disable_network_lockdown() -> Result<bool, String> {
     return platform_rs::linux::disable_network_lockdown().map(|_| true);
     #[cfg(target_os = "windows")]
     return platform_rs::windows::disable_network_lockdown().map(|_| true);
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::disable_network_lockdown().map(|_| true);
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     Err("Network lockdown not supported on this platform".to_string())
 }
 
@@ -1162,6 +1202,8 @@ pub fn run() {
             verify_face_model_assets,
             enable_network_lockdown,
             disable_network_lockdown,
+            check_accessibility_permission,
+            check_screen_sharing,
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
@@ -1186,6 +1228,8 @@ pub fn run() {
                 platform_rs::linux::disable_keyboard_intercept();
                 #[cfg(target_os = "windows")]
                 platform_rs::windows::disable_keyboard_intercept();
+                #[cfg(target_os = "macos")]
+                platform_rs::macos::disable_keyboard_intercept();
             }
         })
         .run(tauri::generate_context!())
