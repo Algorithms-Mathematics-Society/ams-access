@@ -50,11 +50,13 @@ Given the organizer/GCP context, server window policy means the existing synced 
 ### 1. Hardcoded dev login bypass is visible and functional
 
 Evidence:
+
 - `TEST_EMAIL` and `TEST_PASSWORD` are hardcoded in `apps/web/src/app/page.tsx:8-9`.
 - Matching credentials route directly to `/home` with `DEV_BYPASS` in `apps/web/src/app/page.tsx:142-145`.
 - The credentials are also rendered in the login UI at `apps/web/src/app/page.tsx:291-292`.
 
 Impact:
+
 - Anyone with the desktop/web app can enter the hub as `tester@ams.local`.
 - This can contaminate local active session state, unlocked contests, and support/debug flows.
 - It undermines any security wording in the rest of the app because the first gate is intentionally bypassable.
@@ -75,12 +77,14 @@ Recommendation: option 1 immediately, then option 2 if demos matter.
 ### 2. Onboarding warnings auto-advance through checks that look blocking
 
 Evidence:
+
 - Camera failure offers `BYPASS_CAMERA_VERIFICATION [WARN]` at `apps/web/src/app/session/onboarding/page.tsx:1176`.
 - VM detection warns but calls `onPass` after delay.
 - Microphone failure displays "No microphone found - continuing anyway" at `apps/web/src/app/session/onboarding/page.tsx:2184`.
 - Network validation marks unreachable/poor as `warn` and still advances via `Stage12_NetworkValidation` at `apps/web/src/app/session/onboarding/page.tsx:2191`.
 
 Impact:
+
 - A user can reach final launch with failed proctoring inputs, only to be blocked later by `startSecureSession`, or worse, enter with degraded enforcement depending on native policy.
 - The flow teaches users that warnings are decorative, not policy.
 
@@ -102,10 +106,12 @@ Recommendation: option 3. It aligns messaging, stage behavior, and final enforce
 ### 3. Settings permissions are inferred from readiness, not actual browser permission state
 
 Evidence:
+
 - Permissions tab shows Webcam/Microphone based on `readiness.camera === "ok"` and `readiness.mic === "ok"`.
 - Those values can come from `enumerateDevices`, native readiness, or previous settings tests, not `navigator.permissions` or an active permission grant.
 
 Impact:
+
 - UI can show `GRANTED` when the browser still prompts on real `getUserMedia`.
 - UI can show blocked when permissions are fine but no device is attached.
 
@@ -122,12 +128,14 @@ Recommendation: option 2. It avoids browser API inconsistencies and is clearer.
 ### 4. Diagnostics report includes hardcoded/assumed values
 
 Evidence:
+
 - Diagnostics labels Model Asset CDN as "Not checked" at `apps/web/src/app/home/page.tsx:4048`.
 - Exported report hardcodes `client_version: "0.1.0"` and `sandboxed_webview: true`.
 - Login and About also hardcode version-ish/product state.
 - Contest-facing cards also risk showing locally derived status/count/window data unless all fields are taken from the synced organizer contest record.
 
 Impact:
+
 - Support reports can be misleading or stale.
 - Browser/dev-server runs may report sandboxed webview even when Tauri is unavailable.
 - Contestants may see state that differs from the organizer page, such as schedule/status/question count/language constraints.
@@ -147,9 +155,11 @@ Recommendation: options 1 and 2 immediately; option 4 before requiring model ass
 ### 5. Home route is a very large client component
 
 Evidence:
+
 - `home/page.tsx` contains hub, cards, settings, diagnostics, logs, modals, and many inline SVG/style objects in one client file.
 
 Impact:
+
 - Larger route chunk and slower parse/compile on low-end machines.
 - State updates in parent can still touch broad subtrees despite memoization.
 - Harder to test and isolate pre-contest failures.
@@ -167,10 +177,12 @@ Recommendation: options 1 and 2. Do not change visual design; just split and laz
 ### 6. API cache has no eviction and can retain errors/data for the app lifetime
 
 Evidence:
+
 - `queryCache` is a module-level `Map` at `apps/web/src/lib/api-client.ts:24`.
 - `fetchJson` stores data/errors by `dedupeKey` at `apps/web/src/lib/api-client.ts:103-123`.
 
 Impact:
+
 - Long desktop sessions can accumulate cache entries.
 - Errors may remain visible unless a caller explicitly mutates or changes keys.
 - Stale unlocked contest fetches can persist longer than intended.
@@ -232,7 +244,6 @@ The implementation should prioritize:
 2. Shared readiness hook/store.
 3. Policy-driven onboarding stage blocking.
 4. Component splitting/lazy loading for Settings and Diagnostics.
-
 
 ## Safe Execution Priority
 
@@ -354,4 +365,3 @@ Pause implementation and ask for backend/product confirmation if any of these ar
 - Playwright flow for session code validation and blocked/allowed readiness modal.
 - Onboarding tests for camera denied, mic denied, VM detected, restricted app found, network unavailable.
 - Native IPC mocked tests for `get_full_telemetry` timeout and stale-cache refresh.
-

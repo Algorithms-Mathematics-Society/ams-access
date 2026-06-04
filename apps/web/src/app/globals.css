@@ -138,7 +138,7 @@ input::placeholder {
   --theme-card-bg:           #1F1F1F;
   --theme-inner-bg:          #0F0F0F;
   --theme-border:            rgba(255,255,255,0.05);
-  --theme-border-strong:     rgba(168,85,247,0.2);
+  --theme-border-strong:     rgba(255,255,255,0.12);
   --theme-text:              #ffffff;
   --theme-text-muted:        rgba(255,255,255,0.45);
   --theme-text-muted-strong: rgba(255,255,255,0.7);
@@ -146,7 +146,7 @@ input::placeholder {
   --theme-accent-light:      rgba(168,85,247,0.12);
   --theme-accent-border:     rgba(168,85,247,0.3);
   --theme-accent-text:       #c084fc;
-  --theme-console-text:      rgba(168,85,247,0.85);
+  --theme-console-text:      rgba(255,255,255,0.72);
   --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
   --theme-shadow-hover:      0 12px 36px rgba(168,85,247,0.08);
   --theme-dot:               #22c55e;
@@ -163,7 +163,7 @@ input::placeholder {
   --theme-card-bg:           #1F1F1F;
   --theme-inner-bg:          #0F0F0F;
   --theme-border:            rgba(255,255,255,0.05);
-  --theme-border-strong:     rgba(168,85,247,0.2);
+  --theme-border-strong:     rgba(255,255,255,0.12);
   --theme-text:              #ffffff;
   --theme-text-muted:        rgba(255,255,255,0.45);
   --theme-text-muted-strong: rgba(255,255,255,0.7);
@@ -171,7 +171,7 @@ input::placeholder {
   --theme-accent-light:      rgba(168,85,247,0.12);
   --theme-accent-border:     rgba(168,85,247,0.3);
   --theme-accent-text:       #c084fc;
-  --theme-console-text:      rgba(168,85,247,0.85);
+  --theme-console-text:      rgba(255,255,255,0.72);
   --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
   --theme-shadow-hover:      0 12px 36px rgba(168,85,247,0.08);
   --theme-dot:               #22c55e;
@@ -180,8 +180,7 @@ input::placeholder {
 /* ─────────────────────────────────────────────────────────────
    TYPOGRAPHY SCALE  (shared, used by other pages)
    ───────────────────────────────────────────────────────────── */
-.theme-transition,
-.theme-transition * {
+.theme-transition {
   transition:
     background-color 280ms var(--ease-cinematic),
     border-color     280ms var(--ease-cinematic),
@@ -193,7 +192,7 @@ input::placeholder {
 .text-subsection-title{ font-size: 16px !important; font-weight: 500 !important; letter-spacing:  0.02em !important; line-height: 24px !important; }
 .text-body-copy        { font-size: 13px !important; font-weight: 400 !important; letter-spacing:  0px   !important; line-height: 20px !important; }
 .text-mono-console     { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 12px !important; font-weight: 400 !important; letter-spacing: 0.04em !important; line-height: 18px !important; }
-.text-micro-label      { font-size: 9px !important; font-weight: 600 !important; letter-spacing: 0.15em !important; line-height: 12px !important; text-transform: uppercase !important; }
+.text-micro-label      { font-size: 10px !important; font-weight: 600 !important; letter-spacing: 0.12em !important; line-height: 14px !important; text-transform: uppercase !important; }
 
 /* ─────────────────────────────────────────────────────────────
    LOGIN PAGE — layout & component classes
@@ -212,35 +211,6 @@ input::placeholder {
   transition: background-color 260ms var(--ease-cinematic);
 }
 
-/* Status bar */
-.login-status-bar {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: #1F1F1F;
-  border: 1px solid rgba(255,255,255,0.05);
-  border-radius: 6px;
-}
-.login-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 10px #22c55e, 0 0 4px #22c55e;
-  flex-shrink: 0;
-}
-.login-status-label {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(255,255,255,0.8);
-  letter-spacing: 0.08em;
-}
 
 /* Main card */
 .login-card {
@@ -685,74 +655,341 @@ input::placeholder {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #030816;
+  background: #030610;
 }
 
-.welcome-bg {
-  object-fit: cover;
-  object-position: center;
+/* ── Background atmosphere ── */
+
+/* Wide ambient bloom — fills the room with violet air */
+.welcome-glow-primary {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 110% 80% at 50% 44%,
+    rgba(80, 20, 170, 0.28)  0%,
+    rgba(50, 10, 120, 0.14) 40%,
+    transparent              70%
+  );
+  animation: welcome-breathe 8s ease-in-out infinite;
   pointer-events: none;
-  user-select: none;
+  will-change: opacity, transform;
 }
 
-/* Bottom-weighted gradient so the CTA button stands out */
+/* Tight focused hot-spot under the logo */
+.welcome-glow-secondary {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 55% 45% at 50% 42%,
+    rgba(168, 85, 247, 0.14) 0%,
+    rgba(120, 40, 210, 0.06) 50%,
+    transparent              75%
+  );
+  animation: welcome-breathe 8s ease-in-out infinite 4s;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+/* Faint cool rim light from the very top */
+.welcome-glow-rim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 35%;
+  background: radial-gradient(
+    ellipse 60% 100% at 50% 0%,
+    rgba(90, 30, 180, 0.12) 0%,
+    transparent              100%
+  );
+  pointer-events: none;
+}
+
+/* Bottom gradient — lifts footer text off the dark canvas */
 .welcome-overlay {
   position: absolute;
   inset: 0;
   background: linear-gradient(
     to bottom,
-    rgba(3, 8, 22, 0)    0%,
-    rgba(3, 8, 22, 0)    50%,
-    rgba(3, 8, 22, 0.55) 80%,
-    rgba(3, 8, 22, 0.80) 100%
+    transparent           0%,
+    transparent           44%,
+    rgba(3,  6, 16, 0.52) 68%,
+    rgba(3,  6, 16, 0.92) 100%
   );
   pointer-events: none;
 }
 
-.welcome-content {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 64px;
-  opacity: 0;
-  transform: translateY(12px);
-  transition: opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+@keyframes welcome-breathe {
+  0%, 100% { opacity: 0.80; transform: scale(1);    }
+  50%       { opacity: 1;    transform: scale(1.05); }
 }
 
-.welcome-content--visible {
+/* ── Corner badges ── */
+
+.welcome-corner {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transition:
+    opacity  0.65s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.welcome-corner-tl {
+  top: 28px;
+  left: 32px;
+  transform: translateX(-12px);
+}
+
+.welcome-corner-tr {
+  top: 28px;
+  right: 32px;
+  transform: translateX(12px);
+}
+
+.welcome-corner--in {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.welcome-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #22c55e;
+  box-shadow: 0 0 7px rgba(34, 197, 94, 0.9), 0 0 2px #22c55e;
+  animation: welcome-dot-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes welcome-dot-pulse {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 7px rgba(34,197,94,0.9), 0 0 2px #22c55e; }
+  50%       { opacity: 0.4; box-shadow: 0 0 3px rgba(34,197,94,0.4); }
+}
+
+.welcome-mono-tag {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.30);
+  text-transform: uppercase;
+}
+
+.welcome-mono-tag--accent {
+  color: rgba(168, 85, 247, 0.42);
+  letter-spacing: 0.26em;
+}
+
+/* ── Logo ── */
+
+.welcome-logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -54%) translateY(14px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  transition:
+    opacity   0.80s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.80s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.welcome-logo--in {
+  opacity: 1;
+  transform: translate(-50%, -54%) translateY(0);
+}
+
+/* Soft violet bloom behind the SVG mark */
+.welcome-logo-glow {
+  position: absolute;
+  width: 280px;
+  height: 220px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -52%);
+  background: radial-gradient(
+    ellipse at 50% 55%,
+    rgba(168, 85, 247, 0.16) 0%,
+    rgba(100, 30, 200, 0.08) 45%,
+    transparent              70%
+  );
+  pointer-events: none;
+  animation: welcome-breathe 8s ease-in-out infinite 2s;
+  will-change: opacity, transform;
+}
+
+.welcome-logo-svg {
+  width: 116px;
+  height: 98px;
+  margin-bottom: 22px;
+  filter:
+    drop-shadow(0 0 12px rgba(192, 132, 252, 0.45))
+    drop-shadow(0 0 28px rgba(120, 40, 220, 0.30));
+}
+
+.welcome-wordmark {
+  font-family: var(--font-sans, 'Inter', sans-serif);
+  font-size: 26px;
+  font-weight: 200;
+  letter-spacing: 0.60em;
+  /* compensate so the word is truly centred despite trailing tracking */
+  padding-left: 0.60em;
+  color: rgba(255, 255, 255, 0.78);
+  text-transform: uppercase;
+  margin: 0 0 10px;
+  line-height: 1;
+  text-shadow: 0 0 40px rgba(192, 132, 252, 0.18);
+}
+
+.welcome-byline {
+  font-family: var(--font-sans, 'Inter', sans-serif);
+  font-size: 8px;
+  font-weight: 300;
+  letter-spacing: 0.50em;
+  padding-left: 0.50em;
+  color: rgba(255, 255, 255, 0.22);
+  text-transform: uppercase;
+  margin: 0;
+  line-height: 1;
+}
+
+/* ── Tagline ── */
+
+.welcome-tagline {
+  position: absolute;
+  bottom: 202px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font-sans, 'Inter', sans-serif);
+  font-size: 9.5px;
+  font-weight: 300;
+  letter-spacing: 0.34em;
+  padding-left: 0.34em;
+  color: rgba(255, 255, 255, 0.20);
+  text-transform: uppercase;
+  margin: 0;
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity   0.75s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.75s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.welcome-tagline--in {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ── Footer / CTA ── */
+
+.welcome-footer {
+  position: absolute;
+  bottom: 44px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity   0.75s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.75s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.welcome-footer--in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.welcome-footer-rule {
+  width: 32px;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(168, 85, 247, 0.28),
+    transparent
+  );
+}
+
+.welcome-session-hint {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  color: rgba(255, 255, 255, 0.16);
+  text-transform: uppercase;
+  margin: 0;
 }
 
 .welcome-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 14px 52px;
-  border-radius: 14px;
-  border: 1px solid rgba(168, 85, 247, 0.45);
-  background: linear-gradient(135deg, #7e22ce 0%, #a855f7 45%, #c084fc 100%);
-  color: #fff;
+  padding: 14px 64px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 85, 247, 0.32);
+  background: linear-gradient(140deg, #5e18b0 0%, #9333ea 52%, #c084fc 100%);
+  color: rgba(255, 255, 255, 0.92);
   font-family: var(--font-sans, Inter, sans-serif);
-  font-size: 15px;
+  font-size: 10.5px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.32em;
+  padding-left: calc(64px + 0.32em);
+  text-transform: uppercase;
   cursor: pointer;
-  box-shadow: 0 0 28px rgba(168, 85, 247, 0.30), 0 2px 12px rgba(0, 0, 0, 0.45);
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-              opacity 0.18s ease;
+  box-shadow:
+    0 0 0    1px rgba(168, 85, 247, 0.08),
+    0 0 28px    rgba(168, 85, 247, 0.22),
+    0 4px 18px  rgba(0, 0, 0, 0.60),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  transition:
+    transform    0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow   0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.32s ease;
 }
 
 .welcome-cta:hover {
-  transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 0 44px rgba(168, 85, 247, 0.48), 0 4px 20px rgba(0, 0, 0, 0.5);
+  transform: translateY(-3px) scale(1.018);
+  border-color: rgba(192, 132, 252, 0.52);
+  box-shadow:
+    0 0 0    1px rgba(168, 85, 247, 0.14),
+    0 0 48px    rgba(168, 85, 247, 0.38),
+    0 10px 30px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.13);
 }
 
 .welcome-cta:active {
-  transform: translateY(0) scale(0.98);
-  opacity: 0.88;
+  transform: translateY(0) scale(0.972);
+  box-shadow:
+    0 0 18px rgba(168, 85, 247, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.welcome-legal {
+  font-size: 8px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.13);
+  letter-spacing: 0.05em;
+  text-align: center;
+  margin: 0;
+  line-height: 1.7;
+}
+
+.welcome-legal span {
+  color: rgba(168, 85, 247, 0.32);
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+
+.welcome-legal span:hover {
+  color: rgba(192, 132, 252, 0.58);
 }

@@ -1,382 +1,541 @@
 "use client";
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { resolveApiBase } from "@/lib/api-base";
 
-// ─── Constants ────────────────────────────────────────────────
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
 
-// ─── Log entry shape ──────────────────────────────────────────
-type LogLevel = "ERR" | "INF" | "OK";
-interface LogEntry {
-  ts: string;
-  level: LogLevel;
-  msg: string;
-}
-
-function nowTs() {
-  return new Date().toISOString().slice(11, 23);
-}
-
-// ─── SYSTEM_LOGS pane ─────────────────────────────────────────
-function SyslogPane({ entries }: { entries: LogEntry[] }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [entries]);
-
-  if (entries.length === 0) return null;
-
-  return (
-    <div className="syslog-pane" aria-live="polite" aria-label="System log">
-      <div className="syslog-header">▶ SYSTEM_LOGS</div>
-      {entries.slice(-4).map((e, i) => (
-        <div key={i} className="syslog-entry">
-          <span className="syslog-ts">{e.ts}</span>
-          <span
-            className={
-              e.level === "ERR"
-                ? "syslog-level-err"
-                : e.level === "OK"
-                  ? "syslog-level-ok"
-                  : "syslog-level-info"
-            }
-          >
-            [{e.level}]
-          </span>
-          <span className="syslog-msg">{e.msg}</span>
-        </div>
-      ))}
-      <div ref={bottomRef} />
-    </div>
-  );
-}
-
-// ─── Main page ────────────────────────────────────────────────
 export default function LoginPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailFocused, setEmailFocused] = useState(false);
-  const [passwordFocused, setPasswordFocused] = useState(false);
+  const [passFocused, setPassFocused] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
   const [showSSOModal, setShowSSOModal] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-
-  const addLog = useCallback((level: LogLevel, msg: string) => {
-    setLogs((prev) => [...prev, { ts: nowTs(), level, msg }]);
-  }, []);
 
   useEffect(() => {
     localStorage.setItem("ams_theme", "dark");
-    addLog("INF", "SESSION_INIT  secure_shell=true  theme=OBSIDIAN_DARK");
-  }, [addLog]);
-
-  // Cancel autofill on any real keypress
-  useEffect(() => {
-    if (!isTyping) return;
-    const abort = () => {
-      setIsTyping(false);
-      setEmail(TEST_EMAIL);
-      setPassword(TEST_PASSWORD);
-    };
-    window.addEventListener("keydown", abort);
-    return () => window.removeEventListener("keydown", abort);
-  }, [isTyping]);
-
-  // Typewriter — rAF chain at 55 ms/char (≈18 chars/s).
-  // Zero setInterval; React re-renders once per character but at a
-  // human-readable pace, not 125 times per second.
-  const handleAutoFill = useCallback(() => {
-    if (isTyping || loading) return;
-    setIsTyping(true);
-    addLog("INF", "AUTOFILL_INIT  injecting secure access token...");
-
-    const CHAR_MS = 55;
-    let lastTime = 0;
-    let emailIdx = 0;
-    let passIdx = 0;
-    let phase: "email" | "pass" = "email";
-
-    const tick = (now: number) => {
-      if (now - lastTime < CHAR_MS) {
-        requestAnimationFrame(tick);
-        return;
-      }
-      lastTime = now;
-
-      if (phase === "email") {
-        emailIdx++;
-        setEmail(TEST_EMAIL.slice(0, emailIdx));
-        if (emailIdx < TEST_EMAIL.length) {
-          requestAnimationFrame(tick);
-        } else {
-          phase = "pass";
-          requestAnimationFrame(tick);
-        }
-      } else {
-        passIdx++;
-        setPassword(TEST_PASSWORD.slice(0, passIdx));
-        if (passIdx < TEST_PASSWORD.length) {
-          requestAnimationFrame(tick);
-        } else {
-          setIsTyping(false);
-          addLog("OK", "AUTOFILL_DONE  credentials_injected");
-        }
-      }
-    };
-
-    requestAnimationFrame(tick);
-  }, [isTyping, loading, addLog]);
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (isTyping || loading) return;
-
+    if (loading) return;
     setLoading(true);
-    // 1. Dev Bypass Option
+
     if (email === TEST_EMAIL && password === TEST_PASSWORD) {
-      addLog("OK", "AUTH_SUCCESS  (DEV_BYPASS) routing_to=/home");
       localStorage.setItem("ams_user_email", email);
       setTimeout(() => router.push("/home"), 850);
       return;
     }
 
-    // 2. Real Candidate Authentication against Firebase via Go API
-    addLog("INF", `AUTH_ATTEMPT  email=${email || "<empty>"}`);
     try {
       const apiUrl = resolveApiBase();
       const res = await fetch(`${apiUrl}/students/login`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
       if (!res.ok) {
-        let errData: any = {};
-        try {
-          errData = await res.json();
-        } catch {}
-        addLog("ERR", `INVALID_CREDENTIALS  reason=${errData.error || "Authentication failed."}`);
         setLoading(false);
         return;
       }
 
-      addLog("OK", "AUTH_SUCCESS  routing_to=/home");
       localStorage.setItem("ams_user_email", email);
       setTimeout(() => router.push("/home"), 850);
-    } catch (err) {
-      addLog("ERR", `API_UNREACHABLE  error=${err instanceof Error ? err.message : String(err)}`);
+    } catch {
       setLoading(false);
     }
   }
 
   return (
     <>
-      <main className="login-root">
-        {/* ── Status bar ─────────────────────────────────── */}
-        <div className="login-status-bar">
-          <span className="login-status-dot" />
-          <span className="login-status-label">OBSIDIAN_DARK // SECURE_SHELL</span>
+      <style>{`
+        *, *::before, *::after {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+        }
+
+        .bl-root {
+          display: grid;
+          grid-template-columns: 44% 1fr;
+          min-height: 100vh;
+          height: 100vh;
+          font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+          background: #0F0F0F;
+          color: #ffffff;
+          overflow: hidden;
+        }
+
+        /* ── LEFT PANE ───────────────────────────────────────── */
+        .bl-left {
+          background: #141414;
+          border-right: 1px solid rgba(255,255,255,0.05);
+          display: flex;
+          flex-direction: column;
+          padding: 44px 52px;
+          overflow: hidden;
+        }
+
+        .bl-logo {
+          display: flex;
+          align-items: flex-start;
+          gap: 16px;
+          flex-shrink: 0;
+        }
+
+        .bl-logo-label {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+
+        .bl-logo-name {
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.28em;
+          text-transform: uppercase;
+          color: rgba(255,255,255,0.88);
+        }
+
+        .bl-logo-sub {
+          font-size: 9px;
+          letter-spacing: 0.2em;
+          color: #444444;
+          text-transform: uppercase;
+        }
+
+        .bl-spacer { flex: 1; }
+
+        /* ── RIGHT PANE ──────────────────────────────────────── */
+        .bl-right {
+          background: #0F0F0F;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 40px 56px;
+        }
+
+        .bl-form-wrap {
+          width: 100%;
+          max-width: 360px;
+        }
+
+        .bl-form-eyebrow {
+          font-size: 8.5px;
+          font-weight: 700;
+          letter-spacing: 0.25em;
+          color: #a855f7;
+          text-transform: uppercase;
+          margin-bottom: 10px;
+        }
+
+        .bl-form-title {
+          font-size: 14px;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+          color: rgba(255,255,255,0.9);
+          text-transform: uppercase;
+          margin-bottom: 6px;
+        }
+
+        .bl-form-sub {
+          font-size: 9px;
+          letter-spacing: 0.12em;
+          color: #444444;
+          margin-bottom: 28px;
+        }
+
+        .bl-rule {
+          height: 1px;
+          background: rgba(255,255,255,0.05);
+          margin-bottom: 28px;
+        }
+
+        /* Fields */
+        .bl-field {
+          margin-bottom: 18px;
+        }
+
+        .bl-label {
+          display: block;
+          font-size: 8.5px;
+          font-weight: 700;
+          letter-spacing: 0.22em;
+          color: #555555;
+          text-transform: uppercase;
+          margin-bottom: 7px;
+          transition: color 0.12s;
+        }
+
+        .bl-label.focused { color: #a855f7; }
+
+        .bl-input {
+          display: block;
+          width: 100%;
+          background: #0A0A0A;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 0;
+          color: #ffffff;
+          font-family: 'JetBrains Mono', 'Fira Code', monospace;
+          font-size: 12px;
+          padding: 11px 13px;
+          outline: none;
+          -webkit-appearance: none;
+          appearance: none;
+          transition: border-color 0.12s, background 0.12s;
+        }
+
+        .bl-input::placeholder {
+          color: #2a2a2a;
+          font-family: inherit;
+        }
+
+        .bl-input:focus {
+          border-color: rgba(168,85,247,0.45);
+          background: #0D0D0D;
+        }
+
+        .bl-input:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+
+        /* Submit */
+        .bl-submit-wrap { margin-top: 24px; }
+
+        .bl-submit {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          width: 100%;
+          background: #1F1F1F;
+          color: #a855f7;
+          border: 1px solid #a855f7;
+          border-radius: 0;
+          font-family: 'JetBrains Mono', 'Fira Code', monospace;
+          font-size: 10.5px;
+          font-weight: 700;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          padding: 14px 24px;
+          cursor: pointer;
+          transition: background 0.12s, color 0.12s;
+        }
+
+        .bl-submit:hover:not(:disabled) {
+          background: #a855f7;
+          color: #000000;
+        }
+
+        .bl-submit:disabled {
+          background: #1F1F1F;
+          border-color: #3b1a6b;
+          color: #3b1a6b;
+          cursor: not-allowed;
+        }
+
+        /* Spinner */
+        .bl-spinner {
+          flex-shrink: 0;
+          animation: bl-spin 0.75s linear infinite;
+        }
+
+        @keyframes bl-spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+
+        /* Dev autofill */
+        .bl-dev-btn {
+          display: block;
+          width: 100%;
+          margin-top: 10px;
+          background: transparent;
+          border: 1px solid rgba(255,255,255,0.04);
+          border-radius: 0;
+          color: #333333;
+          font-family: inherit;
+          font-size: 9px;
+          font-weight: 700;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          padding: 8px 16px;
+          cursor: pointer;
+          transition: border-color 0.12s, color 0.12s;
+          text-align: center;
+        }
+
+        .bl-dev-btn:hover {
+          border-color: rgba(255,255,255,0.08);
+          color: #555555;
+        }
+
+        /* SSO */
+        .bl-sso-wrap {
+          margin-top: 20px;
+          padding-top: 20px;
+          border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .bl-sso-btn {
+          width: 100%;
+          background: transparent;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 0;
+          color: #444444;
+          font-family: inherit;
+          font-size: 9.5px;
+          font-weight: 700;
+          letter-spacing: 0.15em;
+          text-transform: uppercase;
+          padding: 10px 16px;
+          cursor: pointer;
+          transition: border-color 0.12s, color 0.12s;
+        }
+
+        .bl-sso-btn:hover {
+          border-color: rgba(255,255,255,0.1);
+          color: #777777;
+        }
+
+        .bl-form-note {
+          margin-top: 18px;
+          font-size: 8.5px;
+          letter-spacing: 0.06em;
+          color: #A8A8A8;
+          line-height: 1.8;
+        }
+
+        /* SSO Modal */
+        .bl-modal-bg {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.88);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 200;
+        }
+
+        .bl-modal {
+          background: #141414;
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 0;
+          padding: 40px 44px;
+          max-width: 440px;
+          width: 90%;
+        }
+
+        .bl-modal-tag {
+          font-size: 8.5px;
+          font-weight: 700;
+          letter-spacing: 0.22em;
+          color: #ef4444;
+          text-transform: uppercase;
+          margin-bottom: 12px;
+        }
+
+        .bl-modal-title {
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.1em;
+          color: #ffffff;
+          text-transform: uppercase;
+          margin-bottom: 16px;
+        }
+
+        .bl-modal-body {
+          font-size: 10.5px;
+          line-height: 1.8;
+          color: #666666;
+          margin-bottom: 28px;
+          letter-spacing: 0.03em;
+        }
+
+        .bl-modal-close {
+          background: transparent;
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 0;
+          color: #666666;
+          font-family: inherit;
+          font-size: 9.5px;
+          font-weight: 700;
+          letter-spacing: 0.15em;
+          text-transform: uppercase;
+          padding: 10px 20px;
+          cursor: pointer;
+          transition: border-color 0.12s, color 0.12s;
+        }
+
+        .bl-modal-close:hover {
+          border-color: rgba(255,255,255,0.2);
+          color: #aaaaaa;
+        }
+      `}</style>
+
+      <div className="bl-root">
+        {/* ══════════════════ LEFT PANE ══════════════════ */}
+        <div className="bl-left">
+          {/* Logo */}
+          <div className="bl-logo">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 172 162"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M2.00043 162L87.0004 2L172 162"
+                stroke="#a855f7"
+                strokeWidth="6"
+                strokeLinecap="square"
+                strokeLinejoin="miter"
+              />
+            </svg>
+            <div className="bl-logo-label">
+              <span className="bl-logo-name">AMS Access</span>
+              <span className="bl-logo-sub">Derive Examination System</span>
+            </div>
+          </div>
         </div>
 
-        {/* ── Login card ─────────────────────────────────── */}
-        <div className="login-card">
-          <div className="login-logo-wrap">
-            <Image
-              src="/AMS_ACCESS.svg"
-              alt="AMS Access"
-              width={210}
-              height={48}
-              priority
-              className="login-logo"
-            />
-          </div>
+        {/* ══════════════════ RIGHT PANE ══════════════════ */}
+        <div className="bl-right">
+          <div className="bl-form-wrap">
+            <div className="bl-form-title">Authentication Required</div>
+            <div className="bl-form-sub">AMS Derive · Session will be fully proctored</div>
+            <div className="bl-rule" />
 
-          <form onSubmit={handleSubmit}>
-            {/* Email */}
-            <div className="login-field">
-              <label
-                htmlFor="login-email"
-                className={`login-label text-micro-label${emailFocused ? " is-focused" : ""}`}
-              >
-                Email Address
-                {emailFocused && (
-                  <span className="login-label-cursor" style={{ left: "120px" }}>
-                    ▎
-                  </span>
-                )}
-              </label>
-              <input
-                id="login-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onFocus={() => setEmailFocused(true)}
-                onBlur={() => setEmailFocused(false)}
-                placeholder="you@institution.edu"
-                autoComplete="email"
-                required
-                disabled={isTyping || loading}
-                className="login-input"
-              />
-            </div>
-
-            {/* Password */}
-            <div className="login-field-last">
-              <label
-                htmlFor="login-password"
-                className={`login-label text-micro-label${passwordFocused ? " is-focused" : ""}`}
-              >
-                Password
-                {passwordFocused && (
-                  <span className="login-label-cursor" style={{ left: "85px" }}>
-                    ▎
-                  </span>
-                )}
-              </label>
-              <input
-                id="login-password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onFocus={() => setPasswordFocused(true)}
-                onBlur={() => setPasswordFocused(false)}
-                placeholder="••••••••••••"
-                autoComplete="current-password"
-                required
-                disabled={isTyping || loading}
-                className="login-input login-input--password"
-              />
-            </div>
-
-            {/* Continue */}
-            <div className="login-btn-wrap">
-              <ContinueButton loading={loading} isTyping={isTyping} />
-            </div>
-
-            {/* Divider */}
-            <div className="login-divider">
-              <div className="login-divider-line" />
-              <span className="login-divider-label">security gate</span>
-              <div className="login-divider-line" />
-            </div>
-
-            <SSOButton onUnavailable={() => setShowSSOModal(true)} />
-          </form>
-
-          <p className="login-footer">
-            Session is proctored. Complete system lock and video checks are required.
-          </p>
-        </div>
-
-        {/* ── Autofill keycard ───────────────────────────── */}
-        <button
-          type="button"
-          onClick={handleAutoFill}
-          disabled={isTyping || loading}
-          className="secure-keycard"
-        >
-          <div className="keycard-header">
-            <p className="keycard-title text-micro-label">[ SECURE ACCESS TOKEN (AUTO-FILL) ]</p>
-            <span className="keycard-badge">{isTyping ? "INJECTING..." : "CLICK TO SYNC"}</span>
-          </div>
-          <div className="keycard-credentials">
-            <span>EMAIL: {TEST_EMAIL}</span>
-            <span>PASS: {TEST_PASSWORD}</span>
-          </div>
-        </button>
-
-        {/* ── SSO Modal ──────────────────────────────────── */}
-        {showSSOModal && (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="sso-modal-title"
-            className="sso-modal-overlay"
-          >
-            <div className="sso-modal">
-              <div className="sso-modal-icon-wrap">
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
+            <form onSubmit={handleSubmit}>
+              <div className="bl-field">
+                <label
+                  htmlFor="login-email"
+                  className={`bl-label${emailFocused ? " focused" : ""}`}
                 >
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
+                  Email
+                </label>
+                <input
+                  id="login-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onFocus={() => setEmailFocused(true)}
+                  onBlur={() => setEmailFocused(false)}
+                  placeholder="you@institution.edu"
+                  autoComplete="email"
+                  required
+                  disabled={loading}
+                  className="bl-input"
+                />
               </div>
-              <h3 id="sso-modal-title" className="sso-modal-title text-subsection-title">
-                Institution SSO Portal
-              </h3>
-              <p className="sso-modal-body text-body-copy">
-                Institution Single Sign-On is currently unavailable for this version of the app.
-                Please contact your institution&#39;s administrator to register your device or use
-                your designated secure email credentials to sign in directly.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowSSOModal(false)}
-                className="sso-modal-close"
-              >
-                Acknowledge &amp; Close
+
+              <div className="bl-field">
+                <label
+                  htmlFor="login-password"
+                  className={`bl-label${passFocused ? " focused" : ""}`}
+                >
+                  Password
+                </label>
+                <input
+                  id="login-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setPassFocused(true)}
+                  onBlur={() => setPassFocused(false)}
+                  placeholder="••••••••••••"
+                  autoComplete="current-password"
+                  required
+                  disabled={loading}
+                  className="bl-input"
+                />
+              </div>
+
+              <div className="bl-submit-wrap">
+                <button type="submit" disabled={loading} className="bl-submit">
+                  {loading ? (
+                    <>
+                      <svg
+                        className="bl-spinner"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        fill="none"
+                      >
+                        <circle
+                          cx="6"
+                          cy="6"
+                          r="4.5"
+                          stroke="rgba(168,85,247,0.25)"
+                          strokeWidth="1.5"
+                        />
+                        <path
+                          d="M6 1.5A4.5 4.5 0 0 1 10.5 6"
+                          stroke="#a855f7"
+                          strokeWidth="1.5"
+                          strokeLinecap="butt"
+                        />
+                      </svg>
+                      Verifying...
+                    </>
+                  ) : (
+                    "Authenticate"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  className="bl-dev-btn"
+                  onClick={() => {
+                    setEmail(TEST_EMAIL);
+                    setPassword(TEST_PASSWORD);
+                  }}
+                >
+                  [ dev: autofill test credentials ]
+                </button>
+              </div>
+            </form>
+
+            <div className="bl-sso-wrap">
+              <button type="button" onClick={() => setShowSSOModal(true)} className="bl-sso-btn">
+                [ Institution_SSO ] →
               </button>
             </div>
+
+            <p className="bl-form-note">
+              This is a strictly proctored environment. System verification and optical telemetry
+              will initialize after authentication.
+            </p>
           </div>
-        )}
-      </main>
+        </div>
+      </div>
 
-      {/* SYSTEM_LOGS — fixed to viewport bottom, never occludes card */}
-      <SyslogPane entries={logs} />
-    </>
-  );
-}
-
-// ─── Continue button — hover via CSS :hover, no JS state ─────
-function ContinueButton({ loading, isTyping }: { loading: boolean; isTyping: boolean }) {
-  return (
-    <button type="submit" disabled={loading || isTyping} className="continue-btn">
-      {loading ? (
-        <>
-          <Spinner />
-          Verifying secure link...
-        </>
-      ) : isTyping ? (
-        "Syncing credentials..."
-      ) : (
-        "Continue"
+      {/* ══════════════════ SSO Modal ══════════════════ */}
+      {showSSOModal && (
+        <div role="dialog" aria-modal="true" aria-labelledby="sso-title" className="bl-modal-bg">
+          <div className="bl-modal">
+            <div className="bl-modal-tag">[ Status: Unavailable ]</div>
+            <h3 id="sso-title" className="bl-modal-title">
+              Institution SSO Portal
+            </h3>
+            <p className="bl-modal-body">
+              Institution Single Sign-On is currently unavailable for this version of the
+              application. Contact your institution&#39;s administrator to register your device, or
+              use your designated secure email credentials to sign in directly.
+            </p>
+            <button type="button" onClick={() => setShowSSOModal(false)} className="bl-modal-close">
+              [ Acknowledge &amp; Close ]
+            </button>
+          </div>
+        </div>
       )}
-    </button>
-  );
-}
-
-function Spinner() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="login-spinner">
-      <circle cx="7" cy="7" r="5.5" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5" />
-      <path
-        d="M7 1.5A5.5 5.5 0 0 1 12.5 7"
-        stroke="#a855f7"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-// ─── SSO button — hover via CSS :hover, no JS state ──────────
-function SSOButton({ onUnavailable }: { onUnavailable: () => void }) {
-  return (
-    <button type="button" onClick={onUnavailable} className="sso-btn">
-      [ INSTITUTION SINGLE SIGN-ON ]
-    </button>
+    </>
   );
 }

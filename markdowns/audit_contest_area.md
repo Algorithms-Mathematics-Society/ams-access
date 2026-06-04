@@ -1,4 +1,5 @@
 # AMS Access — Contest Area Audit
+
 **Date:** 2026-06-01 · **Auditor:** Antigravity (multi-perspective)  
 **Scope:** `apps/web/src/app/home/page.tsx` (4 828 lines) + `apps/web/src/app/session/contest/client.tsx` (2 204 lines) + `globals.css`
 
@@ -6,10 +7,10 @@
 
 ## Audit Lenses
 
-| Lens | Focus |
-|---|---|
-| **Senior Engineer (SE)** | Architecture, correctness, security, maintainability |
-| **Latency Engineer (LE)** | Rendering perf, network round-trips, timer precision, bundle weight |
+| Lens                       | Focus                                                                |
+| -------------------------- | -------------------------------------------------------------------- |
+| **Senior Engineer (SE)**   | Architecture, correctness, security, maintainability                 |
+| **Latency Engineer (LE)**  | Rendering perf, network round-trips, timer precision, bundle weight  |
 | **High-Agency UI/UX (UX)** | Interaction quality, feedback clarity, accessibility, cognitive load |
 
 Severity scale: 🔴 Critical · 🟠 High · 🟡 Medium · 🔵 Low
@@ -28,11 +29,11 @@ The UI says "ARMED" when it reaches 100, but the actual readiness check (`runSes
 
 **Fixes compared:**
 
-| Fix | Approach | Pro | Con |
-|---|---|---|---|
-| **A** | Drive progress from `readinessReport` arrival events | Truthful | Requires report to emit incremental events |
-| **B ✅ Best** | Remove fake interval; show spinner until `readinessReport !== null`, then display real results | Simple, honest, zero race condition | Loses animated terminal theatre |
-| **C** | Keep fake animation but block "PROCEED" until both fake-done AND report-arrived | Minimal change | Still deceptive, wastes up to 2s |
+| Fix           | Approach                                                                                       | Pro                                 | Con                                        |
+| ------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------ |
+| **A**         | Drive progress from `readinessReport` arrival events                                           | Truthful                            | Requires report to emit incremental events |
+| **B ✅ Best** | Remove fake interval; show spinner until `readinessReport !== null`, then display real results | Simple, honest, zero race condition | Loses animated terminal theatre            |
+| **C**         | Keep fake animation but block "PROCEED" until both fake-done AND report-arrived                | Minimal change                      | Still deceptive, wastes up to 2s           |
 
 **Best fix:** Option B. Remove the `progressInterval` and `logTemplates` timers. Show a loading spinner until `readinessReport` is non-null. Render all checks from real data. Telemetry text can still be stylised but must pull values from `readinessReport.checks`.
 
@@ -41,21 +42,26 @@ The UI says "ARMED" when it reaches 100, but the actual readiness check (`runSes
 ### SE-2 · `calculateReadinessScore` allows joining with a broken camera 🔴
 
 **Root cause (lines 4659–4682):**
+
 ```ts
-if (!cameraOk && !micOk) { score -= 25; }
-else if (!cameraOk) { score -= 8; }  // comment says "92% Ready"!
+if (!cameraOk && !micOk) {
+  score -= 25;
+} else if (!cameraOk) {
+  score -= 8;
+} // comment says "92% Ready"!
 ```
-Only 8 points deducted for a missing camera. `canProceed` only checks `readinessReport?.decision === "allowed"`. If the backend allows joining without camera, the UI presents the session as ready. The comment documents the bug: *"Exactly 92% Ready when only camera is disconnected!"*
+
+Only 8 points deducted for a missing camera. `canProceed` only checks `readinessReport?.decision === "allowed"`. If the backend allows joining without camera, the UI presents the session as ready. The comment documents the bug: _"Exactly 92% Ready when only camera is disconnected!"_
 
 **Risk:** Candidates enter proctored sessions without a live camera feed, defeating the entire security model.
 
 **Fixes compared:**
 
-| Fix | Approach |
-|---|---|
-| **A** | Hard-block proceed if `readiness.camera === "fail"` regardless of score |
+| Fix           | Approach                                                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| **A**         | Hard-block proceed if `readiness.camera === "fail"` regardless of score                                                                                               |
 | **B ✅ Best** | `canProceed = readinessReport?.decision === "allowed" && readiness.camera !== "fail" && readiness.network !== "fail"` — enforce two non-negotiable checks client-side |
-| **C** | Raise camera deduction to 100 so score never hits threshold | Fragile magic number |
+| **C**         | Raise camera deduction to 100 so score never hits threshold                                                                                                           | Fragile magic number |
 
 **Best fix:** Option B — explicit guard on the two hard requirements. Clear and explicit, doesn't rely on score arithmetic.
 
@@ -64,9 +70,11 @@ Only 8 points deducted for a missing camera. `canProceed` only checks `readiness
 ### SE-3 · `useEffect` dep array misses `readiness`, causes stale log text 🟡
 
 At line 4257:
+
 ```ts
 useEffect(() => { ... }, [contestId, isRescanning, readinessReport]);
 ```
+
 `readiness` (the individual check states) is not in the dep array, but the log templates read `readiness.network`, `readiness.mic`, etc. When only `readiness` changes (not `readinessReport`), the console logs are stale.
 
 **Best fix:** Add `readiness` to the dep array, or derive log text exclusively from `readinessReport.checks` (already in deps).
@@ -87,11 +95,11 @@ When checks fail, the proceed button renders "RESOLVE FAILED CHECKS" but `onClic
 
 **Fixes compared:**
 
-| Fix | Approach |
-|---|---|
-| **A** | Change button to call `onSettingsRedirect()` when `!canProceed` |
+| Fix           | Approach                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- | ------------ |
+| **A**         | Change button to call `onSettingsRedirect()` when `!canProceed`                                                      |
 | **B ✅ Best** | Two separate buttons: a disabled/greyed "PROCEED" + an active amber "FIX ISSUES →" that calls `onSettingsRedirect()` |
-| **C** | Tooltip on the disabled proceed button | Easy to miss |
+| **C**         | Tooltip on the disabled proceed button                                                                               | Easy to miss |
 
 **Best fix:** Option B. A user must never click a button and feel nothing happen.
 
@@ -112,11 +120,13 @@ The close/dismiss button is labelled `ABORT`. In exam context this reads as "abo
 ```ts
 const id = setInterval(() => setNow(Date.now()), 1000);
 ```
+
 Fires every second even when all contests are `ACTIVE` or `ENDED`, forcing re-renders of the entire `ContestsPanel` subtree.
 
 **Best fix:**
+
 ```ts
-const hasScheduled = contests.some(c => c.status === "SCHEDULED");
+const hasScheduled = contests.some((c) => c.status === "SCHEDULED");
 useEffect(() => {
   if (!hasScheduled) return;
   const id = setInterval(() => setNow(Date.now()), 1000);
@@ -139,6 +149,7 @@ Receives `now` as a prop and computes `startsIn`/`phase` inline. Every 1-second 
 ```ts
 const windowOpen = start - 20 * 60 * 1000; // line 944
 ```
+
 Duplicated in the invite code status message. If the backend changes this window, both locations fall out of sync.
 
 **Best fix:** Have the API return `verification_window_minutes` per contest. Use that value client-side. Fall back to 20 if not present.
@@ -150,6 +161,7 @@ Duplicated in the invite code status message. If the backend changes this window
 Rapid "Refresh" clicks fire concurrent fetch calls. No in-flight guard exists.
 
 **Best fix:**
+
 ```ts
 const contestsLoadInFlight = useRef(false);
 async function loadContests(...) {
@@ -167,11 +179,11 @@ Renders `0_SCHEDULED_CONTESTS_REGISTERED` — machine-speak. A contestant who ju
 
 **Fixes compared:**
 
-| Fix | Copy |
-|---|---|
-| **A** | `No upcoming contests found.` — Plain, generic |
+| Fix           | Copy                                                                        |
+| ------------- | --------------------------------------------------------------------------- | --------- |
+| **A**         | `No upcoming contests found.` — Plain, generic                              |
 | **B ✅ Best** | `No contests yet. If you have an invite code, enter it above.` — Actionable |
-| **C** | Keep machine label for "brand aesthetic" | Confusing |
+| **C**         | Keep machine label for "brand aesthetic"                                    | Confusing |
 
 ---
 
@@ -190,17 +202,19 @@ Shows `"Verification opens 12m 44s"` but is `disabled` with no visual treatment 
 ```ts
 const interval = setInterval(updateCameraStatus, 1000);
 ```
+
 `updateCameraStatus` calls `setFaceStatus`, `setProctoringOk`, `setFaceGraceActive`, `setFaceGraceCountdown`, and `setSoftBlockActive` on every tick — 5 potential re-renders/s on the entire contest layout.
 
 **Fixes compared:**
 
-| Fix | Approach |
-|---|---|
-| **A** | Use `useRef` for intermediate values, only `setState` on actual change |
+| Fix           | Approach                                                                             |
+| ------------- | ------------------------------------------------------------------------------------ | ----------------------------------- |
+| **A**         | Use `useRef` for intermediate values, only `setState` on actual change               |
 | **B ✅ Best** | Compare new derived status with ref-cached previous value; skip setState when stable |
-| **C** | Increase interval to 2000ms | Blunter, misses quick state changes |
+| **C**         | Increase interval to 2000ms                                                          | Blunter, misses quick state changes |
 
 **Best fix (B):**
+
 ```ts
 const prevCameraOkRef = useRef<boolean | null>(null);
 const updateCameraStatus = () => {
@@ -230,6 +244,7 @@ try {
 } catch {}
 setSaved(true); // always shows "SAVED" even on network failure
 ```
+
 The UI shows `[ SAVED ]` regardless of whether the POST succeeded. Candidates believe their work is safe when it is not.
 
 **Best fix:** Return `Promise<boolean>` from `handleSave`. Show `[ SAVE FAILED ]` in red with a retry affordance on failure.
@@ -241,6 +256,7 @@ The UI shows `[ SAVED ]` regardless of whether the POST succeeded. Candidates be
 ```ts
 const label = t === "html" ? "main.cpp" : t === "css" ? "order_book.h" : "test_cases.txt";
 ```
+
 The actual editor is HTML/CSS/JS but tabs say `.cpp`, `.h`, `.txt`. Creates cognitive dissonance.
 
 **Best fix:** Use real labels `index.html`, `style.css`, `script.js`, or make them configurable per question via API.
@@ -252,9 +268,13 @@ The actual editor is HTML/CSS/JS but tabs say `.cpp`, `.h`, `.txt`. Creates cogn
 `handleSave` has no return value, so `await handleSave()` in `handleSubmit` cannot detect failure. The session can be submitted with unsaved edits.
 
 **Best fix:** Make `handleSave` return `Promise<boolean>`. In `handleSubmit`:
+
 ```ts
 const saved = await handleSave();
-if (!saved) { setSaveError("Final save failed. Resolve before submitting."); return; }
+if (!saved) {
+  setSaveError("Final save failed. Resolve before submitting.");
+  return;
+}
 ```
 
 ---
@@ -265,11 +285,11 @@ if (!saved) { setSaveError("Final save failed. Resolve before submitting."); ret
 
 **Fixes compared:**
 
-| Fix | Approach |
-|---|---|
-| **A** | `postMessage` for incremental CSS patches | Complex |
-| **B ✅ Best** | Increase debounce to 900ms + ensure `sandbox="allow-scripts"` on iframe | Simple improvement now |
-| **C** | Use `contentDocument.write()` via iframe ref | Avoids full navigation; CodePen approach |
+| Fix           | Approach                                                                |
+| ------------- | ----------------------------------------------------------------------- | ---------------------------------------- |
+| **A**         | `postMessage` for incremental CSS patches                               | Complex                                  |
+| **B ✅ Best** | Increase debounce to 900ms + ensure `sandbox="allow-scripts"` on iframe | Simple improvement now                   |
+| **C**         | Use `contentDocument.write()` via iframe ref                            | Avoids full navigation; CodePen approach |
 
 **Best fix now:** Option B. Option C is the production-quality path for v2.
 
@@ -280,6 +300,7 @@ if (!saved) { setSaveError("Final save failed. Resolve before submitting."); ret
 ```ts
 fetch(`.../${sessionId}/heartbeat`, { method: "POST" }).catch(() => {});
 ```
+
 Browser may cancel this on tab close. Missing `keepalive: true`.
 
 **Best fix (one line):** `fetch(url, { method: "POST", keepalive: true }).catch(() => {});`
@@ -308,11 +329,11 @@ The confirm text (`CONFIRM? CLICK AGAIN`) appears inline in the header with no c
 
 **Fixes compared:**
 
-| Fix | Approach |
-|---|---|
-| **A** | Full modal dialog for submit confirmation |
+| Fix           | Approach                                                                        |
+| ------------- | ------------------------------------------------------------------------------- |
+| **A**         | Full modal dialog for submit confirmation                                       |
 | **B ✅ Best** | Anchored popover/card below the submit button with "Confirm" + "Cancel" buttons |
-| **C** | 3-second countdown with cancel before submitting |
+| **C**         | 3-second countdown with cancel before submitting                                |
 
 **Best fix:** Option B — anchored card, spatially linked, explicitly cancellable.
 
@@ -343,6 +364,7 @@ This is the single highest-impact UX improvement in the contest area.
 ```ts
 setLogs(baseLogs.map((l, i) => `[04:${12 + i}:02] ${l}`));
 ```
+
 Timestamps are always `04:12:02`, `04:13:02`... regardless of actual time. If a proctor notices, trust is broken.
 
 **Best fix:** Use `new Date().toLocaleTimeString()` for all base log timestamps on mount.
@@ -370,6 +392,7 @@ Active tab is only distinguished by background colour change — no left-border,
 Entire home screen — 12+ components, 4 modal types, all business logic — in one file. Maximises merge conflicts, prevents unit testing, triggers full-file recompilation on any change.
 
 **Best fix (incremental extraction):**
+
 1. `SessionReadinessModal` + `PreflightCheckItem` → `components/SessionReadinessModal.tsx`
 2. `ContestsPanel` + card components → `components/ContestsPanel.tsx`
 3. `SettingsPanel` → `components/SettingsPanel.tsx`
@@ -382,6 +405,7 @@ Entire home screen — 12+ components, 4 modal types, all business logic — in 
 `"ams_active_session"`, `"ams_device_id"`, etc. are raw string literals in both files.
 
 **Best fix:** `constants/storage-keys.ts`:
+
 ```ts
 export const STORAGE_KEYS = {
   ACTIVE_SESSION: "ams_active_session",
@@ -413,6 +437,7 @@ Returns an object of CSS variable strings. Called 20+ times per render cycle acr
 Fails WCAG 2.1 AA. Also blocks power-user keyboard workflows.
 
 **Best fix priorities:**
+
 1. Add `role="dialog"` + `aria-modal="true"` + `aria-labelledby` to all 4 modals
 2. Implement focus trapping (use `focus-trap-react` or manual implementation)
 3. Restore `:focus-visible` outlines (don't show on click, only on keyboard)
@@ -422,25 +447,25 @@ Fails WCAG 2.1 AA. Also blocks power-user keyboard workflows.
 
 ## Summary Score Card
 
-| Area | SE Health | LE Health | UX Health |
-|---|---|---|---|
-| Pre-flight Modal | 🟡 | 🟡 | 🔴 |
-| Contest Cards | 🟡 | 🟠 | 🟠 |
-| Live Contest Session | 🔴 | 🟠 | 🟠 |
-| Settings / Diagnostics | 🟡 | 🔵 | 🔵 |
-| Architecture / Cross-cutting | 🟠 | 🟡 | 🔴 |
+| Area                         | SE Health | LE Health | UX Health |
+| ---------------------------- | --------- | --------- | --------- |
+| Pre-flight Modal             | 🟡        | 🟡        | 🔴        |
+| Contest Cards                | 🟡        | 🟠        | 🟠        |
+| Live Contest Session         | 🔴        | 🟠        | 🟠        |
+| Settings / Diagnostics       | 🟡        | 🔵        | 🔵        |
+| Architecture / Cross-cutting | 🟠        | 🟡        | 🔴        |
 
 ---
 
 ## Top 5 Fixes by Impact (Ranked)
 
-| # | Finding | Why It Wins |
-|---|---|---|
-| 1 | **SE-2** — Hard-block proceed on missing camera | Security model is defeated without this |
-| 2 | **SE-9** — Show real save failure in `handleSave` | Silent data loss with no user warning |
-| 3 | **UX-8** — Integrate CodeMirror 6 editor | Highest quality-of-life gain for contestants |
-| 4 | **UX-10** — Keyboard nav + ARIA on modals | Accessibility compliance + power-user experience |
-| 5 | **SE-1** — Tie progress animation to real `readinessReport` | Correctness of the most critical user flow |
+| #   | Finding                                                     | Why It Wins                                      |
+| --- | ----------------------------------------------------------- | ------------------------------------------------ |
+| 1   | **SE-2** — Hard-block proceed on missing camera             | Security model is defeated without this          |
+| 2   | **SE-9** — Show real save failure in `handleSave`           | Silent data loss with no user warning            |
+| 3   | **UX-8** — Integrate CodeMirror 6 editor                    | Highest quality-of-life gain for contestants     |
+| 4   | **UX-10** — Keyboard nav + ARIA on modals                   | Accessibility compliance + power-user experience |
+| 5   | **SE-1** — Tie progress animation to real `readinessReport` | Correctness of the most critical user flow       |
 
 ---
 

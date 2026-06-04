@@ -52,7 +52,7 @@ Implement capability detection inside the preview harness for:
 Expose these capabilities to contestant code through a small global object, for example:
 
 ```ts
-window.AMSRuntime.capabilities
+window.AMSRuntime.capabilities;
 ```
 
 Acceptance criteria:
@@ -79,9 +79,9 @@ Goal: inject a small runtime harness into `buildPreview` before contestant JavaS
 The harness should provide a stable global API such as:
 
 ```ts
-window.AMSBenchmark
-window.AMSMarketData
-window.AMSRuntime
+window.AMSBenchmark;
+window.AMSMarketData;
+window.AMSRuntime;
 ```
 
 Minimum behavior:
@@ -130,7 +130,7 @@ Recommended record shape:
 Batches should be transferred with:
 
 ```ts
-iframe.contentWindow.postMessage(message, "*", [buffer])
+iframe.contentWindow.postMessage(message, "*", [buffer]);
 ```
 
 Acceptance criteria:
@@ -300,23 +300,23 @@ Acceptance criteria:
 
 ## Bottleneck Coverage Map
 
-| Bottleneck | Covered By |
-| --- | --- |
-| BN-1 GC pauses | Steps 3, 5 |
-| BN-2 single JS thread | Steps 1, 5, 7 |
-| BN-3 timer clamping | Steps 1, 7 |
-| BN-4 JS number/object overhead | Steps 3, 5 |
-| BN-5 iframe reload | Steps 2, 6 |
-| BN-6 sandbox limitations | Steps 1, 7 |
-| BN-7 no feed ingress | Step 3 |
-| BN-8 Tauri IPC JSON | Steps 4, 6 |
-| BN-9 OS scheduler jitter | Steps 1, 7 |
-| BN-10 WebSocket mismatch | Step 3 |
-| BN-11 full save payload | Step 6 |
-| BN-12 no benchmark overlay | Step 4 |
-| BN-13 editor tab size | Step 5 |
-| BN-14 heap constraints | Steps 3, 5 |
-| BN-15 no slab allocator | Step 5 |
+| Bottleneck                     | Covered By    |
+| ------------------------------ | ------------- |
+| BN-1 GC pauses                 | Steps 3, 5    |
+| BN-2 single JS thread          | Steps 1, 5, 7 |
+| BN-3 timer clamping            | Steps 1, 7    |
+| BN-4 JS number/object overhead | Steps 3, 5    |
+| BN-5 iframe reload             | Steps 2, 6    |
+| BN-6 sandbox limitations       | Steps 1, 7    |
+| BN-7 no feed ingress           | Step 3        |
+| BN-8 Tauri IPC JSON            | Steps 4, 6    |
+| BN-9 OS scheduler jitter       | Steps 1, 7    |
+| BN-10 WebSocket mismatch       | Step 3        |
+| BN-11 full save payload        | Step 6        |
+| BN-12 no benchmark overlay     | Step 4        |
+| BN-13 editor tab size          | Step 5        |
+| BN-14 heap constraints         | Steps 3, 5    |
+| BN-15 no slab allocator        | Step 5        |
 
 ---
 
