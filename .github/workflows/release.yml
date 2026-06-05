@@ -20,6 +20,12 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             bundle: msi nsis
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            bundle: dmg
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            bundle: dmg
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.target }})
@@ -101,6 +107,13 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization (only used on macOS runners)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "AMS Access ${{ github.ref_name }}"
