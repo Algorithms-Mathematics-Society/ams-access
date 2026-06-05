@@ -16,16 +16,12 @@ jobs:
         include:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            bundle: appimage deb
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-            bundle: msi nsis
           - platform: macos-latest
             target: aarch64-apple-darwin
-            bundle: dmg
           - platform: macos-13
             target: x86_64-apple-darwin
-            bundle: dmg
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.target }})
@@ -101,25 +97,49 @@ jobs:
         run: pnpm --filter @ams/web size:check
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        working-directory: apps/desktop
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS code signing + notarization (only used on macOS runners)
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      - name: Collect artifact paths
+        shell: bash
+        run: |
+          TARGET="${{ matrix.target }}"
+          BASE="target/${TARGET}/release/bundle"
+          FILES=""
+          # Linux
+          for f in "${BASE}"/appimage/*.AppImage "${BASE}"/appimage/*.AppImage.sig \
+                   "${BASE}"/deb/*.deb "${BASE}"/deb/*.deb.sig; do
+            [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
+          done
+          # Windows
+          for f in "${BASE}"/msi/*.msi "${BASE}"/msi/*.msi.sig \
+                   "${BASE}"/nsis/*-setup.exe "${BASE}"/nsis/*-setup.exe.sig; do
+            [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
+          done
+          # macOS
+          for f in "${BASE}"/dmg/*.dmg \
+                   "${BASE}"/macos/*.app.tar.gz "${BASE}"/macos/*.app.tar.gz.sig; do
+            [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
+          done
+          echo "RELEASE_FILES<<EOF" >> "$GITHUB_ENV"
+          echo "$FILES" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
         with:
-          projectPath: apps/desktop
-          tauriScript: pnpm tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: "AMS Access ${{ github.ref_name }}"
-          releaseBody: "See CHANGELOG for details."
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.target }}
+          draft: true
+          name: "AMS Access ${{ github.ref_name }}"
+          body: "See CHANGELOG for details."
+          fail_on_unmatched_files: false
+          files: ${{ env.RELEASE_FILES }}
