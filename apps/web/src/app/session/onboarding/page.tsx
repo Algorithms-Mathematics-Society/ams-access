@@ -194,6 +194,69 @@ const STAGES: Omit<Stage, "status">[] = [
   { id: 15, label: "Entering Contest", group: "Finalizing" },
 ];
 
+const STAGE_META: Record<number, { checking: string; todo: string | null; onFail: string }> = {
+  1: {
+    checking: "Session environment and baseline controls",
+    todo: null,
+    onFail: "Setup restarts automatically",
+  },
+  2: {
+    checking: "Full-screen and window focus mode",
+    todo: null,
+    onFail: "Contest cannot start without full-screen mode",
+  },
+  3: {
+    checking: "Number of connected displays",
+    todo: "Disconnect any external monitors if prompted, then scan again",
+    onFail: "Multiple screens are not permitted during a contest",
+  },
+  4: {
+    checking: "Keyboard shortcut lockdown",
+    todo: null,
+    onFail: "Some shortcuts may remain accessible — flagged for review",
+  },
+  5: {
+    checking: "Full-screen, keyboard controls, and session baseline",
+    todo: null,
+    onFail: "Warnings are recorded but do not block entry",
+  },
+  6: {
+    checking: "Restricted applications running on this device",
+    todo: "Close any flagged apps when prompted, then scan again",
+    onFail: "Entry is blocked until restricted apps are closed",
+  },
+  7: {
+    checking: "Whether this device is running inside a virtual machine",
+    todo: null,
+    onFail: "Session is flagged for review — you may still enter",
+  },
+  8: {
+    checking: "Camera access and video feed",
+    todo: "Allow camera access when your OS asks",
+    onFail: "Camera is required — fix the permission and try again",
+  },
+  9: {
+    checking: "Face position and identity capture",
+    todo: "Look directly at the camera and hold still until captured",
+    onFail: "Setup waits until a valid face is captured — contact your proctor if stuck",
+  },
+  10: {
+    checking: "Live presence via camera feed",
+    todo: "Stay visible in front of your camera",
+    onFail: "Presence must be confirmed before continuing",
+  },
+  11: {
+    checking: "Microphone access and audio signal",
+    todo: "Allow microphone access when prompted",
+    onFail: "Microphone is optional — setup continues with an advisory warning",
+  },
+  12: {
+    checking: "Network connection and response time",
+    todo: "Make sure you have a stable internet connection",
+    onFail: "Poor connection is recorded — you may still enter",
+  },
+};
+
 // ─── Shared sub-components ────────────────────────────────────────────────────
 
 function CheckLine({
@@ -227,12 +290,12 @@ function CheckLine({
 
   const text =
     status === "checking"
-      ? "[SCAN]"
+      ? "Checking"
       : status === "pass"
-        ? "[ OK ]"
+        ? "Ready"
         : status === "warn"
-          ? "[WARN]"
-          : "[FAIL]";
+          ? "Warning"
+          : "Needs action";
 
   return (
     <div
@@ -275,20 +338,19 @@ function Spinner({ size = 20 }: { size?: number }) {
   );
 }
 
-function StageHeader({ id, label, total = 14 }: { id: number; label: string; total?: number }) {
+function StageHeader({ label }: { id?: number; label: string; total?: number }) {
   const theme = useTheme();
   const isLight = theme === "light";
   return (
-    <div style={{ marginBottom: "24px", display: "flex", flexDirection: "column", alignItems: "start", width: "100%" }}>
+    <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", alignItems: "start", width: "100%" }}>
       <h2
         style={{
-          fontSize: "16px",
+          fontSize: "17px",
           fontWeight: 700,
           color: isLight ? "#0f172a" : "#f8fafc",
-          letterSpacing: "0.08em",
+          letterSpacing: "-0.01em",
           lineHeight: 1.25,
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          textTransform: "uppercase",
         }}
       >
         {label}
@@ -327,21 +389,39 @@ function StatusBadge({ status, label }: { status: StageStatus; label: string }) 
       color: "#A8A8A8" 
     },
   }[status];
+  const statusText =
+    status === "checking" ? "Checking" :
+    status === "pass" ? "Ready" :
+    status === "warn" ? "Warning" : "Failed";
+
   return (
     <div
       className="inline-flex items-center gap-2"
       style={{
         background: cfg.bg,
         border: `1px solid ${cfg.border}`,
-        padding: "6px 14px",
-        borderRadius: "2px",
+        padding: "7px 14px",
+        borderRadius: "6px",
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
       }}
     >
+      <div
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: cfg.color,
+          flexShrink: 0,
+          animation: status === "checking" ? "pulse-dot 1.2s ease-in-out infinite" : "none",
+        }}
+      />
       <span
-        style={{ fontSize: "11px", fontWeight: 700, color: cfg.color, letterSpacing: "0.08em" }}
+        style={{ fontSize: "12px", fontWeight: 600, color: cfg.color, letterSpacing: "0.01em" }}
       >
-        [{status.toUpperCase()}] {label.toUpperCase()}
+        {statusText} — {label}
       </span>
     </div>
   );
@@ -383,35 +463,35 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>SECURE_SANDBOX:   </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Session setup:     </span>
           {phase >= 1 ? (
-            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ INITIALIZED ]</span>
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>Ready</span>
           ) : (
-            <span style={{ color: "#A8A8A8" }}>[ INITIALIZING ]</span>
+            <span style={{ color: "#A8A8A8" }}>Starting</span>
           )}
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>DEVICE_INTEGRITY: </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Device check:      </span>
           {phase >= 2 ? (
-            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ VALIDATED ]</span>
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>Checked</span>
           ) : (
-            <span style={{ color: "#A8A8A8" }}>[ PENDING ]</span>
+            <span style={{ color: "#A8A8A8" }}>Pending</span>
           )}
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>SECURE_LOCKS:     </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Contest controls:  </span>
           {phase >= 3 ? (
-            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ ARMED ]</span>
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>Ready</span>
           ) : (
-            <span style={{ color: "#A8A8A8" }}>[ ARMED PENDING ]</span>
+            <span style={{ color: "#A8A8A8" }}>Pending</span>
           )}
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
-        {phase >= 1 && <CheckLine label="Secure sandbox initialized" status="pass" />}
-        {phase >= 2 && <CheckLine label="Device integrity validated" status="pass" />}
-        {phase >= 3 && <CheckLine label="Ready to initialize locks" status="pass" />}
+        {phase >= 1 && <CheckLine label="Session setup ready" status="pass" />}
+        {phase >= 2 && <CheckLine label="Device check complete" status="pass" />}
+        {phase >= 3 && <CheckLine label="Ready for contest controls" status="pass" />}
       </div>
     </div>
   );
@@ -457,21 +537,21 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>WINDOW_MODE:      </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Window mode:      </span>
           <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
-            {done ? "FULLSCREEN" : "NEGOTIATING"}
+            {done ? "Full-screen" : "Starting"}
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>ALWAYS_ON_TOP:    </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Focus mode:       </span>
           <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
-            {done ? "TRUE [LOCKED]" : "NEGOTIATING"}
+            {done ? "On" : "Starting"}
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>DECORATIONS:      </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Window controls:  </span>
           <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
-            {done ? "DISABLED [SECURE]" : "NEGOTIATING"}
+            {done ? "Hidden" : "Starting"}
           </span>
         </div>
       </div>
@@ -560,22 +640,22 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>TARGET_DISPLAY: </span>
-          <span style={{ color: "#22c55e", fontWeight: 700 }}>DISPLAY_0 [PRIMARY]</span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Primary screen: </span>
+          <span style={{ color: "#22c55e", fontWeight: 700 }}>Primary display</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>RESOLUTION:     </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Resolution:     </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
             {monitors[0]?.size.width ?? window.screen.width}x{monitors[0]?.size.height ?? window.screen.height} @ 60Hz
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>PIXEL_DEPTH:    </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Color depth:    </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>24-bit</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>CAPTURE_HOOK:   </span>
-          <span style={{ color: "#22c55e", fontWeight: 700 }}>[ ACTIVE ]</span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Screen check:   </span>
+          <span style={{ color: "#22c55e", fontWeight: 700 }}>Active</span>
         </div>
       </div>
 
@@ -620,7 +700,7 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
                   gap: "8px",
                 }}
               >
-                {scanning ? "PROBING..." : "RE-DETECT CONNECTED DISPLAYS"}
+                {scanning ? "Checking displays..." : "Check displays again"}
               </button>
             </>
           ) : (
@@ -712,9 +792,9 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
             }}
           >
             {locked ? (
-              <span style={{ color: "#22c55e", fontWeight: 700, fontSize: "11px", flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>[ OK ]</span>
+              <span style={{ color: "#22c55e", fontWeight: 700, fontSize: "11px", flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>Ready</span>
             ) : (
-              <span style={{ color: "#A8A8A8", fontWeight: 700, fontSize: "11px", flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>[SCAN]</span>
+              <span style={{ color: "#A8A8A8", fontWeight: 700, fontSize: "11px", flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>Checking</span>
             )}
             <span
               style={{
@@ -879,12 +959,12 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
             }}
           >
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>SCANNING_PROCESSES: </span>
-              <span style={{ color: "#f59e0b", fontWeight: 700 }}>[ ACTIVE ]</span>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Checking apps:      </span>
+              <span style={{ color: "#f59e0b", fontWeight: 700 }}>Active</span>
             </div>
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>PROBING_HOOKS:      </span>
-              <span style={{ color: "#f59e0b", fontWeight: 700 }}>[ RUNNING ]</span>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Checking conflicts: </span>
+              <span style={{ color: "#f59e0b", fontWeight: 700 }}>Running</span>
             </div>
           </div>
           <CheckLine label="Checking for restricted applications..." status="checking" />
@@ -903,11 +983,11 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
             }}
           >
             <p style={{ marginBottom: "12px", fontWeight: 700, color: "#ef4444" }}>
-              RESTRICTED PROCESSES FOUND:
+              Close these restricted apps:
             </p>
             {found.map((f) => (
               <p key={f} style={{ color: "#fca5a5", marginBottom: "4px" }}>
-                • {prettyName[f] ?? f} [KILL REQUIRED]
+                • {prettyName[f] ?? f} - close this app
               </p>
             ))}
           </div>
@@ -927,7 +1007,7 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
               transition: "all 150ms ease",
             }}
           >
-            RE-SCAN SYSTEM PROCESSES
+            Check apps again
           </button>
         </div>
       ) : (
@@ -946,12 +1026,12 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
             }}
           >
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>PROBING_PROCESSES: </span>
-              <span style={{ color: "#22c55e", fontWeight: 700 }}>[ COMPLETE ]</span>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>App check:          </span>
+              <span style={{ color: "#22c55e", fontWeight: 700 }}>Complete</span>
             </div>
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>INTERFERENCE_HOOK: </span>
-              <span style={{ color: "#22c55e", fontWeight: 700 }}>[ NONE DETECTED ]</span>
+              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Conflicts:          </span>
+              <span style={{ color: "#22c55e", fontWeight: 700 }}>None found</span>
             </div>
           </div>
           <CheckLine label="No conflicting applications found" status="pass" />
@@ -961,7 +1041,7 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
   );
 }
 
-function Stage7_VMDetection({ onPass }: { onPass(): void }) {
+function Stage7_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
   const [phase, setPhase] = useState<"checking" | "pass" | "warn">("checking");
   const [platform, setPlatform] = useState<string | null>(null);
   const theme = useTheme();
@@ -977,7 +1057,7 @@ function Stage7_VMDetection({ onPass }: { onPass(): void }) {
       if (result?.detected) {
         setPhase("warn");
         setPlatform(result.platform);
-        setTimeout(onPass, 3000);
+        setTimeout(() => (onWarn ?? onPass)(), 3000);
       } else {
         setPhase("pass");
         setTimeout(onPass, 1200);
@@ -1005,32 +1085,32 @@ function Stage7_VMDetection({ onPass }: { onPass(): void }) {
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>HYPERVISOR_DETECTED: </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Virtual machine:    </span>
           {phase === "checking" ? (
-            <span style={{ color: "#f59e0b", fontWeight: 700 }}>[ PROBING ]</span>
+            <span style={{ color: "#f59e0b", fontWeight: 700 }}>Checking</span>
           ) : phase === "pass" ? (
-            <span style={{ color: "#22c55e", fontWeight: 700 }}>[ FALSE ]</span>
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>Not detected</span>
           ) : (
             <span style={{ color: "#ef4444", fontWeight: 700 }}>[ TRUE ({platform ?? "UNKNOWN"}) ]</span>
           )}
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>HARDWARE_PLATFORM:   </span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Device platform:    </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>x86_64</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>OS_KERNEL:           </span>
-          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>Linux 6.x [SECURE]</span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Operating system:   </span>
+          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>Linux 6.x</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>INTEGRITY_SHIELD:    </span>
-          <span style={{ color: "#22c55e", fontWeight: 700 }}>[ ACTIVE ]</span>
+          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Device status:      </span>
+          <span style={{ color: "#22c55e", fontWeight: 700 }}>Active</span>
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
         {phase === "checking" && (
-          <CheckLine label="Validating hypervisor / VM hooks..." status="checking" />
+          <CheckLine label="Checking whether this device is running in a virtual machine..." status="checking" />
         )}
         {phase === "pass" && (
           <>
@@ -1058,6 +1138,7 @@ function Stage8_CameraInit({
 }) {
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -1121,7 +1202,7 @@ function Stage8_CameraInit({
         stopMediaStream(localStream);
       }
     };
-  }, [onPass, onCameraReady]);
+  }, [onPass, onCameraReady, retryKey]);
 
   return (
     <div className="flex flex-col items-center w-full">
@@ -1159,7 +1240,7 @@ function Stage8_CameraInit({
             style={{ background: "rgba(0,0,0,0.8)", padding: "16px" }}
           >
             <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#fca5a5", textAlign: "center", lineHeight: 1.6 }}>
-              CAMERA UNAVAILABLE
+              Camera needs attention
             </p>
           </div>
         )}
@@ -1183,21 +1264,43 @@ function Stage8_CameraInit({
             {error}
           </p>
           <button
-            onClick={onPass}
+            onClick={() => {
+              setPhase("checking");
+              setError(null);
+              setRetryKey((k) => k + 1);
+            }}
             style={{
               padding: "10px 24px",
               borderRadius: "2px",
-              border: "1px solid #ef4444",
+              border: "1px solid rgba(255,255,255,0.18)",
               background: "#0F0F0F",
-              color: "#ef4444",
+              color: "#f8fafc",
               fontSize: "11px",
               fontWeight: 700,
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               cursor: "pointer",
             }}
           >
-            BYPASS_CAMERA_VERIFICATION [WARN]
+            Try again
           </button>
+          {process.env.NODE_ENV === "development" && (
+            <button
+              onClick={onPass}
+              style={{
+                padding: "6px 16px",
+                borderRadius: "2px",
+                border: "1px solid rgba(245,158,11,0.4)",
+                background: "transparent",
+                color: "#f59e0b",
+                fontSize: "10px",
+                fontWeight: 600,
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                cursor: "pointer",
+              }}
+            >
+              Skip (dev only)
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1487,7 +1590,7 @@ function Stage9_FaceCalibration({
     });
 
     setStageBlocked(true);
-    setGuidance("DETECTION_UNAVAILABLE");
+    setGuidance("Face detection unavailable");
     setRuntimeNote("Face detection unavailable. Contact your proctor to proceed.");
     // Do NOT auto-capture or call onPass — the stage is blocked.
   }
@@ -1899,12 +2002,12 @@ function Stage9_FaceCalibration({
 
   const phase = PHASES[phaseIdx];
   const scanStateLabel: Record<FaceScanState, string> = {
-    loading: "MODEL_LOADING",
-    ready: "AWAITING_FACE",
-    tracking: "FACE_LOCKING",
-    validating: "CAPTURE_VALIDATING",
-    complete: "CALIBRATION_COMPLETE",
-    blocked: "DETECTION_BLOCKED",
+    loading: "Loading model",
+    ready: "Waiting for face",
+    tracking: "Finding face",
+    validating: "Checking capture",
+    complete: "Calibration complete",
+    blocked: "Detection blocked",
   };
   const displayedLockPct = scanState === "validating" ? 100 : lockPct;
 
@@ -1976,7 +2079,7 @@ function Stage9_FaceCalibration({
             }}
           >
             <span style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#A8A8A8" }}>
-              [ INITIALIZING_TF_BLAZEFACE ]
+              Preparing face check
             </span>
           </div>
         )}
@@ -2006,7 +2109,7 @@ function Stage9_FaceCalibration({
                 letterSpacing: "0.08em",
               }}
             >
-              DETECTION_UNAVAILABLE
+              Face detection unavailable
             </span>
             <span
               style={{
@@ -2038,13 +2141,13 @@ function Stage9_FaceCalibration({
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
-          <span>TARGET PHASE:</span>
+          <span>Target:</span>
           <span style={{ color: "#FFF", fontWeight: 700 }}>
-            {done ? "CALIBRATION_COMPLETE" : phase.label}
+            {done ? "Calibration complete" : phase.instruction}
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
-          <span>SCANNER STATE:</span>
+          <span>Camera check:</span>
           <span
             style={{
               color:
@@ -2062,7 +2165,7 @@ function Stage9_FaceCalibration({
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
-          <span>TRACKING STATE:</span>
+          <span>Tracking:</span>
           <span
             style={{
               color: qualityOk
@@ -2075,11 +2178,11 @@ function Stage9_FaceCalibration({
               fontWeight: 700,
             }}
           >
-            {scanState === "validating" ? "CAPTURE_LOCKED" : lostTracking ? "SIGNAL_LOST" : poseLabel.toUpperCase()}
+            {scanState === "validating" ? "Capture ready" : lostTracking ? "Face not centered" : poseLabel}
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "4px" }}>
-          <span>CAPTURE LOCK:</span>
+          <span>Capture progress:</span>
           <span style={{ color: displayedLockPct >= 100 ? "#22c55e" : "#A8A8A8", fontWeight: 700 }}>
             {displayedLockPct}%
           </span>
@@ -2209,7 +2312,7 @@ function Stage10_PresenceVerification({
           marginBottom: "18px",
         }}
       >
-        {confirmed ? "PRESENCE_CONFIRMED" : "VERIFYING_LIVE_PRESENCE..."}
+        {confirmed ? "Presence confirmed" : "Checking live presence..."}
       </p>
 
       <StatusBadge
@@ -2220,7 +2323,7 @@ function Stage10_PresenceVerification({
   );
 }
 
-function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
+function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
   const [level, setLevel] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -2279,7 +2382,7 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
         if (cancelled) return;
         setPhase("fail");
         passTimer = setTimeout(() => {
-          if (!cancelled) onPass();
+          if (!cancelled) (onWarn ?? onPass)();
         }, 2000);
       }
     }
@@ -2388,7 +2491,7 @@ function Stage11_AudioVerification({ onPass }: { onPass(): void }) {
   );
 }
 
-function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
+function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
   const [latency, setLatency] = useState<number | null>(null);
   const [quality, setQuality] = useState<string | null>(null);
   const [phase, setPhase] = useState<"checking" | "pass" | "warn">("checking");
@@ -2404,16 +2507,19 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
         3000
       );
 
+      let nextPhase: "pass" | "warn";
       if (result?.reachable) {
         setLatency(result.latency_ms);
         setQuality(result.quality);
-        setPhase(result.quality === "poor" ? "warn" : "pass");
+        nextPhase = result.quality === "poor" ? "warn" : "pass";
+        setPhase(nextPhase);
       } else {
         setLatency(null);
         setQuality("unreachable");
+        nextPhase = "warn";
         setPhase("warn");
       }
-      setTimeout(onPass, 1400);
+      setTimeout(() => nextPhase === "warn" ? (onWarn ?? onPass)() : onPass(), 1400);
     }
     void go();
   }, [onPass]);
@@ -2455,7 +2561,7 @@ function Stage12_NetworkValidation({ onPass }: { onPass(): void }) {
                 letterSpacing: "0.1em",
               }}
             >
-              LATENCY_RESPONSE
+              Response time
             </p>
           </div>
         )}
@@ -2500,6 +2606,9 @@ function Stage13_IntegrityConfirmation({
     { label: "Connection stable", stage: 12 },
   ];
 
+  const warnCount = items.filter(({ stage }) => results[stage] === "warn").length;
+  const hasWarns = warnCount > 0;
+
   return (
     <div className="flex flex-col items-center">
       <StageHeader id={13} label="Almost Ready" />
@@ -2529,12 +2638,14 @@ function Stage13_IntegrityConfirmation({
         style={{
           borderRadius: "2px",
           padding: "12px 24px",
-          background: "rgba(34,197,94,0.05)",
-          border: "1px solid rgba(34,197,94,0.18)",
+          background: hasWarns ? "rgba(245,158,11,0.05)" : "rgba(34,197,94,0.05)",
+          border: `1px solid ${hasWarns ? "rgba(245,158,11,0.22)" : "rgba(34,197,94,0.18)"}`,
         }}
       >
-        <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: "#22c55e", fontWeight: 700, letterSpacing: "0.05em" }}>
-          ALL CHECKS PASSED — READY TO BEGIN
+        <p style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: hasWarns ? "#fcd34d" : "#22c55e", fontWeight: 700, letterSpacing: "0.05em" }}>
+          {hasWarns
+            ? `${warnCount} advisory warning${warnCount > 1 ? "s" : ""} — proceeding with recorded warnings`
+            : "All checks passed — ready to begin"}
         </p>
       </div>
     </div>
@@ -2702,7 +2813,7 @@ export default function OnboardingPage() {
     typeof window !== "undefined"
       ? (new URLSearchParams(window.location.search).get("contestId") ?? "")
       : "";
-  const [currentStage, setCurrentStage] = useState(1);
+  const [currentStage, setCurrentStage] = useState(0);
   const [results, setResults] = useState<Record<number, StageStatus>>({});
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [transitioning, setTransitioning] = useState(false);
@@ -3077,27 +3188,51 @@ export default function OnboardingPage() {
         transition: "background 500ms ease, color 500ms ease",
       }}
     >
-      <button
-        type="button"
-        onClick={() => void emergencyExit()}
+      <div
         style={{
           position: "fixed",
           top: 16,
           right: 16,
           zIndex: 1000,
-          padding: "6px 12px",
-          borderRadius: "2px",
-          border: "1px solid #ef4444",
-          background: "#0F0F0F",
-          color: "#ef4444",
-          fontSize: "11px",
-          fontWeight: 700,
-          fontFamily: "'JetBrains Mono', monospace",
-          cursor: "pointer",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: "6px",
         }}
       >
-        ABORT_SETUP [ESC]
-      </button>
+        <button
+          type="button"
+          onClick={() => void emergencyExit()}
+          aria-label="Exit setup. Shortcut: Control Shift Q."
+          title="Shortcut: Ctrl + Shift + Q"
+          style={{
+            padding: "6px 12px",
+            borderRadius: "4px",
+            border: "1px solid #ef4444",
+            background: "#0F0F0F",
+            color: "#ef4444",
+            fontSize: "11px",
+            fontWeight: 700,
+            fontFamily: "'JetBrains Mono', monospace",
+            cursor: "pointer",
+          }}
+        >
+          Exit setup
+        </button>
+        <span
+          style={{
+            color: "#a1a1aa",
+            fontSize: "10px",
+            fontFamily: "'JetBrains Mono', monospace",
+            background: "rgba(15, 15, 15, 0.82)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderRadius: "4px",
+            padding: "4px 7px",
+          }}
+        >
+          Shortcut: Ctrl + Shift + Q
+        </span>
+      </div>
 
       {policyBlock && (
         <div
@@ -3107,7 +3242,7 @@ export default function OnboardingPage() {
             border: "1px solid rgba(239,68,68,0.28)",
             background: "rgba(239,68,68,0.08)",
             color: "#fca5a5",
-            borderRadius: 2,
+            borderRadius: 8,
             padding: "12px 16px",
             fontSize: 11,
             fontFamily: "'JetBrains Mono', monospace",
@@ -3116,7 +3251,7 @@ export default function OnboardingPage() {
           {policyBlock}
         </div>
       )}
-      <ProgressBar current={currentStage} results={results} />
+      {currentStage > 0 && <ProgressBar current={currentStage} results={results} />}
 
       <div
         style={{
@@ -3131,29 +3266,97 @@ export default function OnboardingPage() {
           transition: "opacity 300ms ease, transform 300ms cubic-bezier(0.22,1,0.36,1)",
         }}
       >
-        {/* Group label */}
-        <div style={{ marginBottom: "4px", textAlign: "center" }}>
-          <p
+        {/* Group label — hidden on intro screen */}
+        {currentStage > 0 && (
+          <div style={{ marginBottom: "4px", textAlign: "center" }}>
+            <p
+              style={{
+                fontSize: "10px",
+                letterSpacing: "0.12em",
+                color: "#3F3F46",
+                textTransform: "uppercase",
+                fontWeight: 500,
+              }}
+            >
+              {STAGES[currentStage - 1]?.group}
+            </p>
+          </div>
+        )}
+
+        {/* Intro screen — shown before stage 1 begins */}
+        {currentStage === 0 && (
+          <div
             style={{
-              fontSize: "10px",
-              letterSpacing: "0.2em",
-              color: "#3F3F46",
-              textTransform: "uppercase",
-              fontWeight: 500,
+              maxWidth: "480px",
+              width: "100%",
+              background: "#0F0F0F",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: "10px",
+              boxShadow: "0 24px 60px rgba(0, 0, 0, 0.48)",
+              padding: "40px 44px",
             }}
           >
-            {STAGES[currentStage - 1]?.group}
-          </p>
-        </div>
+            <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#f8fafc", letterSpacing: "-0.02em", marginBottom: "8px" }}>
+              Before you begin
+            </h2>
+            <p style={{ fontSize: "13px", color: "#A8A8A8", marginBottom: "28px", lineHeight: 1.6 }}>
+              This usually takes about 2 minutes.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "32px" }}>
+              {[
+                "Fullscreen and display check",
+                "Device security and app scan",
+                "Camera and face scan",
+                "Microphone and network check",
+              ].map((item) => (
+                <div key={item} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "rgba(168,85,247,0.7)", flexShrink: 0 }} />
+                  <span style={{ fontSize: "13px", color: "#e2e8f0" }}>{item}</span>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: "12px", color: "#71717a", marginBottom: "32px", lineHeight: 1.6 }}>
+              Do not close the app during setup. Your session will be interrupted if the window loses focus.
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentStage(1)}
+              style={{
+                width: "100%",
+                padding: "13px 24px",
+                borderRadius: "8px",
+                border: "1px solid #a855f7",
+                background: "#a855f7",
+                color: "#ffffff",
+                fontSize: "14px",
+                fontWeight: 600,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                transition: "all 150ms ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#9333ea";
+                e.currentTarget.style.borderColor = "#c084fc";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#a855f7";
+                e.currentTarget.style.borderColor = "#a855f7";
+              }}
+            >
+              Begin setup
+            </button>
+          </div>
+        )}
 
-        {/* Stage content enclosed in an authoritative diagnostic console frame */}
+        {/* Stage content frame */}
+        {currentStage > 0 && (
         <div
           style={{
             maxWidth: "480px",
             width: "100%",
             background: "#0F0F0F",
             border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: "2px",
+            borderRadius: "10px",
             boxShadow: "0 24px 60px rgba(0, 0, 0, 0.48)",
             padding: "36px 40px",
             position: "relative",
@@ -3161,6 +3364,29 @@ export default function OnboardingPage() {
             transition: "all 300ms ease",
           }}
         >
+          {/* Per-stage context strip */}
+          {STAGE_META[currentStage] && (
+            <div
+              style={{
+                marginBottom: "20px",
+                paddingBottom: "16px",
+                borderBottom: "1px solid rgba(255,255,255,0.06)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              }}
+            >
+              <p style={{ fontSize: "12px", color: "#71717a", lineHeight: 1.5, margin: 0 }}>
+                {STAGE_META[currentStage].checking}
+              </p>
+              {STAGE_META[currentStage].todo && (
+                <p style={{ fontSize: "12px", color: "#a855f7", lineHeight: 1.5, margin: 0 }}>
+                  → {STAGE_META[currentStage].todo}
+                </p>
+              )}
+            </div>
+          )}
+
           {isTooEarly && (
             <div
               style={{
@@ -3229,21 +3455,21 @@ export default function OnboardingPage() {
                   }}
                 >
                   <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: "14px", fontSize: "13px", alignItems: "center" }}>
-                    <div style={{ color: "#A8A8A8" }}>[SYS_STATE]</div>
-                    <div style={{ color: "#22c55e" }}>VERIFICATION_COMPLETE</div>
+                    <div style={{ color: "#A8A8A8" }}>Status</div>
+                    <div style={{ color: "#22c55e" }}>Verification complete</div>
                     
-                    <div style={{ color: "#A8A8A8" }}>[TARGET]</div>
-                    <div style={{ color: "#FFF" }}>AMS_DERIVE_EXECUTION_NODE</div>
+                    <div style={{ color: "#A8A8A8" }}>Next step</div>
+                    <div style={{ color: "#FFF" }}>Contest workspace</div>
                     
-                    <div style={{ color: "#A8A8A8" }}>[HOOKS]</div>
-                    <div style={{ color: "#FFF" }}>ARMED_AND_LOCKED</div>
+                    <div style={{ color: "#A8A8A8" }}>Contest controls</div>
+                    <div style={{ color: "#FFF" }}>Ready</div>
                     
-                    <div style={{ color: "#A8A8A8" }}>[ACTION]</div>
-                    <div style={{ color: "#a855f7" }}>AWAITING_AUTO_REDIRECT...</div>
+                    <div style={{ color: "#A8A8A8" }}>Action</div>
+                    <div style={{ color: "#a855f7" }}>Waiting to enter contest...</div>
 
                     <div style={{ gridColumn: "1 / -1", height: "1px", background: "rgba(255,255,255,0.05)", margin: "16px 0 8px 0" }} />
 
-                    <div style={{ color: "#A8A8A8" }}>[T-MINUS]</div>
+                    <div style={{ color: "#A8A8A8" }}>Starts in</div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
                       <span style={{ fontSize: "42px", fontWeight: 700, color: "#FFFFFF", lineHeight: 1, letterSpacing: "-0.02em" }}>
                         {formatCountdown(waitMs)}
@@ -3268,18 +3494,18 @@ export default function OnboardingPage() {
                   }}
                 >
                   <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: "14px", fontSize: "13px", alignItems: "center" }}>
-                    <div style={{ color: "#A8A8A8" }}>[SYS_STATE]</div>
-                    <div style={{ color: "#22c55e" }}>VERIFICATION_COMPLETE</div>
+                    <div style={{ color: "#A8A8A8" }}>Status</div>
+                    <div style={{ color: "#22c55e" }}>Verification complete</div>
                     
-                    <div style={{ color: "#A8A8A8" }}>[TARGET]</div>
-                    <div style={{ color: "#FFF" }}>AMS_DERIVE_EXECUTION_NODE</div>
+                    <div style={{ color: "#A8A8A8" }}>Next step</div>
+                    <div style={{ color: "#FFF" }}>Contest workspace</div>
                     
-                    <div style={{ color: "#A8A8A8" }}>[HOOKS]</div>
-                    <div style={{ color: "#FFF" }}>ARMED_AND_LOCKED</div>
+                    <div style={{ color: "#A8A8A8" }}>Contest controls</div>
+                    <div style={{ color: "#FFF" }}>Ready</div>
                     
-                    <div style={{ color: "#A8A8A8" }}>[ACTION]</div>
+                    <div style={{ color: "#A8A8A8" }}>Action</div>
                     <div style={{ color: "#a855f7", display: "flex", alignItems: "center", gap: "8px" }}>
-                      LAUNCHING_SECURE_SESSION...
+                      Opening contest workspace...
                       <div
                         style={{
                           width: 12,
@@ -3300,7 +3526,7 @@ export default function OnboardingPage() {
               {currentStage === 4 && <Stage4_KeyboardLockdown onPass={advancePass} />}
               {currentStage === 5 && <Stage5_EnvironmentValidation onPass={advancePass} />}
               {currentStage === 6 && <Stage6_RestrictedApps onPass={advancePass} />}
-              {currentStage === 7 && <Stage7_VMDetection onPass={advancePass} />}
+              {currentStage === 7 && <Stage7_VMDetection onPass={advancePass} onWarn={advanceWarn} />}
               {currentStage === 8 && (
                 <Stage8_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
               )}
@@ -3310,8 +3536,8 @@ export default function OnboardingPage() {
               {currentStage === 10 && (
                 <Stage10_PresenceVerification stream={cameraStream} onPass={advancePass} />
               )}
-              {currentStage === 11 && <Stage11_AudioVerification onPass={advancePass} />}
-              {currentStage === 12 && <Stage12_NetworkValidation onPass={advancePass} />}
+              {currentStage === 11 && <Stage11_AudioVerification onPass={advancePass} onWarn={advanceWarn} />}
+              {currentStage === 12 && <Stage12_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />}
               {currentStage === 13 && (
                 <Stage13_IntegrityConfirmation results={results} onPass={advancePass} />
               )}
@@ -3319,6 +3545,7 @@ export default function OnboardingPage() {
             </>
           )}
         </div>
+        )}
       </div>
 
       <style>{`

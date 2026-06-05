@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { Activity, LayoutGrid, Settings as SettingsIcon } from "lucide-react";
 import { invoke, runSessionReadiness, sessionPolicy } from "@ams/api-client";
 import { fetchJson, useApiQuery } from "@/lib/api-client";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -49,48 +49,23 @@ import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { SecurityOperationsLog } from "./components/SecurityOperationsLog";
 import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
+import { deriveContestantReadiness } from "./components/readiness-context";
 
 const NAV_ITEMS = [
   {
     id: "overview",
     label: "Home",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
-        <rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
-        <rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
-        <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
-      </svg>
-    ),
+    icon: <LayoutGrid size={16} strokeWidth={1.8} />,
   },
   {
     id: "settings",
     label: "Settings",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path
-          d="M2 4.5h2.5M8 4.5h6"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-        />
-        <circle cx="5.5" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <path
-          d="M2 11.5h5.5M11.5 11.5h2.5"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-        />
-        <circle cx="10" cy="11.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M2 8h8M13.5 8h0.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-        <circle cx="11.5" cy="8" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-      </svg>
-    ),
+    icon: <SettingsIcon size={16} strokeWidth={1.8} />,
   },
   {
     id: "diagnostics",
     label: "Diagnostics",
-    icon: <ChevronRight size={16} strokeWidth={1.7} />,
+    icon: <Activity size={16} strokeWidth={1.8} />,
   },
 ];
 
@@ -244,6 +219,17 @@ export default function HomePage() {
   }, []);
 
   const c = useMemo(() => getThemeColors(theme), [theme]);
+
+  const contestantReadiness = useMemo(
+    () =>
+      deriveContestantReadiness({
+        readiness,
+        report: readinessReport,
+        entryWindowStatus: null,
+        activeSession,
+      }),
+    [readiness, readinessReport, activeSession]
+  );
 
   const contestsQueryKey = userEmailHydrated ? `contests:invited:${userEmail}` : null;
   const invitedContestsQuery = useApiQuery<InvitedContest[]>(
@@ -602,7 +588,7 @@ export default function HomePage() {
       }
 
       setInviteCode("");
-      setTimeout(() => setInviteSuccessMsg(null), 1200);
+      setTimeout(() => setInviteSuccessMsg(null), 6000);
     } catch {
       setInviteCodeStatus("Code validation unavailable.");
       appendSecurityEvent("SESSION: Session code validation failed");
@@ -756,6 +742,8 @@ export default function HomePage() {
                 key={item.id}
                 onClick={() => setActiveNav(item.id)}
                 title={item.label}
+                className="home-nav-btn"
+                data-active={String(active)}
                 style={{
                   position: "relative",
                   display: "flex",
@@ -765,18 +753,10 @@ export default function HomePage() {
                   padding: 0,
                   borderRadius: "8px",
                   border: "none",
-                  background: active ? c.accentLight : "transparent",
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  transition: "background 200ms ease",
                   overflow: "hidden",
                   flexShrink: 0,
-                }}
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.background = "transparent";
                 }}
               >
                 {/* Active bar — fades, never causes layout shift */}
@@ -931,8 +911,8 @@ export default function HomePage() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Header */}
         <header
+          className="home-header"
           style={{
-            padding: "36px 48px 24px",
             borderBottom: `1px solid ${c.border}`,
             flexShrink: 0,
             transition: "border-color 300ms",
@@ -946,7 +926,7 @@ export default function HomePage() {
               letterSpacing: "-0.015em",
             }}
           >
-            {activeNav === "overview" && "Contestant Command Hub"}
+            {activeNav === "overview" && "Contest Home"}
             {activeNav === "settings" && "Settings"}
             {activeNav === "diagnostics" && "Diagnostics"}
           </h1>
@@ -973,19 +953,30 @@ export default function HomePage() {
         </header>
 
         {/* Scrollable content views */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "36px 48px" }}>
+        <div className="home-content" style={{ flex: 1, overflowY: "auto" }}>
           {activeNav === "overview" && (
             <div
               className="grid grid-cols-1 xl:grid-cols-[1fr_360px]"
               style={{ gap: "36px", alignItems: "stretch" }}
             >
               <div style={{ display: "flex", flexDirection: "column", gap: "36px" }}>
+                <ContestsPanel
+                  contests={contests}
+                  loading={contestsLoading}
+                  theme={theme}
+                  onPreflight={(contestId, type) => {
+                    setPreflightContestId(contestId);
+                    setPreflightSessionType(type);
+                  }}
+                  readinessContext={contestantReadiness}
+                />
                 <SessionActionsPanel
                   activeSession={activeSession}
                   inviteCode={inviteCode}
                   inviteCodeBusy={inviteCodeBusy}
                   inviteCodeStatus={inviteCodeStatus}
                   inviteSuccessMsg={inviteSuccessMsg}
+                  onDismissInviteSuccess={() => setInviteSuccessMsg(null)}
                   onInviteCodeChange={setInviteCode}
                   onInviteCodeSubmit={handleInviteCodeSubmit}
                   onRefresh={() => loadContests(userEmail)}
@@ -997,15 +988,6 @@ export default function HomePage() {
                   sessionsRefreshing={sessionsRefreshing}
                   theme={theme}
                 />
-                <ContestsPanel
-                  contests={contests}
-                  loading={contestsLoading}
-                  theme={theme}
-                  onPreflight={(contestId, type) => {
-                    setPreflightContestId(contestId);
-                    setPreflightSessionType(type);
-                  }}
-                />
               </div>
 
               <ReadinessWidget
@@ -1013,6 +995,7 @@ export default function HomePage() {
                 onSettingsRedirect={() => setActiveNav("settings")}
                 theme={theme}
                 onResolve={(key) => setActiveResolveModal(key)}
+                context={contestantReadiness}
               />
             </div>
           )}
@@ -1064,6 +1047,14 @@ export default function HomePage() {
           onClose={() => setActiveResolveModal(null)}
           checkKey={activeResolveModal}
           theme={theme}
+          telemetry={telemetryQuery}
+          onOpenSettings={() => {
+            setActiveResolveModal(null);
+            setActiveNav("settings");
+          }}
+          onRetry={async (key) => {
+            await refreshTelemetry(true, `RESOLVE_${key}`);
+          }}
         />
       )}
       <style>{`

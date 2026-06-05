@@ -215,39 +215,39 @@ export function readinessCheckStatus(check: ReadinessCheck): ReadinessStatus {
 export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
   switch (kind) {
     case "network":
-      return { label: "Network Connectivity", success: "Network stable", fail: "Network unstable" };
+      return { label: "Network connection", success: "Network ready", fail: "Network unavailable" };
     case "microphone":
-      return { label: "Audio Telemetry", success: "Audio detected", fail: "Audio check pending" };
+      return { label: "Microphone", success: "Microphone ready", fail: "Microphone not available" };
     case "camera":
-      return { label: "Optical Stream", success: "Camera active", fail: "Camera offline" };
+      return { label: "Camera", success: "Camera ready", fail: "Camera not available" };
     case "virtualization":
       return {
-        label: "Virtualization Shield",
-        success: "Physical machine clear",
-        fail: "Virtualization flagged",
+        label: "Virtual machine check",
+        success: "No VM detected",
+        fail: "Virtual machine detected",
       };
     case "keyboard_lockdown":
       return {
-        label: "Keyboard Lockdown",
-        success: "Keyboard lock available",
-        fail: "Keyboard lock unavailable",
+        label: "Keyboard lockdown",
+        success: "Keyboard lockdown ready",
+        fail: "Keyboard lockdown unavailable",
       };
     case "restricted_apps":
       return {
-        label: "Restricted Processes",
-        success: "Process scan clear",
-        fail: "Restricted app flagged",
+        label: "Restricted apps",
+        success: "No restricted apps found",
+        fail: "Restricted app detected",
       };
     case "platform":
       return {
-        label: "Native Platform",
+        label: "Platform compatibility",
         success: "Platform supported",
-        fail: "Platform unsupported",
+        fail: "Platform not supported",
       };
     case "contest_id":
-      return { label: "Contest Binding", success: "Contest linked", fail: "Contest missing" };
+      return { label: "Contest link", success: "Contest linked", fail: "Contest not linked" };
     case "device_id":
-      return { label: "Device Registration", success: "Device registered", fail: "Device missing" };
+      return { label: "Device ID", success: "Device registered", fail: "Device not registered" };
     default:
       return { label: String(kind), success: "Check passed", fail: "Check failed" };
   }
@@ -267,14 +267,46 @@ export function toPreflightPolicyItem(check: ReadinessCheck, scope: "required" |
 
 // ── Contest entry state ───────────────────────────────────────
 
-export function formatStartsIn(startAt: string, now: number) {
-  const diff = new Date(startAt).getTime() - now;
-  if (diff <= 0) return "Starting now";
+export function formatDurationUntil(targetMs: number, now: number, elapsedLabel = "now") {
+  const diff = targetMs - now;
+  if (diff <= 0) return elapsedLabel;
   const minutes = Math.ceil(diff / 60000);
   if (minutes < 60) return minutes === 1 ? "1m" : `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+export function formatStartsIn(startAt: string, now: number) {
+  return formatDurationUntil(new Date(startAt).getTime(), now, "Starting now");
+}
+
+function formatContestDateTime(
+  value: string | number,
+  timezone: string | undefined,
+  options: Intl.DateTimeFormatOptions
+) {
+  const date = new Date(value);
+  const withTimezone = timezone ? { ...options, timeZone: timezone } : options;
+  try {
+    return new Intl.DateTimeFormat(undefined, withTimezone).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(undefined, options).format(date);
+  }
+}
+
+export function formatContestClock(value: string | number, timezone?: string) {
+  return formatContestDateTime(value, timezone, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+export function formatContestDateLabel(startAt: string, endAt: string, timezone?: string) {
+  const startLabel = formatContestDateTime(startAt, timezone, { month: "short", day: "numeric" });
+  const endLabel = formatContestDateTime(endAt, timezone, { month: "short", day: "numeric" });
+  return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
 export function getVerificationWindowMinutes(c: InvitedContest) {
@@ -295,12 +327,24 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
     canEnter: false,
     sessionType: "new",
     ctaLabel: "Unavailable",
-    statusLabel: "METADATA PENDING",
-    timingLabel: "metadata pending",
+    statusLabel: "TIMING UNAVAILABLE",
+    timingLabel: "timing unavailable",
+    actionHelper: "Contest timing unavailable. Refresh or contact support.",
+    verificationOpensAt: "Unavailable",
+    contestStartsAt: "Unavailable",
+    contestEndsAt: "Unavailable",
+    contestDateLabel: "Date unavailable",
     disabledTitle: "Contest timing metadata is unavailable",
   };
 
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return unavailable;
+
+  const verificationOpen = start - verificationWindowMinutes * 60 * 1000;
+  const verificationOpensAt = formatContestClock(verificationOpen, c.timezone);
+  const contestStartsAt = formatContestClock(c.start_at, c.timezone);
+  const contestEndsAt = formatContestClock(c.end_at, c.timezone);
+  const contestDateLabel = formatContestDateLabel(c.start_at, c.end_at, c.timezone);
+
   if (status === "DRAFT") {
     return {
       phase: "draft",
@@ -309,6 +353,11 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
       ctaLabel: "Draft",
       statusLabel: "DRAFT",
       timingLabel: "not published",
+      actionHelper: "This contest is not published for contestants yet.",
+      verificationOpensAt,
+      contestStartsAt,
+      contestEndsAt,
+      contestDateLabel,
       disabledTitle: "This contest is still in draft",
     };
   }
@@ -319,21 +368,31 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
       canEnter: false,
       sessionType: "resume",
       ctaLabel: "Ended",
-      statusLabel: "CLOSED",
-      timingLabel: "window closed",
+      statusLabel: "ENDED",
+      timingLabel: `ended at ${contestEndsAt}`,
+      actionHelper: `Contest ended at ${contestEndsAt}.`,
+      verificationOpensAt,
+      contestStartsAt,
+      contestEndsAt,
+      contestDateLabel,
       disabledTitle: "This contest has ended",
     };
   }
 
-  const windowOpen = start - verificationWindowMinutes * 60 * 1000;
-  if (now < windowOpen) {
+  if (now < verificationOpen) {
+    const opensIn = formatDurationUntil(verificationOpen, now);
     return {
       phase: "too_early",
       canEnter: false,
       sessionType: "new",
-      ctaLabel: `Verification opens ${formatStartsIn(c.start_at, now)}`,
+      ctaLabel: "Not open yet",
       statusLabel: "SCHEDULED",
-      timingLabel: `opens in ${formatStartsIn(c.start_at, now)}`,
+      timingLabel: `verification opens in ${opensIn}`,
+      actionHelper: `Verification opens at ${verificationOpensAt}.`,
+      verificationOpensAt,
+      contestStartsAt,
+      contestEndsAt,
+      contestDateLabel,
       disabledTitle: "Verification has not opened yet",
     };
   }
@@ -345,7 +404,12 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
       sessionType: "new",
       ctaLabel: "Begin Verification",
       statusLabel: "VERIFICATION OPEN",
-      timingLabel: `starts in ${formatStartsIn(c.start_at, now)}`,
+      timingLabel: `contest starts in ${formatDurationUntil(start, now)}`,
+      actionHelper: `Verification is open. Contest starts at ${contestStartsAt}.`,
+      verificationOpensAt,
+      contestStartsAt,
+      contestEndsAt,
+      contestDateLabel,
     };
   }
 
@@ -357,6 +421,11 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
       ctaLabel: "Enter Contest",
       statusLabel: "LIVE",
       timingLabel: "live now",
+      actionHelper: `Contest is live until ${contestEndsAt}.`,
+      verificationOpensAt,
+      contestStartsAt,
+      contestEndsAt,
+      contestDateLabel,
     };
   }
 
@@ -367,6 +436,11 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
     ctaLabel: "Blocked",
     statusLabel: status || "BLOCKED",
     timingLabel: "entry unavailable",
+    actionHelper: "Entry is unavailable for this contest. Refresh or contact support.",
+    verificationOpensAt,
+    contestStartsAt,
+    contestEndsAt,
+    contestDateLabel,
     disabledTitle: "This contest is not open for entry",
   };
 }

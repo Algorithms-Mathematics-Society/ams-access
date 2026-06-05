@@ -1,20 +1,24 @@
 "use client";
 
 import { useMemo } from "react";
+import { CalendarDays } from "lucide-react";
 import { getThemeColors } from "./utils";
 import { ActiveContestCard } from "./ContestCards";
-import type { InvitedContest } from "./types";
+import { Panel } from "./ui-primitives";
+import type { InvitedContest, ContestantReadinessContext } from "./types";
 
 export function ContestsPanel({
   contests,
   loading,
   theme,
   onPreflight,
+  readinessContext,
 }: {
   contests: InvitedContest[];
   loading: boolean;
   theme: "dark" | "light";
   onPreflight: (contestId: string, type: "new" | "resume") => void;
+  readinessContext?: ContestantReadinessContext;
 }) {
   const themeColors = getThemeColors(theme);
 
@@ -75,16 +79,15 @@ export function ContestsPanel({
 
   if (contests.length === 0) {
     return (
-      <div
+      <Panel
+        theme={theme}
         style={{
-          border: `1px dashed ${themeColors.border}`,
-          borderRadius: "8px",
+          borderStyle: "dashed",
           padding: "24px 28px",
           textAlign: "left",
           display: "flex",
           alignItems: "center",
           gap: "18px",
-          background: themeColors.cardBg,
         }}
       >
         <div
@@ -100,19 +103,7 @@ export function ContestsPanel({
             flexShrink: 0,
           }}
         >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke={themeColors.accent}
-            strokeWidth="1.8"
-          >
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-          </svg>
+<CalendarDays size={18} strokeWidth={1.9} color={themeColors.accent} />
         </div>
         <div style={{ flex: 1 }}>
           <h4
@@ -139,7 +130,7 @@ export function ContestsPanel({
             they are added.
           </p>
         </div>
-      </div>
+      </Panel>
     );
   }
 
@@ -161,7 +152,7 @@ export function ContestsPanel({
         {contests.map((c) => {
           const col = statusColor(c.status);
           return (
-            <ActiveContestCard key={c.id} c={c} col={col} onPreflight={onPreflight} theme={theme} />
+            <ActiveContestCard key={c.id} c={c} col={col} onPreflight={onPreflight} theme={theme} readinessContext={readinessContext} />
           );
         })}
       </div>

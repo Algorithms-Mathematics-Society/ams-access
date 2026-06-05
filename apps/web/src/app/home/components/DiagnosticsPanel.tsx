@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, memo, useMemo } from "react";
+import { useEffect, memo, useMemo, useState, useCallback } from "react";
 import { getThemeColors, getNetworkProbeHost } from "./utils";
 import type { ReadinessState, TelemetryQueryState } from "./types";
 
@@ -88,10 +88,16 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   const lastScannedLabel = useMemo(
     () =>
       telemetry.lastScannedAt
-        ? new Date(telemetry.lastScannedAt).toLocaleTimeString([], { hour12: false })
-        : "not scanned",
+        ? new Date(telemetry.lastScannedAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+          })
+        : null,
     [telemetry.lastScannedAt]
   );
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     void refreshTelemetry(false, "DIAGNOSTICS");
@@ -100,6 +106,29 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   async function runNetworkScan() {
     await refreshTelemetry(true, "DIAGNOSTICS");
   }
+
+  const copySupportSummary = useCallback(() => {
+    const lines = [
+      "AMS Access — Support Summary",
+      `Generated: ${new Date().toLocaleString()}`,
+      "",
+      `Platform: ${platformInfo ? `${platformInfo.os} ${platformInfo.arch}` : "unknown"}`,
+      `Network quality: ${networkQuality}${latency !== null ? ` (${latency}ms latency` : ""}${jitter !== null ? `, ${jitter}ms jitter)` : latency !== null ? ")" : ""}`,
+      `Camera: ${readiness.camera === "ok" ? "Ready" : readiness.camera === "fail" ? "Not ready" : "Checking"}`,
+      `Microphone: ${readiness.mic === "ok" ? "Ready" : readiness.mic === "fail" ? "Not ready" : "Checking"}`,
+      `Keyboard lock: ${readiness.keyboard === "ok" ? "Ready" : readiness.keyboard === "fail" ? "Not ready" : "Checking"}`,
+      `Platform support: ${readiness.platform === "ok" ? "Ready" : readiness.platform === "fail" ? "Not supported" : "Checking"}`,
+      `VM detection: ${readiness.vm === "ok" ? "Ready" : readiness.vm === "fail" ? "Needs attention" : "Checking"}`,
+      "",
+      "Client version: 0.1.0",
+      "Build channel: release-production",
+      lastScannedLabel ? `Last checked: ${lastScannedLabel}` : "Last checked: not scanned",
+    ];
+    void navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2200);
+    });
+  }, [platformInfo, networkQuality, latency, jitter, readiness, lastScannedLabel]);
 
   function exportReport() {
     const data = {
@@ -185,12 +214,12 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             theme={theme}
           />
           <TelemetryStat
-            label="Security Environment"
+            label="Security checks"
             val={securityEnv ? securityEnv.display_server : "Unavailable"}
             sub={
               securityEnv
-                ? `LD_PRELOAD ${securityEnv.ld_preload_injection ? "present" : "clean"}`
-                : "get_security_environment did not return data"
+                ? `Startup injection check ${securityEnv.ld_preload_injection ? "needs attention" : "clean"}`
+                : "Security check did not return data"
             }
             status={securityEnv ? (securityEnv.ld_preload_injection ? "fail" : "ok") : "unknown"}
             theme={theme}
@@ -240,7 +269,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               e.currentTarget.style.transform = "scale(1)";
             }}
           >
-            {checkingNetwork ? "Measuring Telemetry..." : "Scan Latency Network"}
+            {checkingNetwork ? "Checking network..." : "Run network check"}
           </button>
           <div style={{ display: "flex", gap: "20px" }}>
             <span style={{ fontSize: "13px", color: c.textMutedStrong }}>
@@ -283,12 +312,29 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           padding: "20px 24px",
         }}
       >
-        <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text, marginBottom: "8px" }}>
-          Diagnostics Export
-        </h4>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginBottom: "8px",
+          }}
+        >
+          <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
+            Diagnostic Report
+          </h4>
+          <span
+            style={{
+              fontSize: "11px",
+              color: c.textMuted,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            v0.1.0 · release-production
+          </span>
+        </div>
         <p style={{ fontSize: "13px", color: c.textMuted, marginBottom: "16px", lineHeight: 1.5 }}>
-          Export local secure client parameters to help technical administrators troubleshoot
-          workstation setups.
+          Share this report with your contest organizer to help troubleshoot setup issues.
         </p>
         <pre
           style={{
@@ -301,7 +347,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             fontFamily: "'JetBrains Mono', monospace",
             lineHeight: 1.6,
             overflowX: "auto",
-            marginBottom: "20px",
+            marginBottom: "16px",
           }}
         >
           {`{
@@ -310,6 +356,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   "os_environment": "${platformInfo ? `${platformInfo.os} ${platformInfo.arch}` : "unknown"}",
   "display_server": "${securityEnv?.display_server ?? "unknown"}",
   "network_quality": "${networkQuality}",
+  "last_checked": "${lastScannedLabel ?? "not scanned"}",
   "security_lockdown": {
     "platform_supported": ${readiness.platform === "ok"},
     "keyboard_lock_available": ${readiness.keyboard === "ok"},
@@ -317,43 +364,70 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   }
 }`}
         </pre>
-        <button
-          onClick={exportReport}
+        <p
           style={{
-            padding: "9px 16px",
-            background: theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)",
+            fontSize: "12px",
+            color: c.textMuted,
+            marginBottom: "16px",
+            lineHeight: 1.5,
+            padding: "10px 12px",
+            background: "rgba(255,255,255,0.02)",
             border: `1px solid ${c.border}`,
             borderRadius: "6px",
-            color: c.textMutedStrong,
-            fontSize: "13px",
-            fontWeight: 500,
-            fontFamily: "inherit",
-            cursor: "pointer",
-            transition:
-              "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background =
-              theme === "light" ? "rgba(0,0,0,0.055)" : "rgba(255,255,255,0.075)";
-            e.currentTarget.style.borderColor = c.borderStrong;
-            e.currentTarget.style.color = c.text;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background =
-              theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)";
-            e.currentTarget.style.borderColor = c.border;
-            e.currentTarget.style.color = c.textMutedStrong;
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-          onMouseDown={(e) => {
-            e.currentTarget.style.transform = "scale(0.98)";
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
           }}
         >
-          Export Diagnostic JSON Log
-        </button>
+          This includes device, network, and readiness details. It does not include your password or
+          session code.
+        </p>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <button
+            onClick={copySupportSummary}
+            style={{
+              padding: "9px 16px",
+              background: copied ? "rgba(34,197,94,0.1)" : c.accentLight,
+              border: `1px solid ${copied ? "rgba(34,197,94,0.25)" : c.accentBorder}`,
+              borderRadius: "6px",
+              color: copied ? "#4ade80" : c.accentText,
+              fontSize: "13px",
+              fontWeight: 500,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              transition: "background 150ms ease, border-color 150ms ease, color 150ms ease",
+            }}
+          >
+            {copied ? "Copied!" : "Copy support summary"}
+          </button>
+          <button
+            onClick={exportReport}
+            style={{
+              padding: "9px 16px",
+              background: theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)",
+              border: `1px solid ${c.border}`,
+              borderRadius: "6px",
+              color: c.textMutedStrong,
+              fontSize: "13px",
+              fontWeight: 500,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              transition:
+                "background 150ms ease, border-color 150ms ease, color 150ms ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background =
+                theme === "light" ? "rgba(0,0,0,0.055)" : "rgba(255,255,255,0.075)";
+              e.currentTarget.style.borderColor = c.borderStrong;
+              e.currentTarget.style.color = c.text;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background =
+                theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)";
+              e.currentTarget.style.borderColor = c.border;
+              e.currentTarget.style.color = c.textMutedStrong;
+            }}
+          >
+            Export diagnostic report
+          </button>
+        </div>
       </div>
     </div>
   );

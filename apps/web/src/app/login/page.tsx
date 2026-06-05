@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [emailFocused, setEmailFocused] = useState(false);
   const [passFocused, setPassFocused] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showSSOModal, setShowSSOModal] = useState(false);
 
   useEffect(() => {
@@ -23,6 +24,7 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading) return;
+    setError(null);
     setLoading(true);
 
     if (email === TEST_EMAIL && password === TEST_PASSWORD) {
@@ -39,7 +41,14 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
+      if (res.status === 401 || res.status === 403) {
+        setError("Email or password did not match.");
+        setLoading(false);
+        return;
+      }
+
       if (!res.ok) {
+        setError("Sign-in failed. Please try again.");
         setLoading(false);
         return;
       }
@@ -47,8 +56,19 @@ export default function LoginPage() {
       localStorage.setItem("ams_user_email", email);
       setTimeout(() => router.push("/home"), 850);
     } catch {
+      setError("Cannot reach AMS Access. Check your internet connection and try again.");
       setLoading(false);
     }
+  }
+
+  function handleDevSignIn() {
+    if (loading) return;
+    setError(null);
+    setEmail(TEST_EMAIL);
+    setPassword(TEST_PASSWORD);
+    setLoading(true);
+    localStorage.setItem("ams_user_email", TEST_EMAIL);
+    setTimeout(() => router.push("/home"), 250);
   }
 
   return (
@@ -125,28 +145,18 @@ export default function LoginPage() {
           max-width: 360px;
         }
 
-        .bl-form-eyebrow {
-          font-size: 8.5px;
-          font-weight: 700;
-          letter-spacing: 0.25em;
-          color: #a855f7;
-          text-transform: uppercase;
-          margin-bottom: 10px;
-        }
-
         .bl-form-title {
           font-size: 14px;
           font-weight: 700;
-          letter-spacing: 0.12em;
+          letter-spacing: 0;
           color: rgba(255,255,255,0.9);
-          text-transform: uppercase;
           margin-bottom: 6px;
         }
 
         .bl-form-sub {
-          font-size: 9px;
-          letter-spacing: 0.12em;
-          color: #444444;
+          font-size: 11px;
+          letter-spacing: 0;
+          color: #666666;
           margin-bottom: 28px;
         }
 
@@ -163,10 +173,10 @@ export default function LoginPage() {
 
         .bl-label {
           display: block;
-          font-size: 8.5px;
-          font-weight: 700;
-          letter-spacing: 0.22em;
-          color: #555555;
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          color: #666666;
           text-transform: uppercase;
           margin-bottom: 7px;
           transition: color 0.12s;
@@ -179,7 +189,7 @@ export default function LoginPage() {
           width: 100%;
           background: #0A0A0A;
           border: 1px solid rgba(255,255,255,0.06);
-          border-radius: 0;
+          border-radius: 8px;
           color: #ffffff;
           font-family: 'JetBrains Mono', 'Fira Code', monospace;
           font-size: 12px;
@@ -200,6 +210,11 @@ export default function LoginPage() {
           background: #0D0D0D;
         }
 
+        .bl-input:focus-visible {
+          outline: 2px solid rgba(168,85,247,0.5);
+          outline-offset: 2px;
+        }
+
         .bl-input:disabled {
           opacity: 0.45;
           cursor: not-allowed;
@@ -217,13 +232,14 @@ export default function LoginPage() {
           background: #1F1F1F;
           color: #a855f7;
           border: 1px solid #a855f7;
-          border-radius: 0;
+          border-radius: 8px;
           font-family: 'JetBrains Mono', 'Fira Code', monospace;
-          font-size: 10.5px;
+          font-size: 11px;
           font-weight: 700;
-          letter-spacing: 0.18em;
+          letter-spacing: 0.04em;
           text-transform: uppercase;
-          padding: 14px 24px;
+          min-height: 40px;
+          padding: 0 24px;
           cursor: pointer;
           transition: background 0.12s, color 0.12s;
         }
@@ -231,6 +247,11 @@ export default function LoginPage() {
         .bl-submit:hover:not(:disabled) {
           background: #a855f7;
           color: #000000;
+        }
+
+        .bl-submit:focus-visible {
+          outline: 2px solid rgba(168,85,247,0.6);
+          outline-offset: 2px;
         }
 
         .bl-submit:disabled {
@@ -251,6 +272,19 @@ export default function LoginPage() {
           to   { transform: rotate(360deg); }
         }
 
+        /* Inline error */
+        .bl-error {
+          margin-top: 12px;
+          padding: 10px 12px;
+          border: 1px solid rgba(239,68,68,0.25);
+          background: rgba(239,68,68,0.06);
+          font-size: 12px;
+          font-family: 'Inter', system-ui, sans-serif;
+          color: #fca5a5;
+          line-height: 1.5;
+          letter-spacing: 0;
+        }
+
         /* Dev autofill */
         .bl-dev-btn {
           display: block;
@@ -258,7 +292,7 @@ export default function LoginPage() {
           margin-top: 10px;
           background: transparent;
           border: 1px solid rgba(255,255,255,0.04);
-          border-radius: 0;
+          border-radius: 8px;
           color: #333333;
           font-family: inherit;
           font-size: 9px;
@@ -287,29 +321,53 @@ export default function LoginPage() {
           width: 100%;
           background: transparent;
           border: 1px solid rgba(255,255,255,0.06);
-          border-radius: 0;
-          color: #444444;
+          border-radius: 8px;
+          color: #777777;
           font-family: inherit;
-          font-size: 9.5px;
-          font-weight: 700;
-          letter-spacing: 0.15em;
-          text-transform: uppercase;
-          padding: 10px 16px;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0;
+          padding: 0 16px;
+          min-height: 38px;
           cursor: pointer;
           transition: border-color 0.12s, color 0.12s;
         }
 
         .bl-sso-btn:hover {
           border-color: rgba(255,255,255,0.1);
-          color: #777777;
+          color: #888888;
+        }
+
+        .bl-sso-btn:focus-visible {
+          outline: 2px solid rgba(168,85,247,0.5);
+          outline-offset: 2px;
         }
 
         .bl-form-note {
           margin-top: 18px;
-          font-size: 8.5px;
-          letter-spacing: 0.06em;
-          color: #A8A8A8;
-          line-height: 1.8;
+          font-family: 'Inter', system-ui, sans-serif;
+          font-size: 11px;
+          letter-spacing: 0;
+          color: #555555;
+          line-height: 1.6;
+        }
+
+        .bl-form-support {
+          margin-top: 10px;
+          font-family: 'Inter', system-ui, sans-serif;
+          font-size: 11px;
+          color: #666666;
+          line-height: 1.6;
+        }
+
+        .bl-form-support a {
+          color: rgba(168,85,247,0.8);
+          text-decoration: none;
+        }
+
+        .bl-form-support a:hover {
+          color: #a855f7;
+          text-decoration: underline;
         }
 
         /* SSO Modal */
@@ -326,17 +384,17 @@ export default function LoginPage() {
         .bl-modal {
           background: #141414;
           border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 0;
-          padding: 40px 44px;
+          border-radius: 10px;
+          padding: 32px 36px;
           max-width: 440px;
           width: 90%;
         }
 
         .bl-modal-tag {
-          font-size: 8.5px;
+          font-size: 10px;
           font-weight: 700;
-          letter-spacing: 0.22em;
-          color: #ef4444;
+          letter-spacing: 0.12em;
+          color: #fbbf24;
           text-transform: uppercase;
           margin-bottom: 12px;
         }
@@ -344,31 +402,31 @@ export default function LoginPage() {
         .bl-modal-title {
           font-size: 13px;
           font-weight: 700;
-          letter-spacing: 0.1em;
+          letter-spacing: 0;
           color: #ffffff;
-          text-transform: uppercase;
           margin-bottom: 16px;
         }
 
         .bl-modal-body {
-          font-size: 10.5px;
-          line-height: 1.8;
-          color: #666666;
+          font-family: 'Inter', system-ui, sans-serif;
+          font-size: 13px;
+          line-height: 1.65;
+          color: #888888;
           margin-bottom: 28px;
-          letter-spacing: 0.03em;
+          letter-spacing: 0;
         }
 
         .bl-modal-close {
           background: transparent;
           border: 1px solid rgba(255,255,255,0.1);
-          border-radius: 0;
-          color: #666666;
+          border-radius: 8px;
+          color: #d8b4fe;
           font-family: inherit;
-          font-size: 9.5px;
-          font-weight: 700;
-          letter-spacing: 0.15em;
-          text-transform: uppercase;
-          padding: 10px 20px;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0;
+          padding: 0 18px;
+          min-height: 38px;
           cursor: pointer;
           transition: border-color 0.12s, color 0.12s;
         }
@@ -376,6 +434,24 @@ export default function LoginPage() {
         .bl-modal-close:hover {
           border-color: rgba(255,255,255,0.2);
           color: #aaaaaa;
+        }
+
+        .bl-modal-close:focus-visible {
+          outline: 2px solid rgba(168,85,247,0.5);
+          outline-offset: 2px;
+        }
+
+        /* ── Responsive: collapse to single column on narrow windows ── */
+        @media (max-width: 720px) {
+          .bl-root {
+            grid-template-columns: 1fr;
+          }
+          .bl-left {
+            display: none;
+          }
+          .bl-right {
+            padding: 32px 24px;
+          }
         }
       `}</style>
 
@@ -409,11 +485,11 @@ export default function LoginPage() {
         {/* ══════════════════ RIGHT PANE ══════════════════ */}
         <div className="bl-right">
           <div className="bl-form-wrap">
-            <div className="bl-form-title">Authentication Required</div>
-            <div className="bl-form-sub">AMS Derive · Session will be fully proctored</div>
+            <div className="bl-form-title">Sign in</div>
+            <div className="bl-form-sub">AMS Derive &middot; This session will be proctored</div>
             <div className="bl-rule" />
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} noValidate>
               <div className="bl-field">
                 <label
                   htmlFor="login-email"
@@ -425,13 +501,15 @@ export default function LoginPage() {
                   id="login-email"
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setError(null); setEmail(e.target.value); }}
                   onFocus={() => setEmailFocused(true)}
                   onBlur={() => setEmailFocused(false)}
                   placeholder="you@institution.edu"
                   autoComplete="email"
                   required
                   disabled={loading}
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? "true" : undefined}
                   className="bl-input"
                 />
               </div>
@@ -447,13 +525,15 @@ export default function LoginPage() {
                   id="login-password"
                   type="password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setError(null); setPassword(e.target.value); }}
                   onFocus={() => setPassFocused(true)}
                   onBlur={() => setPassFocused(false)}
                   placeholder="••••••••••••"
                   autoComplete="current-password"
                   required
                   disabled={loading}
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? "true" : undefined}
                   className="bl-input"
                 />
               </div>
@@ -468,6 +548,7 @@ export default function LoginPage() {
                         height="12"
                         viewBox="0 0 12 12"
                         fill="none"
+                        aria-hidden="true"
                       >
                         <circle
                           cx="6"
@@ -486,32 +567,38 @@ export default function LoginPage() {
                       Verifying...
                     </>
                   ) : (
-                    "Authenticate"
+                    "Sign in"
                   )}
                 </button>
+
+                {error && (
+                  <p id="login-error" role="alert" className="bl-error">
+                    {error}
+                  </p>
+                )}
+
                 <button
                   type="button"
                   disabled={loading}
                   className="bl-dev-btn"
-                  onClick={() => {
-                    setEmail(TEST_EMAIL);
-                    setPassword(TEST_PASSWORD);
-                  }}
+                  onClick={handleDevSignIn}
                 >
-                  [ dev: autofill test credentials ]
+                  Dev sign in
                 </button>
               </div>
             </form>
 
             <div className="bl-sso-wrap">
               <button type="button" onClick={() => setShowSSOModal(true)} className="bl-sso-btn">
-                [ Institution_SSO ] →
+                Institution SSO
               </button>
             </div>
 
             <p className="bl-form-note">
-              This is a strictly proctored environment. System verification and optical telemetry
-              will initialize after authentication.
+              This is a proctored session. Your device will be verified after you sign in.
+            </p>
+            <p className="bl-form-support">
+              Need help signing in? Contact your contest organizer.
             </p>
           </div>
         </div>
@@ -521,17 +608,16 @@ export default function LoginPage() {
       {showSSOModal && (
         <div role="dialog" aria-modal="true" aria-labelledby="sso-title" className="bl-modal-bg">
           <div className="bl-modal">
-            <div className="bl-modal-tag">[ Status: Unavailable ]</div>
+            <div className="bl-modal-tag">Limited availability</div>
             <h3 id="sso-title" className="bl-modal-title">
-              Institution SSO Portal
+              Institution SSO is not enabled
             </h3>
             <p className="bl-modal-body">
-              Institution Single Sign-On is currently unavailable for this version of the
-              application. Contact your institution&#39;s administrator to register your device, or
-              use your designated secure email credentials to sign in directly.
+              Institution Single Sign-On is not available for this contest. Use the email and
+              password assigned to you by your contest organizer to sign in.
             </p>
             <button type="button" onClick={() => setShowSSOModal(false)} className="bl-modal-close">
-              [ Acknowledge &amp; Close ]
+              Close
             </button>
           </div>
         </div>

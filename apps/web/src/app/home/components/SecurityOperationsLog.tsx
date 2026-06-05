@@ -78,7 +78,7 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
-          Live Security Operations Feed
+          Session activity
         </h4>
       </div>
       <div

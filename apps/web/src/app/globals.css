@@ -993,3 +993,43 @@ input::placeholder {
 .welcome-legal span:hover {
   color: rgba(192, 132, 252, 0.58);
 }
+
+/* ─────────────────────────────────────────────────────────────
+   RESPONSIVE — HOME LAYOUT CHROME
+   ───────────────────────────────────────────────────────────── */
+.home-header  { padding: 36px 48px 24px; }
+.home-content { padding: 36px 48px; }
+
+@media (max-width: 900px) {
+  .home-header  { padding: 20px 24px 16px; }
+  .home-content { padding: 20px 24px; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   HOME — SIDEBAR NAV BUTTON (replaces inline onMouseEnter/Leave)
+   ───────────────────────────────────────────────────────────── */
+.home-nav-btn {
+  background: transparent;
+  transition: background 200ms ease;
+}
+.home-nav-btn[data-active="true"] {
+  background: var(--theme-accent-light);
+}
+.home-nav-btn:hover:not([data-active="true"]),
+.home-nav-btn:focus-visible:not([data-active="true"]) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MOTION PREFERENCES
+   ───────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

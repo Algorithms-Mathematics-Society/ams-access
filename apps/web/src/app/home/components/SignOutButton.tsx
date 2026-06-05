@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LogOut } from "lucide-react";
 import { getThemeColors } from "./utils";
 
 export function SignOutButton({
@@ -39,15 +40,7 @@ export function SignOutButton({
         textAlign: "left",
       }}
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path
-          d="M6 14H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h3M11 11l3-3-3-3M14 8H6"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+<LogOut size={16} strokeWidth={1.7} />
       Sign out
     </button>
   );

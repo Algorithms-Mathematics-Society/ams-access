@@ -60,7 +60,7 @@ function PermissionLine({
           letterSpacing: "0.04em",
         }}
       >
-        {enabled ? "GRANTED" : "BLOCKED"}
+        {enabled ? "Allowed" : "Denied"}
       </span>
     </div>
   );
@@ -1136,12 +1136,12 @@ export const SettingsPanel = memo(function SettingsPanel({
                   label={
                     platformInfo?.os === "windows"
                       ? "Debugger/injection profile"
-                      : "LD_PRELOAD injection"
+                      : "Startup injection check"
                   }
                   val={
                     securityEnv
                       ? securityEnv.ld_preload_injection
-                        ? "Injection variable present"
+                        ? "Needs attention"
                         : "Clean"
                       : "Checking"
                   }
@@ -1305,9 +1305,8 @@ export const SettingsPanel = memo(function SettingsPanel({
                   marginBottom: "24px",
                 }}
               >
-                AMS Access secure contestant sandbox environment. This platform manages identity
-                verification, optical telemetry, and background integrity validations during
-                quantitative rounds.
+                AMS Access helps verify your identity, check your device, and keep the contest
+                environment ready before and during quantitative rounds.
               </p>
 
               <div

@@ -102,6 +102,21 @@ export type ActiveSession = {
 
 export type ResumeVerificationState = "none" | "unverified" | "checking" | "verified" | "invalid";
 
+export type ContestantReadinessStatus =
+  | "checking"
+  | "ready"
+  | "needs_action"
+  | "advisory_warning"
+  | "blocked_by_policy";
+
+export type ContestantReadinessContext = {
+  status: ContestantReadinessStatus;
+  /** Human-readable single sentence answering "what do I do next?" */
+  message: string;
+  failedRequired: number;
+  failedOptional: number;
+};
+
 export type ContestEntryPhase =
   | "draft"
   | "too_early"
@@ -118,5 +133,10 @@ export type ContestEntryState = {
   ctaLabel: string;
   statusLabel: string;
   timingLabel: string;
+  actionHelper: string;
+  verificationOpensAt: string;
+  contestStartsAt: string;
+  contestEndsAt: string;
+  contestDateLabel: string;
   disabledTitle?: string;
 };
