@@ -35,8 +35,7 @@
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist",
       "signingIdentity": null,
-      "providerShortName": null,
-      "frameworks": ["ApplicationServices", "CoreFoundation"]
+      "providerShortName": null
     },
     "icon": [
       "icons/32x32.png",
