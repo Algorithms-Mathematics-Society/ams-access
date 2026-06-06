@@ -1870,6 +1870,7 @@ export default function ContestPageClient() {
     setIsRunning(true);
     setRunResult(null);
     setRunError(null);
+    setSubmitError(null);
     setTerminalTab("stdout");
 
     // Persist the current code before dispatching to the judge.
@@ -1887,16 +1888,20 @@ export default function ContestPageClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          question_id: questions[activeQ].id,
+          problem_id: questions[activeQ].id,
           language: toLanguageId(selectedLanguage),
-          files: editorFiles,
-          active_file_id: activeFileId,
+          source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const created = (await res.json()) as { id: string; attempt_no: number };
-      attemptId = created.id;
-      setRunResult({ id: created.id, attempt_no: created.attempt_no, status: "QUEUED" });
+      const created = (await res.json()) as {
+        id?: string;
+        attempt_id?: string;
+        attempt_no: number;
+      };
+      const resolvedId = created.id ?? created.attempt_id ?? "";
+      attemptId = resolvedId;
+      setRunResult({ id: resolvedId, attempt_no: created.attempt_no, status: "QUEUED" });
       setTerminalTab("stdout");
     } catch {
       setIsRunning(false);
@@ -1988,10 +1993,9 @@ export default function ContestPageClient() {
 
       const qId = questions[activeQ].id;
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submissions`, {
-        question_id: qId,
+        problem_id: qId,
         language: toLanguageId(selectedLanguage),
-        files: editorFiles,
-        active_file_id: activeFileId,
+        source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
       });
 
       if (!response.ok) {
