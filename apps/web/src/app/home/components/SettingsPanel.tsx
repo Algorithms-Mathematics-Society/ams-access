@@ -11,7 +11,7 @@ import {
   CAMERA_RETRY_DELAY_MS,
   CAMERA_START_TIMEOUT_MS,
 } from "./utils";
-import type { ReadinessState, TelemetryQueryState } from "./types";
+import type { ReadinessState, SecurityLogLevel, TelemetryQueryState } from "./types";
 
 function PermissionLine({
   label,
@@ -160,7 +160,7 @@ export const SettingsPanel = memo(function SettingsPanel({
   setReadiness: Dispatch<SetStateAction<ReadinessState>>;
   theme: "dark" | "light";
   setTheme: (t: "dark" | "light") => void;
-  onSecurityEvent: (event: string) => void;
+  onSecurityEvent: (event: string, level?: SecurityLogLevel) => void;
   telemetry: TelemetryQueryState;
   refreshTelemetry: (force?: boolean, source?: string) => Promise<void>;
 }) {
@@ -337,7 +337,7 @@ export const SettingsPanel = memo(function SettingsPanel({
       console.error("Camera setup failed", err);
       setCameraError(describeMediaError(err, "camera"));
       setReadiness((r) => ({ ...r, camera: "fail" }));
-      onSecurityEvent("HARDWARE: Camera stream verification failed");
+      onSecurityEvent("HARDWARE: Camera stream verification failed", "error");
     } finally {
       cameraTestInFlightRef.current = false;
       setCameraBusy(false);
@@ -405,7 +405,7 @@ export const SettingsPanel = memo(function SettingsPanel({
         console.error("Microphone capture failed", err);
         setMicError(describeMediaError(err, "microphone"));
         setReadiness((r) => ({ ...r, mic: "fail" }));
-        onSecurityEvent("HARDWARE: Microphone stream verification failed");
+        onSecurityEvent("HARDWARE: Microphone stream verification failed", "error");
       }
     }
   }
@@ -519,15 +519,6 @@ export const SettingsPanel = memo(function SettingsPanel({
               gap: "8px",
             }}
           >
-            <div
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "#a855f7",
-                boxShadow: "0 0 6px #a855f7",
-              }}
-            />
             <span
               style={{
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",

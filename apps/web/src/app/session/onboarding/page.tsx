@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson } from "@/lib/api-client";
+import { Button } from "@/app/home/components/ui-primitives";
 
 function useTheme() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -646,12 +647,12 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
         <div>
           <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Resolution:     </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
-            {monitors[0]?.size.width ?? window.screen.width}x{monitors[0]?.size.height ?? window.screen.height} @ 60Hz
+            {monitors[0]?.size.width ?? window.screen.width}x{monitors[0]?.size.height ?? window.screen.height}
           </span>
         </div>
         <div>
           <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Color depth:    </span>
-          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>24-bit</span>
+          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>{window.screen.colorDepth}-bit</span>
         </div>
         <div>
           <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Screen check:   </span>
@@ -679,29 +680,16 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
                 label="Multiple displays active — please disconnect external screens"
                 status="warn"
               />
-              <button
-                type="button"
+              <Button
+                theme={theme}
+                variant="danger"
+                size="small"
                 onClick={runDetection}
                 disabled={scanning}
-                style={{
-                  marginTop: "16px",
-                  padding: "8px 16px",
-                  borderRadius: "2px",
-                  background: "#0F0F0F",
-                  border: "1px solid #ef4444",
-                  color: "#ef4444",
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  cursor: scanning ? "not-allowed" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px",
-                }}
+                style={{ marginTop: "16px" }}
               >
                 {scanning ? "Checking displays..." : "Check displays again"}
-              </button>
+              </Button>
             </>
           ) : (
             <CheckLine label="Single screen environment confirmed" status="pass" />
@@ -728,10 +716,8 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
       if (result?.active !== true) {
         setLockFailed(true);
       }
-      setTimeout(() => setPhase(2), 600);
-      setTimeout(() => setPhase(3), 1200);
-      setTimeout(() => setPhase(4), 1800);
-      setTimeout(onPass, 2600);
+      setPhase(4);
+      setTimeout(onPass, 600);
     }
 
     function handleKey(e: KeyboardEvent) {
@@ -991,24 +977,15 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
               </p>
             ))}
           </div>
-          <button
+          <Button
+            theme={theme}
+            variant="danger"
+            size="small"
             onClick={() => void doScan()}
-            style={{
-              width: "100%",
-              borderRadius: "2px",
-              padding: "10px",
-              fontSize: "11px",
-              fontWeight: 700,
-              color: "#ef4444",
-              cursor: "pointer",
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              background: "#0F0F0F",
-              border: "1px solid #ef4444",
-              transition: "all 150ms ease",
-            }}
+            style={{ width: "100%" }}
           >
             Check apps again
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="flex flex-col items-center gap-5 w-full">
@@ -1136,6 +1113,7 @@ function Stage8_CameraInit({
   onPass(): void;
   onCameraReady(stream: MediaStream): void;
 }) {
+  const theme = useTheme();
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -1263,32 +1241,24 @@ function Stage8_CameraInit({
           <p style={{ fontSize: "12px", fontFamily: "'JetBrains Mono', monospace", color: "#f87171", textAlign: "center", lineHeight: 1.65 }}>
             {error}
           </p>
-          <button
+          <Button
+            theme={theme}
+            variant="secondary"
+            size="small"
             onClick={() => {
               setPhase("checking");
               setError(null);
               setRetryKey((k) => k + 1);
             }}
-            style={{
-              padding: "10px 24px",
-              borderRadius: "2px",
-              border: "1px solid rgba(255,255,255,0.18)",
-              background: "#0F0F0F",
-              color: "#f8fafc",
-              fontSize: "11px",
-              fontWeight: 700,
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              cursor: "pointer",
-            }}
           >
             Try again
-          </button>
+          </Button>
           {process.env.NODE_ENV === "development" && (
             <button
               onClick={onPass}
               style={{
                 padding: "6px 16px",
-                borderRadius: "2px",
+                borderRadius: "8px",
                 border: "1px solid rgba(245,158,11,0.4)",
                 background: "transparent",
                 color: "#f59e0b",

@@ -12,6 +12,7 @@ import type {
   InvitedContest,
   ReadinessState,
   SecurityLogEntry,
+  SecurityLogLevel,
   TelemetryQueryState,
   FullTelemetry,
   SecurityScanSnapshot,
@@ -111,7 +112,7 @@ export default function HomePage() {
   const telemetryInFlightRef = useRef<Promise<SecurityScanSnapshot | null> | null>(null);
   const lastScannedAtRef = useRef<number | null>(null);
 
-  const appendSecurityEvent = useCallback((event: string) => {
+  const appendSecurityEvent = useCallback((event: string, level: SecurityLogLevel = "info") => {
     const time = new Date().toLocaleTimeString([], { hour12: false });
     setSecurityLogs((prev) => {
       const next = [
@@ -119,6 +120,7 @@ export default function HomePage() {
         {
           id: String(Date.now()) + "-" + Math.random().toString(36).slice(2),
           text: "[" + time + "] " + event,
+          level,
         },
       ];
       return next.slice(-12);
@@ -204,7 +206,7 @@ export default function HomePage() {
           isLoading: false,
           error: "Native telemetry unavailable",
         }));
-        appendSecurityEvent(source + ": Native telemetry scan failed");
+        appendSecurityEvent(source + ": Native telemetry scan failed", "error");
       } finally {
         telemetryInFlightRef.current = null;
       }
@@ -299,7 +301,7 @@ export default function HomePage() {
     } catch {
       if (mode === "refresh") {
         setSessionsError("Could not refresh sessions. Check your connection and try again.");
-        appendSecurityEvent("SESSION: Contest list refresh failed");
+        appendSecurityEvent("SESSION: Contest list refresh failed", "error");
       }
     } finally {
       setContestsLoading(false);
@@ -365,7 +367,7 @@ export default function HomePage() {
         vm: "fail",
         platform: "fail",
       });
-      appendSecurityEvent("READINESS: Local integrity scan failed");
+      appendSecurityEvent("READINESS: Local integrity scan failed", "error");
     }
   }
 
@@ -401,7 +403,7 @@ export default function HomePage() {
       const res = await fetchWithTimeout(`${API_URL}/sessions/${encodeURIComponent(session.id)}`);
       if (!res.ok) {
         clearStoredActiveSession("Stored active session could not be verified.");
-        appendSecurityEvent("SESSION: Active session validation failed");
+        appendSecurityEvent("SESSION: Active session validation failed", "error");
         return null;
       }
 
@@ -415,13 +417,13 @@ export default function HomePage() {
       const contestId = data.contest_id;
       if (!contestId || (session.contest_id && contestId !== session.contest_id)) {
         clearStoredActiveSession("Stored active session no longer matches the server record.");
-        appendSecurityEvent("SESSION: Active session contest mismatch blocked");
+        appendSecurityEvent("SESSION: Active session contest mismatch blocked", "error");
         return null;
       }
 
       if (data.candidate_email && data.candidate_email.toLowerCase() !== userEmail.toLowerCase()) {
         clearStoredActiveSession("Stored active session belongs to a different candidate.");
-        appendSecurityEvent("SESSION: Active session candidate mismatch blocked");
+        appendSecurityEvent("SESSION: Active session candidate mismatch blocked", "error");
         return null;
       }
 
@@ -431,7 +433,7 @@ export default function HomePage() {
         data.ended_at
       ) {
         clearStoredActiveSession("Stored active session is no longer active.");
-        appendSecurityEvent("SESSION: Inactive stored session cleared");
+        appendSecurityEvent("SESSION: Inactive stored session cleared", "warn");
         return null;
       }
 
@@ -439,7 +441,7 @@ export default function HomePage() {
         const expiresAt = new Date(data.expires_at).getTime();
         if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
           clearStoredActiveSession("Stored active session has expired.");
-          appendSecurityEvent("SESSION: Expired stored session cleared");
+          appendSecurityEvent("SESSION: Expired stored session cleared", "warn");
           return null;
         }
       }
@@ -511,7 +513,7 @@ export default function HomePage() {
     if (!code) {
       inviteCodeInFlightRef.current = false;
       setInviteCodeStatus("Enter a session or invite code.");
-      appendSecurityEvent("SESSION: Empty session code submission blocked");
+      appendSecurityEvent("SESSION: Empty session code submission blocked", "error");
       return;
     }
     setInviteCodeBusy(true);
@@ -530,12 +532,12 @@ export default function HomePage() {
       } catch {}
       if (!res.ok && !data?.contest?.id) {
         setInviteCodeStatus(data?.blocked_reason || "Code validation unavailable.");
-        appendSecurityEvent("SESSION: Session code validation blocked by API");
+        appendSecurityEvent("SESSION: Session code validation blocked by API", "error");
         return;
       }
       if (!data?.contest?.id) {
         setInviteCodeStatus("Code validation unavailable.");
-        appendSecurityEvent("SESSION: Session code validation returned no contest");
+        appendSecurityEvent("SESSION: Session code validation returned no contest", "error");
         return;
       }
       const resolvedContest = data.contest as InvitedContest;
@@ -579,7 +581,8 @@ export default function HomePage() {
         setInviteSuccessMsg("Contest added to your list.");
         setInviteCodeStatus(blockedReason || "Join window is closed for this contest.");
         appendSecurityEvent(
-          "SESSION: Contest added but entry blocked for " + resolvedContest.title
+          "SESSION: Contest added but entry blocked for " + resolvedContest.title,
+          "warn"
         );
       } else {
         setInviteSuccessMsg("Contest added to your list.");
@@ -591,7 +594,7 @@ export default function HomePage() {
       setTimeout(() => setInviteSuccessMsg(null), 6000);
     } catch {
       setInviteCodeStatus("Code validation unavailable.");
-      appendSecurityEvent("SESSION: Session code validation failed");
+      appendSecurityEvent("SESSION: Session code validation failed", "error");
     } finally {
       inviteCodeInFlightRef.current = false;
       setInviteCodeBusy(false);

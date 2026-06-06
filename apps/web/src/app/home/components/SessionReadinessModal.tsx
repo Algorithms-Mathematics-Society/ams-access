@@ -407,7 +407,7 @@ export function SessionReadinessModal({
             <div style={{ color: decisionTone.color, fontSize: "24px", fontWeight: 800 }}>
               {Math.round(currentProgress)}%
             </div>
-            <div style={{ color: c.textMuted, fontSize: "10px", fontWeight: 650, marginTop: "2px" }}>
+            <div style={{ color: c.textMuted, fontSize: "10px", fontWeight: 600, marginTop: "2px" }}>
               complete
             </div>
           </div>
@@ -537,7 +537,7 @@ export function SessionReadinessModal({
               padding: "12px 14px",
               color: c.textMutedStrong,
               fontSize: "12px",
-              fontWeight: 650,
+              fontWeight: 600,
               listStyle: "none",
               display: "flex",
               alignItems: "center",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, memo, useRef } from "react";
+import { useState, useEffect, useMemo, memo } from "react";
 import { CalendarDays, Clock3, ListChecks, Play, ShieldCheck } from "lucide-react";
 import { getThemeColors, getContestEntryState, getScheduledContestTickDelay } from "./utils";
 import { Button, ContestStatePill } from "./ui-primitives";
@@ -27,11 +27,9 @@ export const ScheduledContestCard = memo(
     theme: "dark" | "light";
   }) {
     const [now, setNow] = useState(() => Date.now());
+    const [hovered, setHovered] = useState(false);
     const themeColors = useMemo(() => getThemeColors(theme), [theme]);
     const isLight = theme === "light";
-    const cardRef = useRef<HTMLDivElement>(null);
-    const joinBtnRef = useRef<HTMLButtonElement>(null);
-    const joinIconRef = useRef<SVGSVGElement>(null);
 
     useEffect(() => {
       let active = true;
@@ -64,61 +62,29 @@ export const ScheduledContestCard = memo(
     const joinType = entryState.sessionType;
     const label = entryState.ctaLabel;
 
+    const cardHoverShadow = isLight
+      ? "0 20px 40px rgba(124, 58, 237, 0.08)"
+      : "0 20px 48px rgba(168, 85, 247, 0.08)";
+    const btnHoverShadow = isLight
+      ? "0 8px 20px rgba(124, 58, 237, 0.2)"
+      : "0 8px 24px rgba(168, 85, 247, 0.3)";
+
     return (
       <div
-        ref={cardRef}
-        onMouseEnter={() => {
-          const el = cardRef.current;
-          if (!el) return;
-          el.style.borderColor = themeColors.accent;
-          el.style.boxShadow = isLight
-            ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-            : "0 20px 48px rgba(168, 85, 247, 0.08)";
-          el.style.transform = "translateY(-4px)";
-          const btn = joinBtnRef.current;
-          if (canJoin && btn) {
-            btn.style.background = themeColors.accent;
-            btn.style.color = "#ffffff";
-            btn.style.boxShadow = isLight
-              ? "0 8px 20px rgba(124, 58, 237, 0.2)"
-              : "0 8px 24px rgba(168, 85, 247, 0.3)";
-          }
-          const icon = joinIconRef.current;
-          if (icon) icon.style.transform = "scale(1.1) rotate(5deg)";
-        }}
-        onMouseLeave={() => {
-          const el = cardRef.current;
-          if (!el) return;
-          el.style.borderColor = themeColors.borderStrong;
-          el.style.boxShadow = themeColors.shadow;
-          el.style.transform = "translateY(0)";
-          const btn = joinBtnRef.current;
-          if (btn) {
-            btn.style.background = canJoin
-              ? "#a855f7"
-              : phase === "too_early"
-                ? "rgba(245,158,11,0.08)"
-                : "rgba(255,255,255,0.055)";
-            btn.style.color = canJoin
-              ? "#ffffff"
-              : phase === "too_early"
-                ? "#f59e0b"
-                : themeColors.textMuted;
-            btn.style.boxShadow = "none";
-          }
-          const icon = joinIconRef.current;
-          if (icon) icon.style.transform = "none";
-        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
         style={{
           background: isLight
             ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
             : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
-          border: `1px solid ${themeColors.borderStrong}`,
+          border: `1px solid ${hovered ? themeColors.accent : themeColors.borderStrong}`,
           borderRadius: "8px",
           padding: "28px 32px",
-          transition: "all 400ms cubic-bezier(0.16, 1, 0.3, 1)",
-          boxShadow: themeColors.shadow,
-          transform: "translateY(0)",
+          transition: "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+          boxShadow: hovered ? cardHoverShadow : themeColors.shadow,
+          transform: hovered ? "translateY(-4px)" : "translateY(0)",
           display: "flex",
           flexDirection: "column",
           gap: "20px",
@@ -248,7 +214,6 @@ export const ScheduledContestCard = memo(
           </div>
 
           <Button
-            ref={joinBtnRef}
             onClick={() => {
               if (canJoin) onPreflight(c.id, joinType);
             }}
@@ -276,16 +241,16 @@ export const ScheduledContestCard = memo(
                 : phase === "too_early"
                   ? "#f59e0b"
                   : themeColors.textMuted,
-              boxShadow: "none",
+              boxShadow: hovered && canJoin ? btnHoverShadow : "none",
+              transition: "box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1)",
             }}
           >
             <ShieldCheck
-              ref={joinIconRef}
               size={14}
               strokeWidth={1.9}
               style={{
-                transform: "none",
-                transition: "transform 300ms ease",
+                transition: "transform 300ms cubic-bezier(0.16, 1, 0.3, 1)",
+                transform: hovered && canJoin ? "translateX(2px)" : "none",
               }}
             />
             <span>{label}</span>
@@ -316,9 +281,10 @@ export const ActiveContestCard = memo(
     readinessContext?: ContestantReadinessContext;
   }) {
     const [now, setNow] = useState(() => Date.now());
+    const [hovered, setHovered] = useState(false);
+    const [btnHovered, setBtnHovered] = useState(false);
     const themeColors = useMemo(() => getThemeColors(theme), [theme]);
     const isLight = theme === "light";
-    const cardRef = useRef<HTMLDivElement>(null);
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
 
@@ -413,6 +379,10 @@ export const ActiveContestCard = memo(
       }
     }, [col.bg, col.border, col.dot, entryState.phase, themeColors]);
 
+    const cardHoverShadow = isLight
+      ? "0 20px 40px rgba(124, 58, 237, 0.08)"
+      : "0 20px 48px rgba(168, 85, 247, 0.08)";
+
     const timingRows = [
       { label: "Verification opens", value: entryState.verificationOpensAt },
       { label: "Contest starts", value: entryState.contestStartsAt },
@@ -421,34 +391,21 @@ export const ActiveContestCard = memo(
 
     return (
       <div
-        ref={cardRef}
-        onMouseEnter={() => {
-          if (!canEnter || !cardRef.current) return;
-          cardRef.current.style.borderColor = themeColors.accent;
-          cardRef.current.style.boxShadow = isLight
-            ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-            : "0 20px 48px rgba(168, 85, 247, 0.08)";
-          cardRef.current.style.transform = "translateY(-4px)";
-        }}
-        onMouseLeave={() => {
-          if (!cardRef.current) return;
-          cardRef.current.style.borderColor = canEnter
-            ? themeColors.borderStrong
-            : themeColors.border;
-          cardRef.current.style.boxShadow = themeColors.shadow;
-          cardRef.current.style.transform = "translateY(0)";
-        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
         style={{
           background: isLight
             ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
             : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
-          border: `1px solid ${canEnter ? themeColors.borderStrong : themeColors.border}`,
+          border: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
           borderLeft: `3px solid ${entryTone.rail}`,
           borderRadius: "8px",
           padding: "26px 30px",
-          transition: "all 400ms cubic-bezier(0.16, 1, 0.3, 1)",
-          boxShadow: themeColors.shadow,
-          transform: "translateY(0)",
+          transition: "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+          boxShadow: hovered && canEnter ? cardHoverShadow : themeColors.shadow,
+          transform: hovered && canEnter ? "translateY(-4px)" : "translateY(0)",
           display: "flex",
           flexDirection: "column",
           gap: "18px",
@@ -540,7 +497,7 @@ export const ActiveContestCard = memo(
                 style={{
                   color: themeColors.textMuted,
                   fontSize: "10px",
-                  fontWeight: 650,
+                  fontWeight: 600,
                   letterSpacing: "0.06em",
                   textTransform: "uppercase" as const,
                   marginBottom: "5px",
@@ -552,7 +509,7 @@ export const ActiveContestCard = memo(
                 style={{
                   color: themeColors.text,
                   fontSize: "13px",
-                  fontWeight: 650,
+                  fontWeight: 600,
                   fontFamily: "'JetBrains Mono', monospace",
                   lineHeight: 1.25,
                 }}
@@ -602,20 +559,15 @@ export const ActiveContestCard = memo(
             disabled={!canEnter}
             theme={theme}
             variant={canEnter ? "primary" : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable" ? "danger" : "secondary"}
+            onMouseEnter={() => { if (canEnter) setBtnHovered(true); }}
+            onMouseLeave={() => setBtnHovered(false)}
+            onFocus={() => { if (canEnter) setBtnHovered(true); }}
+            onBlur={() => setBtnHovered(false)}
             style={{
-              border: `1px solid ${entryTone.actionBorder}`,
-              background: entryTone.actionBg,
+              border: `1px solid ${btnHovered && canEnter ? "#c084fc" : entryTone.actionBorder}`,
+              background: btnHovered && canEnter ? "#9333ea" : entryTone.actionBg,
               color: entryTone.actionText,
-            }}
-            onMouseEnter={(e) => {
-              if (!canEnter) return;
-              e.currentTarget.style.background = "#9333ea";
-              e.currentTarget.style.borderColor = "#c084fc";
-            }}
-            onMouseLeave={(e) => {
-              if (!canEnter) return;
-              e.currentTarget.style.background = entryTone.actionBg;
-              e.currentTarget.style.borderColor = entryTone.actionBorder;
+              transition: "background 150ms ease, border-color 150ms ease",
             }}
           >
             {canEnter && <Play size={14} strokeWidth={2} />}

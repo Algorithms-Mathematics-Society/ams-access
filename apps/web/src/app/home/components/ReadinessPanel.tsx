@@ -34,16 +34,6 @@ export const ReadinessWidget = memo(function ReadinessWidget({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
-        <div
-          style={{
-            width: "5px",
-            height: "5px",
-            borderRadius: "50%",
-            background: themeColors.accent,
-            outline: `1px solid ${themeColors.accent}`,
-            outlineOffset: "1.5px",
-          }}
-        />
         <h3
           style={{
             fontSize: "11px",

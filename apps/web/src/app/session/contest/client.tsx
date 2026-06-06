@@ -237,6 +237,22 @@ const VERDICT_COLORS: Record<string, string> = {
   QUEUED: "#a855f7",
   RUNNING: "#a855f7",
 };
+const VERDICT_BG: Record<string, string> = {
+  AC: "rgba(34,197,94,0.1)",
+  QUEUED: "rgba(168,85,247,0.1)",
+  RUNNING: "rgba(168,85,247,0.1)",
+  TLE: "rgba(245,158,11,0.1)",
+  MLE: "rgba(245,158,11,0.1)",
+  OLE: "rgba(245,158,11,0.1)",
+};
+const VERDICT_BORDER: Record<string, string> = {
+  AC: "rgba(34,197,94,0.28)",
+  QUEUED: "rgba(168,85,247,0.28)",
+  RUNNING: "rgba(168,85,247,0.28)",
+  TLE: "rgba(245,158,11,0.28)",
+  MLE: "rgba(245,158,11,0.28)",
+  OLE: "rgba(245,158,11,0.28)",
+};
 
 type ContestMeta = {
   id: string;
@@ -641,17 +657,22 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
 }
 
 function useCountdown(endAt: string) {
-  const [state, setState] = useState({ remaining: "", urgent: false });
+  const totalMsRef = useRef<number | null>(null);
+  const [state, setState] = useState({ remaining: "", urgent: false, pulse: false, percentLeft: 1 });
 
   useEffect(() => {
+    totalMsRef.current = null;
     let id: ReturnType<typeof setInterval> | null = null;
     function tick() {
       const diff = new Date(endAt).getTime() - Date.now();
+      if (totalMsRef.current === null) totalMsRef.current = Math.max(diff, 0);
+      const percentLeft =
+        totalMsRef.current > 0 ? Math.max(0, Math.min(1, diff / totalMsRef.current)) : 0;
       if (diff <= 0) {
         setState((prev) =>
-          prev.remaining === "00:00:00" && !prev.urgent
+          prev.remaining === "00:00:00" && !prev.urgent && !prev.pulse
             ? prev
-            : { remaining: "00:00:00", urgent: false }
+            : { remaining: "00:00:00", urgent: false, pulse: false, percentLeft: 0 }
         );
         if (id) clearInterval(id);
         return;
@@ -661,8 +682,11 @@ function useCountdown(endAt: string) {
       const s = Math.floor((diff % 60000) / 1000);
       const remaining = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
       const urgent = diff < 300000;
+      const pulse = diff >= 300000 && diff < 600000;
       setState((prev) =>
-        prev.remaining === remaining && prev.urgent === urgent ? prev : { remaining, urgent }
+        prev.remaining === remaining && prev.urgent === urgent && prev.pulse === pulse
+          ? prev
+          : { remaining, urgent, pulse, percentLeft }
       );
     }
     tick();
@@ -676,27 +700,43 @@ function useCountdown(endAt: string) {
 }
 
 const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }) {
-  const { remaining, urgent } = useCountdown(endAt);
+  const { remaining, urgent, pulse, percentLeft } = useCountdown(endAt);
+  const R = 10;
+  const CIRC = 2 * Math.PI * R;
+  const offset = CIRC * (1 - percentLeft);
+  const ringColor = urgent ? "#ef4444" : pulse ? "#f59e0b" : "#a855f7";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-      <span
-        style={{
-          fontSize: "12px",
-          fontWeight: 600,
-          color: "#64748b",
-          fontFamily: "Inter, system-ui, sans-serif",
-        }}
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 28 28"
+        style={{ transform: "rotate(-90deg)", flexShrink: 0 }}
+        aria-hidden="true"
       >
-        Time left
-      </span>
+        <circle cx="14" cy="14" r={R} fill="none" stroke="rgba(148,163,184,0.1)" strokeWidth="2" />
+        <circle
+          cx="14"
+          cy="14"
+          r={R}
+          fill="none"
+          stroke={ringColor}
+          strokeWidth="2"
+          strokeDasharray={`${CIRC}`}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1s linear, stroke 600ms ease" }}
+        />
+      </svg>
       <span
         style={{
           fontSize: "13px",
-          fontWeight: 650,
-          color: urgent ? "#ef4444" : "#a855f7",
+          fontWeight: 600,
+          color: urgent ? "#ef4444" : pulse ? "#f59e0b" : "#a855f7",
           fontFamily: "'JetBrains Mono', monospace",
           fontVariantNumeric: "tabular-nums",
           letterSpacing: "0.02em",
+          animation: pulse ? "countdown-pulse 1.5s ease-in-out infinite" : "none",
         }}
       >
         {remaining}
@@ -2407,26 +2447,8 @@ export default function ContestPageClient() {
       ? {
           label: runStatusLabelMap[runResult.status] ?? runResult.status,
           color: VERDICT_COLORS[runResult.status] ?? "#94a3b8",
-          bg:
-            runResult.status === "AC"
-              ? "rgba(34,197,94,0.1)"
-              : runResult.status === "QUEUED" || runResult.status === "RUNNING"
-                ? "rgba(168,85,247,0.1)"
-                : runResult.status === "TLE" ||
-                    runResult.status === "MLE" ||
-                    runResult.status === "OLE"
-                  ? "rgba(245,158,11,0.1)"
-                  : "rgba(239,68,68,0.1)",
-          border:
-            runResult.status === "AC"
-              ? "rgba(34,197,94,0.28)"
-              : runResult.status === "QUEUED" || runResult.status === "RUNNING"
-                ? "rgba(168,85,247,0.28)"
-                : runResult.status === "TLE" ||
-                    runResult.status === "MLE" ||
-                    runResult.status === "OLE"
-                  ? "rgba(245,158,11,0.28)"
-                  : "rgba(239,68,68,0.28)",
+          bg: VERDICT_BG[runResult.status] ?? "rgba(239,68,68,0.1)",
+          border: VERDICT_BORDER[runResult.status] ?? "rgba(239,68,68,0.28)",
           icon:
             runResult.status === "QUEUED" || runResult.status === "RUNNING"
               ? ("loading" as const)
@@ -2436,17 +2458,17 @@ export default function ContestPageClient() {
         }
       : null;
   const runProgressPhase = runError
-    ? 4
+    ? 3
     : !runResult
       ? isRunning
         ? 0
         : -1
       : runResult.status === "QUEUED"
-        ? 1
+        ? 0
         : runResult.status === "RUNNING"
-          ? 3
-          : 4;
-  const runProgressSteps = ["Saved", "Queued", "Compiling", "Running", "Result"];
+          ? 2
+          : 3;
+  const runProgressSteps = ["Queued", "Compiling", "Running", "Result"];
   const runMetrics =
     runResult && runResult.status !== "QUEUED" && runResult.status !== "RUNNING"
       ? [
@@ -2473,17 +2495,7 @@ export default function ContestPageClient() {
   const latestAttemptFirstFailed =
     latestAttemptTests?.find((tr: any) => tr.verdict !== "AC") ?? null;
   const latestAttemptVerdictColor =
-    latestAttemptVerdict === "AC"
-      ? "#22c55e"
-      : latestAttemptPending
-        ? "#a855f7"
-        : latestAttemptVerdict === "TLE" ||
-            latestAttemptVerdict === "MLE" ||
-            latestAttemptVerdict === "OLE"
-          ? "#f59e0b"
-          : latestAttemptVerdict === "Pending"
-            ? "#94a3b8"
-            : "#ef4444";
+    VERDICT_COLORS[latestAttemptVerdict] ?? (latestAttemptVerdict === "Pending" ? "#94a3b8" : "#ef4444");
   const submissionsByQuestion = useMemo(() => {
     const grouped: Record<string, any[]> = {};
     for (const sub of allSubmissionsList) {
@@ -3293,9 +3305,16 @@ export default function ContestPageClient() {
               style={{
                 width: "100%",
                 height: sidebarCollapsed ? "52px" : "150px",
-                border: "1px solid #1F1F1F",
+                border: `2px solid ${
+                  faceStatus === "ok"
+                    ? "rgba(34,197,94,0.55)"
+                    : faceStatus === "away"
+                      ? "rgba(239,68,68,0.55)"
+                      : "rgba(148,163,184,0.14)"
+                }`,
                 boxSizing: "border-box",
                 position: "relative",
+                transition: "border-color 600ms ease",
               }}
             >
               <video
@@ -3438,8 +3457,9 @@ export default function ContestPageClient() {
                       top: 0,
                       zIndex: 5,
                       display: "flex",
-                      gap: "6px",
-                      padding: "10px 24px",
+                      alignItems: "center",
+                      height: "38px",
+                      padding: "0 24px",
                       borderBottom: "1px solid rgba(255,255,255,0.05)",
                       background: "rgba(15,15,15,0.96)",
                       backdropFilter: "blur(12px)",
@@ -3459,16 +3479,18 @@ export default function ContestPageClient() {
                           type="button"
                           onClick={() => setProblemTab(tab)}
                           style={{
-                            height: "28px",
-                            padding: "0 11px",
-                            borderRadius: "999px",
-                            border: `1px solid ${active ? "rgba(168,85,247,0.42)" : "rgba(148,163,184,0.14)"}`,
-                            background: active ? "rgba(168,85,247,0.12)" : "rgba(148,163,184,0.04)",
-                            color: active ? "#d8b4fe" : "#94a3b8",
+                            height: "100%",
+                            padding: "0 12px",
+                            borderRadius: 0,
+                            border: "none",
+                            borderBottom: `2px solid ${active ? "#a855f7" : "transparent"}`,
+                            background: "transparent",
+                            color: active ? "#c084fc" : "#64748b",
                             fontSize: "12px",
                             fontWeight: 600,
                             fontFamily: "Inter, system-ui, sans-serif",
                             cursor: "pointer",
+                            transition: "color 150ms ease, border-color 150ms ease",
                           }}
                         >
                           {label}
@@ -3495,7 +3517,7 @@ export default function ContestPageClient() {
                       color: "#f8fafc",
                       fontSize: "26px",
                       lineHeight: 1.2,
-                      fontWeight: 650,
+                      fontWeight: 700,
                       fontFamily: "Inter, system-ui, sans-serif",
                       letterSpacing: 0,
                     }}
@@ -3517,8 +3539,14 @@ export default function ContestPageClient() {
               aria-label="Resize problem and editor panes"
               title="Drag to resize"
               onMouseDown={handleProblemSplitMouseDown}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLDivElement).style.background = "#111111";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLDivElement).style.background = "#0F0F0F";
+              }}
               style={{
-                width: "7px",
+                width: "10px",
                 flexShrink: 0,
                 cursor: "col-resize",
                 background: "#0F0F0F",
@@ -3526,16 +3554,30 @@ export default function ContestPageClient() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                transition: "background 150ms ease",
               }}
             >
-              <span
+              <div
                 style={{
-                  width: "2px",
-                  height: "42px",
-                  borderRadius: "999px",
-                  background: "rgba(148,163,184,0.22)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
+                  alignItems: "center",
+                  pointerEvents: "none",
                 }}
-              />
+              >
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    style={{
+                      width: "3px",
+                      height: "3px",
+                      borderRadius: "50%",
+                      background: "rgba(148,163,184,0.32)",
+                    }}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Right panel: Editor (Top) + Terminal (Bottom) */}
@@ -3860,15 +3902,16 @@ export default function ContestPageClient() {
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    padding: "8px 12px",
-                    gap: "10px",
-                    minHeight: "48px",
+                    padding: "0 12px",
+                    gap: "0",
+                    height: "48px",
                     background: "#0a0a0a",
                     borderBottom: "1px solid #1F1F1F",
                     flexShrink: 0,
                   }}
                 >
                   <div style={{ flex: 1 }} />
+                  {/* Settings group */}
                   <div style={{ position: "relative" }}>
                     <button
                       type="button"
@@ -3953,6 +3996,18 @@ export default function ContestPageClient() {
                       </div>
                     )}
                   </div>
+                  {/* Separator: settings | primary actions */}
+                  <div
+                    style={{
+                      width: "1px",
+                      height: "22px",
+                      background: "rgba(255,255,255,0.08)",
+                      margin: "0 12px",
+                      flexShrink: 0,
+                    }}
+                  />
+                  {/* Primary actions group: Run + Submit */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <button
                     type="button"
                     onClick={() => void triggerRun()}
@@ -4010,21 +4065,6 @@ export default function ContestPageClient() {
                     )}
                     {isRunning ? "Running" : "Run on Judge"}
                   </button>
-                  <span
-                    title="Runs are evaluated by the judge and appear in Attempts. Final contest exit is separate."
-                    aria-label="Run on Judge information"
-                    style={{
-                      width: "32px",
-                      height: "32px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "#64748b",
-                      cursor: "help",
-                    }}
-                  >
-                    <Info size={15} strokeWidth={1.8} />
-                  </span>
                   <button
                     type="button"
                     onClick={handleSubmitSolution}
@@ -4087,6 +4127,7 @@ export default function ContestPageClient() {
                           ? "Submit Failed"
                           : "Submit Solution"}
                   </button>
+                  </div>{/* end primary actions group */}
                 </div>
 
                 {submissionError && (
@@ -4662,8 +4703,45 @@ export default function ContestPageClient() {
                           Loading submissions...
                         </div>
                       ) : submissionsList.length === 0 ? (
-                        <div style={{ color: "#64748b", fontSize: "11px" }}>
-                          Submitted attempts and judge results appear here.
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "8px",
+                            padding: "24px 16px",
+                            color: "#475569",
+                          }}
+                        >
+                          <Send
+                            size={22}
+                            strokeWidth={1.5}
+                            style={{ opacity: 0.35, color: "#64748b" }}
+                          />
+                          <span
+                            style={{
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              color: "#475569",
+                              fontFamily: "Inter, system-ui, sans-serif",
+                            }}
+                          >
+                            No submissions yet
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              color: "#334155",
+                              fontFamily: "Inter, system-ui, sans-serif",
+                              textAlign: "center",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            Press Submit Solution to send your code to the judge.
+                            <br />
+                            Each attempt is scored independently.
+                          </span>
                         </div>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -5507,7 +5585,7 @@ export default function ContestPageClient() {
         .pb-body { color: #cbd5e1; font-size: 14px; line-height: 1.7; }
         .pb-body-editorial { font-size: 15px; line-height: 1.75; max-width: 720px; }
         .pb-body p { margin: 0 0 14px; }
-        .pb-body h1,.pb-body h2,.pb-body h3,.pb-body h4 { color: #f1f5f9; font-family: Inter, system-ui, sans-serif; font-weight: 650; margin: 24px 0 10px; line-height: 1.28; letter-spacing: 0; }
+        .pb-body h1,.pb-body h2,.pb-body h3,.pb-body h4 { color: #f1f5f9; font-family: Inter, system-ui, sans-serif; font-weight: 700; margin: 24px 0 10px; line-height: 1.28; letter-spacing: 0; }
         .pb-body h1 { font-size: 22px; } .pb-body h2 { font-size: 18px; } .pb-body h3 { font-size: 15px; }
         .pb-body strong { color: #f1f5f9; font-weight: 600; }
         .pb-body em { color: #a5b4fc; font-style: italic; }
@@ -5528,7 +5606,7 @@ export default function ContestPageClient() {
           color: #cbd5e1;
           font-family: Inter, system-ui, sans-serif;
           font-size: 11px;
-          font-weight: 650;
+          font-weight: 600;
           cursor: pointer;
         }
         .pb-copy-button:hover { border-color: rgba(168,85,247,0.35); color: #d8b4fe; }

@@ -27,7 +27,8 @@ export type ReadinessState = {
   platform: ReadinessStatus;
 };
 
-export type SecurityLogEntry = { id: string; text: string };
+export type SecurityLogLevel = "error" | "warn" | "info";
+export type SecurityLogEntry = { id: string; text: string; level: SecurityLogLevel };
 
 export type PlatformInfo = {
   os: string;

@@ -3,34 +3,28 @@
 import { memo, useMemo } from "react";
 import type { ReactNode } from "react";
 import { getThemeColors } from "./utils";
-import type { SecurityLogEntry } from "./types";
+import type { SecurityLogEntry, SecurityLogLevel } from "./types";
 
-export function parseLogLine(log: string, dotColor: string): ReactNode {
-  let splitIndex = log.indexOf("... ");
+const LEVEL_COLOR: Record<SecurityLogLevel, string> = {
+  error: "#ef4444",
+  warn: "#f59e0b",
+  info: "",
+};
+
+export function parseLogLine(text: string, statusColor: string): ReactNode {
+  let splitIndex = text.indexOf("... ");
   let sep = "... ";
   if (splitIndex === -1) {
-    splitIndex = log.indexOf(": ");
+    splitIndex = text.indexOf(": ");
     sep = ": ";
   }
 
   if (splitIndex === -1) {
-    return <span>{log}</span>;
+    return <span style={{ color: statusColor }}>{text}</span>;
   }
 
-  const prefix = log.substring(0, splitIndex + sep.length);
-  const status = log.substring(splitIndex + sep.length);
-
-  let statusColor = dotColor;
-  if (
-    status.includes("ERROR") ||
-    status.includes("CRITICAL") ||
-    status.includes("DENIED") ||
-    status.includes("UNREACHABLE")
-  ) {
-    statusColor = "#ef4444";
-  } else if (status.includes("WARNING") || status.includes("MUTED") || status.includes("pending")) {
-    statusColor = "#f59e0b";
-  }
+  const prefix = text.substring(0, splitIndex + sep.length);
+  const status = text.substring(splitIndex + sep.length);
 
   return (
     <>
@@ -59,15 +53,6 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-        <div
-          style={{
-            width: "6px",
-            height: "6px",
-            borderRadius: "50%",
-            background: themeColors.accent,
-            boxShadow: `0 0 6px ${themeColors.accent}`,
-          }}
-        />
         <h4
           style={{
             fontSize: "11px",
@@ -106,7 +91,7 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
               key={log.id}
               style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
             >
-              {log.text}
+              {parseLogLine(log.text, LEVEL_COLOR[log.level] || themeColors.consoleText)}
             </div>
           ))
         )}

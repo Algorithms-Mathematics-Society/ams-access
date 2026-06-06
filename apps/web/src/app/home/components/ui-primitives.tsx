@@ -163,7 +163,7 @@ export const Button = forwardRef<
         gap: "8px",
         padding: size === "icon" ? "0" : size === "small" ? "0 12px" : "0 16px",
         fontSize: size === "small" ? "12px" : "13px",
-        fontWeight: 650,
+        fontWeight: 600,
         fontFamily: "inherit",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.76 : 1,
