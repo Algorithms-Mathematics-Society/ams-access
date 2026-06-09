@@ -22,6 +22,11 @@ use std::process::{Command, Stdio};
 use std::os::fd::AsRawFd;
 
 const SOCKET_PATH: &str = "/private/var/run/ams-proctor.sock";
+
+#[cfg(target_os = "macos")]
+const CLIENT_CONFIG_PATH: &str =
+    "/Library/Application Support/AMS Access/network-helper-client.conf";
+
 const PFCTL: &str = "/sbin/pfctl";
 const ANCHOR: &str = "com.apple/amsaccess.proctor";
 const LEGACY_ANCHOR: &str = "com.amsaccess.proctor";
