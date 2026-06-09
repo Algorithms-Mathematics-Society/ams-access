@@ -166,11 +166,24 @@ impl SessionPolicy {
             CheckKind::Microphone,
         ]
         .into_iter()
-        .map(|kind| ReadinessRequirement {
-            kind,
-            required,
-            severity: severity.clone(),
-            organizer_override_allowed,
+        .map(|kind| {
+            // Microphone is advisory-only on all profiles — many contest machines
+            // (lab desktops, headless setups) have no audio input. Proctoring
+            // continuity does not depend on it.
+            // Camera is advisory-only too — when hardware is absent the dedicated
+            // face-calibration stages will surface the issue with proper UX.
+            let (kind_required, kind_severity) =
+                if matches!(kind, CheckKind::Microphone | CheckKind::Camera) {
+                    (false, BlockingSeverity::Warning)
+                } else {
+                    (required, severity.clone())
+                };
+            ReadinessRequirement {
+                kind,
+                required: kind_required,
+                severity: kind_severity,
+                organizer_override_allowed,
+            }
         })
         .collect();
 

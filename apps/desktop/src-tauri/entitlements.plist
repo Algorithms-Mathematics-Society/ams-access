@@ -14,5 +14,13 @@
   <array>
     <string>com.apple.accessibility.AXBackBoardServer</string>
   </array>
+  <!-- Scopes the main app's authority to manage exactly one daemon label.
+       Currently the helper is bootstrapped via launchctl inside an osascript
+       shell (no entitlement required). This entry is pre-staged for the
+       SMAppService.daemon() migration on macOS 13+, which does require it. -->
+  <key>com.apple.developer.service-management.launch-control</key>
+  <array>
+    <string>com.ams.access.networkhelper</string>
+  </array>
 </dict>
 </plist>

@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../web/out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "pnpm --filter @ams/web dev",
-    "beforeBuildCommand": "pnpm --filter @ams/web build"
+    "beforeDevCommand": "node src-tauri/scripts/prepare-network-helper.mjs && pnpm --filter @ams/web dev",
+    "beforeBuildCommand": "node src-tauri/scripts/prepare-network-helper.mjs && pnpm --filter @ams/web build"
   },
   "app": {
     "withGlobalTauri": true,
@@ -31,8 +31,15 @@
   "bundle": {
     "active": true,
     "targets": ["deb", "rpm", "appimage", "dmg"],
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"],
+        "postInstallScript": "debian/postinst",
+        "preRemoveScript": "debian/prerm"
+      }
+    },
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "12.0",
       "entitlements": "entitlements.plist",
       "signingIdentity": null,
       "providerShortName": null
@@ -45,7 +52,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../web/public/models/blazeface/*": "models/blazeface/"
+      "../../web/public/models/blazeface/*": "models/blazeface/",
+      "helpers/com.ams.access.networkhelper": "helpers/com.ams.access.networkhelper",
+      "helpers/com.ams.access.networkhelper.plist": "helpers/com.ams.access.networkhelper.plist"
     }
   }
 }

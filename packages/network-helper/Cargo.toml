@@ -1,0 +1,21 @@
+[package]
+name = "network-helper"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The binary name must match the bundle identifier so macOS LaunchDaemon
+# plist Label, the PrivilegedHelperTools filename, and the helper all agree.
+[[bin]]
+name = "ams-access-networkhelper"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"   # size-optimise: this binary does very little
+strip = true
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

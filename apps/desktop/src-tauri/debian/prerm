@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Remove the udev rule added by postinst.
+UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
+rm -f "$UDEV_RULE_PATH"
+
+if command -v udevadm > /dev/null 2>&1; then
+    udevadm control --reload-rules 2>/dev/null || true
+fi

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Must match the Rust binary name and the socket's label. -->
+    <key>Label</key>
+    <string>com.ams.access.networkhelper</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/PrivilegedHelperTools/com.ams.access.networkhelper</string>
+    </array>
+
+    <!-- Start immediately when bootstrapped; restart if it exits. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Helper must run as root so it can call pfctl. -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Route daemon output to a fixed log — inspect with: tail -f /var/log/ams-access-helper.log -->
+    <key>StandardOutPath</key>
+    <string>/var/log/ams-access-helper.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ams-access-helper.log</string>
+
+    <!--
+        Restrict socket creation to /private/var/run — the daemon creates its
+        own socket file; this entry documents the expected filesystem path.
+    -->
+    <key>WorkingDirectory</key>
+    <string>/private/var/run</string>
+</dict>
+</plist>

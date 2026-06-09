@@ -322,13 +322,141 @@ fn check_accessibility_permission() -> bool {
     true
 }
 
-/// Check whether an active screen-sharing / remote desktop session is present (macOS only).
+/// Check whether an active screen-sharing / remote desktop session is present.
 #[tauri::command]
 fn check_screen_sharing() -> bool {
     #[cfg(target_os = "macos")]
     return platform_rs::macos::detect_remote_desktop();
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::detect_remote_desktop();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    false
+}
+
+/// Detect whether any active screen capture process or mechanism is present (Windows only).
+#[tauri::command]
+fn detect_screen_capture_active() -> bool {
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::detect_screen_capture();
+    #[cfg(not(target_os = "windows"))]
+    false
+}
+
+/// Apply DWM capture exclusion so the exam window appears black to all capture APIs.
+/// On Windows: SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE).
+/// On macOS: handled at the CGEventTap / window layer (no-op here).
+#[tauri::command]
+fn apply_capture_protection(app: tauri::AppHandle) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+        if let Some(win) = app.get_webview_window("main") {
+            if let Ok(hwnd) = win.hwnd() {
+                return platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
+            }
+        }
+        return false;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        true
+    }
+}
+
+/// Set whether the Escape key is passed through to the editor (false) or blocked (true).
+/// Call with blocked=false when the Monaco editor gains focus, true on blur.
+#[tauri::command]
+fn set_escape_blocked(blocked: bool) {
+    #[cfg(target_os = "windows")]
+    platform_rs::windows::set_escape_blocked(blocked);
+    #[cfg(target_os = "macos")]
+    platform_rs::macos::set_escape_blocked(blocked);
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = blocked;
+}
+
+/// Check whether the privileged network helper daemon is reachable (macOS only).
+#[tauri::command]
+fn network_helper_running() -> bool {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::network_helper_running();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+/// Install the network helper daemon and request admin credentials via the
+/// standard macOS auth dialog. Resource paths are resolved inside Rust so the
+/// renderer cannot choose an arbitrary root-installed binary.
+#[tauri::command]
+fn install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    #[cfg(target_os = "macos")]
+    {
+        let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+        let helper_binary = resource_dir
+            .join("helpers")
+            .join("com.ams.access.networkhelper");
+        let plist_source = resource_dir
+            .join("helpers")
+            .join("com.ams.access.networkhelper.plist");
+        let client_binary = std::env::current_exe().map_err(|e| e.to_string())?;
+
+        if !helper_binary.exists() {
+            return Err(format!(
+                "helper_binary_missing:{}",
+                helper_binary.to_string_lossy()
+            ));
+        }
+        if !plist_source.exists() {
+            return Err(format!(
+                "helper_plist_missing:{}",
+                plist_source.to_string_lossy()
+            ));
+        }
+
+        return platform_rs::macos::install_network_helper(
+            &helper_binary.to_string_lossy(),
+            &plist_source.to_string_lossy(),
+            &client_binary.to_string_lossy(),
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
+/// Return the list of apps that TCC has granted `kTCCServiceScreenCapture` on macOS.
+///
+/// The frontend cross-references this with RESTRICTED + the live process scan.
+/// An empty vec on non-macOS is not a signal — only macOS uses TCC.
+#[tauri::command]
+fn get_screen_capture_permitted_apps() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::apps_with_screen_capture_permission();
+    #[cfg(not(target_os = "macos"))]
+    vec![]
+}
+
+/// Check whether any process currently holds an active screen-capture session (macOS only).
+#[tauri::command]
+fn detect_active_screen_share() -> bool {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::detect_active_screen_share();
     #[cfg(not(target_os = "macos"))]
     false
+}
+
+/// Open System Settings → Privacy & Security → Accessibility so the candidate can
+/// grant the permission without navigating there manually.
+#[tauri::command]
+fn open_accessibility_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
+    }
 }
 
 /// Measure network reachability and latency using a multi-probe strategy
@@ -514,7 +642,7 @@ async fn get_full_telemetry(network_host: Option<String>) -> FullTelemetry {
     }
 }
 
-/// Full exam lockdown — always-on-top + keyboard intercept + sleep prevention.
+/// Full exam lockdown — always-on-top + keyboard intercept + sleep prevention + capture protection.
 #[tauri::command]
 async fn lock_desktop(app: tauri::AppHandle) -> bool {
     use tauri::Manager;
@@ -522,6 +650,17 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
         let _ = win.set_always_on_top(true);
         let _ = win.set_fullscreen(true);
     }
+
+    // Apply DWM capture exclusion (black screen in all capture APIs) and start the
+    // virtual desktop guard (moves exam window to any desktop the user switches to).
+    #[cfg(target_os = "windows")]
+    if let Some(win) = app.get_webview_window("main") {
+        if let Ok(hwnd) = win.hwnd() {
+            platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
+            platform_rs::windows::spawn_virtual_desktop_guard(hwnd.0 as isize);
+        }
+    }
+
     #[cfg(target_os = "linux")]
     return platform_rs::linux::lock_desktop();
     #[cfg(target_os = "windows")]
@@ -1142,6 +1281,8 @@ extern "C" fn handle_sigterm(_sig: std::os::raw::c_int) {
     eprintln!("AMS Access intercepted termination signal; restoring keyboard shortcuts...");
     #[cfg(target_os = "linux")]
     platform_rs::linux::disable_keyboard_intercept();
+    #[cfg(target_os = "macos")]
+    let _ = platform_rs::macos::disable_network_lockdown();
     std::process::exit(0);
 }
 
@@ -1171,13 +1312,12 @@ pub fn run() {
         }
     }
 
-    // Restore keyboard shortcuts left behind by a previous crashed session.
-    // Runs BEFORE Tauri/GTK initializes so it can't block the GTK main thread
-    // (which would delay webkit2gtk's IPC handshake and break camera permissions)
-    // and BEFORE any enable_keyboard_intercept can fire (which would otherwise
-    // race the recovery and undo the lockdown).
+    // Restore any OS state left behind by a previous crashed session — runs BEFORE
+    // Tauri initialises so it can't race with the first enable_keyboard_intercept call.
     #[cfg(target_os = "linux")]
     platform_rs::linux::recover_keyboard_if_crashed();
+    #[cfg(target_os = "windows")]
+    platform_rs::windows::recover_registry_if_crashed();
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -1203,7 +1343,15 @@ pub fn run() {
             enable_network_lockdown,
             disable_network_lockdown,
             check_accessibility_permission,
+            open_accessibility_settings,
             check_screen_sharing,
+            get_screen_capture_permitted_apps,
+            detect_active_screen_share,
+            network_helper_running,
+            install_network_helper,
+            detect_screen_capture_active,
+            apply_capture_protection,
+            set_escape_blocked,
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
@@ -1227,9 +1375,17 @@ pub fn run() {
                 #[cfg(target_os = "linux")]
                 platform_rs::linux::disable_keyboard_intercept();
                 #[cfg(target_os = "windows")]
-                platform_rs::windows::disable_keyboard_intercept();
+                {
+                    // unlock_desktop covers keyboard, sleep prevention, registry, shield, game bar
+                    platform_rs::windows::unlock_desktop();
+                    // Firewall rules must be cleared even on crash — intentional persistence
+                    let _ = platform_rs::windows::disable_network_lockdown();
+                }
                 #[cfg(target_os = "macos")]
-                platform_rs::macos::disable_keyboard_intercept();
+                {
+                    platform_rs::macos::disable_keyboard_intercept();
+                    let _ = platform_rs::macos::disable_network_lockdown();
+                }
             }
         })
         .run(tauri::generate_context!())

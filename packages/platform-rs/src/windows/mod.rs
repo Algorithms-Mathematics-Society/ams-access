@@ -4,18 +4,66 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
+// Set to true between spawn_hook_thread() call and HOOK_THREAD_ID becoming non-zero.
+// Prevents the watchdog from treating the startup window as a dead thread.
+static HOOK_STARTING: AtomicBool = AtomicBool::new(false);
 
+/// All processes killed by the shield thread during an exam session.
 const RESTRICTED: &[&str] = &[
-    "obs64.exe",
-    "obs32.exe",
-    "obs.exe",
-    "discord.exe",
+    // Remote access / screen share
     "teamviewer.exe",
     "teamviewerhost.exe",
     "anydesk.exe",
     "vncviewer.exe",
     "tvnviewer.exe",
     "rustdesk.exe",
+    "parsec.exe",
+    "nomachine.exe",
+    "nxplayer.exe",
+    "remotedesktopmanager.exe",
+    "mstsc.exe",
+    "rdpclip.exe",
+    // Communication tools with built-in screen share
+    "discord.exe",
+    "zoom.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "skype.exe",
+    "webex.exe",
+    "slack.exe",
+    // Screen recorders
+    "obs64.exe",
+    "obs32.exe",
+    "obs.exe",
+    "bandicam.exe",
+    "fraps.exe",
+    "dxtory.exe",
+    "xsplit.broadcaster.exe",
+    "xsplit.gamecaster.exe",
+    "action.exe", // Mirillis Action!
+    "medal.exe",  // Medal.tv
+    "loom.exe",
+    "flashback.exe", // BB FlashBack
+    "recordit.exe",
+    "screenpresso.exe",
+    "sharex.exe",
+    "lightshot.exe",
+    "greenshot.exe",
+    "snagit32.exe",
+    "snagit64.exe",
+    "snagiteditor.exe",
+    "camtasia.exe",
+    // NVIDIA ShadowPlay / GeForce Experience
+    "nvcontainer.exe",
+    "nvcapture.exe",
+    "nvsphelper64.exe",
+    // Xbox Game Bar and gaming overlays
+    "gamebarpresencewriter.exe",
+    "gamebar.exe",
+    "xboxgameoverlay.exe",
+    "overwolf.exe",
+    // Debugging / packet inspection
     "cheatengine-x86_64.exe",
     "cheatengine.exe",
     "wireshark.exe",
@@ -29,14 +77,45 @@ const RESTRICTED: &[&str] = &[
     "autohotkey64.exe",
     "charles.exe",
     "fiddler.exe",
-    "zoom.exe",
-    "teams.exe",
-    "skype.exe",
-    "mstsc.exe",
-    "rdpclip.exe",
 ];
 
-/// Query whether the current process is running with Administrator/Elevated privileges.
+/// Processes whose mere presence is sufficient to declare active screen capture.
+/// Game Bar and nvcontainer are intentionally absent — they are gated in
+/// detect_screen_capture() Layers 2 and 3 with additional registry checks to
+/// avoid false positives on gaming PCs.
+const CAPTURE_PROCESSES: &[&str] = &[
+    "obs64.exe",
+    "obs32.exe",
+    "obs.exe",
+    "bandicam.exe",
+    "fraps.exe",
+    "dxtory.exe",
+    "xsplit.broadcaster.exe",
+    "xsplit.gamecaster.exe",
+    "action.exe",
+    "medal.exe",
+    "loom.exe",
+    "flashback.exe",
+    "screenpresso.exe",
+    "sharex.exe",
+    "lightshot.exe",
+    "greenshot.exe",
+    "snagit32.exe",
+    "snagit64.exe",
+    "snagiteditor.exe",
+    "camtasia.exe",
+    "nvcapture.exe", // nvcapture = dedicated ShadowPlay capture service; no false positives
+    "discord.exe",
+    "zoom.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "skype.exe",
+    "parsec.exe",
+    "nomachine.exe",
+];
+
+// ── Elevation check ───────────────────────────────────────────────────────────
+
 pub fn is_elevated() -> bool {
     std::process::Command::new("net")
         .arg("session")
@@ -47,67 +126,196 @@ pub fn is_elevated() -> bool {
         .unwrap_or(false)
 }
 
-pub fn scan_processes() -> ProcessScanResult {
+// ── Escape context control ────────────────────────────────────────────────────
+
+pub fn set_escape_blocked(blocked: bool) {
+    ESCAPE_BLOCKED.store(blocked, Ordering::SeqCst);
+}
+
+// ── Process scanning ──────────────────────────────────────────────────────────
+
+pub struct FoundProcess {
+    pub name: String,
+    pub pid: u32,
+}
+
+/// Returns restricted processes with their PIDs for precise kill-by-PID.
+pub fn scan_processes_with_pids() -> Vec<FoundProcess> {
     let mut found = Vec::new();
-    if let Ok(out) = std::process::Command::new("tasklist")
+    let Ok(out) = std::process::Command::new("tasklist")
         .args(["/FO", "CSV", "/NH"])
         .output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    else {
+        return found;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        // CSV format: "image.exe","PID","Session Name","Session#","Mem Usage"
+        let mut cols = line.splitn(5, ',');
+        let image = cols.next().unwrap_or("").trim_matches('"').to_lowercase();
+        let pid_str = cols.next().unwrap_or("").trim_matches('"');
+        let pid: u32 = pid_str.parse().unwrap_or(0);
+        if pid == 0 {
+            continue;
+        }
         for &r in RESTRICTED {
-            if text.contains(r) && !found.contains(&r.to_string()) {
-                found.push(r.trim_end_matches(".exe").to_string());
+            if image == r {
+                found.push(FoundProcess {
+                    name: r.to_string(),
+                    pid,
+                });
+                break;
             }
         }
     }
-    let clean = found.is_empty();
+    found
+}
+
+pub fn scan_processes() -> ProcessScanResult {
+    let procs = scan_processes_with_pids();
+    let clean = procs.is_empty();
+    let found = procs
+        .into_iter()
+        .map(|p| p.name.trim_end_matches(".exe").to_string())
+        .collect();
     ProcessScanResult { found, clean }
 }
 
-pub fn detect_virtualization() -> VirtDetectionResult {
-    if let Ok(out) = std::process::Command::new("systeminfo").output() {
-        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        let vm_markers = [
-            "vmware",
-            "virtualbox",
-            "virtual machine",
-            "hyper-v",
-            "kvm",
-            "xen",
-            "qemu",
-            "parallels",
-        ];
-        for &vm in &vm_markers {
-            if text.contains(vm) {
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(vm.to_string()),
-                    confidence: "high".to_string(),
-                };
-            }
+// ── Screen capture detection ──────────────────────────────────────────────────
+
+/// Multi-layer detection of active screen capture.
+///
+/// `apply_capture_protection()` is the prevention layer (makes window black).
+/// This function is the detection layer for logging and UI warnings.
+pub fn detect_screen_capture() -> bool {
+    let ps = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
+        .unwrap_or_default();
+
+    // Layer 1: known capture process is running
+    for name in CAPTURE_PROCESSES {
+        if ps.contains(*name) {
+            return true;
         }
     }
-    let hv_check = std::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters",
-        ])
-        .output();
-    if matches!(hv_check, Ok(ref out) if out.status.success()) {
-        return VirtDetectionResult {
-            detected: true,
-            platform: Some("hyper-v".to_string()),
-            confidence: "high".to_string(),
-        };
+
+    // Layer 2: Game Bar — only flag if it survived kill-shield AND DVR is still enabled.
+    // Game Bar processes are NOT in CAPTURE_PROCESSES (Layer 1) so this check is reachable.
+    // Rationale: gamebar.exe runs for GPU overlay on many gaming PCs; its presence alone
+    // is not a capture signal. DVR-enabled + running = active capture threat.
+    let gamebar_running = ps.contains("gamebarpresencewriter")
+        || ps.contains("gamebar")
+        || ps.contains("xboxgameoverlay");
+    if gamebar_running
+        && (reg_dword_nonzero(r"HKCU\System\GameConfigStore", "GameDVR_Enabled")
+            || reg_dword_nonzero(
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
+                "AppCaptureEnabled",
+            ))
+    {
+        return true;
     }
-    VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "high".to_string(),
+
+    // Layer 3: nvcontainer.exe — hosts many NVIDIA services (telemetry, driver IPC, etc.)
+    // Only flag when the dedicated ShadowPlay capture registry key is enabled.
+    if ps.contains("nvcontainer")
+        && reg_dword_nonzero(
+            r"HKCU\SOFTWARE\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS",
+            "Enabled",
+        )
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Apply DWM capture exclusion to the exam window so it renders as solid black
+/// to all screen capture APIs: WGC (used by Google Meet, Teams, OBS), DXGI
+/// output duplication, BitBlt/PrintScreen, and browser-based meeting tools.
+///
+/// Requires Windows 10 2004+ (19041) for WDA_EXCLUDEFROMCAPTURE.
+/// Falls back to WDA_MONITOR on older builds which blocks DWM-path captures.
+///
+/// `hwnd_raw` is the HWND cast to isize (obtained from `WebviewWindow::hwnd()`).
+pub fn apply_capture_protection(hwnd_raw: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WINDOW_DISPLAY_AFFINITY,
+    };
+
+    // 0x11 = WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+)
+    // Excludes from ALL capture paths: WGC, DXGI ODuplication, GDI BitBlt, print-screen
+    const WDA_EXCLUDEFROMCAPTURE: WINDOW_DISPLAY_AFFINITY = WINDOW_DISPLAY_AFFINITY(0x11);
+    // 0x01 = WDA_MONITOR — older fallback; blocks GDI/DWM captures but not WGC
+    const WDA_MONITOR: WINDOW_DISPLAY_AFFINITY = WINDOW_DISPLAY_AFFINITY(0x01);
+
+    let hwnd = HWND(hwnd_raw as *mut _);
+    unsafe {
+        if SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok() {
+            return true;
+        }
+        // Fallback for Windows 10 pre-2004
+        SetWindowDisplayAffinity(hwnd, WDA_MONITOR).is_ok()
     }
 }
 
-/// Prevent display/system sleep during exam.
+// ── Registry helpers ──────────────────────────────────────────────────────────
+
+fn reg_dword_nonzero(key: &str, value: &str) -> bool {
+    let Ok(out) = std::process::Command::new("reg")
+        .args(["query", key, "/v", value])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    if let Some(hex) = text.split("0x").nth(1) {
+        let part = hex.trim().split_whitespace().next().unwrap_or("0");
+        return u64::from_str_radix(part, 16).unwrap_or(0) != 0;
+    }
+    false
+}
+
+fn reg_key_exists(key: &str) -> bool {
+    std::process::Command::new("reg")
+        .args(["query", key])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn reg_set(key: &str, value_name: &str, data: &str) {
+    let _ = std::process::Command::new("reg")
+        .args([
+            "add",
+            key,
+            "/v",
+            value_name,
+            "/t",
+            "REG_DWORD",
+            "/d",
+            data,
+            "/f",
+        ])
+        .output();
+}
+
+fn reg_delete_value(key: &str, value_name: &str) {
+    let _ = std::process::Command::new("reg")
+        .args(["delete", key, "/v", value_name, "/f"])
+        .output();
+}
+
+// ── Sleep prevention ──────────────────────────────────────────────────────────
+
 fn set_sleep_prevention(enable: bool) {
     use windows::Win32::System::Power::{
         SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
@@ -121,68 +329,99 @@ fn set_sleep_prevention(enable: bool) {
     }
 }
 
-/// Modify Registry values to enforce Windows system lockdown (Disable Task Manager, WinKeys).
+// ── Registry lockdown ─────────────────────────────────────────────────────────
+
 fn apply_registry_policies(enable: bool) {
     if enable {
-        // 1. Disable Task Manager during secure session
-        let _ = std::process::Command::new("reg")
-            .args([
-                "add",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-                "/v",
-                "DisableTaskMgr",
-                "/t",
-                "REG_DWORD",
-                "/d",
-                "1",
-                "/f",
-            ])
-            .output();
-
-        // 2. Disable Explorer WinKey shortcuts globally
-        let _ = std::process::Command::new("reg")
-            .args([
-                "add",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-                "/v",
-                "NoWinKeys",
-                "/t",
-                "REG_DWORD",
-                "/d",
-                "1",
-                "/f",
-            ])
-            .output();
+        reg_set(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
+            "DisableTaskMgr",
+            "1",
+        );
+        reg_set(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+            "NoWinKeys",
+            "1",
+        );
     } else {
-        // Restore Task Manager
-        let _ = std::process::Command::new("reg")
-            .args([
-                "delete",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-                "/v",
-                "DisableTaskMgr",
-                "/f",
-            ])
-            .output();
-
-        // Restore Explorer WinKeys
-        let _ = std::process::Command::new("reg")
-            .args([
-                "delete",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-                "/v",
-                "NoWinKeys",
-                "/f",
-            ])
-            .output();
+        reg_delete_value(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
+            "DisableTaskMgr",
+        );
+        reg_delete_value(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+            "NoWinKeys",
+        );
     }
 }
+
+fn set_touchpad_gestures_enabled(enabled: bool) {
+    let val = if enabled { "1" } else { "0" };
+    // Windows Precision Touchpad (WPT) multi-finger gesture registry keys.
+    // These are read dynamically by the WPT driver — no restart required.
+    // Non-WPT touchpads (legacy Synaptics/Elan) use vendor-specific drivers
+    // and are not affected by these keys; the virtual desktop guard thread
+    // catches escapes from those devices instead.
+    reg_set(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad",
+        "ThreeFingerSlideEnabled",
+        val,
+    );
+    reg_set(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad",
+        "FourFingerSlideEnabled",
+        val,
+    );
+}
+
+fn set_game_bar_enabled(enabled: bool) {
+    let val = if enabled { "1" } else { "0" };
+    reg_set(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
+        "AppCaptureEnabled",
+        val,
+    );
+    reg_set(r"HKCU\System\GameConfigStore", "GameDVR_Enabled", val);
+    // Disable the Game Bar shell presence itself
+    reg_set(
+        r"HKCU\Software\Microsoft\GameBar",
+        "UseNexusForGameBarEnabled",
+        val,
+    );
+}
+
+// ── Crash recovery ────────────────────────────────────────────────────────────
+
+/// Clears registry lockdown left by a previous crashed session.
+/// Must be called before Tauri initialises so it completes before any
+/// enable_keyboard_intercept() call can race the restore.
+pub fn recover_registry_if_crashed() {
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
+    let task_mgr_set = std::process::Command::new("reg")
+        .args(["query", key, "/v", "DisableTaskMgr"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if task_mgr_set {
+        eprintln!("AMS Access: crashed-session registry state detected — restoring");
+        apply_registry_policies(false);
+        set_game_bar_enabled(true);
+        set_touchpad_gestures_enabled(true);
+        let _ = disable_network_lockdown();
+        set_sleep_prevention(false);
+    }
+}
+
+// ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
 pub fn lock_desktop() -> bool {
     set_sleep_prevention(true);
     apply_registry_policies(true);
+    set_game_bar_enabled(false);
+    set_touchpad_gestures_enabled(false);
 
-    // Active Process Terminating Shield
     SHIELD_ACTIVE.store(true, Ordering::SeqCst);
     std::thread::spawn(|| {
         while SHIELD_ACTIVE.load(Ordering::SeqCst) {
@@ -190,14 +429,11 @@ pub fn lock_desktop() -> bool {
             if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
                 break;
             }
-            let scan = scan_processes();
-            if !scan.clean {
-                for proc in scan.found {
-                    let exe = format!("{}.exe", proc);
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/IM", &exe])
-                        .output();
-                }
+            for proc in scan_processes_with_pids() {
+                // Kill by PID — avoids name collision with legitimate same-named processes
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &proc.pid.to_string()])
+                    .output();
             }
         }
     });
@@ -209,8 +445,246 @@ pub fn lock_desktop() -> bool {
 pub fn unlock_desktop() {
     set_sleep_prevention(false);
     apply_registry_policies(false);
+    set_game_bar_enabled(true);
+    set_touchpad_gestures_enabled(true);
     SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
+}
+
+// ── Virtualization detection (fast: registry + CPUID + ACPI, systeminfo fallback) ──
+
+pub fn detect_virtualization() -> VirtDetectionResult {
+    // Method 1: Specific registry keys left by VM guest tools (<100 ms total).
+    // Hyper-V VM guest key is checked here — critical for the MicrosoftHyperV CPUID
+    // exclusion in Method 2 to be correct.
+    const VM_REGISTRY_KEYS: &[(&str, &str)] = &[
+        (r"HKLM\SOFTWARE\VMware, Inc.\VMware Tools", "vmware"),
+        (
+            r"HKLM\SOFTWARE\Oracle\VirtualBox Guest Additions",
+            "virtualbox",
+        ),
+        (
+            r"HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters",
+            "hyper-v",
+        ),
+        (r"HKLM\HARDWARE\ACPI\DSDT\VBOX__", "virtualbox"),
+        (r"HKLM\HARDWARE\ACPI\DSDT\BOCHS_", "bochs"),
+        (r"HKLM\HARDWARE\ACPI\DSDT\QEMU", "qemu"),
+        (r"HKLM\HARDWARE\ACPI\FADT\VBOX__", "virtualbox"),
+    ];
+    for (key, platform) in VM_REGISTRY_KEYS {
+        if reg_key_exists(key) {
+            return VirtDetectionResult {
+                detected: true,
+                platform: Some(platform.to_string()),
+                confidence: "high".to_string(),
+            };
+        }
+    }
+
+    // Method 2: CPUID hypervisor present bit (~1µs, no I/O — fastest possible check).
+    //
+    // MicrosoftHyperV is intentionally excluded: Windows 11 enables Hyper-V VBS /
+    // Credential Guard / HVCI on bare-metal hardware, which sets the CPUID hypervisor
+    // bit with vendor "Microsoft Hv" but is NOT a VM. If this were a real Hyper-V VM,
+    // the Guest\Parameters registry key (Method 1) would have already matched and
+    // returned. Reaching this point means that key is absent → treat "Microsoft Hv" as
+    // VBS on bare metal and fall through.
+    {
+        let cpuid = raw_cpuid::CpuId::new();
+        if let Some(hv) = cpuid.get_hypervisor_info() {
+            let kind = hv.identify();
+            if !matches!(kind, raw_cpuid::Hypervisor::MicrosoftHyperV) {
+                let platform = match kind {
+                    raw_cpuid::Hypervisor::Vmware => "vmware",
+                    raw_cpuid::Hypervisor::Kvm => "kvm",
+                    raw_cpuid::Hypervisor::Xen => "xen",
+                    raw_cpuid::Hypervisor::Parallels => "parallels",
+                    raw_cpuid::Hypervisor::Bhyve => "bhyve",
+                    _ => "unknown_hypervisor",
+                };
+                return VirtDetectionResult {
+                    detected: true,
+                    platform: Some(platform.to_string()),
+                    confidence: "high".to_string(),
+                };
+            }
+        }
+    }
+
+    // Method 3: ACPI table name scan (~30ms) — catches QEMU / bochs without guest tools.
+    if let Ok(out) = std::process::Command::new("reg")
+        .args(["query", r"HKLM\HARDWARE\ACPI\DSDT"])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        for vm in &["vbox", "vmware", "qemu", "bochs", "xen", "bxpc"] {
+            if text.contains(vm) {
+                return VirtDetectionResult {
+                    detected: true,
+                    platform: Some(vm.to_string()),
+                    confidence: "high".to_string(),
+                };
+            }
+        }
+    }
+
+    // Method 4: systeminfo — last resort for unusual / hardened VMs that leave no
+    // registry or CPUID traces. Capped at 3s to avoid a visible onboarding stall.
+    // Confidence is "medium" because this relies on loose string matching of
+    // English-localised systeminfo output.
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = std::thread::Builder::new()
+            .name("ams-sysinfo-vm".into())
+            .spawn(move || {
+                let _ = tx.send(std::process::Command::new("systeminfo").output());
+            });
+        if let Ok(Ok(out)) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            for vm in &[
+                "vmware",
+                "virtualbox",
+                "virtual machine",
+                "hyper-v",
+                "kvm",
+                "xen",
+                "qemu",
+                "parallels",
+            ] {
+                if text.contains(vm) {
+                    return VirtDetectionResult {
+                        detected: true,
+                        platform: Some(vm.to_string()),
+                        confidence: "medium".to_string(),
+                    };
+                }
+            }
+        }
+    }
+
+    VirtDetectionResult {
+        detected: false,
+        platform: None,
+        confidence: "high".to_string(),
+    }
+}
+
+// ── Remote desktop detection ──────────────────────────────────────────────────
+
+pub fn detect_remote_desktop() -> bool {
+    // Method 1: SESSIONNAME for built-in Windows RDP
+    if std::env::var("SESSIONNAME")
+        .map(|s| s.to_uppercase().contains("RDP"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    // Method 2: SM_REMOTESESSION — non-zero in any WTS/RDP remote session
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_REMOTESESSION};
+        if GetSystemMetrics(SM_REMOTESESSION) != 0 {
+            return true;
+        }
+    }
+
+    // Method 3: Known third-party remote agents not already in RESTRICTED
+    // (belt-and-suspenders — RESTRICTED kill-shield covers these too)
+    let ps = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
+        .unwrap_or_default();
+
+    for agent in &[
+        "teamviewer.exe",
+        "teamviewerhost.exe",
+        "anydesk.exe",
+        "vncviewer.exe",
+        "rustdesk.exe",
+        "parsec.exe",
+        "nomachine.exe",
+    ] {
+        if ps.contains(*agent) {
+            return true;
+        }
+    }
+
+    false
+}
+
+// ── Keyboard intercept ────────────────────────────────────────────────────────
+
+fn spawn_hook_thread() {
+    HOOK_STARTING.store(true, Ordering::SeqCst);
+    std::thread::spawn(|| {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL,
+        };
+
+        let tid = unsafe { GetCurrentThreadId() };
+        HOOK_THREAD_ID.store(tid, Ordering::SeqCst);
+        HOOK_STARTING.store(false, Ordering::SeqCst);
+
+        unsafe {
+            let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbproc), None, 0) {
+                Ok(h) => h,
+                Err(_) => {
+                    HOOK_ACTIVE.store(false, Ordering::SeqCst);
+                    HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                    HOOK_STARTING.store(false, Ordering::SeqCst); // unblock watchdog startup poll
+                    return;
+                }
+            };
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+            UnhookWindowsHookEx(hook).ok();
+        }
+
+        // Signal death without clearing HOOK_ACTIVE — watchdog uses TID==0 to detect
+        HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+    });
+}
+
+fn spawn_hook_watchdog() {
+    std::thread::spawn(|| {
+        // Wait until the hook thread is fully started (TID registered) before the
+        // first check — avoids a false "thread died" during the startup window.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if HOOK_THREAD_ID.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                eprintln!("AMS Access: WH_KEYBOARD_LL hook thread failed to start within 10s");
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if !HOOK_ACTIVE.load(Ordering::SeqCst) {
+                break; // deliberate stop via disable_keyboard_intercept
+            }
+            // TID==0 and not in startup window => thread died unexpectedly
+            if HOOK_THREAD_ID.load(Ordering::SeqCst) == 0 && !HOOK_STARTING.load(Ordering::SeqCst) {
+                eprintln!("AMS Access: WH_KEYBOARD_LL hook thread died — respawning");
+                spawn_hook_thread();
+                // Spin until new thread registers its TID before next watchdog check
+                let respawn_deadline =
+                    std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while HOOK_THREAD_ID.load(Ordering::SeqCst) == 0
+                    && std::time::Instant::now() < respawn_deadline
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+    });
 }
 
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
@@ -223,35 +697,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     }
     HOOK_ACTIVE.store(true, Ordering::SeqCst);
     set_sleep_prevention(true);
-
-    std::thread::spawn(|| {
-        use windows::Win32::System::Threading::GetCurrentThreadId;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL,
-        };
-
-        let tid = unsafe { GetCurrentThreadId() };
-        HOOK_THREAD_ID.store(tid, Ordering::SeqCst);
-
-        unsafe {
-            let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbproc), None, 0) {
-                Ok(h) => h,
-                Err(_) => {
-                    HOOK_ACTIVE.store(false, Ordering::SeqCst);
-                    HOOK_THREAD_ID.store(0, Ordering::SeqCst);
-                    return;
-                }
-            };
-
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
-
-            UnhookWindowsHookEx(hook).ok();
-        }
-
-        HOOK_ACTIVE.store(false, Ordering::SeqCst);
-        HOOK_THREAD_ID.store(0, Ordering::SeqCst);
-    });
+    spawn_hook_thread();
+    spawn_hook_watchdog();
 
     KeyboardInterceptResult {
         active: true,
@@ -261,6 +708,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 }
 
 pub fn disable_keyboard_intercept() {
+    HOOK_ACTIVE.store(false, Ordering::SeqCst);
     set_sleep_prevention(false);
     let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
     if tid != 0 {
@@ -278,34 +726,33 @@ unsafe extern "system" fn kbproc(
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN};
 
     if code >= 0 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let vk = kb.vkCode;
         let alt_down = kb.flags.0 & LLKHF_ALTDOWN.0 != 0;
-        let ctrl_down =
-            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11) as u16 & 0x8000)
-                != 0;
+        let ctrl_down = (GetAsyncKeyState(0x11) as u16 & 0x8000) != 0;
+        let shift_down = (GetAsyncKeyState(0x10) as u16 & 0x8000) != 0;
+        let win_down = (GetAsyncKeyState(0x5B) as u16 & 0x8000) != 0
+            || (GetAsyncKeyState(0x5C) as u16 & 0x8000) != 0;
 
-        let win_down = (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x5B) as u16
-            & 0x8000)
-            != 0
-            || (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x5C) as u16
-                & 0x8000)
-                != 0;
-
-        // Block: Win keys, PrintScreen, Alt+Tab, Alt+F4, Ctrl+Esc, Escape, Alt+Enter, Alt+Space, or any keys while Win is held down.
-        let blocked = vk == 0x5B  // LWin
-            || vk == 0x5C          // RWin
-            || vk == 0x2C          // PrintScreen
+        let blocked = vk == 0x5B   // LWin
+            || vk == 0x5C // RWin
+            || vk == 0x2C // VK_SNAPSHOT (PrintScreen — all methods incl. Win+Shift+S snipping)
             || (alt_down && vk == 0x09)  // Alt+Tab
             || (alt_down && vk == 0x73)  // Alt+F4
-            || (ctrl_down && vk == 0x1B) // Ctrl+Esc
-            || vk == 0x1B          // Escape
-            || (alt_down && vk == 0x0D)  // Alt+Enter (window sizing)
+            || (ctrl_down && vk == 0x1B) // Ctrl+Esc (Start menu)
+            || (ctrl_down && shift_down && vk == 0x1B) // Ctrl+Shift+Esc (Task Manager direct)
+            || (ctrl_down && shift_down && vk == 0x09) // Ctrl+Shift+Tab
+            || (vk == 0x1B && ESCAPE_BLOCKED.load(Ordering::Relaxed)) // Esc — context-aware
+            || (alt_down && vk == 0x0D)  // Alt+Enter (window size menu)
             || (alt_down && vk == 0x20)  // Alt+Space (system menu)
-            || win_down; // Any key combo with Win key (Win+Tab, Win+D, etc.)
+            || (alt_down && vk == 0x5A)  // Alt+Z (NVIDIA ShadowPlay overlay)
+            || (alt_down && vk == 0x52)  // Alt+R (AMD ReLive recording)
+            || (alt_down && vk == 0x78)  // Alt+F9 (Fraps record toggle)
+            || win_down; // Any Win+ combo: Win+G (Game Bar), Win+Tab, Win+D, Win+Shift+S, etc.
 
         if blocked {
             return LRESULT(1);
@@ -314,29 +761,136 @@ unsafe extern "system" fn kbproc(
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-pub fn detect_remote_desktop() -> bool {
-    std::env::var("SESSIONNAME")
-        .map(|s| s.to_uppercase().contains("RDP"))
-        .unwrap_or(false)
+// ── Virtual desktop guard ─────────────────────────────────────────────────────
+
+/// Spawn a background thread that detects when the exam window is no longer on
+/// the current virtual desktop (e.g. touchpad 3-finger swipe on non-WPT devices)
+/// and moves it back within 250 ms.
+///
+/// Strategy: `GetForegroundWindow()` always returns a window on the active desktop.
+/// We get its desktop GUID via `IVirtualDesktopManager::GetWindowDesktopId`, then
+/// call `MoveWindowToDesktop(exam_hwnd, that_guid)` so the exam follows the user
+/// to whichever desktop they switch to — they cannot escape by switching desktops.
+///
+/// Stops when `SHIELD_ACTIVE` is false (set by `unlock_desktop()`).
+pub fn spawn_virtual_desktop_guard(hwnd_raw: isize) {
+    let _ = std::thread::Builder::new()
+        .name("ams-vd-guard".into())
+        .spawn(move || {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::System::Com::{
+                CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+                COINIT_APARTMENTTHREADED,
+            };
+            use windows::Win32::UI::Shell::IVirtualDesktopManager;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetForegroundWindow, SetForegroundWindow,
+            };
+
+            // STA required for shell COM objects
+            let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            if hr.is_err() {
+                return;
+            }
+
+            // CLSID_VirtualDesktopManager = {aa509086-5ca9-4c25-8f95-589d3c07b48a}
+            const CLSID_VDM: windows::core::GUID = windows::core::GUID {
+                data1: 0xaa509086,
+                data2: 0x5ca9,
+                data3: 0x4c25,
+                data4: [0x8f, 0x95, 0x58, 0x9d, 0x3c, 0x07, 0xb4, 0x8a],
+            };
+            let vdm: windows::core::Result<IVirtualDesktopManager> =
+                unsafe { CoCreateInstance(&CLSID_VDM, None, CLSCTX_INPROC_SERVER) };
+            let Ok(vdm) = vdm else {
+                unsafe { CoUninitialize() };
+                return;
+            };
+
+            let hwnd = HWND(hwnd_raw as *mut _);
+
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                // Check if our window is still on the active virtual desktop
+                let on_current = unsafe { vdm.IsWindowOnCurrentVirtualDesktop(hwnd) };
+                let escaped = matches!(on_current, Ok(b) if !b.as_bool());
+                if !escaped {
+                    continue;
+                }
+
+                // GetForegroundWindow() returns a window that IS on the current desktop —
+                // get its desktop GUID and move the exam window to that same desktop.
+                let fg = unsafe { GetForegroundWindow() };
+                if fg.0.is_null() || fg == hwnd {
+                    continue;
+                }
+                if let Ok(desktop_id) = unsafe { vdm.GetWindowDesktopId(fg) } {
+                    unsafe { vdm.MoveWindowToDesktop(hwnd, &desktop_id) }.ok();
+                    // Bring exam window to front on the new desktop
+                    unsafe { SetForegroundWindow(hwnd) }.ok();
+                }
+            }
+
+            unsafe { CoUninitialize() };
+        });
 }
 
-// ── Network lockdown (Windows Firewall via netsh) ─────────────────────────────
+// ── Network lockdown (process-scoped, not global policy) ─────────────────────
 
-fn netsh(args: &[&str]) -> Result<std::process::Output, String> {
-    std::process::Command::new("netsh")
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())
-}
-
-/// Apply outbound firewall: set default outbound to block, allow only `allowed_ips`.
-/// Rules persist until `disable_network_lockdown` is called — intentional.
+/// Scopes outbound firewall to this process only, allows only `allowed_ips`.
+///
+/// Uses a specific BLOCK rule for this exe plus per-IP ALLOW rules. Windows
+/// Firewall resolves specificity conflicts in favour of the more constrained
+/// rule, so ALLOW(exe → specific-ip) wins over BLOCK(exe → any).
+///
+/// Does NOT touch the global outbound policy so other processes keep internet.
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
-    // Clear any leftover rules first (idempotent)
-    let _ = disable_network_lockdown();
+    let _ = disable_network_lockdown(); // idempotent cleanup
 
-    // Add allow rules for whitelisted IPs before setting default to block
+    let exe = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .into_owned();
+
+    // netsh needs program="path with spaces"; wrap value in embedded quotes
+    let program_arg = format!("program=\"{}\"", exe);
+
+    // Block-all outbound rule for this exe
+    let out = std::process::Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            "name=AMS_PROCTOR_BLOCK_ALL",
+            "dir=out",
+            "action=block",
+            "enable=yes",
+            "profile=any",
+            &program_arg,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "netsh block-all failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // Per-IP allow rules — more specific than BLOCK_ALL so they win
     for ip in allowed_ips {
+        // Upstream (lib.rs) already validates via parse::<IpAddr>() or to_socket_addrs().
+        // We re-validate here as a safety net. Critically, use parse::<IpAddr>() not a
+        // char-set check — the char-set approach rejects valid IPv6 addresses containing
+        // hex letters (a-f), e.g. 2607:f8b0:4004:c09::71 fails is_ascii_digit().
+        if ip.parse::<std::net::IpAddr>().is_err() {
+            continue;
+        }
         let out = std::process::Command::new("netsh")
             .args([
                 "advfirewall",
@@ -349,6 +903,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
                 "enable=yes",
                 "profile=any",
                 &format!("remoteip={}", ip),
+                &program_arg,
             ])
             .output()
             .map_err(|e| e.to_string())?;
@@ -361,42 +916,33 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
         }
     }
 
-    // Set default outbound to block across all profiles
-    // Explicit allow rules above take precedence over the default block
-    let out = netsh(&[
-        "advfirewall",
-        "set",
-        "allprofiles",
-        "firewallpolicy",
-        "blockinbound,blockoutbound",
-    ])?;
-    if !out.status.success() {
-        return Err(format!(
-            "netsh set policy failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
+    // IPv6: the BLOCK_ALL rule has no remoteip filter, so netsh applies it to all traffic
+    // regardless of IP version — no separate ::/0 block rule is needed.
+    // IPv6 ALLOW rules are added above when lib.rs resolves both A and AAAA records via
+    // to_socket_addrs(), which returns both IPv4 and IPv6 addresses.
 
     Ok(())
 }
 
-/// Restore default outbound policy and remove AMS allow rules.
+/// Remove all AMS firewall rules and restore unrestricted outbound access.
 pub fn disable_network_lockdown() -> Result<(), String> {
-    // Restore Windows default: block inbound, allow outbound
-    let _ = netsh(&[
-        "advfirewall",
-        "set",
-        "allprofiles",
-        "firewallpolicy",
-        "blockinbound,allowoutbound",
-    ]);
-    // Remove all AMS allow rules
-    let _ = netsh(&[
-        "advfirewall",
-        "firewall",
-        "delete",
-        "rule",
-        "name=AMS_PROCTOR_ALLOW",
-    ]);
+    let _ = std::process::Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            "name=AMS_PROCTOR_BLOCK_ALL",
+        ])
+        .output();
+    let _ = std::process::Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            "name=AMS_PROCTOR_ALLOW",
+        ])
+        .output();
     Ok(())
 }

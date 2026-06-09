@@ -4,6 +4,7 @@ members = [
     "apps/desktop/src-tauri",
     "packages/platform-rs",
     "packages/core-rs",
+    "packages/network-helper",
 ]
 
 [workspace.package]

@@ -1,4 +1,7 @@
 use core_rs::exam::{KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const RESTRICTED: &[&str] = &[
     "obs",
@@ -570,12 +573,208 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     }
 }
 
+// ── Touchpad control ──────────────────────────────────────────────────────────
+
+/// Disable or re-enable the touchpad.
+///
+/// GNOME (X11 + Wayland): flips `org.gnome.desktop.peripherals.touchpad send-events`.
+/// X11 non-GNOME fallback: disables every device whose name contains "touchpad"
+/// via `xinput`. Silently no-ops on Wayland when neither path applies.
+fn set_touchpad_enabled(enabled: bool) {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_lowercase();
+    let is_gnome = desktop.contains("gnome") || desktop.contains("ubuntu");
+
+    if is_gnome {
+        let value = if enabled { "'enabled'" } else { "'disabled'" };
+        gsettings_set(
+            "org.gnome.desktop.peripherals.touchpad",
+            "send-events",
+            value,
+        );
+        return;
+    }
+
+    // X11 fallback — xinput does nothing on Wayland but won't panic.
+    let Ok(out) = std::process::Command::new("xinput").arg("list").output() else {
+        return;
+    };
+    let ids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| line.to_lowercase().contains("touchpad"))
+        .filter_map(|line| {
+            // line format: "  ↳ Synaptics TouchPad   id=14   [slave  pointer  (2)]"
+            line.split("id=")
+                .nth(1)?
+                .split_whitespace()
+                .next()?
+                .parse::<u32>()
+                .ok()
+        })
+        .collect();
+
+    let action = if enabled { "enable" } else { "disable" };
+    for id in ids {
+        let _ = std::process::Command::new("xinput")
+            .args([action, &id.to_string()])
+            .output();
+    }
+}
+
+// ── Process kill shield ───────────────────────────────────────────────────────
+
+/// Returns (process_name, pid) pairs for every restricted process found in /proc.
+fn scan_restricted_pids() -> Vec<(String, u32)> {
+    let mut result = Vec::new();
+    let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+        return result;
+    };
+    for entry in proc_dir.flatten() {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        let Ok(pid) = fname.parse::<u32>() else {
+            continue;
+        };
+        let Ok(raw) = std::fs::read(format!("/proc/{}/cmdline", pid)) else {
+            continue;
+        };
+        if raw.is_empty() {
+            continue;
+        }
+        let exe = raw.split(|&b| b == 0).next().unwrap_or(&[]);
+        let exe_str = String::from_utf8_lossy(exe).to_lowercase();
+        let basename = exe_str.rsplit('/').next().unwrap_or(&exe_str).to_string();
+        for &r in RESTRICTED {
+            if basename == r {
+                result.push((r.to_string(), pid));
+                break;
+            }
+        }
+    }
+    result
+}
+
+/// Spawn a background thread that kills restricted processes by PID every second.
+fn spawn_kill_shield() {
+    let our_pid = std::process::id();
+    std::thread::Builder::new()
+        .name("ams-kill-shield".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
+                break;
+            }
+            for (_, pid) in scan_restricted_pids() {
+                if pid == our_pid {
+                    continue;
+                }
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+            }
+        })
+        .ok();
+}
+
+// ── Workspace watchdog (X11 only) ─────────────────────────────────────────────
+//
+// On Wayland the touchpad is fully disabled above and GSettings already blocks
+// all workspace-switch keyboard shortcuts, so no watchdog is needed there.
+// On X11 a touchpad swipe can still slip through on non-WPT drivers — the watchdog
+// detects the drift and moves the exam window to whichever workspace became active.
+
+fn xdotool_int(args: &[&str]) -> Option<u32> {
+    let out = std::process::Command::new("xdotool")
+        .args(args)
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Spawn a workspace-guard thread (no-op if not on X11 or xdotool/wmctrl absent).
+fn spawn_workspace_watchdog() {
+    // Only meaningful on X11.
+    if std::env::var("DISPLAY").is_err() {
+        return;
+    }
+
+    std::thread::Builder::new()
+        .name("ams-workspace-guard".into())
+        .spawn(|| {
+            // Give the window manager time to map our window.
+            let our_pid = std::process::id().to_string();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let win_id: u64 = loop {
+                // xdotool search --pid returns newline-separated window IDs.
+                if let Some(id) = std::process::Command::new("xdotool")
+                    .args(["search", "--pid", &our_pid, "--onlyvisible"])
+                    .output()
+                    .ok()
+                    .and_then(|out| {
+                        String::from_utf8_lossy(&out.stdout)
+                            .lines()
+                            .filter_map(|l| l.trim().parse::<u64>().ok())
+                            .next()
+                    })
+                {
+                    break id;
+                }
+                if std::time::Instant::now() > deadline {
+                    return; // xdotool not available or window never appeared
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            };
+
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                let Some(active_desktop) = xdotool_int(&["get_desktop"]) else {
+                    continue;
+                };
+                let Some(our_desktop) =
+                    xdotool_int(&["get_desktop_for_window", &win_id.to_string()])
+                else {
+                    continue;
+                };
+
+                if active_desktop != our_desktop {
+                    // Move exam window to wherever the user switched.
+                    let _ = std::process::Command::new("wmctrl")
+                        .args([
+                            "-i",
+                            "-r",
+                            &format!("0x{:x}", win_id),
+                            "-t",
+                            &active_desktop.to_string(),
+                        ])
+                        .output();
+                    // Focus it.
+                    let _ = std::process::Command::new("xdotool")
+                        .args(["windowfocus", "--sync", &win_id.to_string()])
+                        .output();
+                }
+            }
+        })
+        .ok();
+}
+
+// ── Desktop lock / unlock ─────────────────────────────────────────────────────
+
 /// Restore all DE keybindings to their pre-exam values.
 pub fn lock_desktop() -> bool {
+    SHIELD_ACTIVE.store(true, Ordering::SeqCst);
+    set_touchpad_enabled(false);
+    spawn_kill_shield();
+    spawn_workspace_watchdog();
     enable_keyboard_intercept().active
 }
 
 pub fn unlock_desktop() {
+    SHIELD_ACTIVE.store(false, Ordering::SeqCst);
+    set_touchpad_enabled(true);
     disable_keyboard_intercept();
 }
 

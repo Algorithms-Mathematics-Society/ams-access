@@ -10,7 +10,7 @@ use core_rs::exam::{KeyboardInterceptResult, ProcessScanResult, VirtDetectionRes
 use std::ffi::c_void;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 // ── Restricted process list ───────────────────────────────────────────────────
 
@@ -55,6 +55,15 @@ const RESTRICTED: &[&str] = &[
     "Screen Sharing",
     "screensharingd",
     "RemoteDesktopAgent",
+    // local screen recording apps
+    "QuickTime Player",
+    "Kap",
+    "CleanShot X",
+    "Rottenwood",
+    "ScreenFloat",
+    "Recordit",
+    "ScreenBrush",
+    "OBS",
 ];
 
 // ── Thread-safe raw pointer wrapper ──────────────────────────────────────────
@@ -67,11 +76,17 @@ unsafe impl Sync for SendPtr {}
 // ── Global state ──────────────────────────────────────────────────────────────
 
 static INTERCEPT_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
 static TAP_RUNLOOP: OnceLock<Mutex<Option<SendPtr>>> = OnceLock::new();
+static TAP_STARTED: OnceLock<Arc<(Mutex<bool>, Condvar)>> = OnceLock::new();
 static CAFFEINATE_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 
 fn tap_runloop() -> &'static Mutex<Option<SendPtr>> {
     TAP_RUNLOOP.get_or_init(|| Mutex::new(None))
+}
+
+fn tap_started() -> &'static Arc<(Mutex<bool>, Condvar)> {
+    TAP_STARTED.get_or_init(|| Arc::new((Mutex::new(false), Condvar::new())))
 }
 
 fn caffeinate_pid() -> &'static Mutex<Option<u32>> {
@@ -116,13 +131,16 @@ const VK_W: i64 = 13;
 const VK_3: i64 = 20; // Cmd+Shift+3 screenshot
 const VK_4: i64 = 21; // Cmd+Shift+4 screenshot
 const VK_5: i64 = 23; // Cmd+Shift+5 screenshot
+const VK_F: i64 = 3; // f key — Ctrl+Cmd+F toggles fullscreen
 const VK_F3: i64 = 99; // Mission Control (default binding)
 const VK_F4: i64 = 118; // Launchpad
+const VK_F11: i64 = 103; // Show Desktop
 const VK_UP: i64 = 126; // Ctrl+Up = Mission Control
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn CGEventTapIsEnabled(tap: *mut c_void) -> bool;
     fn CGEventTapCreate(
         tap: u32,
         place: u32,
@@ -183,7 +201,9 @@ unsafe extern "C" fn kb_tap_callback(
         VK_TAB if cmd => true,
         // Cmd+` (in-app window switcher)
         VK_BACKTICK if cmd => true,
-        // Cmd+Q (quit)
+        // Ctrl+Cmd+Q (lock screen) — must come before plain Cmd+Q
+        VK_Q if cmd && ctrl => true,
+        // Cmd+Q (quit) — also covers any other Cmd+Q modifier combo
         VK_Q if cmd => true,
         // Cmd+W (close window)
         VK_W if cmd => true,
@@ -195,16 +215,21 @@ unsafe extern "C" fn kb_tap_callback(
         VK_SPACE if cmd && !ctrl && !opt => true,
         // Cmd+Option+Esc (Force Quit dialog)
         VK_ESCAPE if cmd && opt => true,
-        // Bare Escape
-        VK_ESCAPE if !cmd && !ctrl && !opt && !shift => true,
+        // Bare Escape — skipped when Monaco is focused so editor can dismiss suggestions
+        VK_ESCAPE if !cmd && !ctrl && !opt && !shift && ESCAPE_BLOCKED.load(Ordering::Relaxed) => {
+            true
+        }
         // Cmd+Shift+3/4/5 (screenshots)
         VK_3 | VK_4 | VK_5 if cmd && shift => true,
         // Ctrl+Up (Mission Control)
         VK_UP if ctrl => true,
-        // F3 (Mission Control default key)
-        VK_F3 => true,
-        // F4 (Launchpad)
-        VK_F4 => true,
+        // F3 (Mission Control) and F4 (Launchpad) — blocked unconditionally
+        // including Cmd+F3 (Show Desktop alternate binding)
+        VK_F3 | VK_F4 => true,
+        // F11 bare (Show Desktop on MacBook fn+F11)
+        VK_F11 if !cmd && !ctrl && !opt && !shift => true,
+        // Ctrl+Cmd+F (fullscreen toggle — would exit AMS fullscreen)
+        VK_F if cmd && ctrl => true,
         _ => false,
     };
 
@@ -215,7 +240,34 @@ unsafe extern "C" fn kb_tap_callback(
     }
 }
 
+// ── CGEventTap watchdog ───────────────────────────────────────────────────────
+
+/// macOS silently disables a CGEventTap when its callback is slow enough that
+/// the HID event queue overflows. This watchdog polls every 2 s and re-enables
+/// the tap if that happens, also printing a line so the violation log can capture it.
+fn start_tap_watchdog(tap: *mut c_void) {
+    let tap_ptr = SendPtr(tap);
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        if !INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
+            break;
+        }
+        unsafe {
+            if !CGEventTapIsEnabled(tap_ptr.0) {
+                CGEventTapEnable(tap_ptr.0, true);
+                eprintln!("AMS Access: CGEventTap was disabled by OS — re-enabling");
+            }
+        }
+    });
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/// Allow bare Escape through when Monaco editor is focused so the editor can
+/// dismiss autocomplete/suggestions without triggering the intercept.
+pub fn set_escape_blocked(blocked: bool) {
+    ESCAPE_BLOCKED.store(blocked, Ordering::SeqCst);
+}
 
 /// Check whether the Accessibility permission is granted for this process.
 ///
@@ -247,8 +299,17 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         };
     }
 
+    {
+        let (lock, _) = &**tap_started();
+        if let Ok(mut started) = lock.lock() {
+            *started = false;
+        }
+    }
+
+    let started = tap_started().clone();
+
     // Spawn the run loop thread that hosts the event tap.
-    std::thread::spawn(|| {
+    std::thread::spawn(move || {
         unsafe {
             let tap = CGEventTapCreate(
                 K_CG_HID_EVENT_TAP,
@@ -258,13 +319,24 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
                 kb_tap_callback,
                 std::ptr::null_mut(),
             );
+
+            let signal_ready = || {
+                let (lock, cvar) = &*started;
+                if let Ok(mut ready) = lock.lock() {
+                    *ready = true;
+                    cvar.notify_one();
+                }
+            };
+
             if tap.is_null() {
+                signal_ready();
                 return;
             }
 
             let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
             if source.is_null() {
                 CFRelease(tap);
+                signal_ready();
                 return;
             }
 
@@ -277,6 +349,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
                 *guard = Some(SendPtr(rl));
             }
 
+            signal_ready();
+            start_tap_watchdog(tap);
             CFRunLoopRun(); // blocks until CFRunLoopStop is called
 
             // Cleanup after stop
@@ -287,8 +361,13 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         }
     });
 
-    // Give the thread a moment to start and set the flag.
-    std::thread::sleep(std::time::Duration::from_millis(80));
+    let (lock, cvar) = &**tap_started();
+    if let Ok(ready) = lock.lock() {
+        let _wait_result =
+            cvar.wait_timeout_while(ready, std::time::Duration::from_millis(500), |ready| {
+                !*ready
+            });
+    }
 
     let active = INTERCEPT_ACTIVE.load(Ordering::SeqCst);
     KeyboardInterceptResult {
@@ -338,10 +417,13 @@ pub fn unlock_desktop() {
 
 /// Scan running processes for restricted applications.
 ///
-/// Uses `ps -axco comm` which lists only the basename of each process executable.
+/// Uses `ps -axo command=` (full command path, no header) to avoid the 15-char
+/// truncation that `ps -axco comm` applies.  We extract the basename for matching
+/// so "QuickTime Player" in the RESTRICTED list matches
+/// `/Applications/QuickTime Player.app/Contents/MacOS/QuickTime Player`.
 pub fn scan_processes() -> ProcessScanResult {
     let output = Command::new("ps")
-        .args(["-axco", "comm"])
+        .args(["-axo", "command="])
         .output()
         .unwrap_or_else(|_| std::process::Output {
             status: std::process::ExitStatus::default(),
@@ -350,7 +432,18 @@ pub fn scan_processes() -> ProcessScanResult {
         });
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let running: Vec<&str> = stdout.lines().map(str::trim).collect();
+
+    // Extract the last path component of each line (everything after the final '/').
+    // Also keep the raw line so multi-word names that don't contain '/' still match.
+    let running: Vec<String> = stdout
+        .lines()
+        .map(|line| {
+            let line = line.trim();
+            // Strip any CLI arguments (first word only for path-based processes)
+            let cmd = line.split_whitespace().next().unwrap_or(line);
+            cmd.rsplit('/').next().unwrap_or(cmd).to_string()
+        })
+        .collect();
 
     let found: Vec<String> = RESTRICTED
         .iter()
@@ -366,9 +459,30 @@ pub fn scan_processes() -> ProcessScanResult {
 
 /// Detect whether the process is running inside a VM or hypervisor.
 ///
-/// Checks `system_profiler SPHardwareDataType` model name and
-/// `ioreg -l` for hypervisor markers.
+/// Checks CPUID hypervisor leaf first (cannot be spoofed without paravirt config),
+/// then `system_profiler SPHardwareDataType` and `ioreg -l` for hypervisor markers.
 pub fn detect_virtualization() -> VirtDetectionResult {
+    // CPUID leaf 0x40000000 — set by all major hypervisors, unreadable from /proc
+    {
+        let cpuid = raw_cpuid::CpuId::new();
+        if let Some(hv) = cpuid.get_hypervisor_info() {
+            let platform = match hv.identify() {
+                raw_cpuid::Hypervisor::Vmware => "vmware",
+                raw_cpuid::Hypervisor::Kvm => "kvm",
+                raw_cpuid::Hypervisor::Xen => "xen",
+                raw_cpuid::Hypervisor::Parallels => "parallels",
+                raw_cpuid::Hypervisor::Bhyve => "bhyve",
+                raw_cpuid::Hypervisor::MicrosoftHyperV => "hyperv",
+                _ => "unknown_hypervisor",
+            };
+            return VirtDetectionResult {
+                detected: true,
+                platform: Some(platform.to_string()),
+                confidence: "high".to_string(),
+            };
+        }
+    }
+
     let hw_output = Command::new("system_profiler")
         .arg("SPHardwareDataType")
         .output()
@@ -426,72 +540,291 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     }
 }
 
-/// Check whether the current desktop session has an active screen-sharing connection.
+/// Check whether any remote desktop or screen-sharing session is active.
 pub fn detect_remote_desktop() -> bool {
-    // screensharingd is present when someone is viewing this screen remotely
-    let output = Command::new("ps")
-        .args(["-axco", "comm"])
+    let ps = Command::new("ps")
+        .args(["-axo", "command="])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_string();
 
-    let text = output.to_string();
-    text.contains("screensharingd")
-        || text.contains("remotedesktopagent")
-        || text.contains("applescreencontrol")
+    // Built-in macOS Screen Sharing (VNC server daemon)
+    if ps.contains("screensharingd") {
+        return true;
+    }
+    // Apple Remote Desktop agent
+    if ps.contains("remotedesktopagent") {
+        return true;
+    }
+    // macOS 12+ Screen Sharing controller
+    if ps.contains("applescreencontrol") {
+        return true;
+    }
+    // Third-party remote-access tools
+    if ps.contains("teamvieweragent") {
+        return true;
+    }
+    if ps.contains("anydesk") {
+        return true;
+    }
+    if ps.contains("rustdesk") {
+        return true;
+    }
+    if ps.contains("jump desktop connect") {
+        return true;
+    }
+
+    // SSH session with X11 forwarding — the remote peer can see the display
+    if std::env::var("SSH_CONNECTION").is_ok() && std::env::var("DISPLAY").is_ok() {
+        return true;
+    }
+
+    false
 }
 
-/// Restrict outbound network traffic to `allowed_ips` using pfctl.
-///
-/// Requires root. Creates a pf anchor `com.amsaccess.proctor` with outbound
-/// block-all rules except for the supplied IP list and loopback.
-///
-/// Rules persist across process crashes by design — call `disable_network_lockdown`
-/// explicitly to restore normal access.
-pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
-    // Enable pf (idempotent — already on = no-op exit code 1, harmless)
-    let _ = Command::new("pfctl").arg("-e").output();
+// ── Privileged helper client ──────────────────────────────────────────────────
+//
+// All pfctl operations are delegated to com.ams.access.networkhelper, a root
+// LaunchDaemon installed under /Library/LaunchDaemons.  The main app connects
+// over a Unix domain socket at HELPER_SOCKET.  This avoids every pfctl call
+// requiring root in the main process.
 
-    let ip_list = allowed_ips.join(", ");
-    let rules = format!(
-        "table <ams_allowed> persist {{ {ip_list} }}\n\
-         pass out quick on lo0 all\n\
-         pass out quick to <ams_allowed>\n\
-         block out all\n"
+const HELPER_SOCKET: &str = "/private/var/run/ams-proctor.sock";
+const HELPER_BINARY_DEST: &str = "/Library/PrivilegedHelperTools/com.ams.access.networkhelper";
+const HELPER_PLIST_DEST: &str = "/Library/LaunchDaemons/com.ams.access.networkhelper.plist";
+const HELPER_CLIENT_CONFIG_DEST: &str =
+    "/Library/Application Support/AMS Access/network-helper-client.conf";
+const HELPER_CONFIG_DIR: &str = "/Library/Application Support/AMS Access";
+
+/// Check whether the helper daemon socket is reachable and accepts this app.
+pub fn network_helper_running() -> bool {
+    helper_send(r#"{"cmd":"ping"}"#).is_ok()
+}
+
+/// Install the helper binary and LaunchDaemon plist, then bootstrap the daemon.
+///
+/// `helper_binary` — path to the compiled `com.ams.access.networkhelper` binary
+///   (typically inside the .app bundle at Contents/MacOS/).
+/// `plist_source`  — path to the bundled `.plist` file.
+///
+/// Both copy operations and `launchctl bootstrap` require root, so this function
+/// uses `osascript` to request administrator credentials via the standard macOS
+/// auth dialog. The dialog shows the reason string so the candidate understands
+/// why elevation is needed.
+pub fn install_network_helper(
+    helper_binary: &str,
+    plist_source: &str,
+    client_binary: &str,
+) -> Result<(), String> {
+    let helper_binary = applescript_string(helper_binary);
+    let plist_source = applescript_string(plist_source);
+    let client_binary = applescript_string(client_binary);
+
+    let script = format!(
+        r#"set helperBinary to "{helper_binary}"
+set plistSource to "{plist_source}"
+set clientBinary to "{client_binary}"
+set helperDest to "{HELPER_BINARY_DEST}"
+set plistDest to "{HELPER_PLIST_DEST}"
+set configDir to "{HELPER_CONFIG_DIR}"
+set clientConfig to "{HELPER_CLIENT_CONFIG_DEST}"
+do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchctl bootout system " & quoted form of plistDest & " 2>/dev/null || true) && /usr/bin/install -o root -g wheel -m 755 " & quoted form of helperBinary & " " & quoted form of helperDest & " && /usr/bin/install -o root -g wheel -m 644 " & quoted form of plistSource & " " & quoted form of plistDest & " && /usr/bin/printf '%s\n' " & quoted form of clientBinary & " > " & quoted form of clientConfig & " && /usr/sbin/chown root:wheel " & quoted form of clientConfig & " && /bin/chmod 644 " & quoted form of clientConfig & " && /bin/launchctl bootstrap system " & quoted form of plistDest with administrator privileges with prompt "AMS Access needs to install a network component to restrict internet access during the exam. Enter your Mac password to continue.""#
     );
 
-    let rules_path = "/tmp/ams_pf_anchor.conf";
-    std::fs::write(rules_path, &rules).map_err(|e| format!("write pf rules: {e}"))?;
-
-    let out = Command::new("pfctl")
-        .args(["-a", "com.amsaccess.proctor", "-f", rules_path])
+    let out = Command::new("osascript")
+        .args(["-e", &script])
         .output()
-        .map_err(|e| format!("pfctl -f: {e}"))?;
+        .map_err(|e| format!("osascript: {e}"))?;
 
     if !out.status.success() {
-        return Err(format!(
-            "pfctl anchor load failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // Exit code 1 from osascript when the user cancels the auth dialog.
+        if stderr.contains("cancelled") || stderr.contains("(-128)") {
+            return Err("admin_auth_cancelled".to_string());
+        }
+        return Err(stderr.trim().to_string());
     }
 
+    // Give the daemon up to 3 s to create its socket before we return.
+    for _ in 0..30 {
+        if network_helper_running() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    Err("helper installed but socket not ready within 3 s".to_string())
+}
+
+fn applescript_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Uninstall the helper — stop the daemon and remove its files.
+///
+/// Requires admin privileges (osascript elevation).
+pub fn uninstall_network_helper() -> Result<(), String> {
+    let script = format!(
+        r#"do shell script "
+            /bin/launchctl bootout system '{HELPER_PLIST_DEST}' 2>/dev/null || true &&
+            /bin/rm -f '{HELPER_BINARY_DEST}' '{HELPER_PLIST_DEST}' '{HELPER_CLIENT_CONFIG_DEST}'
+        " with administrator privileges"#
+    );
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+    }
     Ok(())
 }
 
-/// Remove the AMS pf anchor and restore unrestricted outbound access.
-pub fn disable_network_lockdown() -> Result<(), String> {
-    let out = Command::new("pfctl")
-        .args(["-a", "com.amsaccess.proctor", "-F", "all"])
-        .output()
-        .map_err(|e| format!("pfctl flush: {e}"))?;
+/// Send a JSON command to the helper and return its response.
+fn helper_send(json: &str) -> Result<(), String> {
+    use std::io::{BufRead, BufReader, Write};
 
-    if !out.status.success() {
-        return Err(format!(
-            "pfctl anchor flush failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+    let stream = std::os::unix::net::UnixStream::connect(HELPER_SOCKET)
+        .map_err(|e| format!("connect to helper: {e}"))?;
+
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .ok();
+
+    let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
+    writeln!(writer, "{json}").map_err(|e| format!("send: {e}"))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader
+        .read_line(&mut response)
+        .map_err(|e| format!("read response: {e}"))?;
+
+    let parsed: serde_json::Value = serde_json::from_str(response.trim())
+        .map_err(|e| format!("invalid helper response: {e}"))?;
+
+    if parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(parsed
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("helper command failed")
+            .to_string())
+    }
+}
+
+/// Restrict outbound network traffic via the privileged helper.
+///
+/// The helper runs pfctl as root — this function needs no elevated privileges.
+/// If the helper is not installed, returns `Err("helper_not_installed")`.
+pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+    if !network_helper_running() {
+        return Err("helper_not_installed".to_string());
     }
 
-    let _ = std::fs::remove_file("/tmp/ams_pf_anchor.conf");
-    Ok(())
+    let request = serde_json::json!({
+        "cmd": "enable",
+        "ips": allowed_ips,
+    })
+    .to_string();
+
+    helper_send(&request)
+}
+
+/// Lift the network lockdown via the privileged helper.
+pub fn disable_network_lockdown() -> Result<(), String> {
+    if !network_helper_running() {
+        // Nothing to flush — helper isn't running, rules can't be active.
+        return Ok(());
+    }
+    helper_send(r#"{"cmd":"disable"}"#)
+}
+
+// ── Screen recording detection ────────────────────────────────────────────────
+
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var("HOME").ok().map(std::path::PathBuf::from)
+}
+
+/// Query the TCC database for apps that have been granted `kTCCServiceScreenCapture`.
+///
+/// Returns bundle IDs / process names of every app the user previously allowed to
+/// capture the screen. The caller cross-references this against RESTRICTED and the
+/// live process list to decide whether to block entry.
+///
+/// Returns an empty vec if the database cannot be opened (sandboxed builds without
+/// FDA will silently fail here — treat as unknown, not clean).
+pub fn apps_with_screen_capture_permission() -> Vec<String> {
+    let Some(path) = home_dir().map(|h| h.join("Library/Application Support/com.apple.TCC/TCC.db"))
+    else {
+        return vec![];
+    };
+    if !path.exists() {
+        return vec![];
+    }
+
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return vec![];
+    };
+
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT client FROM access \
+         WHERE service = 'kTCCServiceScreenCapture' \
+         AND auth_value = 2",
+    ) else {
+        return vec![];
+    };
+
+    stmt.query_map([], |row| row.get::<_, String>(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Detect whether a local screen-recording session is actively running.
+///
+/// Distinct from `detect_remote_desktop` (inbound remote-control sessions).
+/// This checks for local tools the candidate might use to stream their screen
+/// to another device.
+///
+/// Strategy: scan the live process list for known recording-app executables.
+/// The ScreenCaptureKit `SCContentSharingSession` API (macOS 14.2+ for
+/// programmatic detection) will be the production-grade path once
+/// objc2-screencapturekit crate bindings stabilise.
+pub fn detect_active_screen_share() -> bool {
+    const LOCAL_RECORDERS: &[&str] = &[
+        "QuickTime Player",
+        "Kap",
+        "CleanShot X",
+        "Rottenwood",
+        "ScreenFloat",
+        "Recordit",
+        "ScreenBrush",
+        "obs",
+        "OBS",
+    ];
+
+    let ps = Command::new("ps")
+        .args(["-axo", "command="])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    LOCAL_RECORDERS.iter().any(|name| {
+        ps.lines().any(|line| {
+            let basename = line
+                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .rsplit('/')
+                .next()
+                .unwrap_or("");
+            basename.eq_ignore_ascii_case(name)
+        })
+    })
 }

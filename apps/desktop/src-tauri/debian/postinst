@@ -1,0 +1,20 @@
+#!/bin/sh
+set -e
+
+# Grant the currently logged-in console user access to webcam devices.
+# TAG+="uaccess" is the modern systemd-logind mechanism — it gives access to
+# the session owner automatically without requiring group membership or logout.
+UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
+
+cat > "$UDEV_RULE_PATH" << 'EOF'
+# AMS Access — grant session user access to webcam for proctoring camera check.
+SUBSYSTEM=="video4linux", TAG+="uaccess"
+EOF
+
+chmod 0644 "$UDEV_RULE_PATH"
+
+# Reload rules so existing devices pick up the tag immediately.
+if command -v udevadm > /dev/null 2>&1; then
+    udevadm control --reload-rules 2>/dev/null || true
+    udevadm trigger --subsystem-match=video4linux 2>/dev/null || true
+fi
