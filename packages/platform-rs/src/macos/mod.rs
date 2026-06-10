@@ -467,12 +467,11 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         let cpuid = raw_cpuid::CpuId::new();
         if let Some(hv) = cpuid.get_hypervisor_info() {
             let platform = match hv.identify() {
-                raw_cpuid::Hypervisor::Vmware => "vmware",
-                raw_cpuid::Hypervisor::Kvm => "kvm",
+                raw_cpuid::Hypervisor::VMware => "vmware",
+                raw_cpuid::Hypervisor::KVM => "kvm",
                 raw_cpuid::Hypervisor::Xen => "xen",
-                raw_cpuid::Hypervisor::Parallels => "parallels",
+                raw_cpuid::Hypervisor::HyperV => "hyperv",
                 raw_cpuid::Hypervisor::Bhyve => "bhyve",
-                raw_cpuid::Hypervisor::MicrosoftHyperV => "hyperv",
                 _ => "unknown_hypervisor",
             };
             return VirtDetectionResult {
