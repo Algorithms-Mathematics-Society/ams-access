@@ -46,3 +46,9 @@ fix_ui.py
 patch_media_toggle.py
 scratch.py
 session-start.md
+
+# Audit / Docs / Scratch artifacts
+contest-area-03.md
+docs/
+markdowns/
+image/product-screens/
