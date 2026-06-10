@@ -8,19 +8,7 @@
   <!-- Required to load WebKit's unsigned dylibs under hardened runtime -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
-  <!-- Required for CGEventTap (keyboard intercept) — user must also grant
-       Accessibility permission in System Preferences → Privacy & Security -->
-  <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-  <array>
-    <string>com.apple.accessibility.AXBackBoardServer</string>
-  </array>
-  <!-- Scopes the main app's authority to manage exactly one daemon label.
-       Currently the helper is bootstrapped via launchctl inside an osascript
-       shell (no entitlement required). This entry is pre-staged for the
-       SMAppService.daemon() migration on macOS 13+, which does require it. -->
-  <key>com.apple.developer.service-management.launch-control</key>
-  <array>
-    <string>com.ams.access.networkhelper</string>
-  </array>
+  <!-- CGEventTap requires Accessibility permission granted by the user in
+       System Settings → Privacy & Security. No restricted entitlement needed. -->
 </dict>
 </plist>
