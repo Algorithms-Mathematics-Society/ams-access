@@ -13,6 +13,8 @@ interface ResolveModalProps {
   telemetry?: TelemetryQueryState;
   onOpenSettings?: () => void;
   onRetry?: (checkKey: string) => Promise<void> | void;
+  onCloseApps?: (apps: string[]) => Promise<void>;
+  closingApps?: boolean;
 }
 
 type ResolveFlow = {
@@ -22,6 +24,7 @@ type ResolveFlow = {
   primaryLabel: string;
   primaryAction: "settings" | "retry";
   details: Array<{ label: string; value: string }>;
+  closeAllApps?: string[];
 };
 
 function formatValue(value: unknown, fallback = "Not available") {
@@ -55,11 +58,21 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         details: [
           {
             label: "Flagged apps",
-            value: processes?.found?.length ? processes.found.join(", ") : "No process details available",
+            value: processes?.found?.length
+              ? processes.found.join(", ")
+              : "No process details available",
           },
           { label: "Latest scan", value: lastScanned },
-          { label: "Status", value: processes ? (processes.clean ? "No restricted apps found" : "Needs action") : "Unknown" },
+          {
+            label: "Status",
+            value: processes
+              ? processes.clean
+                ? "No restricted apps found"
+                : "Needs action"
+              : "Unknown",
+          },
         ],
+        closeAllApps: processes?.found?.length ? processes.found : undefined,
       };
     case "camera":
       return {
@@ -109,8 +122,14 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         details: [
           { label: "Probe host", value: getNetworkProbeHost() },
           { label: "Reachable", value: formatValue(network?.reachable, "Unknown") },
-          { label: "Latency", value: network?.latency_ms != null ? `${network.latency_ms}ms` : "Not available" },
-          { label: "Jitter", value: network?.jitter_ms != null ? `${network.jitter_ms}ms` : "Not available" },
+          {
+            label: "Latency",
+            value: network?.latency_ms != null ? `${network.latency_ms}ms` : "Not available",
+          },
+          {
+            label: "Jitter",
+            value: network?.jitter_ms != null ? `${network.jitter_ms}ms` : "Not available",
+          },
           { label: "Quality", value: formatValue(network?.quality, "Unknown") },
         ],
       };
@@ -143,7 +162,10 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         primaryLabel: "Run checks again",
         primaryAction: "retry",
         details: [
-          { label: "Operating system", value: platform ? `${platform.os} ${platform.arch}` : "Unknown" },
+          {
+            label: "Operating system",
+            value: platform ? `${platform.os} ${platform.arch}` : "Unknown",
+          },
           { label: "Platform family", value: formatValue(platform?.family, "Unknown") },
           { label: "Display session", value: formatValue(env?.display_server, "Unknown") },
         ],
@@ -177,12 +199,18 @@ export function ResolveModal({
   telemetry,
   onOpenSettings,
   onRetry,
+  onCloseApps,
+  closingApps,
 }: ResolveModalProps) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const c = getThemeColors(theme);
   const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
-  const flow = useMemo(() => (checkKey ? buildFlow(checkKey, telemetry) : null), [checkKey, telemetry]);
+  const flow = useMemo(
+    () => (checkKey ? buildFlow(checkKey, telemetry) : null),
+    [checkKey, telemetry]
+  );
 
   if (!isOpen || !checkKey || !flow) return null;
 
@@ -199,6 +227,17 @@ export function ResolveModal({
       await onRetry?.(activeCheckKey);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleCloseAll() {
+    if (!confirmingClose) {
+      setConfirmingClose(true);
+      return;
+    }
+    setConfirmingClose(false);
+    if (activeFlow.closeAllApps && onCloseApps) {
+      await onCloseApps(activeFlow.closeAllApps);
     }
   }
 
@@ -251,7 +290,9 @@ export function ResolveModal({
           boxShadow: "0 24px 64px rgba(0, 0, 0, 0.35)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "18px" }}>
+        <div
+          style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "18px" }}
+        >
           <div
             style={{
               width: "38px",
@@ -270,7 +311,10 @@ export function ResolveModal({
             !
           </div>
           <div>
-            <h3 id="resolve-modal-title" style={{ color: c.text, margin: "0 0 7px", fontSize: "18px", fontWeight: 750 }}>
+            <h3
+              id="resolve-modal-title"
+              style={{ color: c.text, margin: "0 0 7px", fontSize: "18px", fontWeight: 750 }}
+            >
               {activeFlow.title}
             </h3>
             <p style={{ color: c.textMutedStrong, lineHeight: 1.55, margin: 0, fontSize: "13px" }}>
@@ -283,9 +327,19 @@ export function ResolveModal({
           <h4 style={{ color: c.text, fontSize: "12px", fontWeight: 700, margin: "0 0 10px" }}>
             What to do
           </h4>
-          <ol style={{ margin: 0, paddingLeft: "20px", color: c.textMutedStrong, fontSize: "13px", lineHeight: 1.65 }}>
+          <ol
+            style={{
+              margin: 0,
+              paddingLeft: "20px",
+              color: c.textMutedStrong,
+              fontSize: "13px",
+              lineHeight: 1.65,
+            }}
+          >
             {activeFlow.steps.map((step) => (
-              <li key={step} style={{ marginBottom: "5px" }}>{step}</li>
+              <li key={step} style={{ marginBottom: "5px" }}>
+                {step}
+              </li>
             ))}
           </ol>
         </section>
@@ -304,9 +358,19 @@ export function ResolveModal({
           </h4>
           <div style={{ display: "grid", gap: "8px" }}>
             {activeFlow.details.map((item) => (
-              <div key={item.label} style={{ display: "flex", justifyContent: "space-between", gap: "14px" }}>
+              <div
+                key={item.label}
+                style={{ display: "flex", justifyContent: "space-between", gap: "14px" }}
+              >
                 <span style={{ color: c.textMuted, fontSize: "12px" }}>{item.label}</span>
-                <span style={{ color: c.textMutedStrong, fontSize: "12px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>
+                <span
+                  style={{
+                    color: c.textMutedStrong,
+                    fontSize: "12px",
+                    textAlign: "right",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
                   {item.value}
                 </span>
               </div>
@@ -349,6 +413,72 @@ export function ResolveModal({
           >
             Close
           </button>
+          {activeFlow.closeAllApps &&
+            (confirmingClose ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingClose(false)}
+                  disabled={closingApps}
+                  style={{
+                    height: "40px",
+                    padding: "0 14px",
+                    background: "transparent",
+                    color: c.textMuted,
+                    border: `1px solid ${c.border}`,
+                    borderRadius: "6px",
+                    fontWeight: 500,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseAll}
+                  disabled={closingApps}
+                  aria-label={`Confirm close: ${activeFlow.closeAllApps.join(", ")}`}
+                  style={{
+                    height: "40px",
+                    padding: "0 16px",
+                    background: "rgba(239, 68, 68, 0.12)",
+                    color: "#ef4444",
+                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                    borderRadius: "6px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: closingApps ? "not-allowed" : "pointer",
+                    opacity: closingApps ? 0.72 : 1,
+                  }}
+                >
+                  {closingApps
+                    ? "Closing…"
+                    : `Confirm — close ${activeFlow.closeAllApps.join(", ")}?`}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCloseAll}
+                disabled={busy || closingApps}
+                aria-label="Close all restricted apps automatically"
+                style={{
+                  height: "40px",
+                  padding: "0 16px",
+                  background: "rgba(239, 68, 68, 0.10)",
+                  color: "#ef4444",
+                  border: "1px solid rgba(239, 68, 68, 0.30)",
+                  borderRadius: "6px",
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: busy || closingApps ? "not-allowed" : "pointer",
+                  opacity: busy || closingApps ? 0.72 : 1,
+                }}
+              >
+                Close all ▸
+              </button>
+            ))}
           <button
             type="button"
             onClick={handlePrimaryAction}
@@ -356,7 +486,8 @@ export function ResolveModal({
             style={{
               height: "40px",
               padding: "0 16px",
-              background: activeFlow.primaryAction === "settings" ? "#a855f7" : "rgba(245, 158, 11, 0.14)",
+              background:
+                activeFlow.primaryAction === "settings" ? "#a855f7" : "rgba(245, 158, 11, 0.14)",
               color: activeFlow.primaryAction === "settings" ? "#ffffff" : "#f59e0b",
               border: `1px solid ${activeFlow.primaryAction === "settings" ? "#a855f7" : "rgba(245, 158, 11, 0.36)"}`,
               borderRadius: "6px",

@@ -47,6 +47,12 @@ pub struct ProcessScanResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloseAppsResult {
+    pub closed: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtDetectionResult {
     pub detected: bool,
     pub platform: Option<String>,

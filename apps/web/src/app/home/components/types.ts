@@ -141,3 +141,8 @@ export type ContestEntryState = {
   contestDateLabel: string;
   disabledTitle?: string;
 };
+
+export type CloseAppsResult = {
+  closed: string[];
+  failed: string[];
+};

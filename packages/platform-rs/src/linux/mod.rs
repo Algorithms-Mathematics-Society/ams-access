@@ -1,4 +1,4 @@
-use core_rs::exam::{KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -979,4 +979,56 @@ pub fn disable_network_lockdown() -> Result<(), String> {
     let _ = iptables(&["-F", IPTABLES_CHAIN]);
     let _ = iptables(&["-X", IPTABLES_CHAIN]);
     Ok(())
+}
+
+/// Returns true if `name` is in the Linux RESTRICTED process list.
+pub fn is_restricted_name(name: &str) -> bool {
+    RESTRICTED.iter().any(|&r| r.eq_ignore_ascii_case(name))
+}
+
+/// Send SIGTERM to each named restricted process, wait 600 ms, then
+/// SIGKILL any survivors. Uses pkill to avoid requiring the libc crate.
+pub fn close_apps(names: &[String]) -> CloseAppsResult {
+    let mut closed = Vec::new();
+    let mut failed = Vec::new();
+
+    // Phase 1: SIGTERM all named processes.
+    for name in names {
+        let _ = std::process::Command::new("pkill")
+            .args(["-15", "-x", name])
+            .output();
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    // Phase 2: SIGKILL survivors.
+    for name in names {
+        if linux_process_alive(name) {
+            let _ = std::process::Command::new("pkill")
+                .args(["-9", "-x", name])
+                .output();
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // Classify outcomes.
+    for name in names {
+        if linux_process_alive(name) {
+            failed.push(name.clone());
+        } else {
+            closed.push(name.clone());
+        }
+    }
+
+    CloseAppsResult { closed, failed }
+}
+
+/// Returns true if any process with this exact name is alive in /proc.
+fn linux_process_alive(name: &str) -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-x", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }

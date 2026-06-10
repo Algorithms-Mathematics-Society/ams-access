@@ -6,7 +6,10 @@
 //! Process scanning: `ps -axco comm`.
 //! VM detection: `system_profiler SPHardwareDataType` + `ioreg`.
 
-use core_rs::exam::{KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use block2::RcBlock;
+use core_rs::exam::{
+    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
+};
 use std::ffi::c_void;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -141,6 +144,15 @@ const VK_F3: i64 = 99; // Mission Control (default binding)
 const VK_F4: i64 = 118; // Launchpad
 const VK_F11: i64 = 103; // Show Desktop
 const VK_UP: i64 = 126; // Ctrl+Up = Mission Control
+
+#[link(name = "AVFoundation", kind = "framework")]
+extern "C" {
+    // NSString constants for media types
+    static AVMediaTypeVideo: *mut c_void;
+    static AVMediaTypeAudio: *mut c_void;
+    // AVCaptureDevice class method: requestAccessForMediaType:completionHandler:
+    // Called as +[AVCaptureDevice requestAccessForMediaType:completionHandler:]
+}
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -941,4 +953,103 @@ pub fn detect_active_screen_share() -> bool {
             basename.eq_ignore_ascii_case(name)
         })
     })
+}
+
+/// Returns true if `name` appears in the macOS RESTRICTED process list.
+pub fn is_restricted_name(name: &str) -> bool {
+    RESTRICTED.iter().any(|&r| r.eq_ignore_ascii_case(name))
+}
+
+/// Gracefully quit then force-kill each named restricted app.
+///
+/// Step 1: osascript graceful quit (honours Cocoa quit delegate, no data loss).
+/// Step 2: wait up to 800 ms for process to exit.
+/// Step 3: pkill -x (SIGTERM) + pkill -f (broad match) if still alive.
+/// Returns which apps were closed and which could not be terminated.
+pub fn close_apps(names: &[String]) -> CloseAppsResult {
+    let mut closed = Vec::new();
+    let mut failed = Vec::new();
+
+    for name in names {
+        // Graceful quit via AppleScript.
+        let _ = Command::new("osascript")
+            .args(["-e", &format!("tell application {:?} to quit", name)])
+            .output();
+
+        // Wait up to 800 ms for the process to exit (80 ms polling).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
+        loop {
+            if !process_alive_by_name(name) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+
+        // Force-kill if still alive.
+        if process_alive_by_name(name) {
+            let _ = Command::new("pkill").args(["-x", name]).output();
+            let _ = Command::new("pkill").args(["-f", name]).output();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        if process_alive_by_name(name) {
+            failed.push(name.clone());
+        } else {
+            closed.push(name.clone());
+        }
+    }
+
+    CloseAppsResult { closed, failed }
+}
+
+/// Returns true if any process with this exact basename is currently alive.
+fn process_alive_by_name(name: &str) -> bool {
+    Command::new("pgrep")
+        .args(["-x", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Request macOS TCC (Privacy) permission for camera and microphone.
+///
+/// WKWebView's `getUserMedia()` auto-grants at the WebKit level but does NOT
+/// trigger the macOS system permission dialog — that only happens when the
+/// native app itself calls `+[AVCaptureDevice requestAccessForMediaType:completionHandler:]`.
+/// This function fires those requests so macOS shows the "AMS Access wants to
+/// use the camera/microphone" system dialog and registers the app in
+/// System Settings → Privacy & Security → Camera / Microphone.
+///
+/// Safe to call multiple times — a no-op if permission is already granted.
+pub fn request_av_permissions() {
+    unsafe {
+        let cls = objc_getClass(b"AVCaptureDevice\0".as_ptr() as *const i8);
+        if cls.is_null() {
+            return;
+        }
+
+        let sel = sel_registerName(
+            b"requestAccessForMediaType:completionHandler:\0".as_ptr() as *const i8
+        );
+
+        // Fire-and-forget completion handler — we only care that the dialog appears.
+        let video_block = RcBlock::new(|_granted: bool| {});
+        let audio_block = RcBlock::new(|_granted: bool| {});
+
+        type FnReqAccess = unsafe extern "C" fn(
+            *mut c_void,
+            *const c_void,
+            *mut c_void,
+            &block2::Block<dyn Fn(bool)>,
+        );
+        let req: FnReqAccess = std::mem::transmute(objc_msgSend as *const ());
+
+        // Request video (camera).
+        req(cls, sel, AVMediaTypeVideo, &video_block);
+        // Request audio (microphone).
+        req(cls, sel, AVMediaTypeAudio, &audio_block);
+    }
 }

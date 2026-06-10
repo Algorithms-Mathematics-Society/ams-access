@@ -1,4 +1,4 @@
-use core_rs::exam::{KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -945,4 +945,55 @@ pub fn disable_network_lockdown() -> Result<(), String> {
         ])
         .output();
     Ok(())
+}
+
+/// Returns true if `name` (without .exe) is in the Windows RESTRICTED list.
+pub fn is_restricted_name(name: &str) -> bool {
+    RESTRICTED
+        .iter()
+        .any(|&r| r.trim_end_matches(".exe").eq_ignore_ascii_case(name))
+}
+
+/// Force-terminate each named restricted app using taskkill.
+///
+/// `names` contains process names WITHOUT the `.exe` extension — the same
+/// format that `scan_processes()` returns.
+/// `/T` kills the entire process tree so child processes (Electron helpers,
+/// zoom subprocesses) are also terminated.
+/// Discord respawn guard: retry up to 3 times with a 600 ms gap.
+pub fn close_apps(names: &[String]) -> CloseAppsResult {
+    let mut closed = Vec::new();
+    let mut failed = Vec::new();
+
+    for name in names {
+        let exe = format!("{}.exe", name);
+        let mut killed = false;
+
+        for _ in 0..3 {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/IM", &exe, "/F", "/T"])
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            if !win_process_alive(name) {
+                killed = true;
+                break;
+            }
+        }
+
+        if killed {
+            closed.push(name.clone());
+        } else {
+            failed.push(name.clone());
+        }
+    }
+
+    CloseAppsResult { closed, failed }
+}
+
+/// Returns true if a process matching `name` (without .exe) is still alive.
+fn win_process_alive(name: &str) -> bool {
+    scan_processes()
+        .found
+        .iter()
+        .any(|f| f.eq_ignore_ascii_case(name))
 }

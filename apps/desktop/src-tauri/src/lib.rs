@@ -1,6 +1,6 @@
 use base64::Engine as _;
 use core_rs::exam::{
-    evaluate_readiness, DeviceState, EnforcementDecision, KeyboardInterceptResult,
+    evaluate_readiness, CloseAppsResult, DeviceState, EnforcementDecision, KeyboardInterceptResult,
     NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy, VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
@@ -263,6 +263,58 @@ fn scan_processes() -> ProcessScanResult {
     ProcessScanResult {
         found: vec![],
         clean: true,
+    }
+}
+
+/// Close each restricted app by name. The `apps` list comes from the
+/// frontend and is validated server-side against the platform's RESTRICTED
+/// list before any kill is issued. Names not on the list are silently ignored.
+#[tauri::command]
+fn close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
+    if apps.is_empty() {
+        return CloseAppsResult {
+            closed: vec![],
+            failed: vec![],
+        };
+    }
+
+    // Security: only kill names that appear in the platform's RESTRICTED list.
+    // The Tauri IPC boundary is not a trust boundary — validate on the backend.
+    #[cfg(target_os = "linux")]
+    let safe: Vec<String> = apps
+        .into_iter()
+        .filter(|n| platform_rs::linux::is_restricted_name(n))
+        .collect();
+    #[cfg(target_os = "windows")]
+    let safe: Vec<String> = apps
+        .into_iter()
+        .filter(|n| platform_rs::windows::is_restricted_name(n))
+        .collect();
+    #[cfg(target_os = "macos")]
+    let safe: Vec<String> = apps
+        .into_iter()
+        .filter(|n| platform_rs::macos::is_restricted_name(n))
+        .collect();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    let safe: Vec<String> = vec![];
+
+    if safe.is_empty() {
+        return CloseAppsResult {
+            closed: vec![],
+            failed: vec![],
+        };
+    }
+
+    #[cfg(target_os = "linux")]
+    return platform_rs::linux::close_apps(&safe);
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::close_apps(&safe);
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::close_apps(&safe);
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    CloseAppsResult {
+        closed: vec![],
+        failed: safe,
     }
 }
 
@@ -1325,6 +1377,7 @@ pub fn run() {
             evaluate_session_readiness,
             start_secure_session,
             scan_processes,
+            close_restricted_apps,
             detect_virtualization,
             enable_keyboard_intercept,
             disable_keyboard_intercept,
@@ -1368,6 +1421,13 @@ pub fn run() {
                     .expect("with_webview failed — camera/mic permission handler not registered");
                 }
             }
+            // On macOS, WKWebView's getUserMedia() does NOT trigger the macOS TCC
+            // permission dialog on its own — only a native AVCaptureDevice.requestAccess
+            // call does. Fire it here so the system dialog appears on first launch
+            // and the app is registered in System Settings → Privacy → Camera/Microphone.
+            #[cfg(target_os = "macos")]
+            platform_rs::macos::request_av_permissions();
+            let _ = app;
             Ok(())
         })
         .on_window_event(|_win, event| {
