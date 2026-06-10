@@ -467,7 +467,8 @@ pub fn scan_processes() -> ProcessScanResult {
 /// Checks CPUID hypervisor leaf first (cannot be spoofed without paravirt config),
 /// then `system_profiler SPHardwareDataType` and `ioreg -l` for hypervisor markers.
 pub fn detect_virtualization() -> VirtDetectionResult {
-    // CPUID leaf 0x40000000 — set by all major hypervisors, unreadable from /proc
+    // CPUID leaf 0x40000000 — x86/x86_64 only; ARM Macs skip this path
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         let cpuid = raw_cpuid::CpuId::with_cpuid_fn(raw_cpuid::CpuIdReaderNative);
         if let Some(hv) = cpuid.get_hypervisor_info() {
