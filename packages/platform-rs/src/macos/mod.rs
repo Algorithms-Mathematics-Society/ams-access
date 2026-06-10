@@ -109,9 +109,14 @@ const K_CG_HID_EVENT_TAP: u32 = 0;
 const K_CG_HEAD_INSERT_EVENT_TAP: u32 = 0;
 // CGEventTapOptions — 0 = active intercepting tap (not passive observer)
 const K_CG_EVENT_TAP_OPTION_DEFAULT: u32 = 0;
-// CGEventMask bits for keyboard events
+// CGEventType values for trackpad gesture events (matches NSEventType* values)
+const CG_EVENT_GESTURE: u32 = 29; // NSEventTypeGesture  — begin/end of any gesture
+const CG_EVENT_SWIPE: u32 = 31; // NSEventTypeSwipe    — 3/4-finger space-switch swipe
+
+// CGEventMask bits — keyboard + gesture/swipe (so the tap sees swipes too)
 const KB_EVENT_MASK: u64 =
     (1u64 << CG_EVENT_KEY_DOWN) | (1u64 << CG_EVENT_KEY_UP) | (1u64 << CG_EVENT_FLAGS_CHANGED);
+const FULL_LOCK_MASK: u64 = KB_EVENT_MASK | (1u64 << CG_EVENT_GESTURE) | (1u64 << CG_EVENT_SWIPE);
 
 // CGEventFlags modifier masks
 const FLAG_CMD: u64 = 0x0010_0000;
@@ -170,6 +175,14 @@ extern "C" {
     fn CFRelease(cf: *mut c_void);
 }
 
+// Objective-C runtime — for NSRunningApplication space watchdog
+extern "C" {
+    fn objc_getClass(name: *const i8) -> *mut c_void;
+    fn sel_registerName(name: *const i8) -> *const c_void;
+    // Declared with no args; callers transmute to the right signature per call.
+    fn objc_msgSend();
+}
+
 // ── CGEventTap callback ───────────────────────────────────────────────────────
 
 /// Returns `null` to block the event or `event` to pass it through.
@@ -184,6 +197,11 @@ unsafe extern "C" fn kb_tap_callback(
 ) -> *mut c_void {
     if !INTERCEPT_ACTIVE.load(Ordering::Relaxed) {
         return event;
+    }
+    // Layer 2: swallow 3/4-finger swipe and gesture events so WindowServer
+    // never sees them and cannot switch spaces or open Mission Control.
+    if event_type == CG_EVENT_SWIPE || event_type == CG_EVENT_GESTURE {
+        return std::ptr::null_mut();
     }
     if event_type != CG_EVENT_KEY_DOWN && event_type != CG_EVENT_KEY_UP {
         return event;
@@ -320,7 +338,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
                 K_CG_HID_EVENT_TAP,
                 K_CG_HEAD_INSERT_EVENT_TAP,
                 K_CG_EVENT_TAP_OPTION_DEFAULT,
-                KB_EVENT_MASK,
+                FULL_LOCK_MASK, // includes gesture/swipe bits for space-switch prevention
                 kb_tap_callback,
                 std::ptr::null_mut(),
             );
@@ -396,7 +414,92 @@ pub fn disable_keyboard_intercept() {
     }
 }
 
+// ── Layer 1: disable/restore trackpad space-switching gesture ────────────────
+
+/// Write trackpad prefs to disable (or restore) 3-finger and 4-finger
+/// horizontal swipes used for Mission Control space switching.
+/// `killall cfprefsd` flushes the pref cache so the change takes effect
+/// immediately without requiring a logout.
+fn set_swipe_gesture_enabled(enabled: bool) {
+    let value = if enabled { "2" } else { "0" };
+    let domains = [
+        "com.apple.AppleMultitouchTrackpad",
+        "com.apple.driver.AppleBluetoothMultitouch.trackpad",
+    ];
+    let keys = [
+        "TrackpadThreeFingerHorizSwipeGesture",
+        "TrackpadFourFingerHorizSwipeGesture",
+    ];
+    for domain in domains {
+        for key in keys {
+            let _ = Command::new("defaults")
+                .args(["write", domain, key, "-int", value])
+                .output();
+        }
+    }
+    // Flush the preferences daemon so the new values are read by the Dock.
+    let _ = Command::new("killall").arg("cfprefsd").output();
+}
+
+// ── Layer 3: space watchdog ───────────────────────────────────────────────────
+
+/// Poll every 400 ms; if our app is no longer the frontmost application
+/// (e.g. the user managed to switch spaces), activate it immediately.
+///
+/// Uses NSRunningApplication via raw Objective-C message sends so we don't
+/// need an extra crate dependency.
+fn spawn_space_watchdog() {
+    let our_pid = std::process::id() as i32;
+    std::thread::spawn(move || {
+        // Pre-cache selectors — sel_registerName is thread-safe.
+        let sel_for_pid = unsafe {
+            sel_registerName(b"runningApplicationWithProcessIdentifier:\0".as_ptr() as *const i8)
+        };
+        let sel_frontmost = unsafe { sel_registerName(b"isFrontmost\0".as_ptr() as *const i8) };
+        let sel_activate =
+            unsafe { sel_registerName(b"activateWithOptions:\0".as_ptr() as *const i8) };
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            if !INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
+                break;
+            }
+            unsafe {
+                let cls = objc_getClass(b"NSRunningApplication\0".as_ptr() as *const i8);
+                if cls.is_null() {
+                    continue;
+                }
+
+                // +[NSRunningApplication runningApplicationWithProcessIdentifier:pid]
+                type FnForPid =
+                    unsafe extern "C" fn(*mut c_void, *const c_void, i32) -> *mut c_void;
+                let send_for_pid: FnForPid = std::mem::transmute(objc_msgSend as *const ());
+                let app = send_for_pid(cls, sel_for_pid, our_pid);
+                if app.is_null() {
+                    continue;
+                }
+
+                // -[app isFrontmost]  →  BOOL (u8)
+                type FnBool = unsafe extern "C" fn(*mut c_void, *const c_void) -> u8;
+                let send_bool: FnBool = std::mem::transmute(objc_msgSend as *const ());
+                let frontmost = send_bool(app, sel_frontmost);
+
+                if frontmost == 0 {
+                    // -[app activateWithOptions:NSApplicationActivateIgnoringOtherApps]
+                    // NSApplicationActivateIgnoringOtherApps = 1 << 1 = 2
+                    type FnActivate = unsafe extern "C" fn(*mut c_void, *const c_void, u64) -> u8;
+                    let send_act: FnActivate = std::mem::transmute(objc_msgSend as *const ());
+                    send_act(app, sel_activate, 2u64);
+                }
+            }
+        }
+    });
+}
+
 /// Engage keyboard intercept and prevent display sleep during exam.
+/// Also disables trackpad space-switching gestures (Layer 1) and starts
+/// the space watchdog (Layer 3). Layer 2 (CGEventTap swipe intercept) is
+/// active as soon as the tap is installed with FULL_LOCK_MASK.
 pub fn lock_desktop() -> bool {
     // Prevent display and system sleep via caffeinate -d (display) -i (idle)
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
@@ -406,13 +509,22 @@ pub fn lock_desktop() -> bool {
             }
         }
     }
+    // Layer 1: disable the OS-level gesture so Dock never sees the swipe.
+    set_swipe_gesture_enabled(false);
     let result = enable_keyboard_intercept();
+    if result.active {
+        // Layer 3: watchdog brings us back if user still manages to switch.
+        spawn_space_watchdog();
+    }
     result.active
 }
 
-/// Release keyboard intercept and allow display sleep again.
+/// Release keyboard intercept, restore space-switching gestures, and allow
+/// display sleep again.
 pub fn unlock_desktop() {
     disable_keyboard_intercept();
+    // Layer 1: restore gesture so the user can use their trackpad normally.
+    set_swipe_gesture_enabled(true);
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
         if let Some(pid) = pid_guard.take() {
             let _ = Command::new("kill").arg(pid.to_string()).output();
