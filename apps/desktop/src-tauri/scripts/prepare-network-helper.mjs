@@ -55,4 +55,18 @@ if (!isMacOS) {
   });
   console.log(`lipo -info: ${lipoCheck.stdout.trim()}`);
   console.log(`Prepared universal network helper: ${bundledHelper}`);
+
+  // Sign with hardened runtime + secure timestamp so notarization accepts it.
+  // APPLE_SIGNING_IDENTITY is set by CI before this script runs.
+  const signingIdentity = process.env.APPLE_SIGNING_IDENTITY;
+  if (signingIdentity) {
+    execFileSync(
+      "codesign",
+      ["--force", "--sign", signingIdentity, "--options", "runtime", "--timestamp", bundledHelper],
+      { stdio: "inherit" }
+    );
+    console.log(`Signed network helper with identity: ${signingIdentity}`);
+  } else {
+    console.log("APPLE_SIGNING_IDENTITY not set — skipping helper codesign (local build).");
+  }
 }
