@@ -502,15 +502,22 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 
     let combined = format!("{hw_output}{ioreg_output}");
 
+    // Use specific substrings that only appear in actual VM environments.
+    // "xen" alone is too broad — ioreg -l is enormous and can contain "xen" in
+    // unrelated device or property names on real hardware. kern.hv_support is
+    // always 1 on Apple Silicon (native CPU capability), not a VM indicator.
     let vm_markers: &[(&str, &str)] = &[
         ("vmware", "VMware"),
         ("parallels", "Parallels"),
         ("virtualbox", "VirtualBox"),
         ("qemu", "QEMU"),
         ("hyperv", "Hyper-V"),
-        ("xen", "Xen"),
+        // Require xen-specific driver/vendor strings, not just "xen" substring
+        ("xenbus", "Xen"),
+        ("xensource", "Xen"),
+        ("xen hypervisor", "Xen"),
         ("utm ", "UTM"),
-        ("apple virtualization", "Apple Virtualization"),
+        ("apple virtualization framework", "Apple Virtualization"),
     ];
 
     for (marker, platform) in vm_markers {
@@ -521,21 +528,6 @@ pub fn detect_virtualization() -> VirtDetectionResult {
                 confidence: "high".to_string(),
             };
         }
-    }
-
-    // Check sysctl for hypervisor bit
-    let sysctl_out = Command::new("sysctl")
-        .arg("kern.hv_support")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default();
-
-    if sysctl_out.contains(": 1") {
-        return VirtDetectionResult {
-            detected: true,
-            platform: Some("hypervisor".to_string()),
-            confidence: "medium".to_string(),
-        };
     }
 
     VirtDetectionResult {
