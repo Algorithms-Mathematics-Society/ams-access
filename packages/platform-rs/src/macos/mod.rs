@@ -306,6 +306,11 @@ pub fn check_accessibility_permission() -> bool {
 /// Spawns a dedicated thread that runs the CoreFoundation run loop.
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     if !check_accessibility_permission() {
+        // Open System Settings → Privacy & Security → Accessibility so the user
+        // can grant the permission without searching for it manually.
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
         return KeyboardInterceptResult {
             active: false,
             method: "accessibility_denied".to_string(),

@@ -103,15 +103,28 @@ export function withUiTimeout<T>(promise: Promise<T>, ms: number): Promise<T | n
 }
 
 export async function getBrowserMediaAvailability() {
-  const devices = await withUiTimeout(
-    navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
-    READINESS_TIMEOUT_MS.media
-  );
-  if (!devices) return { cameraAvailable: false, microphoneAvailable: false };
-  return {
-    cameraAvailable: devices.some((d) => d.kind === "videoinput"),
-    microphoneAvailable: devices.some((d) => d.kind === "audioinput"),
-  };
+  // Use getUserMedia() instead of enumerateDevices() so that:
+  //   1. On macOS (WKWebView), the OS permission dialog is shown on first run.
+  //      enumerateDevices() alone never triggers the dialog and returns an
+  //      empty list until permission is granted at least once.
+  //   2. We confirm the device is actually usable for proctoring (access
+  //      granted), not just that the hardware exists.
+  // 30 s timeout gives the user time to respond to the system prompt.
+  const [camResult, micResult] = await Promise.allSettled([
+    getUserMediaWithTimeout({ video: true }, 30_000),
+    getUserMediaWithTimeout({ audio: true }, 30_000),
+  ]);
+
+  const cameraAvailable = camResult.status === "fulfilled";
+  const microphoneAvailable = micResult.status === "fulfilled";
+
+  // Stop tracks immediately — we only needed the permission grant.
+  if (cameraAvailable)
+    (camResult as PromiseFulfilledResult<MediaStream>).value.getTracks().forEach((t) => t.stop());
+  if (microphoneAvailable)
+    (micResult as PromiseFulfilledResult<MediaStream>).value.getTracks().forEach((t) => t.stop());
+
+  return { cameraAvailable, microphoneAvailable };
 }
 
 export async function fetchWithTimeout(

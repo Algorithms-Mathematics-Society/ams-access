@@ -545,6 +545,12 @@ fn evaluate_requirement(
                 Some("supported platform: linux".to_string()),
                 vec![],
             ),
+            Some(platform) if platform == "macos" => (
+                true,
+                None,
+                Some("supported platform: macos".to_string()),
+                vec![],
+            ),
             Some(platform) if platform == "windows" => (
                 true,
                 None,
