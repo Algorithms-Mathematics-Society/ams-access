@@ -247,15 +247,20 @@ unsafe extern "C" fn kb_tap_callback(
 /// the tap if that happens, also printing a line so the violation log can capture it.
 fn start_tap_watchdog(tap: *mut c_void) {
     let tap_ptr = SendPtr(tap);
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        if !INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
-            break;
-        }
-        unsafe {
-            if !CGEventTapIsEnabled(tap_ptr.0) {
-                CGEventTapEnable(tap_ptr.0, true);
-                eprintln!("AMS Access: CGEventTap was disabled by OS — re-enabling");
+    std::thread::spawn(move || {
+        // Rebind so Rust 2021 closure captures the whole SendPtr (which is Send),
+        // not just the inner *mut c_void field (which is !Send).
+        let tap_ptr = tap_ptr;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if !INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
+                break;
+            }
+            unsafe {
+                if !CGEventTapIsEnabled(tap_ptr.0) {
+                    CGEventTapEnable(tap_ptr.0, true);
+                    eprintln!("AMS Access: CGEventTap was disabled by OS — re-enabling");
+                }
             }
         }
     });
@@ -464,7 +469,7 @@ pub fn scan_processes() -> ProcessScanResult {
 pub fn detect_virtualization() -> VirtDetectionResult {
     // CPUID leaf 0x40000000 — set by all major hypervisors, unreadable from /proc
     {
-        let cpuid = raw_cpuid::CpuId::new();
+        let cpuid = raw_cpuid::CpuId::with_cpuid_fn(raw_cpuid::CpuIdReaderNative);
         if let Some(hv) = cpuid.get_hypervisor_info() {
             let platform = match hv.identify() {
                 raw_cpuid::Hypervisor::VMware => "vmware",
