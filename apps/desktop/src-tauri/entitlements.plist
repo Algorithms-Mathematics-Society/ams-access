@@ -8,6 +8,14 @@
   <!-- Required to load WebKit's unsigned dylibs under hardened runtime -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
+  <!-- Hardened-runtime processes are denied camera/microphone access outright
+       (TCC never even prompts) unless these device entitlements are present.
+       They are NOT restricted entitlements — no provisioning profile needed,
+       so they do not retrigger the AMFI kill fixed in caaec5f. -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
   <!-- CGEventTap requires Accessibility permission granted by the user in
        System Settings → Privacy & Security. No restricted entitlement needed. -->
 </dict>

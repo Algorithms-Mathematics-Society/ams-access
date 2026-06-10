@@ -72,7 +72,16 @@ pub struct NetworkCheckResult {
     pub latency_ms: Option<u64>,
     pub jitter_ms: Option<u64>,
     pub quality: String,
+    /// Signed offset of the device clock vs the contest server (server − local),
+    /// measured from an HTTP `Date` header. `None` when no server time signal
+    /// was available — absence of the signal is never treated as a failure.
+    #[serde(default)]
+    pub clock_skew_ms: Option<i64>,
 }
+
+/// Device clocks drifted beyond this bound make submission timestamps and
+/// contest-window enforcement unreliable — the readiness network check fails.
+pub const MAX_CLOCK_SKEW_MS: i64 = 120_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -116,6 +125,7 @@ pub enum FailureReasonCode {
     RestrictedApplicationDetected,
     VirtualizationDetected,
     UnsupportedPlatform,
+    ClockSkewDetected,
     ProbeUnavailable,
 }
 
@@ -451,6 +461,29 @@ fn evaluate_requirement(
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
         CheckKind::Network => match &device_state.network {
+            // Clock integrity rides on the network check: the device clock
+            // drives report and submission timestamps, so a drift beyond the
+            // bound is as disqualifying as an unreachable network. Checked
+            // first so a skewed-but-fast network cannot pass.
+            Some(network)
+                if network.reachable
+                    && network
+                        .clock_skew_ms
+                        .is_some_and(|skew| skew.abs() > MAX_CLOCK_SKEW_MS) =>
+            {
+                (
+                    false,
+                    Some(FailureReasonCode::ClockSkewDetected),
+                    Some(format!(
+                        "device clock differs from contest server by {} s — fix the system clock",
+                        network.clock_skew_ms.unwrap_or_default() / 1000
+                    )),
+                    vec![
+                        RecoveryAction::RetryReadinessScan,
+                        RecoveryAction::ContactOrganizer,
+                    ],
+                )
+            }
             Some(network) if network.reachable && network.quality != "poor" => (
                 true,
                 None,
@@ -653,6 +686,7 @@ mod tests {
                 latency_ms: Some(40),
                 jitter_ms: Some(5),
                 quality: "good".to_string(),
+                clock_skew_ms: Some(800),
             }),
             keyboard: Some(KeyboardInterceptResult {
                 active: true,
@@ -730,6 +764,7 @@ mod tests {
             latency_ms: None,
             jitter_ms: None,
             quality: "offline".to_string(),
+            clock_skew_ms: None,
         });
 
         let mut policy = SessionPolicy::strict_contest();
@@ -761,6 +796,43 @@ mod tests {
     }
 
     #[test]
+    fn clock_skew_beyond_bound_blocks_strict_policy() {
+        let mut state = passing_state();
+        if let Some(network) = state.network.as_mut() {
+            network.clock_skew_ms = Some(MAX_CLOCK_SKEW_MS + 1);
+        }
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("c1".into()),
+            Some("d1".into()),
+            &state,
+        );
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ClockSkewDetected));
+    }
+
+    #[test]
+    fn missing_clock_skew_signal_is_not_a_failure() {
+        let mut state = passing_state();
+        if let Some(network) = state.network.as_mut() {
+            network.clock_skew_ms = None;
+        }
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("c1".into()),
+            Some("d1".into()),
+            &state,
+        );
+
+        assert_eq!(report.decision, EnforcementDecision::Allowed);
+    }
+
+    #[test]
     fn strict_policy_blocks_missing_ids_and_splits_outcomes() {
         let policy = SessionPolicy::strict_contest();
         let report = evaluate_readiness(&policy, None, Some("device-1".into()), &passing_state());
@@ -769,7 +841,21 @@ mod tests {
         assert!(report
             .blocking_reasons
             .contains(&FailureReasonCode::ContestIdMissing));
-        assert_eq!(report.required_checks.len(), report.checks.len());
-        assert!(report.optional_checks.is_empty());
+        // Camera and microphone are advisory-only on every profile; the other
+        // seven checks stay required under the strict profile.
+        let optional_kinds = report
+            .optional_checks
+            .iter()
+            .map(|check| check.kind.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            optional_kinds,
+            vec![CheckKind::Camera, CheckKind::Microphone]
+        );
+        assert_eq!(report.required_checks.len(), 7);
+        assert_eq!(
+            report.required_checks.len() + report.optional_checks.len(),
+            report.checks.len()
+        );
     }
 }

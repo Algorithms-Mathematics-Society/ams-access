@@ -1,4 +1,6 @@
-use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use core_rs::exam::{
+    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);

@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
@@ -46,6 +47,11 @@ struct ProctoringEventEntry {
 
 static VIOLATION_LOG: OnceLock<Mutex<Vec<ViolationEntry>>> = OnceLock::new();
 static PROCTORING_LOG: OnceLock<Mutex<Vec<ProctoringEventEntry>>> = OnceLock::new();
+// True while a real exam lockdown (lock_desktop) owns the keyboard intercept.
+// Readiness probes consult this so they never tear down a live exam lockdown,
+// and release the intercept otherwise (a probe must not leave Cmd+Tab/Cmd+Q
+// blocked while the candidate is still on the home screen).
+static LOCKDOWN_ENGAGED: AtomicBool = AtomicBool::new(false);
 
 fn violation_log() -> &'static Mutex<Vec<ViolationEntry>> {
     VIOLATION_LOG.get_or_init(|| Mutex::new(Vec::new()))
@@ -113,6 +119,179 @@ fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
     persist_violation(app, &entry);
 }
 
+// ── Event streaming (organizer visibility) ────────────────────────────────────
+//
+// The JSONL files written by persist_violation / persist_proctoring_event are
+// the durable offline spool. A background task tails them from a persisted
+// byte offset ("high-water mark" in sync-state.json) and uploads batches to
+// `POST {api_url}/sessions/{session_id}/events` every 5 s, with exponential
+// backoff on failure. Offsets only advance after a 2xx response, so nothing
+// is ever lost — a crash, an offline stretch, or a webview reload just delays
+// delivery. The frontend arms the stream via `configure_event_stream` once a
+// session id exists; without a config the tail consumes nothing.
+
+#[derive(Clone)]
+struct EventSyncConfig {
+    api_url: String,
+    session_id: String,
+}
+
+static EVENT_SYNC_CONFIG: OnceLock<Mutex<Option<EventSyncConfig>>> = OnceLock::new();
+
+fn event_sync_config() -> &'static Mutex<Option<EventSyncConfig>> {
+    EVENT_SYNC_CONFIG.get_or_init(|| Mutex::new(None))
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct EventSyncState {
+    violations_offset: u64,
+    proctoring_offset: u64,
+}
+
+const EVENT_SYNC_INTERVAL_SECS: u64 = 5;
+const EVENT_SYNC_MAX_BACKOFF_SECS: u64 = 60;
+const EVENT_SYNC_MAX_BATCH: usize = 200;
+
+/// Arm (or disarm, with `session_id: None`) the violation/proctoring event
+/// uploader. Called by the frontend as soon as a server session id exists.
+#[tauri::command]
+fn configure_event_stream(api_url: String, session_id: Option<String>) {
+    if let Ok(mut config) = event_sync_config().lock() {
+        *config = match session_id {
+            Some(session_id) if !session_id.trim().is_empty() && !api_url.trim().is_empty() => {
+                Some(EventSyncConfig {
+                    api_url: api_url.trim().trim_end_matches('/').to_string(),
+                    session_id: session_id.trim().to_string(),
+                })
+            }
+            _ => None,
+        };
+    }
+}
+
+/// Read complete JSONL lines from `path` starting at `*offset`, append them to
+/// `out` tagged with `stream`, and advance `*offset` past every consumed line.
+///
+/// - A trailing line without '\n' is a write in progress — left for next time.
+/// - Unparseable lines are consumed but skipped, so a corrupt line can never
+///   stall the stream (no poison pill).
+/// - `*offset` beyond the file length means the file was replaced — restart
+///   from the beginning.
+fn read_new_jsonl_events(
+    path: &Path,
+    offset: &mut u64,
+    stream: &str,
+    out: &mut Vec<serde_json::Value>,
+) {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return;
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if *offset > len {
+        *offset = 0;
+    }
+    if *offset == len || file.seek(SeekFrom::Start(*offset)).is_err() {
+        return;
+    }
+    let mut buf = String::new();
+    if file.read_to_string(&mut buf).is_err() {
+        return;
+    }
+
+    let mut consumed = 0usize;
+    for line in buf.split_inclusive('\n') {
+        if !line.ends_with('\n') || out.len() >= EVENT_SYNC_MAX_BATCH {
+            break;
+        }
+        consumed += line.len();
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("stream".to_string(), serde_json::json!(stream));
+            }
+            out.push(value);
+        }
+    }
+    *offset += consumed as u64;
+}
+
+/// Background uploader: tails the JSONL spool and ships batches to the
+/// backend. Runs for the lifetime of the process; idles cheaply when no
+/// session is configured or nothing is pending.
+fn spawn_event_sync_task(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        else {
+            return;
+        };
+        let mut delay = EVENT_SYNC_INTERVAL_SECS;
+        loop {
+            tokio::time::sleep(Duration::from_secs(delay)).await;
+
+            let Some(config) = event_sync_config().lock().ok().and_then(|c| c.clone()) else {
+                delay = EVENT_SYNC_INTERVAL_SECS;
+                continue;
+            };
+
+            let dir = proctoring_log_dir(Some(&app));
+            let state_path = dir.join("sync-state.json");
+            let mut state: EventSyncState = std::fs::read_to_string(&state_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or_default();
+
+            let mut events = Vec::new();
+            let mut violations_offset = state.violations_offset;
+            let mut proctoring_offset = state.proctoring_offset;
+            read_new_jsonl_events(
+                &dir.join("violations.jsonl"),
+                &mut violations_offset,
+                "violation",
+                &mut events,
+            );
+            read_new_jsonl_events(
+                &dir.join("proctoring-events.jsonl"),
+                &mut proctoring_offset,
+                "proctoring",
+                &mut events,
+            );
+
+            if events.is_empty() {
+                delay = EVENT_SYNC_INTERVAL_SECS;
+                continue;
+            }
+
+            let url = format!("{}/sessions/{}/events", config.api_url, config.session_id);
+            let delivered = client
+                .post(&url)
+                .json(&serde_json::json!({ "events": events }))
+                .send()
+                .await
+                .map(|response| response.status().is_success())
+                .unwrap_or(false);
+
+            if delivered {
+                state.violations_offset = violations_offset;
+                state.proctoring_offset = proctoring_offset;
+                if let Ok(raw) = serde_json::to_string(&state) {
+                    let _ = std::fs::write(&state_path, raw);
+                }
+                delay = EVENT_SYNC_INTERVAL_SECS;
+            } else {
+                // Offsets NOT persisted — the same batch retries after backoff.
+                delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+            }
+        }
+    });
+}
+
 fn record_proctoring_event(
     app: Option<&tauri::AppHandle>,
     kind: &str,
@@ -141,30 +320,8 @@ fn collect_fast_device_state() -> DeviceState {
     #[cfg(not(target_os = "windows"))]
     let platform = Some(std::env::consts::OS.to_string());
 
-    #[cfg(target_os = "linux")]
-    let restricted_processes = Some(platform_rs::linux::scan_processes());
-    #[cfg(target_os = "windows")]
-    let restricted_processes = Some(platform_rs::windows::scan_processes());
-    #[cfg(target_os = "macos")]
-    let restricted_processes = Some(platform_rs::macos::scan_processes());
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let restricted_processes = Some(ProcessScanResult {
-        found: vec![],
-        clean: true,
-    });
-
-    #[cfg(target_os = "linux")]
-    let virtualization = Some(platform_rs::linux::detect_virtualization());
-    #[cfg(target_os = "windows")]
-    let virtualization = Some(platform_rs::windows::detect_virtualization());
-    #[cfg(target_os = "macos")]
-    let virtualization = Some(platform_rs::macos::detect_virtualization());
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let virtualization = Some(VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "unknown".to_string(),
-    });
+    let restricted_processes = Some(scan_processes());
+    let virtualization = Some(detect_virtualization());
 
     DeviceState {
         platform,
@@ -179,6 +336,7 @@ fn collect_fast_device_state() -> DeviceState {
 
 async fn collect_device_state_inner(
     network_host: Option<String>,
+    api_url: Option<String>,
     camera_available: Option<bool>,
     microphone_available: Option<bool>,
     activate_keyboard: bool,
@@ -187,16 +345,49 @@ async fn collect_device_state_inner(
     state.camera_available = camera_available;
     state.microphone_available = microphone_available;
     state.keyboard = if activate_keyboard {
-        Some(enable_keyboard_intercept())
+        // Transactional probe: prove the intercept can engage, then release it
+        // immediately — unless an exam lockdown currently owns it (rescans
+        // during a locked session must not tear the lockdown down).
+        let result = enable_keyboard_intercept();
+        if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+            disable_keyboard_intercept();
+        }
+        Some(result)
     } else {
         None
     };
 
     if let Some(host) = network_host.filter(|host| !host.trim().is_empty()) {
-        state.network = Some(check_network_stability(host).await);
+        state.network = Some(check_network_stability(host, api_url).await);
     }
 
     state
+}
+
+/// Dispatch `platform_rs::<os>::$func(args…)` for the compiled target OS,
+/// with `$fallback` as the expression for unsupported platforms. Exactly one
+/// branch survives cfg-stripping, so the macro is usable in expression
+/// position and replaces the hand-rolled `#[cfg(target_os = …)]` ladders that
+/// every cross-platform command used to repeat.
+macro_rules! platform_dispatch {
+    ($func:ident ( $($arg:expr),* $(,)? ), else $fallback:expr) => {{
+        #[cfg(target_os = "linux")]
+        {
+            platform_rs::linux::$func($($arg),*)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            platform_rs::windows::$func($($arg),*)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            platform_rs::macos::$func($($arg),*)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            $fallback
+        }
+    }};
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -205,12 +396,14 @@ async fn collect_device_state_inner(
 #[tauri::command]
 async fn collect_device_state(
     network_host: Option<String>,
+    api_url: Option<String>,
     camera_available: Option<bool>,
     microphone_available: Option<bool>,
     activate_keyboard: Option<bool>,
 ) -> DeviceState {
     collect_device_state_inner(
         network_host,
+        api_url,
         camera_available,
         microphone_available,
         activate_keyboard.unwrap_or(false),
@@ -238,6 +431,7 @@ async fn start_secure_session(
     contest_id: Option<String>,
     device_id: Option<String>,
     device_state: DeviceState,
+    api_url: Option<String>,
 ) -> Result<ReadinessReport, String> {
     let policy = policy.unwrap_or_default();
     let report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
@@ -246,24 +440,75 @@ async fn start_secure_session(
             serde_json::to_string(&report).unwrap_or_else(|_| "readiness blocked".to_string())
         );
     }
+    deliver_readiness_report(&app, &report, api_url).await;
     let _ = lock_desktop(app).await;
     Ok(report)
+}
+
+/// Short-term readiness attestation: deliver the full evaluated report to the
+/// backend so the server has a durable record of what this device claimed at
+/// the entry gate (`POST /contests/:id/readiness-reports`). The server — not
+/// this client — decides whether to gate session activation on it, so
+/// delivery is best-effort here: a failure is logged as a proctoring event
+/// (and will reach the organizer via the event stream) but never blocks entry
+/// client-side. Long-term this becomes a device-key-signed report; see
+/// fable.md item 14.
+async fn deliver_readiness_report(
+    app: &tauri::AppHandle,
+    report: &ReadinessReport,
+    api_url: Option<String>,
+) {
+    let Some(api) = api_url
+        .as_deref()
+        .map(|u| u.trim().trim_end_matches('/'))
+        .filter(|u| !u.is_empty())
+    else {
+        return;
+    };
+    let Some(contest_id) = report.contest_id.as_deref() else {
+        return;
+    };
+
+    let url = format!("{api}/contests/{contest_id}/readiness-reports");
+    let delivered = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    {
+        Ok(client) => client
+            .post(&url)
+            .json(&serde_json::json!({
+                "device_id": report.device_id,
+                "report": report,
+            }))
+            .send()
+            .await
+            .map(|response| response.status().is_success())
+            .unwrap_or(false),
+        Err(_) => false,
+    };
+
+    record_proctoring_event(
+        Some(app),
+        if delivered {
+            "readiness_report_delivered"
+        } else {
+            "readiness_report_delivery_failed"
+        },
+        &format!("entry-gate readiness report → {url}"),
+        serde_json::json!({
+            "decision": report.decision,
+            "delivered": delivered,
+        }),
+    );
 }
 
 /// Scan running processes for known restricted applications.
 #[tauri::command]
 fn scan_processes() -> ProcessScanResult {
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::scan_processes();
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::scan_processes();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::scan_processes();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    ProcessScanResult {
+    platform_dispatch!(scan_processes(), else ProcessScanResult {
         found: vec![],
         clean: true,
-    }
+    })
 }
 
 /// Close each restricted app by name. The `apps` list comes from the
@@ -280,23 +525,10 @@ fn close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
 
     // Security: only kill names that appear in the platform's RESTRICTED list.
     // The Tauri IPC boundary is not a trust boundary — validate on the backend.
-    #[cfg(target_os = "linux")]
     let safe: Vec<String> = apps
         .into_iter()
-        .filter(|n| platform_rs::linux::is_restricted_name(n))
+        .filter(|n| platform_dispatch!(is_restricted_name(n), else false))
         .collect();
-    #[cfg(target_os = "windows")]
-    let safe: Vec<String> = apps
-        .into_iter()
-        .filter(|n| platform_rs::windows::is_restricted_name(n))
-        .collect();
-    #[cfg(target_os = "macos")]
-    let safe: Vec<String> = apps
-        .into_iter()
-        .filter(|n| platform_rs::macos::is_restricted_name(n))
-        .collect();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let safe: Vec<String> = vec![];
 
     if safe.is_empty() {
         return CloseAppsResult {
@@ -305,62 +537,36 @@ fn close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
         };
     }
 
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::close_apps(&safe);
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::close_apps(&safe);
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::close_apps(&safe);
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    CloseAppsResult {
+    platform_dispatch!(close_apps(&safe), else CloseAppsResult {
         closed: vec![],
         failed: safe,
-    }
+    })
 }
 
 /// Detect virtualisation / VM environment.
 #[tauri::command]
 fn detect_virtualization() -> VirtDetectionResult {
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::detect_virtualization();
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::detect_virtualization();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::detect_virtualization();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    VirtDetectionResult {
+    platform_dispatch!(detect_virtualization(), else VirtDetectionResult {
         detected: false,
         platform: None,
         confidence: "unknown".to_string(),
-    }
+    })
 }
 
 /// Install platform-level keyboard intercept.
 #[tauri::command]
 fn enable_keyboard_intercept() -> KeyboardInterceptResult {
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::enable_keyboard_intercept();
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::enable_keyboard_intercept();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::enable_keyboard_intercept();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    KeyboardInterceptResult {
+    platform_dispatch!(enable_keyboard_intercept(), else KeyboardInterceptResult {
         active: false,
         method: "none".to_string(),
         platform: "unknown".to_string(),
-    }
+    })
 }
 
 /// Release keyboard intercept (called on exit / crash recovery).
 #[tauri::command]
 fn disable_keyboard_intercept() {
-    #[cfg(target_os = "linux")]
-    platform_rs::linux::disable_keyboard_intercept();
-    #[cfg(target_os = "windows")]
-    platform_rs::windows::disable_keyboard_intercept();
-    #[cfg(target_os = "macos")]
-    platform_rs::macos::disable_keyboard_intercept();
+    platform_dispatch!(disable_keyboard_intercept(), else ())
 }
 
 /// Check whether Accessibility permission is granted (macOS only).
@@ -524,7 +730,7 @@ fn open_accessibility_settings() {
 ///   4. If all TCP probes fail but DNS succeeded, the host is considered reachable
 ///      with the DNS latency as the reported value.
 #[tauri::command]
-async fn check_network_stability(host: String) -> NetworkCheckResult {
+async fn check_network_stability(host: String, api_url: Option<String>) -> NetworkCheckResult {
     let host = host.trim().to_string();
 
     // ── 1. Localhost shortcut ──────────────────────────────────────────────────
@@ -537,6 +743,8 @@ async fn check_network_stability(host: String) -> NetworkCheckResult {
             latency_ms: Some(1),
             jitter_ms: Some(0),
             quality: "excellent".to_string(),
+            // Same machine as the dev API — the clock cannot disagree with itself.
+            clock_skew_ms: Some(0),
         };
     }
 
@@ -597,6 +805,7 @@ async fn check_network_stability(host: String) -> NetworkCheckResult {
                 latency_ms: None,
                 jitter_ms: None,
                 quality: "unreachable".to_string(),
+                clock_skew_ms: None,
             };
         }
     };
@@ -608,12 +817,51 @@ async fn check_network_stability(host: String) -> NetworkCheckResult {
         _ => "poor",
     };
 
+    // ── 5. Clock-integrity signal ──────────────────────────────────────────────
+    // The device clock drives report and submission timestamps; compare it to
+    // the contest server via the HTTP Date header. Only attempted when the
+    // caller supplied the API base URL, and never fails the probe by itself —
+    // core-rs decides whether the measured skew blocks readiness.
+    let clock_skew_ms = match api_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        Some(api) => measure_clock_skew(api).await,
+        None => None,
+    };
+
     NetworkCheckResult {
         reachable,
         latency_ms: Some(latency_ms),
         jitter_ms: Some(0),
         quality: quality.to_string(),
+        clock_skew_ms,
     }
+}
+
+/// Measure device-clock skew (server − local, ms) from the HTTP `Date` header
+/// of any response from the contest API — every response carries one per
+/// RFC 9110, regardless of status code. Granularity is one second plus up to
+/// one RTT of error, which is far finer than the 120 s readiness bound.
+/// Returns `None` when no trustworthy signal could be obtained.
+async fn measure_clock_skew(api_url: &str) -> Option<i64> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .ok()?;
+    let response = client.get(api_url).send().await.ok()?;
+    let date = response
+        .headers()
+        .get(reqwest::header::DATE)?
+        .to_str()
+        .ok()?;
+    let server = httpdate::parse_http_date(date).ok()?;
+    let server_ms = server
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    let local_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    Some(server_ms - local_ms)
 }
 
 /// Current OS identifier.
@@ -681,7 +929,7 @@ async fn get_full_telemetry(network_host: Option<String>) -> FullTelemetry {
     let processes = scan_processes();
     let virt = detect_virtualization();
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
-        Some(host) => Some(check_network_stability(host).await),
+        Some(host) => Some(check_network_stability(host, None).await),
         None => None,
     };
 
@@ -713,30 +961,24 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::lock_desktop();
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::lock_desktop();
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::lock_desktop();
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    false
+    let locked = platform_dispatch!(lock_desktop(), else false);
+
+    // Only a successful lockdown owns the intercept; on failure readiness
+    // probes keep releasing it after each scan.
+    LOCKDOWN_ENGAGED.store(locked, Ordering::SeqCst);
+    locked
 }
 
 /// Release full exam lockdown.
 #[tauri::command]
 async fn unlock_desktop(app: tauri::AppHandle) {
     use tauri::Manager;
+    LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_always_on_top(false);
         let _ = win.set_fullscreen(false);
     }
-    #[cfg(target_os = "linux")]
-    platform_rs::linux::unlock_desktop();
-    #[cfg(target_os = "windows")]
-    platform_rs::windows::unlock_desktop();
-    #[cfg(target_os = "macos")]
-    platform_rs::macos::unlock_desktop();
+    platform_dispatch!(unlock_desktop(), else ())
 }
 
 /// Return all recorded violations for this session.
@@ -855,29 +1097,21 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
         return Err("Could not resolve any allowed domains to IPs".to_string());
     }
 
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::enable_network_lockdown(&ips).map(|_| true);
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::enable_network_lockdown(&ips).map(|_| true);
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::enable_network_lockdown(&ips).map(|_| true);
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    Err("Network lockdown not supported on this platform".to_string())
+    platform_dispatch!(
+        enable_network_lockdown(&ips),
+        else Err("Network lockdown not supported on this platform".to_string())
+    )
+    .map(|_| true)
 }
 
 /// Remove all AMS firewall rules and restore normal internet access.
 #[tauri::command]
 async fn disable_network_lockdown() -> Result<bool, String> {
-    #[cfg(target_os = "linux")]
-    return platform_rs::linux::disable_network_lockdown().map(|_| true);
-    #[cfg(target_os = "windows")]
-    return platform_rs::windows::disable_network_lockdown().map(|_| true);
-    #[cfg(target_os = "macos")]
-    return platform_rs::macos::disable_network_lockdown().map(|_| true);
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    Err("Network lockdown not supported on this platform".to_string())
+    platform_dispatch!(
+        disable_network_lockdown(),
+        else Err("Network lockdown not supported on this platform".to_string())
+    )
+    .map(|_| true)
 }
 
 /// Result returned by `save_face_image` — includes backend image validation outcome.
@@ -1334,7 +1568,13 @@ extern "C" fn handle_sigterm(_sig: std::os::raw::c_int) {
     #[cfg(target_os = "linux")]
     platform_rs::linux::disable_keyboard_intercept();
     #[cfg(target_os = "macos")]
-    let _ = platform_rs::macos::disable_network_lockdown();
+    {
+        // Full unlock: keyboard intercept, trackpad gesture prefs (persisted via
+        // `defaults write` — must be restored or they survive the process), and
+        // the caffeinate child.
+        platform_rs::macos::unlock_desktop();
+        let _ = platform_rs::macos::disable_network_lockdown();
+    }
     std::process::exit(0);
 }
 
@@ -1370,6 +1610,18 @@ pub fn run() {
     platform_rs::linux::recover_keyboard_if_crashed();
     #[cfg(target_os = "windows")]
     platform_rs::windows::recover_registry_if_crashed();
+    #[cfg(target_os = "macos")]
+    {
+        platform_rs::macos::recover_lockdown_if_crashed();
+        // pfctl rules survive crashes BY DESIGN (a crash must not restore
+        // internet mid-exam), but at process start no exam can be active, so
+        // any still-active rules are leftovers from a crashed session. Flush
+        // in the background so a candidate is never stranded offline with no
+        // UI explaining why. No-op when the helper isn't installed/running.
+        std::thread::spawn(|| {
+            let _ = platform_rs::macos::disable_network_lockdown();
+        });
+    }
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -1405,8 +1657,13 @@ pub fn run() {
             detect_screen_capture_active,
             apply_capture_protection,
             set_escape_blocked,
+            configure_event_stream,
         ])
         .setup(|app| {
+            // Organizer event stream: tail the violation/proctoring spool and
+            // upload once the frontend arms it with a session id.
+            spawn_event_sync_task(app.handle().clone());
+
             #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
@@ -1426,7 +1683,30 @@ pub fn run() {
             // call does. Fire it here so the system dialog appears on first launch
             // and the app is registered in System Settings → Privacy → Camera/Microphone.
             #[cfg(target_os = "macos")]
-            platform_rs::macos::request_av_permissions();
+            {
+                platform_rs::macos::request_av_permissions();
+
+                // Sink for security events raised from background lockdown
+                // threads (Accessibility revoked mid-exam, screen sharing
+                // detected, tap re-enabled). Persists to the violation +
+                // proctoring logs and notifies the webview so the frontend
+                // can react live if it subscribes to "lockdown-event".
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                platform_rs::macos::set_lockdown_event_callback(move |kind, detail| {
+                    record_violation(Some(&handle), kind, detail);
+                    record_proctoring_event(
+                        Some(&handle),
+                        kind,
+                        detail,
+                        serde_json::json!({ "source": "platform_lockdown" }),
+                    );
+                    let _ = handle.emit(
+                        "lockdown-event",
+                        serde_json::json!({ "kind": kind, "detail": detail }),
+                    );
+                });
+            }
             let _ = app;
             Ok(())
         })
@@ -1443,7 +1723,10 @@ pub fn run() {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    platform_rs::macos::disable_keyboard_intercept();
+                    // unlock_desktop covers keyboard intercept, the persisted
+                    // trackpad gesture prefs, and the caffeinate child — not
+                    // just the event tap.
+                    platform_rs::macos::unlock_desktop();
                     let _ = platform_rs::macos::disable_network_lockdown();
                 }
             }

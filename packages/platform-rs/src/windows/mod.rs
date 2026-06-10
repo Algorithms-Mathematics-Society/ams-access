@@ -1,4 +1,6 @@
-use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult};
+use core_rs::exam::{
+    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
+};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -276,7 +278,7 @@ fn reg_dword_nonzero(key: &str, value: &str) -> bool {
     }
     let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
     if let Some(hex) = text.split("0x").nth(1) {
-        let part = hex.trim().split_whitespace().next().unwrap_or("0");
+        let part = hex.split_whitespace().next().unwrap_or("0");
         return u64::from_str_radix(part, 16).unwrap_or(0) != 0;
     }
     false
@@ -494,13 +496,15 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         let cpuid = raw_cpuid::CpuId::new();
         if let Some(hv) = cpuid.get_hypervisor_info() {
             let kind = hv.identify();
-            if !matches!(kind, raw_cpuid::Hypervisor::MicrosoftHyperV) {
+            if !matches!(kind, raw_cpuid::Hypervisor::HyperV) {
                 let platform = match kind {
-                    raw_cpuid::Hypervisor::Vmware => "vmware",
-                    raw_cpuid::Hypervisor::Kvm => "kvm",
+                    raw_cpuid::Hypervisor::VMware => "vmware",
+                    raw_cpuid::Hypervisor::KVM => "kvm",
                     raw_cpuid::Hypervisor::Xen => "xen",
-                    raw_cpuid::Hypervisor::Parallels => "parallels",
+                    raw_cpuid::Hypervisor::QEMU => "qemu",
                     raw_cpuid::Hypervisor::Bhyve => "bhyve",
+                    // Parallels has no dedicated raw-cpuid variant; it surfaces
+                    // as Unknown(..) and is still reported as detected.
                     _ => "unknown_hypervisor",
                 };
                 return VirtDetectionResult {
@@ -831,7 +835,7 @@ pub fn spawn_virtual_desktop_guard(hwnd_raw: isize) {
                 if let Ok(desktop_id) = unsafe { vdm.GetWindowDesktopId(fg) } {
                     unsafe { vdm.MoveWindowToDesktop(hwnd, &desktop_id) }.ok();
                     // Bring exam window to front on the new desktop
-                    unsafe { SetForegroundWindow(hwnd) }.ok();
+                    let _ = unsafe { SetForegroundWindow(hwnd) }.ok();
                 }
             }
 

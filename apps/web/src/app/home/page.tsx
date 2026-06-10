@@ -3,7 +3,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, LayoutGrid, Settings as SettingsIcon } from "lucide-react";
-import { invoke, runSessionReadiness, sessionPolicy } from "@ams/api-client";
+import {
+  applyOrganizerOverrides,
+  fetchOrganizerOverrides,
+  invoke,
+  runSessionReadiness,
+  sessionPolicy,
+} from "@ams/api-client";
 import { fetchJson, useApiQuery } from "@/lib/api-client";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
@@ -340,14 +346,37 @@ export default function HomePage() {
 
     try {
       const strict = Boolean(contestId);
+      const deviceId = getOrCreateDeviceId();
+
+      // Live proctor "resolve" channel: organizer-issued override grants
+      // loosen specific checks for this device. Fetch is best-effort — no
+      // endpoint / offline simply means the base policy applies.
+      const overrides = contestId
+        ? await fetchOrganizerOverrides(API_URL, contestId, deviceId)
+        : [];
+      if (isCancelled()) return;
+      const basePolicy = sessionPolicy(strict ? "strict_contest" : "internal_pilot");
+      const policy = applyOrganizerOverrides(basePolicy, overrides);
+      if (overrides.length > 0) {
+        const kinds = overrides.map((grant) => grant.check_kind).join(", ");
+        appendSecurityEvent(`READINESS: Organizer overrides active for ${kinds}`, "warn");
+        void invoke("log_proctoring_event", {
+          kind: "organizer_override_applied",
+          detail: `organizer overrides active: ${kinds}`,
+          timestamp: Date.now(),
+          payload: { contest_id: contestId, device_id: deviceId, overrides },
+        }).catch(() => {});
+      }
+
       const report = await runSessionReadiness({
         networkHost: getNetworkProbeHost(),
+        apiUrl: API_URL,
         contestId: contestId ?? null,
-        deviceId: getOrCreateDeviceId(),
+        deviceId,
         cameraAvailable: media.cameraAvailable,
         microphoneAvailable: media.microphoneAvailable,
         activateKeyboard: true,
-        policy: sessionPolicy(strict ? "strict_contest" : "internal_pilot"),
+        policy,
       });
       if (isCancelled()) return;
       setReadinessReport(report);

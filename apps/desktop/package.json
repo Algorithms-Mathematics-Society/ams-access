@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:mac-dev": "APPLE_SIGNING_IDENTITY='AMS Access Dev' tauri build --debug --bundles app",
+    "setup:mac-signing": "bash src-tauri/scripts/setup-macos-dev-signing.sh",
     "clean": "rm -rf src-tauri/target"
   },
   "dependencies": {

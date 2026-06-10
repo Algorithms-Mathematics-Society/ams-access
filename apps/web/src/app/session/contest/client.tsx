@@ -15,6 +15,11 @@ import { marked, type MarkedExtension } from "marked";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
+import {
+  loadPresenceDetector,
+  samplePresence,
+  type PresenceDetector,
+} from "@/lib/presence-monitor";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "./editor-pane";
 import {
@@ -658,7 +663,12 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
 
 function useCountdown(endAt: string) {
   const totalMsRef = useRef<number | null>(null);
-  const [state, setState] = useState({ remaining: "", urgent: false, pulse: false, percentLeft: 1 });
+  const [state, setState] = useState({
+    remaining: "",
+    urgent: false,
+    pulse: false,
+    percentLeft: 1,
+  });
 
   useEffect(() => {
     totalMsRef.current = null;
@@ -1325,8 +1335,15 @@ export default function ContestPageClient() {
 
   const [softBlockActive, setSoftBlockActive] = useState(false);
   const prevCameraStatusRef = useRef<{ cameraOk: boolean; blockedCount: number } | null>(null);
+  // Camera defaults ON (permission was granted during onboarding); microphone
+  // defaults OFF — contestants opt in once inside the contest area. Refs mirror
+  // the state so stream (re)acquisition applies the current toggle, and every
+  // change is audit-logged for organizers (see applyMediaToggle).
   const [cameraEnabled, setCameraEnabled] = useState(true);
-  const [micEnabled, setMicEnabled] = useState(true);
+  const [micEnabled, setMicEnabled] = useState(false);
+  const cameraEnabledRef = useRef(true);
+  const micEnabledRef = useRef(false);
+  const mediaInitialStateLoggedRef = useRef(false);
   const [hasToggledMedia, setHasToggledMedia] = useState(false);
   const [showMediaToggleWarning, setShowMediaToggleWarning] = useState(false);
   const [pendingMediaToggle, setPendingMediaToggle] = useState<{
@@ -1457,22 +1474,58 @@ export default function ContestPageClient() {
     prevSubmissionsRef.current = submissionsList;
   }, [submissionsList]);
 
+  function logMediaToggle(type: "camera" | "mic", enabled: boolean) {
+    const timestamp = new Date().toISOString();
+    const detail = `${type === "camera" ? "Camera" : "Microphone"} turned ${enabled ? "on" : "off"} by contestant`;
+    // Server-side incident record — organizers/admins see when and what changed.
+    sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
+      category: enabled ? "media_toggle_on" : "media_toggle_off",
+      detail,
+      telemetry: {
+        timestamp,
+        contest_id: contestId,
+        session_id: sessionId ?? "unregistered",
+        media: type,
+        enabled,
+      },
+    });
+    // Local persistent audit trail (proctoring-events.jsonl) — survives offline.
+    void window.__TAURI__?.core
+      .invoke("log_proctoring_event", {
+        kind: "media_toggle",
+        detail,
+        timestamp: Date.now(),
+        payload: {
+          media: type,
+          enabled,
+          contest_id: contestId,
+          session_id: sessionId ?? "unregistered",
+        },
+      })
+      .catch(() => {});
+  }
+
   function applyMediaToggle(type: "camera" | "mic", value: boolean) {
     if (type === "camera") {
       setCameraEnabled(value);
+      cameraEnabledRef.current = value;
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = value));
       }
     } else {
       setMicEnabled(value);
+      micEnabledRef.current = value;
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = value));
       }
     }
+    logMediaToggle(type, value);
   }
 
   function handleToggleMedia(type: "camera" | "mic", value: boolean) {
-    if (!hasToggledMedia) {
+    // The one-time confirmation only applies when turning a device OFF —
+    // enabling the (default-off) microphone needs no proctoring warning.
+    if (!hasToggledMedia && !value) {
       setPendingMediaToggle({ type, value });
       setShowMediaToggleWarning(true);
       return;
@@ -2156,9 +2209,28 @@ export default function ContestPageClient() {
 
         stopStream(cameraStreamRef.current);
         cameraStreamRef.current = stream;
+        // Honor the current toggles on every (re)acquisition: camera defaults
+        // on, microphone defaults off until the contestant enables it.
+        stream.getVideoTracks().forEach((t) => (t.enabled = cameraEnabledRef.current));
+        stream.getAudioTracks().forEach((t) => (t.enabled = micEnabledRef.current));
         setCameraStream(stream);
         setCameraVideoReady(false);
         setCameraError(null);
+        if (!mediaInitialStateLoggedRef.current) {
+          mediaInitialStateLoggedRef.current = true;
+          void window.__TAURI__?.core
+            .invoke("log_proctoring_event", {
+              kind: "media_initial_state",
+              detail: `camera ${cameraEnabledRef.current ? "on" : "off"}, microphone ${micEnabledRef.current ? "on" : "off"}`,
+              timestamp: Date.now(),
+              payload: {
+                camera_enabled: cameraEnabledRef.current,
+                mic_enabled: micEnabledRef.current,
+                contest_id: contestId,
+              },
+            })
+            .catch(() => {});
+        }
         void bindStream(stream, attempt);
       } catch (err) {
         if (cancelled) return;
@@ -2206,6 +2278,103 @@ export default function ContestPageClient() {
     const id = setInterval(sendHeartbeat, 60_000);
     return () => clearInterval(id);
   }, [sessionId]);
+
+  // Arm the native event-stream uploader: the Rust side tails the local
+  // violation/proctoring spool and ships batches to
+  // POST /sessions/:id/events with retry/backoff once it knows the session.
+  useEffect(() => {
+    if (!sessionId) return;
+    void window.__TAURI__?.core
+      .invoke("configure_event_stream", { apiUrl: API_URL, sessionId })
+      .catch(() => {});
+  }, [sessionId]);
+
+  // ── Periodic presence verification (jittered 30–90 s) ──────────────────────
+  // Samples the live camera with BlazeFace and logs presence_ok /
+  // face_missing / multiple_faces proctoring events (thumbnails only on
+  // anomalies — see lib/presence-monitor.ts for the retention notes). Uses a
+  // detached <video> bound to the stream so sampling is independent of the
+  // camera panel being collapsed. Deliberately does NOT drive faceStatus or
+  // any UI — evidence collection only.
+  useEffect(() => {
+    if (!cameraStream) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let detectorFailed = false;
+    let detector: PresenceDetector | null = null;
+    const canvas = document.createElement("canvas");
+
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = cameraStream;
+    void video.play().catch(() => {});
+
+    const logPresence = (kind: string, detail: string, payload: Record<string, unknown>) => {
+      void window.__TAURI__?.core
+        .invoke("log_proctoring_event", {
+          kind,
+          detail,
+          timestamp: Date.now(),
+          payload: { ...payload, contest_id: contestId },
+        })
+        .catch(() => {});
+    };
+
+    async function tick() {
+      if (cancelled) return;
+      try {
+        if (!cameraEnabledRef.current) {
+          // Camera is policy-allowed off; attest that no sample was possible
+          // so the organizer timeline has no silent gaps.
+          logPresence(
+            "presence_skipped_camera_off",
+            "presence check skipped: camera disabled by contestant",
+            {}
+          );
+        } else {
+          if (!detector && !detectorFailed) {
+            try {
+              detector = await loadPresenceDetector();
+            } catch {
+              detectorFailed = true;
+              logPresence(
+                "presence_monitor_unavailable",
+                "face detector failed to initialise; periodic presence checks disabled",
+                {}
+              );
+            }
+          }
+          if (detector && !cancelled) {
+            const sample = await samplePresence(video, detector, canvas);
+            if (sample && !cancelled) {
+              logPresence(sample.status, `presence check: ${sample.faces} face(s) detected`, {
+                faces: sample.faces,
+                thumbnail: sample.thumbnail,
+              });
+            }
+          }
+        }
+      } catch {
+        // Sampling must never disturb the exam surface.
+      } finally {
+        if (!cancelled && !detectorFailed) schedule();
+      }
+    }
+
+    function schedule() {
+      timer = setTimeout(() => void tick(), 30_000 + Math.random() * 60_000);
+    }
+    schedule();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      video.srcObject = null;
+      detector?.dispose?.();
+      detector = null;
+    };
+  }, [cameraStream, contestId]);
 
   useEffect(() => {
     if (!cameraStream || !cameraVideoRef.current) return;
@@ -2495,7 +2664,8 @@ export default function ContestPageClient() {
   const latestAttemptFirstFailed =
     latestAttemptTests?.find((tr: any) => tr.verdict !== "AC") ?? null;
   const latestAttemptVerdictColor =
-    VERDICT_COLORS[latestAttemptVerdict] ?? (latestAttemptVerdict === "Pending" ? "#94a3b8" : "#ef4444");
+    VERDICT_COLORS[latestAttemptVerdict] ??
+    (latestAttemptVerdict === "Pending" ? "#94a3b8" : "#ef4444");
   const submissionsByQuestion = useMemo(() => {
     const grouped: Record<string, any[]> = {};
     for (const sub of allSubmissionsList) {
@@ -4008,126 +4178,129 @@ export default function ContestPageClient() {
                   />
                   {/* Primary actions group: Run + Submit */}
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <button
-                    type="button"
-                    onClick={() => void triggerRun()}
-                    disabled={isRunning || !sessionId}
-                    title="Runs are evaluated by the judge and appear in Attempts. They do not end the contest."
-                    aria-label="Run on judge"
-                    style={{
-                      height: "40px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                      padding: "0 16px",
-                      border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.16)" : "rgba(148,163,184,0.24)"}`,
-                      borderRadius: "6px",
-                      background:
-                        isRunning || !sessionId
-                          ? "rgba(148,163,184,0.06)"
-                          : "rgba(148,163,184,0.1)",
-                      color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#e2e8f0",
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      fontFamily: "Inter, system-ui, sans-serif",
-                      cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
-                      opacity: isRunning || !sessionId ? 0.75 : 1,
-                      transition:
-                        "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (isRunning || !sessionId) return;
-                      e.currentTarget.style.background = "rgba(148,163,184,0.16)";
-                      e.currentTarget.style.borderColor = "rgba(203,213,225,0.34)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (isRunning || !sessionId) return;
-                      e.currentTarget.style.background = "rgba(148,163,184,0.1)";
-                      e.currentTarget.style.borderColor = "rgba(148,163,184,0.24)";
-                      e.currentTarget.style.transform = "scale(1)";
-                    }}
-                    onMouseDown={(e) => {
-                      if (!isRunning && sessionId) e.currentTarget.style.transform = "scale(0.98)";
-                    }}
-                    onMouseUp={(e) => {
-                      e.currentTarget.style.transform = "scale(1)";
-                    }}
-                  >
-                    {isRunning ? (
-                      <Loader2
-                        size={15}
-                        strokeWidth={2}
-                        style={{ animation: "spin 0.8s linear infinite" }}
-                      />
-                    ) : (
-                      <Play size={15} strokeWidth={2} />
-                    )}
-                    {isRunning ? "Running" : "Run on Judge"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSubmitSolution}
-                    disabled={saving || isSubmitting}
-                    style={{
-                      height: "40px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                      padding: "0 18px",
-                      border: `1px solid ${saving || isSubmitting ? "rgba(168,85,247,0.24)" : "#a855f7"}`,
-                      borderRadius: "6px",
-                      background: saving || isSubmitting ? "rgba(168,85,247,0.14)" : "#a855f7",
-                      color: saving || isSubmitting ? "rgba(255,255,255,0.58)" : "#ffffff",
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      fontFamily: "Inter, system-ui, sans-serif",
-                      cursor: saving || isSubmitting ? "not-allowed" : "pointer",
-                      opacity: saving || isSubmitting ? 0.82 : 1,
-                      boxShadow:
-                        saving || isSubmitting ? "none" : "0 8px 22px rgba(168,85,247,0.18)",
-                      transition:
-                        "background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (saving || isSubmitting) return;
-                      e.currentTarget.style.background = "#9333ea";
-                      e.currentTarget.style.borderColor = "#c084fc";
-                      e.currentTarget.style.boxShadow = "0 10px 26px rgba(168,85,247,0.26)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (saving || isSubmitting) return;
-                      e.currentTarget.style.background = "#a855f7";
-                      e.currentTarget.style.borderColor = "#a855f7";
-                      e.currentTarget.style.boxShadow = "0 8px 22px rgba(168,85,247,0.18)";
-                      e.currentTarget.style.transform = "scale(1)";
-                    }}
-                    onMouseDown={(e) => {
-                      if (!saving && !isSubmitting) e.currentTarget.style.transform = "scale(0.98)";
-                    }}
-                    onMouseUp={(e) => {
-                      e.currentTarget.style.transform = "scale(1)";
-                    }}
-                  >
-                    {isSubmitting || saving ? (
-                      <Loader2
-                        size={15}
-                        strokeWidth={2}
-                        style={{ animation: "spin 0.8s linear infinite" }}
-                      />
-                    ) : (
-                      <Send size={15} strokeWidth={2} />
-                    )}
-                    {isSubmitting
-                      ? "Submitting"
-                      : saving
-                        ? "Saving"
-                        : submissionError
-                          ? "Submit Failed"
-                          : "Submit Solution"}
-                  </button>
-                  </div>{/* end primary actions group */}
+                    <button
+                      type="button"
+                      onClick={() => void triggerRun()}
+                      disabled={isRunning || !sessionId}
+                      title="Runs are evaluated by the judge and appear in Attempts. They do not end the contest."
+                      aria-label="Run on judge"
+                      style={{
+                        height: "40px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                        padding: "0 16px",
+                        border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.16)" : "rgba(148,163,184,0.24)"}`,
+                        borderRadius: "6px",
+                        background:
+                          isRunning || !sessionId
+                            ? "rgba(148,163,184,0.06)"
+                            : "rgba(148,163,184,0.1)",
+                        color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#e2e8f0",
+                        fontSize: "13px",
+                        fontWeight: 500,
+                        fontFamily: "Inter, system-ui, sans-serif",
+                        cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
+                        opacity: isRunning || !sessionId ? 0.75 : 1,
+                        transition:
+                          "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (isRunning || !sessionId) return;
+                        e.currentTarget.style.background = "rgba(148,163,184,0.16)";
+                        e.currentTarget.style.borderColor = "rgba(203,213,225,0.34)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (isRunning || !sessionId) return;
+                        e.currentTarget.style.background = "rgba(148,163,184,0.1)";
+                        e.currentTarget.style.borderColor = "rgba(148,163,184,0.24)";
+                        e.currentTarget.style.transform = "scale(1)";
+                      }}
+                      onMouseDown={(e) => {
+                        if (!isRunning && sessionId)
+                          e.currentTarget.style.transform = "scale(0.98)";
+                      }}
+                      onMouseUp={(e) => {
+                        e.currentTarget.style.transform = "scale(1)";
+                      }}
+                    >
+                      {isRunning ? (
+                        <Loader2
+                          size={15}
+                          strokeWidth={2}
+                          style={{ animation: "spin 0.8s linear infinite" }}
+                        />
+                      ) : (
+                        <Play size={15} strokeWidth={2} />
+                      )}
+                      {isRunning ? "Running" : "Run on Judge"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSubmitSolution}
+                      disabled={saving || isSubmitting}
+                      style={{
+                        height: "40px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                        padding: "0 18px",
+                        border: `1px solid ${saving || isSubmitting ? "rgba(168,85,247,0.24)" : "#a855f7"}`,
+                        borderRadius: "6px",
+                        background: saving || isSubmitting ? "rgba(168,85,247,0.14)" : "#a855f7",
+                        color: saving || isSubmitting ? "rgba(255,255,255,0.58)" : "#ffffff",
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        fontFamily: "Inter, system-ui, sans-serif",
+                        cursor: saving || isSubmitting ? "not-allowed" : "pointer",
+                        opacity: saving || isSubmitting ? 0.82 : 1,
+                        boxShadow:
+                          saving || isSubmitting ? "none" : "0 8px 22px rgba(168,85,247,0.18)",
+                        transition:
+                          "background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (saving || isSubmitting) return;
+                        e.currentTarget.style.background = "#9333ea";
+                        e.currentTarget.style.borderColor = "#c084fc";
+                        e.currentTarget.style.boxShadow = "0 10px 26px rgba(168,85,247,0.26)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (saving || isSubmitting) return;
+                        e.currentTarget.style.background = "#a855f7";
+                        e.currentTarget.style.borderColor = "#a855f7";
+                        e.currentTarget.style.boxShadow = "0 8px 22px rgba(168,85,247,0.18)";
+                        e.currentTarget.style.transform = "scale(1)";
+                      }}
+                      onMouseDown={(e) => {
+                        if (!saving && !isSubmitting)
+                          e.currentTarget.style.transform = "scale(0.98)";
+                      }}
+                      onMouseUp={(e) => {
+                        e.currentTarget.style.transform = "scale(1)";
+                      }}
+                    >
+                      {isSubmitting || saving ? (
+                        <Loader2
+                          size={15}
+                          strokeWidth={2}
+                          style={{ animation: "spin 0.8s linear infinite" }}
+                        />
+                      ) : (
+                        <Send size={15} strokeWidth={2} />
+                      )}
+                      {isSubmitting
+                        ? "Submitting"
+                        : saving
+                          ? "Saving"
+                          : submissionError
+                            ? "Submit Failed"
+                            : "Submit Solution"}
+                    </button>
+                  </div>
+                  {/* end primary actions group */}
                 </div>
 
                 {submissionError && (

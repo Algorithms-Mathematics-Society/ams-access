@@ -42,6 +42,7 @@ export type FailureReasonCode =
   | "restricted_application_detected"
   | "virtualization_detected"
   | "unsupported_platform"
+  | "clock_skew_detected"
   | "probe_unavailable";
 
 export type RecoveryAction =
@@ -72,6 +73,8 @@ export type NetworkCheckResult = {
   latency_ms: number | null;
   jitter_ms: number | null;
   quality: string;
+  /** Device clock vs contest server (server − local, ms); null = no signal. */
+  clock_skew_ms?: number | null;
 };
 
 export type KeyboardInterceptResult = {
@@ -141,12 +144,20 @@ export function sessionPolicy(profile: EnforcementProfile): SessionPolicy {
   const strict = profile === "strict_contest";
   return {
     profile,
-    checks: POLICY_CHECKS.map((kind) => ({
-      kind,
-      required: strict,
-      severity: strict ? "block" : "warning",
-      organizer_override_allowed: !strict,
-    })),
+    checks: POLICY_CHECKS.map((kind) => {
+      // Camera and microphone are advisory-only on EVERY profile — this must
+      // mirror SessionPolicy::for_profile in core-rs/src/exam/mod.rs (the Rust
+      // side is the source of truth). The microphone starts muted and the
+      // camera can be toggled in the contest area; both toggles are
+      // audit-logged, so neither device may block entry here.
+      const advisory = kind === "camera" || kind === "microphone";
+      return {
+        kind,
+        required: strict && !advisory,
+        severity: strict && !advisory ? ("block" as const) : ("warning" as const),
+        organizer_override_allowed: !strict,
+      };
+    }),
   };
 }
 
@@ -156,12 +167,15 @@ export function strictContestPolicy(): SessionPolicy {
 
 export async function collectDeviceState(options: {
   networkHost?: string;
+  /** Contest API base URL — enables the device-clock skew measurement. */
+  apiUrl?: string | null;
   cameraAvailable?: boolean | null;
   microphoneAvailable?: boolean | null;
   activateKeyboard?: boolean;
 }): Promise<DeviceState> {
   return invoke<DeviceState>("collect_device_state", {
     networkHost: options.networkHost ?? null,
+    apiUrl: options.apiUrl ?? null,
     cameraAvailable: options.cameraAvailable ?? null,
     microphoneAvailable: options.microphoneAvailable ?? null,
     activateKeyboard: options.activateKeyboard ?? false,
@@ -184,6 +198,7 @@ export async function evaluateSessionReadiness(options: {
 
 export async function runSessionReadiness(options: {
   networkHost?: string;
+  apiUrl?: string | null;
   contestId?: string | null;
   deviceId?: string | null;
   cameraAvailable?: boolean | null;
@@ -205,11 +220,91 @@ export async function startSecureSession(options: {
   contestId?: string | null;
   deviceId?: string | null;
   deviceState: DeviceState;
+  /** Contest API base URL — the entry-gate readiness report is delivered
+   *  there (`POST /contests/:id/readiness-reports`) so the server has a
+   *  durable record of what this device claimed. */
+  apiUrl?: string | null;
 }): Promise<ReadinessReport> {
   return invoke<ReadinessReport>("start_secure_session", {
     policy: options.policy ?? strictContestPolicy(),
     contestId: options.contestId ?? null,
     deviceId: options.deviceId ?? null,
     deviceState: options.deviceState,
+    apiUrl: options.apiUrl ?? null,
   });
+}
+
+// ── Organizer overrides (live proctor "resolve" channel) ─────────────────────
+//
+// Organizers can remotely waive a failing readiness check for a specific
+// device. The dashboard issues override grants server-side; the candidate app
+// fetches them (TLS to the authoritative API is the trust boundary — an
+// override only LOOSENS policy, so no client-side signature check is needed)
+// and injects them as non-required requirements, which core-rs's
+// merge_requirements overlays onto the base policy.
+
+export type OrganizerOverride = {
+  check_kind: CheckKind;
+  /** Epoch ms after which the grant is ignored. */
+  expires_at_ms: number;
+  issued_by?: string;
+};
+
+/** Identity checks can never be waived remotely. */
+const NON_OVERRIDABLE_CHECKS: CheckKind[] = ["contest_id", "device_id"];
+
+const KNOWN_CHECK_KINDS = new Set<string>(POLICY_CHECKS);
+
+export async function fetchOrganizerOverrides(
+  apiUrl: string,
+  contestId: string,
+  deviceId: string
+): Promise<OrganizerOverride[]> {
+  try {
+    const res = await fetch(
+      `${apiUrl}/contests/${encodeURIComponent(contestId)}/overrides?device_id=${encodeURIComponent(deviceId)}`
+    );
+    if (!res.ok) return [];
+    const body: unknown = await res.json();
+    const list = Array.isArray(body)
+      ? body
+      : Array.isArray((body as { overrides?: unknown[] })?.overrides)
+        ? (body as { overrides: unknown[] }).overrides
+        : [];
+    const now = Date.now();
+    return list.filter((entry): entry is OrganizerOverride => {
+      const candidate = entry as Partial<OrganizerOverride> | null;
+      return (
+        !!candidate &&
+        typeof candidate.check_kind === "string" &&
+        KNOWN_CHECK_KINDS.has(candidate.check_kind) &&
+        !NON_OVERRIDABLE_CHECKS.includes(candidate.check_kind as CheckKind) &&
+        typeof candidate.expires_at_ms === "number" &&
+        candidate.expires_at_ms > now
+      );
+    });
+  } catch {
+    // No overrides endpoint / offline — readiness proceeds with base policy.
+    return [];
+  }
+}
+
+export function applyOrganizerOverrides(
+  policy: SessionPolicy,
+  overrides: OrganizerOverride[]
+): SessionPolicy {
+  if (overrides.length === 0) return policy;
+  return {
+    ...policy,
+    checks: [
+      ...policy.checks,
+      // Appended last so merge_requirements lets the override win by kind.
+      ...overrides.map((grant) => ({
+        kind: grant.check_kind,
+        required: false,
+        severity: "warning" as const,
+        organizer_override_allowed: true,
+      })),
+    ],
+  };
 }

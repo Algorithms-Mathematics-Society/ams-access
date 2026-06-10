@@ -1,0 +1,94 @@
+name: CI
+
+# Compiles and lints the Rust workspace on ALL shipping platforms.
+#
+# Rationale: platform-rs hides each OS module behind cfg_if, so a Linux-only
+# check (pre-commit hook) never parses the macOS/Windows code at all. That is
+# how commit 27f3950 landed with macOS code that did not compile, and how the
+# Windows raw-cpuid variant-name errors went unnoticed. This matrix is the
+# authoritative gate.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+          - platform: macos-latest
+
+    runs-on: ${{ matrix.platform }}
+    name: Rust (${{ matrix.platform }})
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Configure sccache
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ci-${{ matrix.platform }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ci-${{ matrix.platform }}-cargo-
+
+      - name: Install Linux system deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev
+
+      # tauri-build validates that frontendDist (apps/web/out) exists at compile
+      # time. The Rust gate does not need real frontend assets — an empty dir is
+      # enough and avoids a full Node/Next build on every Rust-only PR.
+      - name: Create placeholder frontend dist
+        shell: bash
+        run: mkdir -p apps/web/out
+
+      - name: rustfmt
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace

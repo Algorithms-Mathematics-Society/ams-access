@@ -21,6 +21,11 @@ core-rs = { path = "../../../packages/core-rs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["net", "rt", "time"] }
+# Event-stream uploader (organizer visibility). reqwest is already in the
+# dependency graph via tauri, so this adds no new transitive deps.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "http2"] }
+# RFC 9110 Date-header parsing for the clock-skew probe (zero dependencies).
+httpdate = "1"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
 sha2 = "0.10"
