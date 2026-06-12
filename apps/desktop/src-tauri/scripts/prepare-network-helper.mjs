@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,13 +17,16 @@ mkdirSync(helperDir, { recursive: true });
 const isMacOS = process.platform === "darwin";
 
 if (!isMacOS) {
-  // Build for the current host only — used on Linux/Windows CI for web-only builds.
+  // Build for the current host only. On Windows the crate produces a stub
+  // (lockdown is enforced by the main app there), but the bundler still
+  // expects the helper resource to exist, so build and copy it anyway.
   execFileSync("cargo", ["build", "-p", "network-helper", "--release"], {
     cwd: repoRoot,
     stdio: "inherit",
   });
-  const builtHelper = path.join(repoRoot, "target/release", cargoBinName);
-  execFileSync("cp", [builtHelper, bundledHelper]);
+  const binFileName = process.platform === "win32" ? `${cargoBinName}.exe` : cargoBinName;
+  const builtHelper = path.join(repoRoot, "target", "release", binFileName);
+  copyFileSync(builtHelper, bundledHelper);
   chmodSync(bundledHelper, 0o755);
   console.log(`Prepared network helper (host arch): ${bundledHelper}`);
 } else {
