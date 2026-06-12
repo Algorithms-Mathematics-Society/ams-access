@@ -34,6 +34,8 @@ export type PlatformInfo = {
   os: string;
   arch: string;
   family: string;
+  /** Windows: true when the process is UAC-elevated. Always true elsewhere. */
+  elevated?: boolean;
 };
 
 export type SecurityEnvironment = {

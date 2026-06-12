@@ -15,7 +15,12 @@ name = "ams-access"
 path = "src/main.rs"
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+# NOTE: the "devtools" feature is intentionally NOT enabled. Tauri turns
+# DevTools on automatically for debug builds, so `pnpm tauri dev` still has
+# them — but enabling the feature would also compile DevTools into RELEASE
+# (lockdown) builds, letting a candidate open the inspector and drive
+# window.__TAURI__ directly. Keep it off so release bundles ship without it.
+tauri = { version = "2" }
 platform-rs = { path = "../../../packages/platform-rs" }
 core-rs = { path = "../../../packages/core-rs" }
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +38,11 @@ hex = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_22"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# WebView2 PermissionRequested auto-allow for camera/mic. Same version wry
+# already pins, so this adds no new transitive deps.
+webview2-com = "0.38"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

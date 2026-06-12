@@ -118,14 +118,91 @@ const CAPTURE_PROCESSES: &[&str] = &[
 
 // ── Elevation check ───────────────────────────────────────────────────────────
 
+/// True when the process token is elevated (UAC "Administrator").
+///
+/// Token query, not `net session` — that command depends on the LanmanServer
+/// service and reports "not admin" on machines where the service is disabled,
+/// which would hard-block readiness for a candidate who IS elevated.
 pub fn is_elevated() -> bool {
-    std::process::Command::new("net")
-        .arg("session")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut TOKEN_ELEVATION as *mut core::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
+    }
+}
+
+/// Relaunch this executable elevated via the `runas` shell verb. This raises
+/// the standard one-click UAC consent prompt — the candidate never has to
+/// find the exe and right-click "Run as administrator" themselves.
+///
+/// Returns Ok(()) once the elevated instance has been started; the caller is
+/// responsible for exiting the current (unelevated) instance. `uac_declined`
+/// means the candidate dismissed the consent prompt.
+pub fn relaunch_as_admin() -> Result<(), String> {
+    use windows::core::{w, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    if is_elevated() {
+        return Ok(());
+    }
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_w = HSTRING::from(exe.as_os_str());
+    let hinstance = unsafe {
+        ShellExecuteW(
+            None,
+            w!("runas"),
+            PCWSTR(exe_w.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    // Per ShellExecuteW docs the return value is > 32 on success;
+    // SE_ERR_ACCESSDENIED (5) is what a declined UAC prompt produces.
+    if hinstance.0 as isize > 32 {
+        Ok(())
+    } else {
+        Err("uac_declined".to_string())
+    }
+}
+
+/// Deep-link straight into the Windows Settings page that controls the given
+/// permission, so a candidate fixes an OS-level privacy block with one click
+/// instead of hunting through Settings manually.
+pub fn open_privacy_settings(section: &str) -> Result<(), String> {
+    let uri = match section {
+        "camera" => "ms-settings:privacy-webcam",
+        "microphone" => "ms-settings:privacy-microphone",
+        _ => return Err(format!("unknown_settings_section:{section}")),
+    };
+    // explorer.exe resolves ms-settings: URIs without flashing a console window.
+    std::process::Command::new("explorer.exe")
+        .arg(uri)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 // ── Escape context control ────────────────────────────────────────────────────

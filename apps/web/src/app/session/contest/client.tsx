@@ -12,6 +12,7 @@ import {
 import MarkovEditor, { type MarkovChain, normalizeChain } from "@/components/MarkovEditor";
 import dynamic from "next/dynamic";
 import { marked, type MarkedExtension } from "marked";
+import DOMPurify from "dompurify";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
@@ -109,7 +110,17 @@ function parseDescription(md: string): string {
     .replace(/\\ldots\b|\\dots\b/g, "…")
     .replace(/\\pm\b/g, "±")
     .replace(/\\\\/g, "\n");
-  return marked.parse(tex) as string;
+  // SECURITY: problem statements are untrusted (backend / contest-authored, and
+  // could be tampered with in transit) and are rendered into the privileged
+  // Tauri webview via dangerouslySetInnerHTML. Sanitize the marked() output —
+  // stripping <script>, inline event handlers, and javascript:/data: URLs —
+  // before it can reach the DOM, so injected markup cannot reach window.__TAURI__.
+  // DOMPurify needs a DOM; during static prerender (Node) there is none, but
+  // contest content is only ever fetched and rendered in the browser, so the
+  // prerender path only ever sees empty placeholder strings.
+  if (typeof window === "undefined") return "";
+  const rawHtml = marked.parse(tex) as string;
+  return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
 }
 function decodeHtmlEntities(value: string): string {
   return value

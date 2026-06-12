@@ -573,12 +573,32 @@ function createContestEditorTheme(themeId: ContestEditorThemeId): Extension {
   ];
 }
 
+/// Tell the native keyboard hook whether bare Escape should be swallowed.
+/// While the editor is focused Escape must reach CodeMirror (dismiss
+/// autocomplete, close search, cancel selection); everywhere else it stays
+/// blocked so it cannot interact with system UI. No-op outside Tauri.
+function setNativeEscapeBlocked(blocked: boolean) {
+  type TauriGlobal = {
+    core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+  };
+  const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
+  void tauri?.core.invoke("set_escape_blocked", { blocked }).catch(() => {});
+}
+
 function createEditorExtensions(
   onCodeChange: (value: string) => void,
   editorTheme: ContestEditorThemeId,
   language: string
 ): Extension[] {
   return [
+    EditorView.domEventHandlers({
+      focus: () => {
+        setNativeEscapeBlocked(false);
+      },
+      blur: () => {
+        setNativeEscapeBlocked(true);
+      },
+    }),
     lineNumbers(),
     foldGutter(),
     highlightActiveLineGutter(),
@@ -671,6 +691,9 @@ export default function EditorPane({
     return () => {
       view.destroy();
       if (viewRef.current === view) viewRef.current = null;
+      // The destroyed view never fires blur — re-arm Escape blocking so a
+      // tab switch or page exit can never leave Escape passing through.
+      setNativeEscapeBlocked(true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeQ, activeTab, extensions]);

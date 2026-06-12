@@ -87,6 +87,14 @@ static ACCESSIBILITY_PROMPTED: AtomicBool = AtomicBool::new(false);
 // outlive a rapid disable→enable cycle; both compare their stamped generation
 // against this counter so they never clobber or re-enable a newer tap's state.
 static TAP_GENERATION: AtomicU64 = AtomicU64::new(0);
+// True while a tap run-loop thread is spawning or alive. The 500 ms ready-wait
+// in `enable_keyboard_intercept` can time out and report failure while the
+// spawned thread goes on to install the tap anyway; a retry would then spawn a
+// SECOND tap + run-loop thread. That race leaked a tap and a CFRunLoop thread
+// on every readiness rescan (crash reports showed 7+ live run-loop threads),
+// and the accumulating state is what eventually aborted the process. This flag
+// makes spawning single-shot: only one tap thread can exist at a time.
+static TAP_THREAD_PRESENT: AtomicBool = AtomicBool::new(false);
 static TAP_RUNLOOP: OnceLock<Mutex<Option<SendPtr>>> = OnceLock::new();
 static TAP_STARTED: OnceLock<Arc<(Mutex<bool>, Condvar)>> = OnceLock::new();
 static CAFFEINATE_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
@@ -111,10 +119,17 @@ where
 }
 
 /// Raise a security event to the host app (and stderr as a fallback trail).
+///
+/// Called from background lockdown threads (the tap watchdog, the space
+/// watchdog). The host callback ends up in Tauri's `emit` / event machinery,
+/// which can panic (e.g. if the webview is gone). A panic that unwinds out of
+/// this call on a spawned thread can escalate to a process `abort()` — the
+/// SIGABRT crash seen in the field — so it is contained here and never allowed
+/// to take down the exam app.
 fn emit_lockdown_event(kind: &str, detail: &str) {
     eprintln!("AMS Access: {kind}: {detail}");
     if let Some(callback) = LOCKDOWN_EVENT_CALLBACK.get() {
-        callback(kind, detail);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(kind, detail)));
     }
 }
 
@@ -269,26 +284,45 @@ extern "C" {
 
 // ── CGEventTap callback ───────────────────────────────────────────────────────
 
-/// Returns `null` to block the event or `event` to pass it through.
+/// FFI entry point for the CGEventTap. Returns `null` to block the event or
+/// `event` to pass it through.
 ///
-/// Called on the tap's run loop thread. Uses only atomics — no locking.
-#[allow(non_upper_case_globals)]
+/// Called by CoreGraphics across an FFI boundary on the tap's run-loop thread.
+/// A Rust panic must NEVER unwind into C — that is undefined behaviour and
+/// aborts the whole process with SIGABRT. So this is a thin panic-guarded
+/// wrapper around `kb_tap_should_block`; on the (unexpected) panic path it
+/// fails OPEN — passing the event through rather than killing the exam app or
+/// leaving the candidate with a frozen keyboard.
 unsafe extern "C" fn kb_tap_callback(
     _proxy: *mut c_void,
     event_type: u32,
     event: *mut c_void,
     _user_info: *mut c_void,
 ) -> *mut c_void {
+    let decision = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        kb_tap_should_block(event_type, event)
+    }));
+    match decision {
+        Ok(true) => std::ptr::null_mut(),
+        Ok(false) | Err(_) => event,
+    }
+}
+
+/// Decide whether to swallow this event. Split out from `kb_tap_callback` so
+/// the FFI entry point stays a thin panic-guarded shim. Uses only atomics —
+/// no locking — so it is safe to run on the tap's run-loop thread.
+#[allow(non_upper_case_globals)]
+unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
     if !INTERCEPT_ACTIVE.load(Ordering::Relaxed) {
-        return event;
+        return false;
     }
     // Layer 2: swallow 3/4-finger swipe and gesture events so WindowServer
     // never sees them and cannot switch spaces or open Mission Control.
     if event_type == CG_EVENT_SWIPE || event_type == CG_EVENT_GESTURE {
-        return std::ptr::null_mut();
+        return true;
     }
     if event_type != CG_EVENT_KEY_DOWN && event_type != CG_EVENT_KEY_UP {
-        return event;
+        return false;
     }
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
@@ -298,7 +332,7 @@ unsafe extern "C" fn kb_tap_callback(
     let ctrl = (flags & FLAG_CTRL) != 0;
     let opt = (flags & FLAG_OPT) != 0;
 
-    let block = match kc {
+    match kc {
         // Cmd+Tab (app switcher)
         VK_TAB if cmd => true,
         // Cmd+` (in-app window switcher)
@@ -333,12 +367,6 @@ unsafe extern "C" fn kb_tap_callback(
         // Ctrl+Cmd+F (fullscreen toggle — would exit AMS fullscreen)
         VK_F if cmd && ctrl => true,
         _ => false,
-    };
-
-    if block {
-        std::ptr::null_mut()
-    } else {
-        event
     }
 }
 
@@ -506,6 +534,25 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         };
     }
 
+    // A tap thread is already spawning or running (INTERCEPT_ACTIVE may not be
+    // set true yet because the run-loop thread sets it just before signalling
+    // ready). Refuse to spawn a second one — that is the race that leaked taps
+    // and CFRunLoop threads on every rescan until the process aborted. The
+    // running thread clears this flag when it exits.
+    if TAP_THREAD_PRESENT.swap(true, Ordering::SeqCst) {
+        let active = INTERCEPT_ACTIVE.load(Ordering::SeqCst);
+        let method = if active {
+            "cgeventtap"
+        } else {
+            "cgeventtap_pending"
+        };
+        return KeyboardInterceptResult {
+            active,
+            method: method.to_string(),
+            platform: "macos".to_string(),
+        };
+    }
+
     {
         let (lock, _) = &**tap_started();
         if let Ok(mut started) = lock.lock() {
@@ -553,6 +600,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 
             if tap.is_null() {
                 signal_ready();
+                TAP_THREAD_PRESENT.store(false, Ordering::SeqCst);
                 return;
             }
 
@@ -560,6 +608,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             if source.is_null() {
                 CFRelease(tap);
                 signal_ready();
+                TAP_THREAD_PRESENT.store(false, Ordering::SeqCst);
                 return;
             }
 
@@ -593,6 +642,8 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             }
             CFRelease(source);
         }
+        // This tap thread is exiting — allow a future enable to spawn a new one.
+        TAP_THREAD_PRESENT.store(false, Ordering::SeqCst);
     });
 
     let (lock, cvar) = &**tap_started();
@@ -841,8 +892,12 @@ fn install_space_observer() {
     // RcBlock may drop when this function returns. Built outside the unsafe
     // block below so its body carries its own explicit unsafe scope.
     let handler = RcBlock::new(|_notification: *mut c_void| {
+        // Invoked as an Objective-C block on the main queue. A panic here would
+        // unwind into AppKit/ObjC and abort the process — contain it.
         if INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
-            unsafe { refocus_our_app() };
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                refocus_our_app()
+            }));
         }
     });
 
@@ -929,7 +984,11 @@ fn spawn_space_watchdog() {
         if !INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
             break;
         }
-        unsafe { refocus_our_app() };
+        // `refocus_our_app` is raw objc_msgSend; a panic here must not unwind
+        // out of the thread and risk aborting the process.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            refocus_our_app()
+        }));
     });
 }
 

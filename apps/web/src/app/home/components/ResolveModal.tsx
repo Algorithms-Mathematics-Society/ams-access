@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { invoke } from "@ams/api-client";
 import { getNetworkProbeHost, getThemeColors } from "./utils";
 import { useFocusTrap } from "./hooks";
 import type { TelemetryQueryState } from "./types";
@@ -22,7 +23,7 @@ type ResolveFlow = {
   problem: string;
   steps: string[];
   primaryLabel: string;
-  primaryAction: "settings" | "retry";
+  primaryAction: "settings" | "retry" | "elevate" | "privacy-camera" | "privacy-microphone";
   details: Array<{ label: string; value: string }>;
   closeAllApps?: string[];
 };
@@ -74,40 +75,58 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         ],
         closeAllApps: processes?.found?.length ? processes.found : undefined,
       };
-    case "camera":
+    case "camera": {
+      // On Windows the usual cause is the OS privacy toggle — deep-link
+      // straight to it so fixing it is one click, not a Settings scavenger hunt.
+      const winCamera = platform?.os === "windows";
       return {
         title: "Camera needs attention",
         problem: "AMS Access cannot confirm a working camera for this session.",
-        steps: [
-          "Allow camera permission in your browser or system privacy settings.",
-          "Close Zoom, Meet, OBS, or any other app that may be using the camera.",
-          "Open Settings and run the camera test again.",
-        ],
-        primaryLabel: "Open Settings",
-        primaryAction: "settings",
+        steps: winCamera
+          ? [
+              "Click the button below to open Windows camera privacy settings.",
+              "Turn on “Camera access” and “Let desktop apps access your camera”.",
+              "Close Zoom, Meet, OBS, or any other app that may be using the camera, then run the camera test again.",
+            ]
+          : [
+              "Allow camera permission in your browser or system privacy settings.",
+              "Close Zoom, Meet, OBS, or any other app that may be using the camera.",
+              "Open Settings and run the camera test again.",
+            ],
+        primaryLabel: winCamera ? "Open Windows camera settings" : "Open Settings",
+        primaryAction: winCamera ? "privacy-camera" : "settings",
         details: [
           { label: "Device check", value: "Camera failed readiness" },
           { label: "Latest scan", value: lastScanned },
           { label: "Suggested fix", value: "Permission or camera busy" },
         ],
       };
-    case "mic":
+    }
+    case "mic": {
+      const winMic = platform?.os === "windows";
       return {
         title: "Microphone needs attention",
         problem: "AMS Access cannot confirm a working microphone for this session.",
-        steps: [
-          "Allow microphone permission in your browser or system privacy settings.",
-          "Check that the microphone is connected and not muted.",
-          "Open Settings and run the microphone test again.",
-        ],
-        primaryLabel: "Open Settings",
-        primaryAction: "settings",
+        steps: winMic
+          ? [
+              "Click the button below to open Windows microphone privacy settings.",
+              "Turn on “Microphone access” and “Let desktop apps access your microphone”.",
+              "Check that the microphone is connected and not muted, then run the test again.",
+            ]
+          : [
+              "Allow microphone permission in your browser or system privacy settings.",
+              "Check that the microphone is connected and not muted.",
+              "Open Settings and run the microphone test again.",
+            ],
+        primaryLabel: winMic ? "Open Windows microphone settings" : "Open Settings",
+        primaryAction: winMic ? "privacy-microphone" : "settings",
         details: [
           { label: "Device check", value: "Microphone failed readiness" },
           { label: "Latest scan", value: lastScanned },
           { label: "Suggested fix", value: "Permission, mute, or missing input device" },
         ],
       };
+    }
     case "network":
       return {
         title: "Network needs attention",
@@ -150,7 +169,31 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
           { label: "Latest scan", value: lastScanned },
         ],
       };
-    case "platform":
+    case "platform": {
+      // Windows without elevation is recoverable in one click: the relaunch
+      // command raises the standard UAC consent prompt — no manual
+      // right-click "Run as administrator" needed.
+      if (platform?.os === "windows" && platform.elevated === false) {
+        return {
+          title: "Administrator approval needed",
+          problem:
+            "AMS Access needs Administrator privileges on Windows to enable full exam lockdown (firewall and keyboard protection).",
+          steps: [
+            "Click “Relaunch as Administrator” below.",
+            "Choose “Yes” on the Windows confirmation prompt that appears.",
+            "The app restarts with the required privileges — then sign in again.",
+          ],
+          primaryLabel: "Relaunch as Administrator",
+          primaryAction: "elevate",
+          details: [
+            {
+              label: "Operating system",
+              value: `${platform.os} ${platform.arch}`,
+            },
+            { label: "Administrator", value: "No — approval required" },
+          ],
+        };
+      }
       return {
         title: "Platform not supported",
         problem: "This operating system or desktop session may not support secure contest entry.",
@@ -170,6 +213,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
           { label: "Display session", value: formatValue(env?.display_server, "Unknown") },
         ],
       };
+    }
     case "vm":
     default:
       return {
@@ -205,6 +249,7 @@ export function ResolveModal({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const c = getThemeColors(theme);
   const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
   const flow = useMemo(
@@ -218,8 +263,39 @@ export function ResolveModal({
   const activeFlow = flow;
 
   async function handlePrimaryAction() {
+    setActionNotice(null);
     if (activeFlow.primaryAction === "settings") {
       onOpenSettings?.();
+      return;
+    }
+    if (activeFlow.primaryAction === "elevate") {
+      setBusy(true);
+      try {
+        // Raises the one-click UAC prompt; on approval the elevated instance
+        // starts and this one exits, so we never reach the catch block.
+        await invoke("relaunch_as_admin");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setActionNotice(
+          msg.includes("uac_declined")
+            ? "Administrator approval was declined. Click the button and choose “Yes” on the Windows prompt to continue."
+            : "Could not relaunch with Administrator privileges. Please try again."
+        );
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (
+      activeFlow.primaryAction === "privacy-camera" ||
+      activeFlow.primaryAction === "privacy-microphone"
+    ) {
+      const section = activeFlow.primaryAction === "privacy-camera" ? "camera" : "microphone";
+      try {
+        await invoke("open_privacy_settings", { section });
+      } catch {
+        setActionNotice("Could not open Windows Settings. Please try again.");
+      }
       return;
     }
     setBusy(true);
@@ -378,6 +454,24 @@ export function ResolveModal({
           </div>
         </section>
 
+        {actionNotice && (
+          <p
+            role="alert"
+            style={{
+              margin: "0 0 14px",
+              padding: "10px 12px",
+              borderRadius: "6px",
+              background: "rgba(245, 158, 11, 0.10)",
+              border: "1px solid rgba(245, 158, 11, 0.32)",
+              color: "#f59e0b",
+              fontSize: "12.5px",
+              lineHeight: 1.55,
+            }}
+          >
+            {actionNotice}
+          </p>
+        )}
+
         <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "flex-end" }}>
           <button
             type="button"
@@ -487,9 +581,9 @@ export function ResolveModal({
               height: "40px",
               padding: "0 16px",
               background:
-                activeFlow.primaryAction === "settings" ? "#a855f7" : "rgba(245, 158, 11, 0.14)",
-              color: activeFlow.primaryAction === "settings" ? "#ffffff" : "#f59e0b",
-              border: `1px solid ${activeFlow.primaryAction === "settings" ? "#a855f7" : "rgba(245, 158, 11, 0.36)"}`,
+                activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.14)" : "#a855f7",
+              color: activeFlow.primaryAction === "retry" ? "#f59e0b" : "#ffffff",
+              border: `1px solid ${activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.36)" : "#a855f7"}`,
               borderRadius: "6px",
               fontWeight: 700,
               fontSize: "13px",
@@ -497,7 +591,11 @@ export function ResolveModal({
               opacity: busy ? 0.72 : 1,
             }}
           >
-            {busy ? "Checking..." : activeFlow.primaryLabel}
+            {busy
+              ? activeFlow.primaryAction === "elevate"
+                ? "Waiting for approval..."
+                : "Checking..."
+              : activeFlow.primaryLabel}
           </button>
         </div>
       </div>

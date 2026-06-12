@@ -599,7 +599,7 @@ fn evaluate_requirement(
             Some(platform) if platform == "windows_no_admin" => (
                 false,
                 Some(FailureReasonCode::UnsupportedPlatform),
-                Some("Administrator privileges are required on Windows. Please relaunch the application as Administrator.".to_string()),
+                Some("Administrator privileges are required on Windows. Use the Relaunch as Administrator action — Windows will show a single confirmation prompt.".to_string()),
                 vec![
                     RecoveryAction::UseSupportedPlatform,
                     RecoveryAction::ContactOrganizer,

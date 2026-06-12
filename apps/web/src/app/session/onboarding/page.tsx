@@ -1099,8 +1099,16 @@ function Stage8_CameraInit({
   const theme = useTheme();
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [error, setError] = useState<string | null>(null);
+  const [permissionIssue, setPermissionIssue] = useState(false);
+  const [isWindows, setIsWindows] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    invoke<{ os: string }>("get_platform")
+      .then((p) => setIsWindows(p?.os === "windows"))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1141,13 +1149,17 @@ function Stage8_CameraInit({
         localStream = null;
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Camera access was denied";
-        setError(
+        const denied =
           msg.includes("denied") ||
-            msg.includes("Permission") ||
-            msg.includes("NotAllowed") ||
-            msg.includes("not allowed")
-            ? "Camera access was denied. Please allow camera access in your system settings."
-            : msg.includes("not available") || msg.includes("NotFound")
+          msg.includes("Permission") ||
+          msg.includes("NotAllowed") ||
+          msg.includes("not allowed");
+        const notFound = msg.includes("not available") || msg.includes("NotFound");
+        setPermissionIssue(!notFound);
+        setError(
+          denied
+            ? "Camera access was denied. Allow camera access for AMS Access, then try again."
+            : notFound
               ? "No camera found. Please connect a camera and try again."
               : "Could not access your camera. Please check your settings."
         );
@@ -1240,6 +1252,20 @@ function Stage8_CameraInit({
           >
             {error}
           </p>
+          {isWindows && permissionIssue && (
+            <Button
+              theme={theme}
+              variant="primary"
+              size="small"
+              onClick={() => {
+                // One-click deep link into Windows Settings → Privacy → Camera —
+                // the candidate never has to find the page themselves.
+                void invoke("open_privacy_settings", { section: "camera" }).catch(() => {});
+              }}
+            >
+              Open Windows camera settings
+            </Button>
+          )}
           <Button
             theme={theme}
             variant="secondary"
@@ -1247,6 +1273,7 @@ function Stage8_CameraInit({
             onClick={() => {
               setPhase("checking");
               setError(null);
+              setPermissionIssue(false);
               setRetryKey((k) => k + 1);
             }}
           >
@@ -3142,13 +3169,59 @@ export default function OnboardingPage() {
               updated_at: new Date().toISOString(),
             })
           );
+          // SEC-3/SEC-4: arm the proctoring event uploader as soon as the
+          // session exists, so onboarding-phase events — including a failed
+          // network lockdown below — stream to the server promptly instead of
+          // waiting for the contest screen to mount.
+          await invoke("configure_event_stream", {
+            apiUrl: API_URL,
+            sessionId: body.id,
+          }).catch(() => {});
         }
         setSessionPrepared(true);
       }
 
-      await window.__TAURI__?.core
-        .invoke("enable_network_lockdown", { allowedDomains: [getNetworkProbeHost()] })
-        .catch(() => null);
+      // SEC-3: network lockdown is the core anti-cheat control — never enter a
+      // contest with it silently un-applied. Outside the desktop shell (dev /
+      // browser preview) there is nothing to lock, so skip. Inside it, a failure
+      // is a hard stop with a durable, server-visible violation so the proctor
+      // sees the attempt rather than the candidate slipping in with open internet.
+      const tauriBridge = window.__TAURI__;
+      if (tauriBridge) {
+        let lockdownEngaged = false;
+        let lockdownError: string | null = null;
+        try {
+          lockdownEngaged = await tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
+            allowedDomains: [getNetworkProbeHost()],
+          });
+        } catch (err) {
+          lockdownError = err instanceof Error ? err.message : String(err);
+        }
+
+        if (!lockdownEngaged) {
+          const detail = lockdownError ?? "enable_network_lockdown returned false";
+          await invoke("log_violation", { kind: "network_lockdown_failed", detail }).catch(
+            () => {}
+          );
+          await invoke("log_proctoring_event", {
+            kind: "network_lockdown_failed",
+            detail,
+            payload: { allowed_domains: [getNetworkProbeHost()] },
+          }).catch(() => {});
+          setReadyForStart(false);
+          setTransitioning(false);
+          setPolicyBlock(
+            "We couldn't secure your network for the exam — the proctoring network component may not be installed or still needs your permission. Re-run device setup, then try again. Starting now would leave your internet open, which a secured contest does not allow."
+          );
+          return;
+        }
+
+        await invoke("log_proctoring_event", {
+          kind: "network_lockdown_engaged",
+          detail: "Outbound traffic restricted to the exam allowlist.",
+          payload: { allowed_domains: [getNetworkProbeHost()] },
+        }).catch(() => {});
+      }
 
       await startSecureSession({
         contestId,

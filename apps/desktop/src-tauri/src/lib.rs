@@ -30,11 +30,24 @@ const EXPECTED_BLAZEFACE_ASSETS: &[(&str, &str, u64)] = &[
 ];
 // ── Violation log ─────────────────────────────────────────────────────────────
 
+// SEC-4: every event carries a monotonic `seq` and a hash-chain link
+// (`prev_hash` → `hash`). Together they make the local spool tamper-EVIDENT:
+// the server (which already receives events in near-real-time and is the system
+// of record) can detect suppression (a gap in `seq` that never arrives),
+// reordering, or any edit (a broken chain link / mismatched `hash`). The new
+// fields default on deserialize so spool files written before this change still
+// load. See `next_chain_link` for the digest definition the server re-computes.
 #[derive(Serialize, Deserialize, Clone)]
 struct ViolationEntry {
     kind: String,
     detail: String,
     ts: u64,
+    #[serde(default)]
+    seq: u64,
+    #[serde(default)]
+    prev_hash: String,
+    #[serde(default)]
+    hash: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -43,6 +56,12 @@ struct ProctoringEventEntry {
     detail: String,
     ts: u64,
     payload: serde_json::Value,
+    #[serde(default)]
+    seq: u64,
+    #[serde(default)]
+    prev_hash: String,
+    #[serde(default)]
+    hash: String,
 }
 
 static VIOLATION_LOG: OnceLock<Mutex<Vec<ViolationEntry>>> = OnceLock::new();
@@ -68,11 +87,102 @@ fn unix_ts_ms() -> u64 {
         .as_millis() as u64
 }
 
+// ── SEC-4: tamper-evident event chain ─────────────────────────────────────────
+//
+// A single monotonic sequence + hash chain spans BOTH the violation and
+// proctoring streams (they share one counter). The chain is anchored by a
+// per-run nonce (the genesis `prev_hash`), so chains from different app runs are
+// distinguishable and cannot be spliced together. The server merges both
+// streams by `seq`, then verifies: `seq` is contiguous from 0 (a gap that never
+// arrives = suppression), each `prev_hash` equals the previous event's `hash`
+// (no reordering/insertion), and each `hash` re-computes (no edits).
+//
+// This is tamper-EVIDENCE, not prevention: a candidate who fully controls the
+// machine can rewrite the on-disk spool, but the server already holds what it
+// received, so any divergence is detectable. Unforgeable integrity additionally
+// needs a server-ISSUED per-session key (HMAC) held only in memory — that is the
+// backend half of this fix and is documented in fable-sec-june-12.md (SEC-4).
+struct EventChainState {
+    seq: u64,
+    prev_hash: String,
+}
+
+static EVENT_CHAIN: OnceLock<Mutex<EventChainState>> = OnceLock::new();
+
+/// Per-run anchor for the event chain. Unique per process run so the server can
+/// tell runs apart; not secret (integrity comes from the server already holding
+/// received events, not from this value being unpredictable).
+fn gen_run_nonce() -> String {
+    let pid = u64::from(std::process::id());
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut hasher = Sha256::new();
+    hasher.update(b"ams-access-run-nonce-v1");
+    hasher.update(pid.to_le_bytes());
+    hasher.update(nanos.to_le_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn event_chain() -> &'static Mutex<EventChainState> {
+    EVENT_CHAIN.get_or_init(|| {
+        Mutex::new(EventChainState {
+            seq: 0,
+            prev_hash: gen_run_nonce(),
+        })
+    })
+}
+
+/// Reserve the next `(seq, prev_hash, hash)` for an event and advance the chain.
+/// `payload_digest` is a hex SHA-256 of the proctoring payload (empty for
+/// violations); the server re-computes `hash` over exactly these inputs.
+fn next_chain_link(
+    ts: u64,
+    kind: &str,
+    detail: &str,
+    payload_digest: &str,
+) -> (u64, String, String) {
+    // Poison-tolerant: a panic elsewhere must not stop the audit chain.
+    let mut chain = event_chain()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let seq = chain.seq;
+    let prev_hash = chain.prev_hash.clone();
+
+    let mut hasher = Sha256::new();
+    hasher.update(seq.to_le_bytes());
+    hasher.update(ts.to_le_bytes());
+    hasher.update(kind.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(detail.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(payload_digest.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(prev_hash.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+
+    chain.seq = seq.wrapping_add(1);
+    chain.prev_hash = hash.clone();
+    (seq, prev_hash, hash)
+}
+
+fn payload_digest(payload: &serde_json::Value) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(payload.to_string().as_bytes());
+    hex::encode(hasher.finalize())
+}
+
 fn violation_entry(kind: &str, detail: &str) -> ViolationEntry {
+    let ts = unix_ts_ms();
+    let (seq, prev_hash, hash) = next_chain_link(ts, kind, detail, "");
     ViolationEntry {
         kind: kind.to_string(),
         detail: detail.to_string(),
-        ts: unix_ts_ms(),
+        ts,
+        seq,
+        prev_hash,
+        hash,
     }
 }
 
@@ -100,11 +210,23 @@ fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, e
         return;
     }
     let path = dir.join(filename);
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    // SEC-4: the spool can hold sensitive proctoring detail; keep it readable
+    // and writable only by the owning user (0600) so other local accounts can't
+    // read it or tamper with the audit trail. Applied on the create path; an
+    // existing file's mode is left as-is (idempotent re-tightening below).
+    #[cfg(unix)]
     {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    if let Ok(mut file) = options.open(&path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
         if let Ok(line) = serde_json::to_string(entry) {
             let _ = writeln!(file, "{line}");
         }
@@ -298,11 +420,17 @@ fn record_proctoring_event(
     detail: &str,
     payload: serde_json::Value,
 ) {
+    let ts = unix_ts_ms();
+    let digest = payload_digest(&payload);
+    let (seq, prev_hash, hash) = next_chain_link(ts, kind, detail, &digest);
     let entry = ProctoringEventEntry {
         kind: kind.to_string(),
         detail: detail.to_string(),
-        ts: unix_ts_ms(),
+        ts,
         payload,
+        seq,
+        prev_hash,
+        hash,
     };
     if let Ok(mut log) = proctoring_log().lock() {
         log.push(entry.clone());
@@ -717,6 +845,53 @@ fn open_accessibility_settings() {
     }
 }
 
+/// True when the process runs with the privileges full lockdown needs
+/// (UAC-elevated on Windows; other platforms have no equivalent gate here).
+#[tauri::command]
+fn is_process_elevated() -> bool {
+    process_elevated()
+}
+
+fn process_elevated() -> bool {
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::is_elevated();
+    #[cfg(not(target_os = "windows"))]
+    true
+}
+
+/// Relaunch the app elevated via the standard one-click UAC consent prompt
+/// (Windows only). On success the unelevated instance exits and the elevated
+/// one takes over — the candidate never touches the OS manually.
+/// Errors with "uac_declined" if the candidate dismisses the prompt.
+#[tauri::command]
+fn relaunch_as_admin(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        platform_rs::windows::relaunch_as_admin()?;
+        app.exit(0);
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err("not_supported_on_this_platform".to_string())
+    }
+}
+
+/// Deep-link into the OS privacy settings page for `section` ("camera" or
+/// "microphone"). Windows opens the matching ms-settings page; other
+/// platforms are a no-op (macOS camera/mic prompts are handled natively).
+#[tauri::command]
+fn open_privacy_settings(section: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    return platform_rs::windows::open_privacy_settings(&section);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = section;
+        Ok(())
+    }
+}
+
 /// Measure network reachability and latency using a multi-probe strategy
 /// that is resilient to Linux iptables rules and restrictive firewall policies.
 ///
@@ -871,6 +1046,7 @@ fn get_platform() -> serde_json::Value {
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "family": std::env::consts::FAMILY,
+        "elevated": process_elevated(),
     })
 }
 
@@ -907,6 +1083,7 @@ pub struct PlatformInfo {
     pub os: String,
     pub arch: String,
     pub family: String,
+    pub elevated: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -924,6 +1101,7 @@ async fn get_full_telemetry(network_host: Option<String>) -> FullTelemetry {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         family: std::env::consts::FAMILY.to_string(),
+        elevated: process_elevated(),
     };
     let env = get_security_environment();
     let processes = scan_processes();
@@ -1649,6 +1827,9 @@ pub fn run() {
             disable_network_lockdown,
             check_accessibility_permission,
             open_accessibility_settings,
+            is_process_elevated,
+            relaunch_as_admin,
+            open_privacy_settings,
             check_screen_sharing,
             get_screen_capture_permitted_apps,
             detect_active_screen_share,
@@ -1674,6 +1855,45 @@ pub fn run() {
                             req.allow();
                             true
                         });
+                    })
+                    .expect("with_webview failed — camera/mic permission handler not registered");
+                }
+            }
+            // On Windows, WebView2 raises PermissionRequested for getUserMedia.
+            // Mirror the Linux webkit2gtk auto-allow: grant camera/microphone to
+            // the bundled exam UI so the candidate only ever deals with the
+            // OS-level privacy toggle (which Stage 8 deep-links to), and a one-off
+            // webview "Deny" can never be persisted and dead-end the camera stage.
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    win.with_webview(|wv| unsafe {
+                        use webview2_com::Microsoft::Web::WebView2::Win32::{
+                            COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+                            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                            COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                        };
+                        use webview2_com::PermissionRequestedEventHandler;
+
+                        let Ok(core) = wv.controller().CoreWebView2() else {
+                            return;
+                        };
+                        let handler =
+                            PermissionRequestedEventHandler::create(Box::new(|_core, args| {
+                                if let Some(args) = args {
+                                    let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                                    args.PermissionKind(&mut kind)?;
+                                    if kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
+                                        || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                                    {
+                                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                                    }
+                                }
+                                Ok(())
+                            }));
+                        let mut token = 0i64;
+                        let _ = core.add_PermissionRequested(&handler, &mut token);
                     })
                     .expect("with_webview failed — camera/mic permission handler not registered");
                 }

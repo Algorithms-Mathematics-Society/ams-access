@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, memo } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { invoke } from "@ams/api-client";
 import {
   getThemeColors,
   describeMediaError,
@@ -146,6 +147,145 @@ function ProcessListItem({
     </div>
   );
 }
+
+/**
+ * Manual recovery control. Lockdown disables the macOS trackpad space-switch
+ * gestures (via a persisted `defaults write`), holds the screen awake with a
+ * `caffeinate` child, installs a keyboard intercept, and locks outbound network
+ * at the firewall. All of that is unwound automatically when a contest ends or
+ * the app exits — but if the app was force-quit or crashed mid-session, the
+ * teardown never ran and the candidate is left with a half-locked machine
+ * (most visibly: three/four-finger swipe stops working). This card lets them
+ * put everything back without waiting for the next launch's crash recovery.
+ *
+ * Every call is best-effort and idempotent: running it when nothing is locked
+ * is a harmless no-op, so it is always safe to press.
+ */
+const RestoreLockdownCard = memo(function RestoreLockdownCard({
+  theme,
+  onSecurityEvent,
+}: {
+  theme: "dark" | "light";
+  onSecurityEvent: (event: string, level?: SecurityLogLevel) => void;
+}) {
+  const c = useMemo(() => getThemeColors(theme), [theme]);
+  const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [detail, setDetail] = useState<string | null>(null);
+
+  async function restore() {
+    setStatus("working");
+    setDetail(null);
+    // unlock_desktop is the important one — it restores the trackpad gesture
+    // prefs and reaps caffeinate. The other two clear the keyboard intercept
+    // and flush the firewall allowlist. Independent and idempotent, so run them
+    // together and report on the aggregate.
+    const results = await Promise.allSettled([
+      invoke("unlock_desktop"),
+      invoke("disable_keyboard_intercept"),
+      invoke("disable_network_lockdown"),
+    ]);
+
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    // Thrown by the api-client when not running inside the desktop shell.
+    if (rejected.some((r) => String(r.reason).includes("bridge unavailable"))) {
+      setStatus("error");
+      setDetail("Recovery is only available inside the AMS Access desktop app.");
+      return;
+    }
+    if (rejected.length > 0) {
+      setStatus("error");
+      setDetail(
+        "Some settings could not be restored automatically. Relaunch AMS Access — it re-runs recovery on startup — or restart your Mac."
+      );
+      onSecurityEvent("RECOVERY: manual restore reported errors", "warn");
+      return;
+    }
+    setStatus("done");
+    setDetail(
+      "Trackpad gestures, keyboard shortcuts, screen sleep, and network access have been restored."
+    );
+    onSecurityEvent("RECOVERY: system settings restored by user");
+  }
+
+  const working = status === "working";
+  const accentBorder =
+    status === "done"
+      ? "rgba(34,197,94,0.3)"
+      : status === "error"
+        ? "rgba(239,68,68,0.3)"
+        : c.border;
+
+  return (
+    <div
+      style={{
+        background: c.cardBg,
+        border: `1px solid ${accentBorder}`,
+        borderRadius: "8px",
+        padding: "20px 22px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "14px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: "20px",
+        }}
+      >
+        <div>
+          <h4 style={{ fontSize: "13px", fontWeight: 600, color: c.text, marginBottom: "4px" }}>
+            Restore device after a contest
+          </h4>
+          <p style={{ fontSize: "12px", color: c.textMuted, lineHeight: 1.5, maxWidth: "520px" }}>
+            Re-enables trackpad swipe gestures, keyboard shortcuts, screen sleep, and full internet
+            access. Use this if a session ended unexpectedly and your Mac still feels locked down —
+            for example if three-finger swipe between desktops stopped working.
+          </p>
+        </div>
+        <button
+          onClick={() => void restore()}
+          disabled={working}
+          style={{
+            flexShrink: 0,
+            padding: "10px 18px",
+            background: c.accentLight,
+            border: `1px solid ${c.accentBorder}`,
+            borderRadius: "6px",
+            color: c.accentText,
+            fontSize: "13px",
+            fontWeight: 600,
+            cursor: working ? "not-allowed" : "pointer",
+            opacity: working ? 0.7 : 1,
+            transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
+          }}
+        >
+          {working ? "Restoring..." : "Restore System Settings"}
+        </button>
+      </div>
+      {detail && (
+        <p
+          style={{
+            fontSize: "12px",
+            lineHeight: 1.5,
+            color:
+              status === "done"
+                ? theme === "light"
+                  ? "#10b981"
+                  : "#22c55e"
+                : status === "error"
+                  ? "#f87171"
+                  : c.textMuted,
+          }}
+        >
+          {detail}
+        </p>
+      )}
+    </div>
+  );
+});
 
 export const SettingsPanel = memo(function SettingsPanel({
   readiness,
@@ -1017,6 +1157,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 
         {activeTab === "permissions" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            <RestoreLockdownCard theme={theme} onSecurityEvent={onSecurityEvent} />
             <PermissionLine
               label="Webcam Hardware Access"
               enabled={readiness.camera === "ok"}
