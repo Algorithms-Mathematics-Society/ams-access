@@ -152,15 +152,22 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
           { label: "Quality", value: formatValue(network?.quality, "Unknown") },
         ],
       };
-    case "keyboard":
+    case "keyboard": {
+      const isMac = platform?.os === "macos";
       return {
         title: "Keyboard lockdown unavailable",
         problem: "This device has not confirmed the keyboard controls required for the contest.",
-        steps: [
-          "Disable custom keyboard remappers or window-manager shortcuts temporarily.",
-          "Close tools like AutoHotkey or global hotkey managers.",
-          "Run the device check again.",
-        ],
+        steps: isMac
+          ? [
+              "Open System Settings → Privacy & Security → Accessibility.",
+              "Enable AMS Access in the Accessibility list.",
+              "Run the device check again.",
+            ]
+          : [
+              "Disable custom keyboard remappers or window-manager shortcuts temporarily.",
+              "Close tools like AutoHotkey or global hotkey managers.",
+              "Run the device check again.",
+            ],
         primaryLabel: "Run checks again",
         primaryAction: "retry",
         details: [
@@ -169,6 +176,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
           { label: "Latest scan", value: lastScanned },
         ],
       };
+    }
     case "platform": {
       // Windows without elevation is recoverable in one click: the relaunch
       // command raises the standard UAC consent prompt — no manual
@@ -198,7 +206,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         title: "Platform not supported",
         problem: "This operating system or desktop session may not support secure contest entry.",
         steps: [
-          "Use a supported Windows or Linux desktop environment.",
+          "Use a supported Windows, macOS, or Linux desktop environment.",
           "Avoid running the app inside a browser-only or unsupported shell.",
           "Run the platform check again after changing devices or sessions.",
         ],

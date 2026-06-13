@@ -186,12 +186,16 @@ export default function HomePage() {
           ...r,
           platform:
             snapshot.platform &&
-            (snapshot.platform.os === "linux" || snapshot.platform.os === "windows")
+            (snapshot.platform.os === "linux" ||
+              snapshot.platform.os === "windows" ||
+              snapshot.platform.os === "macos")
               ? "ok"
               : "fail",
           keyboard:
             snapshot.platform &&
-            (snapshot.platform.os === "linux" || snapshot.platform.os === "windows")
+            (snapshot.platform.os === "linux" ||
+              snapshot.platform.os === "windows" ||
+              snapshot.platform.os === "macos")
               ? "ok"
               : "fail",
           restrictedApps: snapshot.processes ? (snapshot.processes.clean ? "ok" : "fail") : "fail",
