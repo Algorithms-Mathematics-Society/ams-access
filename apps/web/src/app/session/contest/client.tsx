@@ -70,11 +70,26 @@ const LANGUAGE_ID_MAP: Record<string, string> = {
   C: "c",
   "C++17": "cpp17",
   "C++20": "cpp20",
+  cpp: "cpp17",
+  cpp17: "cpp17",
+  cpp20: "cpp20",
+  "c++": "cpp17",
+  "c++17": "cpp17",
+  "c++20": "cpp20",
   Python3: "python3",
+  python: "python3",
+  py: "python3",
+  python3: "python3",
   PyPy3: "pypy3",
+  pypy: "pypy3",
+  pypy3: "pypy3",
   Java17: "java17",
+  java: "java17",
+  java17: "java17",
   Go: "go",
+  go: "go",
   Rust: "rust",
+  rust: "rust",
 };
 
 // Languages the judge worker actually handles. Go and Rust are not yet
@@ -83,6 +98,44 @@ const WORKER_SUPPORTED_LANGUAGES = new Set(["C", "C++17", "C++20", "Python3", "P
 
 function toLanguageId(displayLabel: string): string {
   return LANGUAGE_ID_MAP[displayLabel] ?? displayLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeLanguageLabel(label: string): string {
+  const trimmed = label.trim();
+  switch (trimmed.toLowerCase()) {
+    case "cpp":
+    case "cpp17":
+    case "c++":
+    case "c++17":
+      return "C++17";
+    case "cpp20":
+    case "c++20":
+      return "C++20";
+    case "python":
+    case "py":
+    case "python3":
+      return "Python3";
+    case "pypy":
+    case "pypy3":
+      return "PyPy3";
+    case "java":
+    case "java17":
+      return "Java17";
+    case "go":
+      return "Go";
+    case "rust":
+      return "Rust";
+    default:
+      return trimmed;
+  }
+}
+
+function normalizeAllowedLanguages(languages?: string[] | null): string[] {
+  const source = languages?.length ? languages : ["C++17"];
+  const normalized = source
+    .map((language) => normalizeLanguageLabel(language))
+    .filter((language, index, list) => list.indexOf(language) === index);
+  return normalized.length > 0 ? normalized : ["C++17"];
 }
 
 function isContestEditorTheme(value: string | null): value is ContestEditorThemeId {
@@ -1771,9 +1824,13 @@ export default function ContestPageClient() {
     Promise.all([contestRequest, questionsRequest, sessionRequest])
       .then(async ([c, questions, session]) => {
         const contestMeta = c ? (c as ContestMeta) : null;
-        const firstLang = contestMeta?.allowed_languages?.[0] ?? "C++17";
+        const normalizedLanguages = normalizeAllowedLanguages(contestMeta?.allowed_languages);
+        const firstLang = normalizedLanguages[0] ?? "C++17";
         if (contestMeta) {
-          setContest(contestMeta);
+          setContest({
+            ...contestMeta,
+            allowed_languages: normalizedLanguages,
+          });
           setSelectedLanguage(firstLang);
         }
 
@@ -1863,7 +1920,7 @@ export default function ContestPageClient() {
       const displayLang =
         Object.entries(LANGUAGE_ID_MAP).find(([, id]) => id === saved.language)?.[0] ??
         saved.language;
-      lang = displayLang;
+      lang = normalizeLanguageLabel(displayLang);
       content = saved.content;
       setSelectedLanguage(lang);
     } else {
@@ -1900,7 +1957,8 @@ export default function ContestPageClient() {
   }
 
   function handleLanguageChange(newLanguage: string) {
-    setSelectedLanguage(newLanguage);
+    const normalizedLanguage = normalizeLanguageLabel(newLanguage);
+    setSelectedLanguage(normalizedLanguage);
     setHasUnsavedChanges(true);
     setSaved(false);
     const q = questions[activeQ];
@@ -1914,8 +1972,10 @@ export default function ContestPageClient() {
           if (!f.id.endsWith(":main")) return f;
           return {
             ...f,
-            name: questionFileName(q, newLanguage),
-            content: isPristineStarter(f.content) ? defaultStarterFor(newLanguage) : f.content,
+            name: questionFileName(q, normalizedLanguage),
+            content: isPristineStarter(f.content)
+              ? defaultStarterFor(normalizedLanguage)
+              : f.content,
           };
         }),
       };
