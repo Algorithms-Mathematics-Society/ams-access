@@ -241,6 +241,24 @@ type RunAttempt = {
   compile_output?: string | null;
 };
 
+type SubmissionAttemptRecord = {
+  id: string;
+  problem_id: string;
+  question_title?: string | null;
+  attempt_no: number;
+  language: string;
+  status: string;
+  final_verdict?: string | null;
+  score: number;
+  runtime_ms?: number | null;
+  memory_kb?: number | null;
+  error_message?: string | null;
+  source_code?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
 const VERDICT_COLORS: Record<string, string> = {
   AC: "#22c55e",
   WA: "#ef4444",
@@ -269,6 +287,37 @@ const VERDICT_BORDER: Record<string, string> = {
   MLE: "rgba(245,158,11,0.28)",
   OLE: "rgba(245,158,11,0.28)",
 };
+
+function normalizeSubmissionVerdict(attempt: SubmissionAttemptRecord): RunVerdict {
+  if (attempt.status === "QUEUED" || attempt.status === "RUNNING") return attempt.status;
+  const verdict = String(attempt.final_verdict ?? "").toUpperCase();
+  switch (verdict) {
+    case "AC":
+    case "WA":
+    case "TLE":
+    case "MLE":
+    case "RE":
+    case "CE":
+    case "OLE":
+    case "IE":
+      return verdict;
+    default:
+      return "IE";
+  }
+}
+
+function normalizeAttemptForRunResult(attempt: SubmissionAttemptRecord): RunAttempt {
+  const status = normalizeSubmissionVerdict(attempt);
+  return {
+    id: attempt.id,
+    attempt_no: attempt.attempt_no,
+    status,
+    runtime_ms: attempt.runtime_ms ?? null,
+    memory_kb: attempt.memory_kb ?? null,
+    compile_output: status === "CE" || status === "IE" ? (attempt.error_message ?? null) : null,
+    stderr: status !== "AC" ? (attempt.error_message ?? null) : null,
+  };
+}
 
 type ContestMeta = {
   id: string;
@@ -1362,8 +1411,8 @@ export default function ContestPageClient() {
     value: boolean;
   } | null>(null);
   const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
-  const [submissionsList, setSubmissionsList] = useState<any[]>([]);
-  const [allSubmissionsList, setAllSubmissionsList] = useState<any[]>([]);
+  const [submissionsList, setSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
+  const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, any[]>>({});
@@ -1405,12 +1454,14 @@ export default function ContestPageClient() {
     if (!sessionId || !questions[activeQ]) return;
     setLoadingSubmissions(true);
     try {
-      const response = await fetchJson<any[]>(
-        `${API_URL}/sessions/${sessionId}/submissions`,
-        {},
-        { dedupeKey: `submissions-${sessionId}-${activeQ}`, retries: 1 }
+      const response = await fetch(
+        `${API_URL}/sessions/${sessionId}/submissions?_t=${Date.now()}`,
+        {
+          cache: "no-store",
+        }
       );
-      const allSubmissions = response || [];
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const allSubmissions = (await response.json()) as SubmissionAttemptRecord[];
       setAllSubmissionsList(allSubmissions);
       const qId = questions[activeQ].id;
       const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
@@ -1443,14 +1494,15 @@ export default function ContestPageClient() {
   const fetchTestResults = async (attemptId: string) => {
     if (!sessionId) return;
     try {
-      const response = await fetchJson<any[]>(
-        `${API_URL}/sessions/${sessionId}/submissions/${attemptId}/test-results`,
-        {},
-        { dedupeKey: `test-results-${attemptId}`, retries: 1 }
+      const response = await fetch(
+        `${API_URL}/sessions/${sessionId}/submissions/${attemptId}/test-results?_t=${Date.now()}`,
+        { cache: "no-store" }
       );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = (await response.json()) as any[];
       setTestResults((prev) => ({
         ...prev,
-        [attemptId]: response || [],
+        [attemptId]: data || [],
       }));
     } catch (err) {
       console.error("Failed to fetch test results:", err);
@@ -1468,7 +1520,7 @@ export default function ContestPageClient() {
     }
   };
 
-  const prevSubmissionsRef = useRef<any[]>([]);
+  const prevSubmissionsRef = useRef<SubmissionAttemptRecord[]>([]);
   useEffect(() => {
     if (submissionsList.length > 0) {
       const latest = submissionsList[0];
@@ -2018,15 +2070,22 @@ export default function ContestPageClient() {
     for (const ms of delays) {
       await new Promise<void>((r) => setTimeout(r, ms));
       try {
-        const pollRes = await fetch(`${API_URL}/sessions/${sessionId}/submissions`);
+        const pollRes = await fetch(
+          `${API_URL}/sessions/${sessionId}/submissions?_t=${Date.now()}`,
+          {
+            cache: "no-store",
+          }
+        );
         if (!pollRes.ok) continue; // transient — keep polling
-        const attempts = (await pollRes.json()) as RunAttempt[];
+        const attempts = (await pollRes.json()) as SubmissionAttemptRecord[];
         const attempt = attempts.find((a) => a.id === attemptId);
         if (attempt) {
-          setRunResult(attempt);
-          if (attempt.status !== "QUEUED" && attempt.status !== "RUNNING") {
+          const normalized = normalizeAttemptForRunResult(attempt);
+          setRunResult(normalized);
+          if (normalized.status !== "QUEUED" && normalized.status !== "RUNNING") {
             setIsRunning(false);
-            setTerminalTab(attempt.status === "CE" ? "logs" : "stdout");
+            setTerminalTab(normalized.status === "CE" ? "logs" : "submissions");
+            await fetchSubmissions();
             return;
           }
         }
@@ -2680,7 +2739,7 @@ export default function ContestPageClient() {
   const submissionsByQuestion = useMemo(() => {
     const grouped: Record<string, any[]> = {};
     for (const sub of allSubmissionsList) {
-      const qId = String(sub.problem_id ?? sub.question_id ?? "");
+      const qId = String(sub.problem_id ?? "");
       if (!qId) continue;
       grouped[qId] = [...(grouped[qId] ?? []), sub];
     }
