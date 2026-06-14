@@ -35,8 +35,6 @@ import {
   MicOff,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
-  ChevronDown,
   AlertCircle,
   Check,
   Info,
@@ -241,6 +239,61 @@ type RunAttempt = {
   compile_output?: string | null;
 };
 
+type SubmissionAttempt = {
+  id: string;
+  problem_id: string;
+  question_title: string;
+  attempt_no: number;
+  language: string;
+  status: string;
+  final_verdict?: string | null;
+  score: number;
+  runtime_ms?: number | null;
+  memory_kb?: number | null;
+  error_message?: string | null;
+  source_code: string;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+type LeaderboardQuestion = {
+  id: string;
+  order_index: number;
+  title: string;
+  points: number;
+};
+
+type LeaderboardProblemState = {
+  question_id: string;
+  attempts: number;
+  best_score: number;
+  verdict: string;
+  last_submission_at?: string | null;
+};
+
+type LeaderboardEntry = {
+  rank: number;
+  session_id: string;
+  candidate_name: string;
+  candidate_email: string;
+  total_score: number;
+  solved_count: number;
+  penalty_seconds: number;
+  last_scored_at?: string | null;
+  latest_activity_at?: string | null;
+  problems: LeaderboardProblemState[];
+};
+
+type LeaderboardResponse = {
+  contest_id: string;
+  status: string;
+  scoring_type: string;
+  questions: LeaderboardQuestion[];
+  entries: LeaderboardEntry[];
+  updated_at: string;
+};
+
 const VERDICT_COLORS: Record<string, string> = {
   AC: "#22c55e",
   WA: "#ef4444",
@@ -269,6 +322,30 @@ const VERDICT_BORDER: Record<string, string> = {
   MLE: "rgba(245,158,11,0.28)",
   OLE: "rgba(245,158,11,0.28)",
 };
+
+function verdictLabel(status: string | null | undefined, finalVerdict?: string | null): string {
+  if (status === "QUEUED" || status === "RUNNING") return status;
+  return finalVerdict || status || "Pending";
+}
+
+function verdictColorFor(verdict: string): string {
+  return VERDICT_COLORS[verdict] ?? "#94a3b8";
+}
+
+function verdictSurfaceFor(verdict: string) {
+  return {
+    color: verdictColorFor(verdict),
+    bg: VERDICT_BG[verdict] ?? "rgba(148,163,184,0.08)",
+    border: VERDICT_BORDER[verdict] ?? "rgba(148,163,184,0.18)",
+  };
+}
+
+function formatPenalty(seconds: number): string {
+  if (seconds <= 0) return "0m";
+  const minutes = Math.floor(seconds / 60);
+  const remSeconds = seconds % 60;
+  return remSeconds > 0 ? `${minutes}m ${remSeconds}s` : `${minutes}m`;
+}
 
 type ContestMeta = {
   id: string;
@@ -1293,6 +1370,273 @@ function MarkovPane({
   );
 }
 
+function SubmissionHistoryModal({
+  open,
+  onClose,
+  dialogRef,
+  questions,
+  submissionsByQuestion,
+}: {
+  open: boolean;
+  onClose: () => void;
+  dialogRef: React.RefObject<HTMLDivElement | null>;
+  questions: Question[];
+  submissionsByQuestion: Record<string, SubmissionAttempt[]>;
+}) {
+  if (!open) return null;
+
+  const attemptedQuestions = questions.filter(
+    (question) => (submissionsByQuestion[question.id] ?? []).length > 0
+  );
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="submission-history-title"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 12000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(2,6,23,0.8)",
+        backdropFilter: "blur(18px)",
+        padding: "24px",
+      }}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: "min(1080px, 100%)",
+          maxHeight: "min(82vh, 920px)",
+          overflow: "auto",
+          borderRadius: "18px",
+          border: "1px solid rgba(148,163,184,0.18)",
+          background: "#07111f",
+          boxShadow: "0 28px 80px rgba(2,6,23,0.55)",
+        }}
+      >
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            padding: "18px 22px",
+            borderBottom: "1px solid rgba(148,163,184,0.14)",
+            background: "rgba(7,17,31,0.94)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          <div>
+            <h2
+              id="submission-history-title"
+              style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#f8fafc" }}
+            >
+              Submission History
+            </h2>
+            <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8" }}>
+              Historical attempts grouped by question, including verdicts and submitted code.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: "34px",
+              height: "34px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "999px",
+              border: "1px solid rgba(148,163,184,0.18)",
+              background: "transparent",
+              color: "#94a3b8",
+              cursor: "pointer",
+            }}
+            aria-label="Close submission history"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div
+          style={{
+            padding: "20px 22px 24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "16px",
+          }}
+        >
+          {attemptedQuestions.length === 0 ? (
+            <div
+              style={{
+                padding: "28px",
+                borderRadius: "14px",
+                border: "1px dashed rgba(148,163,184,0.18)",
+                color: "#64748b",
+                textAlign: "center",
+                fontSize: "13px",
+              }}
+            >
+              No submissions yet.
+            </div>
+          ) : (
+            attemptedQuestions.map((question) => (
+              <section
+                key={question.id}
+                style={{
+                  borderRadius: "16px",
+                  border: "1px solid rgba(148,163,184,0.14)",
+                  background: "rgba(15,23,42,0.62)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "12px",
+                    padding: "14px 16px",
+                    borderBottom: "1px solid rgba(148,163,184,0.12)",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: 700, color: "#f8fafc" }}>
+                      {question.title}
+                    </div>
+                    <div style={{ marginTop: "3px", fontSize: "11px", color: "#94a3b8" }}>
+                      {(submissionsByQuestion[question.id] ?? []).length} historical attempt(s)
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    padding: "14px 16px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
+                  }}
+                >
+                  {(submissionsByQuestion[question.id] ?? []).map((submission) => {
+                    const verdict = verdictLabel(submission.status, submission.final_verdict);
+                    const surface = verdictSurfaceFor(verdict);
+                    return (
+                      <article
+                        key={submission.id}
+                        style={{
+                          borderRadius: "12px",
+                          border: `1px solid ${surface.border}`,
+                          background: "rgba(2,6,23,0.54)",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: "12px",
+                            padding: "12px 14px",
+                            borderBottom: "1px solid rgba(148,163,184,0.08)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "10px",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <span
+                              style={{ fontSize: "12px", fontWeight: 700, color: surface.color }}
+                            >
+                              {verdict}
+                            </span>
+                            <span style={{ fontSize: "11px", color: "#cbd5e1" }}>
+                              Attempt #{submission.attempt_no}
+                            </span>
+                            <span style={{ fontSize: "10px", color: "#94a3b8" }}>
+                              {LANGUAGE_META[submission.language as keyof typeof LANGUAGE_META]
+                                ?.name ?? submission.language}
+                            </span>
+                            <span style={{ fontSize: "10px", color: "#64748b" }}>
+                              {new Date(submission.created_at).toLocaleString()}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "12px",
+                              color: "#94a3b8",
+                              fontSize: "10px",
+                            }}
+                          >
+                            <span>Score {submission.score ?? 0}</span>
+                            <span>
+                              {submission.runtime_ms != null
+                                ? `${submission.runtime_ms}ms`
+                                : "Runtime N/A"}
+                            </span>
+                            <span>
+                              {submission.memory_kb != null
+                                ? `${Math.round(submission.memory_kb / 1024)}MB`
+                                : "Memory N/A"}
+                            </span>
+                          </div>
+                        </div>
+                        {submission.error_message && (
+                          <div
+                            style={{
+                              padding: "10px 14px 0",
+                              color: "#fca5a5",
+                              fontSize: "11px",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {submission.error_message}
+                          </div>
+                        )}
+                        <pre
+                          style={{
+                            margin: 0,
+                            padding: "14px",
+                            whiteSpace: "pre-wrap",
+                            overflowX: "auto",
+                            color: "#dbeafe",
+                            background: "rgba(2,6,23,0.8)",
+                            fontSize: "12px",
+                            lineHeight: 1.55,
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {submission.source_code || "// Submitted source unavailable"}
+                        </pre>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ContestPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1361,15 +1705,14 @@ export default function ContestPageClient() {
     type: "camera" | "mic";
     value: boolean;
   } | null>(null);
-  const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
-  const [submissionsList, setSubmissionsList] = useState<any[]>([]);
-  const [allSubmissionsList, setAllSubmissionsList] = useState<any[]>([]);
-  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
-  const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, any[]>>({});
-  const [testResultFilter, setTestResultFilter] = useState<"all" | "failed" | "passed">("all");
+  const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "leaderboard">("stdout");
+  const [submissionsList, setSubmissionsList] = useState<SubmissionAttempt[]>([]);
+  const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttempt[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [showSubmissionHistory, setShowSubmissionHistory] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<
     Record<string, { language: string; content: string }>
   >({});
@@ -1403,9 +1746,8 @@ export default function ContestPageClient() {
 
   const fetchSubmissions = useCallback(async () => {
     if (!sessionId || !questions[activeQ]) return;
-    setLoadingSubmissions(true);
     try {
-      const response = await fetchJson<any[]>(
+      const response = await fetchJson<SubmissionAttempt[]>(
         `${API_URL}/sessions/${sessionId}/submissions`,
         {},
         { dedupeKey: `submissions-${sessionId}-${activeQ}`, retries: 1 }
@@ -1418,8 +1760,6 @@ export default function ContestPageClient() {
       setSubmissionsList(filtered);
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
-    } finally {
-      setLoadingSubmissions(false);
     }
   }, [sessionId, activeQ, questions]);
 
@@ -1440,50 +1780,33 @@ export default function ContestPageClient() {
     return () => clearInterval(interval);
   }, [submissionsList, fetchSubmissions]);
 
-  const fetchTestResults = async (attemptId: string) => {
-    if (!sessionId) return;
+  const fetchLeaderboard = useCallback(async () => {
+    if (!contestId || contestId.startsWith("mock-contest-")) return;
     try {
-      const response = await fetchJson<any[]>(
-        `${API_URL}/sessions/${sessionId}/submissions/${attemptId}/test-results`,
+      const response = await fetchJson<LeaderboardResponse>(
+        `${API_URL}/contests/${contestId}/leaderboard`,
         {},
-        { dedupeKey: `test-results-${attemptId}`, retries: 1 }
+        { dedupeKey: `leaderboard-${contestId}`, retries: 1 }
       );
-      setTestResults((prev) => ({
-        ...prev,
-        [attemptId]: response || [],
-      }));
+      setLeaderboard(response);
+      setLeaderboardError(null);
     } catch (err) {
-      console.error("Failed to fetch test results:", err);
+      console.error("Failed to fetch leaderboard:", err);
+      setLeaderboardError("Leaderboard is temporarily unavailable.");
     }
-  };
+  }, [contestId]);
 
-  const toggleExpandAttempt = (attemptId: string) => {
-    if (expandedAttemptId === attemptId) {
-      setExpandedAttemptId(null);
-    } else {
-      setExpandedAttemptId(attemptId);
-      if (!testResults[attemptId]) {
-        fetchTestResults(attemptId);
-      }
-    }
-  };
-
-  const prevSubmissionsRef = useRef<any[]>([]);
   useEffect(() => {
-    if (submissionsList.length > 0) {
-      const latest = submissionsList[0];
-      const prevLatest = prevSubmissionsRef.current[0];
-      if (
-        latest &&
-        latest.status === "DONE" &&
-        (!prevLatest || prevLatest.id !== latest.id || prevLatest.status !== "DONE")
-      ) {
-        setExpandedAttemptId(latest.id);
-        fetchTestResults(latest.id);
-      }
-    }
-    prevSubmissionsRef.current = submissionsList;
-  }, [submissionsList]);
+    fetchLeaderboard();
+  }, [fetchLeaderboard]);
+
+  useEffect(() => {
+    if (contest?.status !== "ACTIVE") return;
+    const interval = setInterval(() => {
+      fetchLeaderboard();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [contest?.status, fetchLeaderboard]);
 
   function logMediaToggle(type: "camera" | "mic", enabled: boolean) {
     const timestamp = new Date().toISOString();
@@ -2087,7 +2410,7 @@ export default function ContestPageClient() {
 
     setIsSubmitting(true);
     setSubmissionError(null);
-    setTerminalTab("submissions");
+    setTerminalTab("leaderboard");
 
     try {
       const savedOk = await handleSave();
@@ -2660,27 +2983,17 @@ export default function ContestPageClient() {
       : "";
   const shouldShowRunProgress = Boolean(isRunning || runResult || runError);
   const latestAttempt = submissionsList[0] ?? null;
-  const latestAttemptTests = latestAttempt ? testResults[latestAttempt.id] : null;
   const latestAttemptPending = latestAttempt
     ? latestAttempt.status === "QUEUED" || latestAttempt.status === "RUNNING"
     : false;
   const latestAttemptVerdict = latestAttempt
-    ? latestAttemptPending
-      ? latestAttempt.status
-      : latestAttempt.final_verdict || latestAttempt.status || "Pending"
+    ? verdictLabel(latestAttempt.status, latestAttempt.final_verdict)
     : "Pending";
-  const latestAttemptPassed = latestAttemptTests
-    ? latestAttemptTests.filter((tr: any) => tr.verdict === "AC").length
-    : 0;
-  const latestAttemptFirstFailed =
-    latestAttemptTests?.find((tr: any) => tr.verdict !== "AC") ?? null;
-  const latestAttemptVerdictColor =
-    VERDICT_COLORS[latestAttemptVerdict] ??
-    (latestAttemptVerdict === "Pending" ? "#94a3b8" : "#ef4444");
+  const latestAttemptVerdictColor = verdictColorFor(latestAttemptVerdict);
   const submissionsByQuestion = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
+    const grouped: Record<string, SubmissionAttempt[]> = {};
     for (const sub of allSubmissionsList) {
-      const qId = String(sub.problem_id ?? sub.question_id ?? "");
+      const qId = String(sub.problem_id ?? "");
       if (!qId) continue;
       grouped[qId] = [...(grouped[qId] ?? []), sub];
     }
@@ -2761,6 +3074,29 @@ export default function ContestPageClient() {
     (submissionsByQuestion[q.id] ?? []).some((sub) => (sub.final_verdict ?? sub.status) === "AC")
   ).length;
   const remainingQuestionCount = Math.max(questions.length - attemptedQuestionCount, 0);
+  const leaderboardEntries = leaderboard?.entries ?? [];
+  const leaderboardQuestions = leaderboard?.questions ?? [];
+  const currentUserLeaderboardEntry = useMemo(
+    () => leaderboardEntries.find((entry) => entry.session_id === sessionId) ?? null,
+    [leaderboardEntries, sessionId]
+  );
+  const leaderboardQuestionIndex = useMemo(() => {
+    const map: Record<string, number> = {};
+    leaderboardQuestions.forEach((question, index) => {
+      map[question.id] = index;
+    });
+    return map;
+  }, [leaderboardQuestions]);
+  const submissionsHistoryByQuestion = useMemo(() => {
+    const grouped: Record<string, SubmissionAttempt[]> = {};
+    for (const sub of allSubmissionsList) {
+      grouped[sub.problem_id] = [...(grouped[sub.problem_id] ?? []), sub];
+    }
+    Object.values(grouped).forEach((items) =>
+      items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    );
+    return grouped;
+  }, [allSubmissionsList]);
   useEffect(() => {
     if (!availableProblemTabs.includes(problemTab)) setProblemTab("statement");
     setCopiedSampleKey(null);
@@ -2781,6 +3117,9 @@ export default function ContestPageClient() {
   const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
     showMediaToggleWarning,
     cancelMediaToggle
+  );
+  const submissionHistoryDialogRef = useFocusTrap<HTMLDivElement>(showSubmissionHistory, () =>
+    setShowSubmissionHistory(false)
   );
   const supportDialogRef = useFocusTrap<HTMLDivElement>(showSupportModal, () =>
     setShowSupportModal(false)
@@ -4435,14 +4774,14 @@ export default function ContestPageClient() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setTerminalTab("submissions")}
+                    onClick={() => setTerminalTab("leaderboard")}
                     style={{
                       fontSize: "12px",
-                      color: terminalTab === "submissions" ? "#c084fc" : "#64748b",
+                      color: terminalTab === "leaderboard" ? "#c084fc" : "#64748b",
                       background: "transparent",
                       border: "none",
                       borderBottom:
-                        terminalTab === "submissions"
+                        terminalTab === "leaderboard"
                           ? "2px solid #a855f7"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
@@ -4453,22 +4792,22 @@ export default function ContestPageClient() {
                     }}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                      Attempts
-                      {submissionsList.length > 0 && (
+                      Leaderboard
+                      {leaderboardEntries.length > 0 && (
                         <span
                           style={{
                             padding: "1px 6px",
                             borderRadius: "999px",
                             background:
-                              terminalTab === "submissions"
+                              terminalTab === "leaderboard"
                                 ? "rgba(168,85,247,0.16)"
                                 : "rgba(148,163,184,0.1)",
-                            color: terminalTab === "submissions" ? "#d8b4fe" : "#94a3b8",
+                            color: terminalTab === "leaderboard" ? "#d8b4fe" : "#94a3b8",
                             fontSize: "9px",
                             fontWeight: 700,
                           }}
                         >
-                          {submissionsList.length}
+                          {leaderboardEntries.length}
                         </span>
                       )}
                     </span>
@@ -4706,7 +5045,7 @@ export default function ContestPageClient() {
                     </div>
                   )}
 
-                  {terminalTab === "submissions" && (
+                  {terminalTab === "leaderboard" && (
                     <div style={{ padding: "12px 16px" }}>
                       <div
                         style={{
@@ -4717,48 +5056,45 @@ export default function ContestPageClient() {
                           marginBottom: "10px",
                         }}
                       >
-                        <span
+                        <div>
+                          <div
+                            style={{
+                              color: "#64748b",
+                              fontSize: "10px",
+                              letterSpacing: "0.08em",
+                            }}
+                          >
+                            Leaderboard
+                          </div>
+                          <div style={{ marginTop: "4px", fontSize: "11px", color: "#94a3b8" }}>
+                            Updates automatically while the contest is active.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowSubmissionHistory(true)}
                           style={{
-                            color: "#64748b",
-                            fontSize: "10px",
-                            letterSpacing: "0.08em",
+                            height: "30px",
+                            padding: "0 12px",
+                            borderRadius: "999px",
+                            border: "1px solid rgba(168,85,247,0.4)",
+                            background: "rgba(168,85,247,0.12)",
+                            color: "#d8b4fe",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            fontFamily: "Inter, system-ui, sans-serif",
+                            cursor: "pointer",
+                            whiteSpace: "nowrap",
                           }}
                         >
-                          Attempts
-                        </span>
-                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                          {(["all", "failed", "passed"] as const).map((filter) => {
-                            const active = testResultFilter === filter;
-                            return (
-                              <button
-                                key={filter}
-                                type="button"
-                                onClick={() => setTestResultFilter(filter)}
-                                style={{
-                                  height: "28px",
-                                  padding: "0 12px",
-                                  borderRadius: "999px",
-                                  border: `1px solid ${active ? "rgba(168,85,247,0.5)" : "rgba(148,163,184,0.14)"}`,
-                                  background: active ? "rgba(168,85,247,0.14)" : "transparent",
-                                  color: active ? "#c084fc" : "#64748b",
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  fontFamily: "Inter, system-ui, sans-serif",
-                                  cursor: "pointer",
-                                  textTransform: "capitalize",
-                                }}
-                              >
-                                {filter}
-                              </button>
-                            );
-                          })}
-                        </div>
+                          View Submissions
+                        </button>
                       </div>
-                      {latestAttempt && (
+                      {currentUserLeaderboardEntry && (
                         <div
                           style={{
-                            border: "1px solid rgba(148,163,184,0.12)",
-                            background: "rgba(255,255,255,0.025)",
+                            border: "1px solid rgba(168,85,247,0.22)",
+                            background: "rgba(168,85,247,0.08)",
                             borderRadius: "8px",
                             padding: "12px",
                             marginBottom: "12px",
@@ -4783,32 +5119,30 @@ export default function ContestPageClient() {
                             >
                               <span
                                 style={{
-                                  color: latestAttemptVerdictColor,
+                                  color: "#e9d5ff",
                                   fontSize: "13px",
                                   fontWeight: 700,
                                   fontFamily: "Inter, system-ui, sans-serif",
                                 }}
                               >
-                                {latestAttemptPending
-                                  ? `${latestAttempt.status}...`
-                                  : latestAttemptVerdict}
+                                You are #{currentUserLeaderboardEntry.rank}
                               </span>
                               <span style={{ color: "#64748b", fontSize: "11px" }}>
-                                Attempt #{latestAttempt.attempt_no}
+                                {currentUserLeaderboardEntry.total_score} pts
                               </span>
                               <span
                                 style={{
                                   padding: "2px 7px",
                                   borderRadius: "999px",
-                                  border: "1px solid rgba(148,163,184,0.16)",
-                                  background: "rgba(148,163,184,0.08)",
-                                  color: "#94a3b8",
+                                  border: "1px solid rgba(168,85,247,0.24)",
+                                  background: "rgba(168,85,247,0.12)",
+                                  color: "#d8b4fe",
                                   fontSize: "10px",
                                   fontWeight: 600,
                                   fontFamily: "Inter, system-ui, sans-serif",
                                 }}
                               >
-                                Evaluated attempt
+                                {currentUserLeaderboardEntry.solved_count} solved
                               </span>
                             </div>
                             <div
@@ -4821,72 +5155,60 @@ export default function ContestPageClient() {
                               }}
                             >
                               <span>
-                                {latestAttemptTests
-                                  ? `${latestAttemptPassed} / ${latestAttemptTests.length} passed`
-                                  : latestAttemptPending
-                                    ? "Judging in progress"
-                                    : "Loading test results"}
-                              </span>
-                              <span>Score: {latestAttempt.score ?? "N/A"}</span>
-                              <span>
-                                {latestAttempt.runtime_ms != null
-                                  ? `${latestAttempt.runtime_ms}ms`
-                                  : "Runtime N/A"}
+                                Penalty:{" "}
+                                {formatPenalty(currentUserLeaderboardEntry.penalty_seconds)}
                               </span>
                               <span>
-                                {latestAttempt.memory_kb != null
-                                  ? `${Math.round(latestAttempt.memory_kb / 1024)}MB`
-                                  : "Memory N/A"}
+                                {currentUserLeaderboardEntry.latest_activity_at
+                                  ? `Last activity ${new Date(currentUserLeaderboardEntry.latest_activity_at).toLocaleTimeString()}`
+                                  : "No activity yet"}
                               </span>
                             </div>
                           </div>
-                          {latestAttemptFirstFailed ? (
-                            <div
-                              style={{
-                                border: "1px solid rgba(239,68,68,0.22)",
-                                background: "rgba(239,68,68,0.06)",
-                                borderRadius: "6px",
-                                padding: "8px 10px",
-                                color: "#fca5a5",
-                                fontSize: "11px",
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              <strong style={{ color: "#fecaca" }}>
-                                {latestAttemptFirstFailed.hidden ||
-                                latestAttemptFirstFailed.is_hidden
-                                  ? `Hidden test ${latestAttemptFirstFailed.test_number ?? ""} failed`
-                                  : `Test ${latestAttemptFirstFailed.test_number ?? "?"} failed`}
-                              </strong>
-                              {` · ${latestAttemptFirstFailed.verdict ?? "Failed"}`}
-                              {latestAttemptFirstFailed.runtime_ms != null &&
-                                ` · ${latestAttemptFirstFailed.runtime_ms}ms`}
-                              {latestAttemptFirstFailed.memory_kb != null &&
-                                ` · ${Math.round(latestAttemptFirstFailed.memory_kb / 1024)}MB`}
-                              {(latestAttemptFirstFailed.message ||
-                                latestAttemptFirstFailed.status_message ||
-                                latestAttemptFirstFailed.error) && (
-                                <span style={{ color: "#fca5a5" }}>
-                                  {` · ${latestAttemptFirstFailed.message ?? latestAttemptFirstFailed.status_message ?? latestAttemptFirstFailed.error}`}
-                                </span>
-                              )}
-                            </div>
-                          ) : latestAttemptTests && latestAttemptTests.length > 0 ? (
-                            <div style={{ color: "#86efac", fontSize: "11px" }}>
-                              All visible tests passed.
-                            </div>
-                          ) : (
-                            <div style={{ color: "#64748b", fontSize: "11px" }}>
-                              Test-case details will appear here when the judge returns them.
-                            </div>
-                          )}
+                          <div
+                            style={{
+                              marginTop: "10px",
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: "8px",
+                            }}
+                          >
+                            {leaderboardQuestions.map((question) => {
+                              const problem =
+                                currentUserLeaderboardEntry.problems.find(
+                                  (item) => item.question_id === question.id
+                                ) ?? null;
+                              const verdict = problem?.verdict ?? "UNATTEMPTED";
+                              const surface = verdictSurfaceFor(verdict);
+                              return (
+                                <div
+                                  key={question.id}
+                                  title={`${question.title} · ${verdict}`}
+                                  style={{
+                                    minWidth: "34px",
+                                    height: "28px",
+                                    padding: "0 10px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: "999px",
+                                    border: `1px solid ${surface.border}`,
+                                    background: surface.bg,
+                                    color: surface.color,
+                                    fontSize: "11px",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {verdict === "UNATTEMPTED" ? question.order_index + 1 : verdict}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
-                      {loadingSubmissions && submissionsList.length === 0 ? (
-                        <div style={{ color: "#64748b", fontSize: "11px" }}>
-                          Loading submissions...
-                        </div>
-                      ) : submissionsList.length === 0 ? (
+                      {leaderboardError ? (
+                        <div style={{ color: "#fca5a5", fontSize: "11px" }}>{leaderboardError}</div>
+                      ) : leaderboardEntries.length === 0 ? (
                         <div
                           style={{
                             display: "flex",
@@ -4898,7 +5220,7 @@ export default function ContestPageClient() {
                             color: "#475569",
                           }}
                         >
-                          <Send
+                          <Info
                             size={22}
                             strokeWidth={1.5}
                             style={{ opacity: 0.35, color: "#64748b" }}
@@ -4911,7 +5233,7 @@ export default function ContestPageClient() {
                               fontFamily: "Inter, system-ui, sans-serif",
                             }}
                           >
-                            No submissions yet
+                            Leaderboard will appear here
                           </span>
                           <span
                             style={{
@@ -4922,272 +5244,137 @@ export default function ContestPageClient() {
                               lineHeight: 1.5,
                             }}
                           >
-                            Press Submit Solution to send your code to the judge.
+                            Rankings update after participants start submitting.
                             <br />
-                            Each attempt is scored independently.
+                            Keep this panel open to watch the contest move live.
                           </span>
                         </div>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                          {submissionsList.map((sub) => {
-                            const isExpanded = expandedAttemptId === sub.id;
-                            const finalVerdict = sub.final_verdict || "Pending";
-                            const status = sub.status;
-                            const isPending = status === "QUEUED" || status === "RUNNING";
-
-                            let verdictColor = "#94a3b8";
-                            if (finalVerdict === "AC") verdictColor = "#22c55e";
-                            else if (finalVerdict === "WA") verdictColor = "#ef4444";
-                            else if (finalVerdict === "TLE") verdictColor = "#f59e0b";
-                            else if (finalVerdict === "MLE") verdictColor = "#3b82f6";
-                            else if (finalVerdict === "CE") verdictColor = "#a855f7";
-                            else if (finalVerdict === "RE") verdictColor = "#ec4899";
-                            else if (isPending) verdictColor = "#06b6d4";
-
+                          {leaderboardEntries.map((entry) => {
                             return (
                               <div
-                                key={sub.id}
-                                style={{ borderBottom: "1px solid #1F1F1F", paddingBottom: "8px" }}
+                                key={entry.session_id}
+                                style={{
+                                  border:
+                                    entry.session_id === sessionId
+                                      ? "1px solid rgba(168,85,247,0.24)"
+                                      : "1px solid rgba(148,163,184,0.12)",
+                                  background:
+                                    entry.session_id === sessionId
+                                      ? "rgba(168,85,247,0.06)"
+                                      : "rgba(255,255,255,0.02)",
+                                  borderRadius: "10px",
+                                  padding: "10px 12px",
+                                }}
                               >
                                 <div
                                   style={{
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "space-between",
-                                    cursor: "pointer",
+                                    gap: "14px",
                                   }}
-                                  onClick={() => toggleExpandAttempt(sub.id)}
                                 >
                                   <div
-                                    style={{ display: "flex", alignItems: "center", gap: "12px" }}
-                                  >
-                                    <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                      Attempt #{sub.attempt_no}
-                                    </span>
-                                    <span
-                                      style={{
-                                        fontSize: "10px",
-                                        padding: "1px 6px",
-                                        border: "1px solid rgba(148,163,184,0.14)",
-                                        background: "rgba(148,163,184,0.06)",
-                                        borderRadius: "999px",
-                                        color: "#94a3b8",
-                                        fontFamily: "Inter, system-ui, sans-serif",
-                                        fontWeight: 600,
-                                      }}
-                                    >
-                                      Evaluated
-                                    </span>
-                                    <span
-                                      style={{
-                                        fontSize: "10px",
-                                        padding: "1px 5px",
-                                        background: "#1F1F1F",
-                                        borderRadius: "3px",
-                                        color: "#94a3b8",
-                                      }}
-                                    >
-                                      {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]
-                                        ?.name || sub.language}
-                                    </span>
-                                    <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                      {new Date(sub.created_at).toLocaleTimeString()}
-                                    </span>
-                                  </div>
-                                  <div
-                                    style={{ display: "flex", alignItems: "center", gap: "12px" }}
-                                  >
-                                    <span
-                                      style={{
-                                        fontSize: "11px",
-                                        fontWeight: "bold",
-                                        color: verdictColor,
-                                      }}
-                                    >
-                                      {isPending ? `${status}...` : finalVerdict}
-                                    </span>
-                                    <span style={{ fontSize: "10px", color: "#64748b" }}>
-                                      {isExpanded ? (
-                                        <ChevronUp size={14} />
-                                      ) : (
-                                        <ChevronDown size={14} />
-                                      )}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                {isExpanded && (
-                                  <div
                                     style={{
-                                      marginTop: "6px",
-                                      padding: "8px",
-                                      background: "#0a0a0a",
-                                      border: "1px solid #1F1F1F",
-                                      borderRadius: "4px",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "12px",
+                                      minWidth: 0,
                                     }}
                                   >
-                                    {isPending ? (
-                                      <div style={{ fontSize: "11px", color: "#64748b" }}>
-                                        Grading in progress... Live results will update
-                                        automatically.
+                                    <span
+                                      style={{
+                                        minWidth: "28px",
+                                        fontSize: "12px",
+                                        fontWeight: 700,
+                                        color: entry.rank <= 3 ? "#f8fafc" : "#94a3b8",
+                                      }}
+                                    >
+                                      #{entry.rank}
+                                    </span>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div
+                                        style={{
+                                          fontSize: "12px",
+                                          fontWeight: 600,
+                                          color: "#e2e8f0",
+                                          whiteSpace: "nowrap",
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                        }}
+                                      >
+                                        {entry.candidate_name}
+                                        {entry.session_id === sessionId ? " (You)" : ""}
                                       </div>
-                                    ) : (
-                                      <>
-                                        <div
-                                          style={{
-                                            display: "flex",
-                                            gap: "16px",
-                                            marginBottom: "8px",
-                                            fontSize: "10px",
-                                            color: "#64748b",
-                                          }}
-                                        >
-                                          <span>
-                                            Runtime:{" "}
-                                            {sub.runtime_ms !== null
-                                              ? `${sub.runtime_ms} ms`
-                                              : "N/A"}
-                                          </span>
-                                          <span>
-                                            Memory:{" "}
-                                            {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
-                                          </span>
-                                          <span>Score: {sub.score}</span>
-                                        </div>
-
-                                        <div>
-                                          {testResults[sub.id] ? (
-                                            (() => {
-                                              const trs = testResults[sub.id];
-                                              const passedCount = trs.filter(
-                                                (tr: any) => tr.verdict === "AC"
-                                              ).length;
-                                              return (
-                                                <>
-                                                  <div
-                                                    style={{
-                                                      fontSize: "10px",
-                                                      color: "#64748b",
-                                                      marginBottom: "6px",
-                                                    }}
-                                                  >
-                                                    <span
-                                                      style={{
-                                                        color:
-                                                          passedCount === trs.length
-                                                            ? "#22c55e"
-                                                            : "#94a3b8",
-                                                        fontWeight: 600,
-                                                      }}
-                                                    >
-                                                      {passedCount} / {trs.length}
-                                                    </span>{" "}
-                                                    test cases passed
-                                                  </div>
-                                                  <div
-                                                    style={{
-                                                      display: "flex",
-                                                      flexWrap: "wrap",
-                                                      gap: "6px",
-                                                    }}
-                                                  >
-                                                    {trs
-                                                      .map((tr: any, originalIndex: number) => ({
-                                                        tr,
-                                                        originalIndex,
-                                                      }))
-                                                      .filter(({ tr }: any) =>
-                                                        testResultFilter === "all"
-                                                          ? true
-                                                          : testResultFilter === "passed"
-                                                            ? tr.verdict === "AC"
-                                                            : tr.verdict !== "AC"
-                                                      )
-                                                      .map(
-                                                        (
-                                                          { tr, originalIndex }: any,
-                                                          idx: number
-                                                        ) => {
-                                                          const isAC = tr.verdict === "AC";
-                                                          const isWarn =
-                                                            tr.verdict === "TLE" ||
-                                                            tr.verdict === "MLE" ||
-                                                            tr.verdict === "OLE";
-                                                          const trColor = isAC
-                                                            ? "rgba(34,197,94,0.1)"
-                                                            : isWarn
-                                                              ? "rgba(245,158,11,0.08)"
-                                                              : "rgba(239,68,68,0.1)";
-                                                          const trBorder = isAC
-                                                            ? "rgba(34,197,94,0.3)"
-                                                            : isWarn
-                                                              ? "rgba(245,158,11,0.3)"
-                                                              : "rgba(239,68,68,0.3)";
-                                                          const trTextColor = isAC
-                                                            ? "#22c55e"
-                                                            : isWarn
-                                                              ? "#f59e0b"
-                                                              : "#ef4444";
-                                                          const testNumber =
-                                                            tr.test_number ?? originalIndex + 1;
-                                                          return (
-                                                            <div
-                                                              key={`${sub.id}-${testNumber}-${idx}`}
-                                                              title={
-                                                                isAC
-                                                                  ? `Test #${testNumber}: Accepted${tr.runtime_ms != null ? ` (${tr.runtime_ms}ms)` : ""}`
-                                                                  : tr.hidden || tr.is_hidden
-                                                                    ? `Hidden test ${testNumber}: ${tr.verdict}`
-                                                                    : `Test #${testNumber}: ${tr.verdict}${tr.runtime_ms != null ? ` (${tr.runtime_ms}ms)` : ""}`
-                                                              }
-                                                              style={{
-                                                                minWidth: "30px",
-                                                                height: "24px",
-                                                                padding: "0 7px",
-                                                                display: "flex",
-                                                                alignItems: "center",
-                                                                justifyContent: "center",
-                                                                background: trColor,
-                                                                border: `1px solid ${trBorder}`,
-                                                                borderRadius: "999px",
-                                                                fontSize: "10px",
-                                                                fontWeight: 700,
-                                                                color: trTextColor,
-                                                                cursor: "default",
-                                                              }}
-                                                            >
-                                                              {testNumber}
-                                                            </div>
-                                                          );
-                                                        }
-                                                      )}
-                                                  </div>
-                                                  {trs.filter((tr: any) =>
-                                                    testResultFilter === "all"
-                                                      ? true
-                                                      : testResultFilter === "passed"
-                                                        ? tr.verdict === "AC"
-                                                        : tr.verdict !== "AC"
-                                                  ).length === 0 && (
-                                                    <div
-                                                      style={{ color: "#64748b", fontSize: "10px" }}
-                                                    >
-                                                      No {testResultFilter} tests in this attempt.
-                                                    </div>
-                                                  )}
-                                                </>
-                                              );
-                                            })()
-                                          ) : (
-                                            <div style={{ fontSize: "10px", color: "#64748b" }}>
-                                              Loading test results...
-                                            </div>
-                                          )}
-                                        </div>
-                                      </>
-                                    )}
+                                      <div
+                                        style={{
+                                          marginTop: "3px",
+                                          fontSize: "10px",
+                                          color: "#64748b",
+                                        }}
+                                      >
+                                        {entry.solved_count} solved · penalty{" "}
+                                        {formatPenalty(entry.penalty_seconds)}
+                                      </div>
+                                    </div>
                                   </div>
-                                )}
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "14px",
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: "14px",
+                                        fontWeight: 700,
+                                        color: "#f8fafc",
+                                      }}
+                                    >
+                                      {entry.total_score}
+                                    </span>
+                                    <div
+                                      style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                                    >
+                                      {leaderboardQuestions.map((question) => {
+                                        const problem =
+                                          entry.problems[leaderboardQuestionIndex[question.id]];
+                                        const verdict = problem?.verdict ?? "UNATTEMPTED";
+                                        const surface = verdictSurfaceFor(verdict);
+                                        return (
+                                          <span
+                                            key={`${entry.session_id}:${question.id}`}
+                                            title={`${question.title} · ${verdict}`}
+                                            style={{
+                                              minWidth: "28px",
+                                              height: "24px",
+                                              padding: "0 6px",
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "center",
+                                              borderRadius: "999px",
+                                              border: `1px solid ${surface.border}`,
+                                              background: surface.bg,
+                                              color: surface.color,
+                                              fontSize: "10px",
+                                              fontWeight: 700,
+                                            }}
+                                          >
+                                            {verdict === "UNATTEMPTED"
+                                              ? question.order_index + 1
+                                              : verdict === "RUNNING"
+                                                ? "..."
+                                                : verdict}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             );
                           })}
@@ -5201,6 +5388,14 @@ export default function ContestPageClient() {
           </>
         )}
       </div>
+
+      <SubmissionHistoryModal
+        open={showSubmissionHistory}
+        onClose={() => setShowSubmissionHistory(false)}
+        dialogRef={submissionHistoryDialogRef}
+        questions={questions}
+        submissionsByQuestion={submissionsHistoryByQuestion}
+      />
 
       {/* ── Proctoring footer ── */}
       <footer
