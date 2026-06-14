@@ -5,7 +5,6 @@ import { getThemeColors } from "./utils";
 import { Button, Field, InlineAlert } from "./ui-primitives";
 import type { ActiveSession, ResumeVerificationState } from "./types";
 
-
 export function SessionActionsPanel({
   activeSession,
   inviteCode,
@@ -44,10 +43,15 @@ export function SessionActionsPanel({
   const c = getThemeColors(theme);
   const resumeVerified = resumeVerification === "verified";
   const resumeChecking = resumeVerification === "checking" || resumeVerification === "unverified";
+  const resumeRequestPending =
+    String(activeSession?.resume_request_status ?? "").toUpperCase() === "PENDING";
   const resumeAvailable = Boolean(activeSession && resumeVerified);
-  const resumeButtonDisabled = resumeBusy || !resumeAvailable;
-  const resumeButtonLabel =
-    resumeBusy || resumeChecking ? "Validating..." : "Resume Active Session";
+  const resumeButtonDisabled = resumeBusy || resumeRequestPending || !resumeAvailable;
+  const resumeButtonLabel = resumeRequestPending
+    ? "Awaiting Approval"
+    : resumeBusy || resumeChecking
+      ? "Validating..."
+      : "Resume Active Session";
 
   return (
     <div
@@ -116,7 +120,13 @@ export function SessionActionsPanel({
                 e.currentTarget.style.borderColor = c.accentBorder;
               }}
             >
-              {inviteCodeBusy && <Loader2 size={14} strokeWidth={2} style={{ animation: "spin 1s linear infinite" }} />}
+              {inviteCodeBusy && (
+                <Loader2
+                  size={14}
+                  strokeWidth={2}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+              )}
               {inviteCodeBusy ? "Checking" : "Validate"}
             </Button>
           </form>
@@ -135,7 +145,11 @@ export function SessionActionsPanel({
                 gap: "6px",
               }}
             >
-<AlertTriangle size={14} strokeWidth={2} style={{ flexShrink: 0, marginTop: "2px" }} />
+              <AlertTriangle
+                size={14}
+                strokeWidth={2}
+                style={{ flexShrink: 0, marginTop: "2px" }}
+              />
               <span>
                 {inviteSuccessMsg} {inviteCodeStatus}
               </span>
@@ -175,7 +189,7 @@ export function SessionActionsPanel({
                 gap: "5px",
               }}
             >
-<CheckCircle size={14} strokeWidth={2} aria-hidden="true" />
+              <CheckCircle size={14} strokeWidth={2} aria-hidden="true" />
               {inviteSuccessMsg}
               {onDismissInviteSuccess && (
                 <button
@@ -275,25 +289,29 @@ export function SessionActionsPanel({
                     padding: "2px 7px",
                     borderRadius: "4px",
                     fontWeight: 600,
-                    background:
-                      resumeVerification === "verified"
+                    background: resumeRequestPending
+                      ? "rgba(245,158,11,0.12)"
+                      : resumeVerification === "verified"
                         ? "rgba(34,197,94,0.12)"
                         : resumeVerification === "checking" || resumeVerification === "unverified"
                           ? "rgba(168,85,247,0.1)"
                           : "rgba(239,68,68,0.1)",
-                    color:
-                      resumeVerification === "verified"
+                    color: resumeRequestPending
+                      ? "#fbbf24"
+                      : resumeVerification === "verified"
                         ? "#4ade80"
                         : resumeVerification === "checking" || resumeVerification === "unverified"
                           ? c.accentText
                           : "#fca5a5",
                   }}
                 >
-                  {resumeVerification === "verified"
-                    ? "Verified"
-                    : resumeVerification === "checking" || resumeVerification === "unverified"
-                      ? "Checking..."
-                      : "Unverified"}
+                  {resumeRequestPending
+                    ? "Approval pending"
+                    : resumeVerification === "verified"
+                      ? "Verified"
+                      : resumeVerification === "checking" || resumeVerification === "unverified"
+                        ? "Checking..."
+                        : "Unverified"}
                 </span>
                 {activeSession.updated_at && resumeVerification === "verified" && (
                   <span style={{ fontSize: "11px", color: c.textMuted }}>
@@ -353,7 +371,14 @@ export function SessionActionsPanel({
         {resumeStatus && (
           <InlineAlert
             theme={theme}
-            tone={/verified/i.test(resumeStatus) && !/failed|not found|expired|mismatch|could not/i.test(resumeStatus) ? "success" : /validat/i.test(resumeStatus) ? "accent" : "danger"}
+            tone={
+              /verified/i.test(resumeStatus) &&
+              !/failed|not found|expired|mismatch|could not/i.test(resumeStatus)
+                ? "success"
+                : /validat/i.test(resumeStatus)
+                  ? "accent"
+                  : "danger"
+            }
           >
             {resumeStatus}
           </InlineAlert>

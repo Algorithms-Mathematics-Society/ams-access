@@ -24,6 +24,15 @@ import {
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "./editor-pane";
 import {
+  isPendingSubmissionStatus,
+  normalizeAttemptForRunResult,
+  normalizeSubmissionVerdict,
+  shouldAutoExpandAttempt,
+  type RunAttempt,
+  type RunVerdict,
+  type SubmissionAttemptRecord,
+} from "./submission-state";
+import {
   Play,
   Loader2,
   Send,
@@ -228,37 +237,6 @@ type EditorFile = {
   content: string;
 };
 
-type RunVerdict = "QUEUED" | "RUNNING" | "AC" | "WA" | "TLE" | "MLE" | "RE" | "CE" | "OLE" | "IE";
-
-type RunAttempt = {
-  id: string;
-  attempt_no: number;
-  status: RunVerdict;
-  runtime_ms?: number | null;
-  memory_kb?: number | null;
-  stdout?: string | null;
-  stderr?: string | null;
-  compile_output?: string | null;
-};
-
-type SubmissionAttemptRecord = {
-  id: string;
-  problem_id: string;
-  question_title?: string | null;
-  attempt_no: number;
-  language: string;
-  status: string;
-  final_verdict?: string | null;
-  score: number;
-  runtime_ms?: number | null;
-  memory_kb?: number | null;
-  error_message?: string | null;
-  source_code?: string | null;
-  created_at: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-};
-
 const VERDICT_COLORS: Record<string, string> = {
   AC: "#22c55e",
   WA: "#ef4444",
@@ -287,37 +265,6 @@ const VERDICT_BORDER: Record<string, string> = {
   MLE: "rgba(245,158,11,0.28)",
   OLE: "rgba(245,158,11,0.28)",
 };
-
-function normalizeSubmissionVerdict(attempt: SubmissionAttemptRecord): RunVerdict {
-  if (attempt.status === "QUEUED" || attempt.status === "RUNNING") return attempt.status;
-  const verdict = String(attempt.final_verdict ?? "").toUpperCase();
-  switch (verdict) {
-    case "AC":
-    case "WA":
-    case "TLE":
-    case "MLE":
-    case "RE":
-    case "CE":
-    case "OLE":
-    case "IE":
-      return verdict;
-    default:
-      return "IE";
-  }
-}
-
-function normalizeAttemptForRunResult(attempt: SubmissionAttemptRecord): RunAttempt {
-  const status = normalizeSubmissionVerdict(attempt);
-  return {
-    id: attempt.id,
-    attempt_no: attempt.attempt_no,
-    status,
-    runtime_ms: attempt.runtime_ms ?? null,
-    memory_kb: attempt.memory_kb ?? null,
-    compile_output: status === "CE" || status === "IE" ? (attempt.error_message ?? null) : null,
-    stderr: status !== "AC" ? (attempt.error_message ?? null) : null,
-  };
-}
 
 type ContestMeta = {
   id: string;
@@ -1467,6 +1414,13 @@ export default function ContestPageClient() {
       const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
       filtered.sort((a, b) => b.attempt_no - a.attempt_no);
       setSubmissionsList(filtered);
+      setRunResult((prev) => {
+        if (!prev) return prev;
+        const latestForRun =
+          filtered.find((attempt) => attempt.id === prev.id) ?? filtered[0] ?? null;
+        if (!latestForRun) return prev;
+        return normalizeAttemptForRunResult(latestForRun);
+      });
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
     } finally {
@@ -1479,9 +1433,7 @@ export default function ContestPageClient() {
   }, [activeQ, sessionId, fetchSubmissions]);
 
   useEffect(() => {
-    const hasPending = submissionsList.some(
-      (sub) => sub.status === "QUEUED" || sub.status === "RUNNING"
-    );
+    const hasPending = submissionsList.some((sub) => isPendingSubmissionStatus(sub.status));
     if (!hasPending) return;
 
     const interval = setInterval(() => {
@@ -1525,11 +1477,7 @@ export default function ContestPageClient() {
     if (submissionsList.length > 0) {
       const latest = submissionsList[0];
       const prevLatest = prevSubmissionsRef.current[0];
-      if (
-        latest &&
-        latest.status === "DONE" &&
-        (!prevLatest || prevLatest.id !== latest.id || prevLatest.status !== "DONE")
-      ) {
+      if (shouldAutoExpandAttempt(latest, prevLatest)) {
         setExpandedAttemptId(latest.id);
         fetchTestResults(latest.id);
       }
@@ -2058,7 +2006,8 @@ export default function ContestPageClient() {
       const resolvedId = created.id ?? created.attempt_id ?? "";
       attemptId = resolvedId;
       setRunResult({ id: resolvedId, attempt_no: created.attempt_no, status: "QUEUED" });
-      setTerminalTab("stdout");
+      setTerminalTab("submissions");
+      void fetchSubmissions();
     } catch {
       setIsRunning(false);
       setRunError("Could not reach the judge. Check your connection and retry.");
@@ -2078,11 +2027,19 @@ export default function ContestPageClient() {
         );
         if (!pollRes.ok) continue; // transient — keep polling
         const attempts = (await pollRes.json()) as SubmissionAttemptRecord[];
+        const qId = questions[activeQ]?.id;
+        if (qId) {
+          const filtered = attempts
+            .filter((attempt) => attempt.problem_id === qId)
+            .sort((a, b) => b.attempt_no - a.attempt_no);
+          setAllSubmissionsList(attempts);
+          setSubmissionsList(filtered);
+        }
         const attempt = attempts.find((a) => a.id === attemptId);
         if (attempt) {
           const normalized = normalizeAttemptForRunResult(attempt);
           setRunResult(normalized);
-          if (normalized.status !== "QUEUED" && normalized.status !== "RUNNING") {
+          if (!isPendingSubmissionStatus(normalized.status)) {
             setIsRunning(false);
             setTerminalTab(normalized.status === "CE" ? "logs" : "submissions");
             await fetchSubmissions();
@@ -2095,7 +2052,9 @@ export default function ContestPageClient() {
     }
 
     setIsRunning(false);
-    setRunError("Judge is taking longer than expected. Your code was queued — check back shortly.");
+    setRunError(null);
+    setTerminalTab("submissions");
+    void fetchSubmissions();
   }
 
   async function handleSave(): Promise<boolean> {

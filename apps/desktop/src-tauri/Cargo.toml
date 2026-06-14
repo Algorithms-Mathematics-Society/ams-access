@@ -20,7 +20,7 @@ path = "src/main.rs"
 # them — but enabling the feature would also compile DevTools into RELEASE
 # (lockdown) builds, letting a candidate open the inspector and drive
 # window.__TAURI__ directly. Keep it off so release bundles ship without it.
-tauri = { version = "2" }
+tauri = { version = "2", features = [] }
 platform-rs = { path = "../../../packages/platform-rs" }
 core-rs = { path = "../../../packages/core-rs" }
 serde = { version = "1", features = ["derive"] }
