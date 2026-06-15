@@ -260,6 +260,13 @@ export async function fetchOrganizerOverrides(
   contestId: string,
   deviceId: string
 ): Promise<OrganizerOverride[]> {
+  if (typeof window !== "undefined") {
+    const target = new URL(apiUrl, window.location.href);
+    if (target.origin !== window.location.origin) {
+      // The public overrides endpoint is not deployed on the remote judge API.
+      return [];
+    }
+  }
   try {
     const res = await fetch(
       `${apiUrl}/contests/${encodeURIComponent(contestId)}/overrides?device_id=${encodeURIComponent(deviceId)}`

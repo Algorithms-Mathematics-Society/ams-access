@@ -24,6 +24,15 @@ import {
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "./editor-pane";
 import {
+  isPendingSubmissionStatus,
+  normalizeAttemptForRunResult,
+  normalizeSubmissionVerdict,
+  shouldAutoExpandAttempt,
+  type RunAttempt,
+  type RunVerdict,
+  type SubmissionAttemptRecord,
+} from "./submission-state";
+import {
   Play,
   Loader2,
   Send,
@@ -61,11 +70,26 @@ const LANGUAGE_ID_MAP: Record<string, string> = {
   C: "c",
   "C++17": "cpp17",
   "C++20": "cpp20",
+  cpp: "cpp17",
+  cpp17: "cpp17",
+  cpp20: "cpp20",
+  "c++": "cpp17",
+  "c++17": "cpp17",
+  "c++20": "cpp20",
   Python3: "python3",
+  python: "python3",
+  py: "python3",
+  python3: "python3",
   PyPy3: "pypy3",
+  pypy: "pypy3",
+  pypy3: "pypy3",
   Java17: "java17",
+  java: "java17",
+  java17: "java17",
   Go: "go",
+  go: "go",
   Rust: "rust",
+  rust: "rust",
 };
 
 // Languages the judge worker actually handles. Go and Rust are not yet
@@ -74,6 +98,44 @@ const WORKER_SUPPORTED_LANGUAGES = new Set(["C", "C++17", "C++20", "Python3", "P
 
 function toLanguageId(displayLabel: string): string {
   return LANGUAGE_ID_MAP[displayLabel] ?? displayLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeLanguageLabel(label: string): string {
+  const trimmed = label.trim();
+  switch (trimmed.toLowerCase()) {
+    case "cpp":
+    case "cpp17":
+    case "c++":
+    case "c++17":
+      return "C++17";
+    case "cpp20":
+    case "c++20":
+      return "C++20";
+    case "python":
+    case "py":
+    case "python3":
+      return "Python3";
+    case "pypy":
+    case "pypy3":
+      return "PyPy3";
+    case "java":
+    case "java17":
+      return "Java17";
+    case "go":
+      return "Go";
+    case "rust":
+      return "Rust";
+    default:
+      return trimmed;
+  }
+}
+
+function normalizeAllowedLanguages(languages?: string[] | null): string[] {
+  const source = languages?.length ? languages : ["C++17"];
+  const normalized = source
+    .map((language) => normalizeLanguageLabel(language))
+    .filter((language, index, list) => list.indexOf(language) === index);
+  return normalized.length > 0 ? normalized : ["C++17"];
 }
 
 function isContestEditorTheme(value: string | null): value is ContestEditorThemeId {
@@ -228,37 +290,6 @@ type EditorFile = {
   content: string;
 };
 
-type RunVerdict = "QUEUED" | "RUNNING" | "AC" | "WA" | "TLE" | "MLE" | "RE" | "CE" | "OLE" | "IE";
-
-type RunAttempt = {
-  id: string;
-  attempt_no: number;
-  status: RunVerdict;
-  runtime_ms?: number | null;
-  memory_kb?: number | null;
-  stdout?: string | null;
-  stderr?: string | null;
-  compile_output?: string | null;
-};
-
-type SubmissionAttemptRecord = {
-  id: string;
-  problem_id: string;
-  question_title?: string | null;
-  attempt_no: number;
-  language: string;
-  status: string;
-  final_verdict?: string | null;
-  score: number;
-  runtime_ms?: number | null;
-  memory_kb?: number | null;
-  error_message?: string | null;
-  source_code?: string | null;
-  created_at: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-};
-
 const VERDICT_COLORS: Record<string, string> = {
   AC: "#22c55e",
   WA: "#ef4444",
@@ -287,37 +318,6 @@ const VERDICT_BORDER: Record<string, string> = {
   MLE: "rgba(245,158,11,0.28)",
   OLE: "rgba(245,158,11,0.28)",
 };
-
-function normalizeSubmissionVerdict(attempt: SubmissionAttemptRecord): RunVerdict {
-  if (attempt.status === "QUEUED" || attempt.status === "RUNNING") return attempt.status;
-  const verdict = String(attempt.final_verdict ?? "").toUpperCase();
-  switch (verdict) {
-    case "AC":
-    case "WA":
-    case "TLE":
-    case "MLE":
-    case "RE":
-    case "CE":
-    case "OLE":
-    case "IE":
-      return verdict;
-    default:
-      return "IE";
-  }
-}
-
-function normalizeAttemptForRunResult(attempt: SubmissionAttemptRecord): RunAttempt {
-  const status = normalizeSubmissionVerdict(attempt);
-  return {
-    id: attempt.id,
-    attempt_no: attempt.attempt_no,
-    status,
-    runtime_ms: attempt.runtime_ms ?? null,
-    memory_kb: attempt.memory_kb ?? null,
-    compile_output: status === "CE" || status === "IE" ? (attempt.error_message ?? null) : null,
-    stderr: status !== "AC" ? (attempt.error_message ?? null) : null,
-  };
-}
 
 type ContestMeta = {
   id: string;
@@ -1467,6 +1467,13 @@ export default function ContestPageClient() {
       const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
       filtered.sort((a, b) => b.attempt_no - a.attempt_no);
       setSubmissionsList(filtered);
+      setRunResult((prev) => {
+        if (!prev) return prev;
+        const latestForRun =
+          filtered.find((attempt) => attempt.id === prev.id) ?? filtered[0] ?? null;
+        if (!latestForRun) return prev;
+        return normalizeAttemptForRunResult(latestForRun);
+      });
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
     } finally {
@@ -1479,9 +1486,7 @@ export default function ContestPageClient() {
   }, [activeQ, sessionId, fetchSubmissions]);
 
   useEffect(() => {
-    const hasPending = submissionsList.some(
-      (sub) => sub.status === "QUEUED" || sub.status === "RUNNING"
-    );
+    const hasPending = submissionsList.some((sub) => isPendingSubmissionStatus(sub.status));
     if (!hasPending) return;
 
     const interval = setInterval(() => {
@@ -1525,11 +1530,7 @@ export default function ContestPageClient() {
     if (submissionsList.length > 0) {
       const latest = submissionsList[0];
       const prevLatest = prevSubmissionsRef.current[0];
-      if (
-        latest &&
-        latest.status === "DONE" &&
-        (!prevLatest || prevLatest.id !== latest.id || prevLatest.status !== "DONE")
-      ) {
+      if (shouldAutoExpandAttempt(latest, prevLatest)) {
         setExpandedAttemptId(latest.id);
         fetchTestResults(latest.id);
       }
@@ -1823,9 +1824,13 @@ export default function ContestPageClient() {
     Promise.all([contestRequest, questionsRequest, sessionRequest])
       .then(async ([c, questions, session]) => {
         const contestMeta = c ? (c as ContestMeta) : null;
-        const firstLang = contestMeta?.allowed_languages?.[0] ?? "C++17";
+        const normalizedLanguages = normalizeAllowedLanguages(contestMeta?.allowed_languages);
+        const firstLang = normalizedLanguages[0] ?? "C++17";
         if (contestMeta) {
-          setContest(contestMeta);
+          setContest({
+            ...contestMeta,
+            allowed_languages: normalizedLanguages,
+          });
           setSelectedLanguage(firstLang);
         }
 
@@ -1915,7 +1920,7 @@ export default function ContestPageClient() {
       const displayLang =
         Object.entries(LANGUAGE_ID_MAP).find(([, id]) => id === saved.language)?.[0] ??
         saved.language;
-      lang = displayLang;
+      lang = normalizeLanguageLabel(displayLang);
       content = saved.content;
       setSelectedLanguage(lang);
     } else {
@@ -1952,7 +1957,8 @@ export default function ContestPageClient() {
   }
 
   function handleLanguageChange(newLanguage: string) {
-    setSelectedLanguage(newLanguage);
+    const normalizedLanguage = normalizeLanguageLabel(newLanguage);
+    setSelectedLanguage(normalizedLanguage);
     setHasUnsavedChanges(true);
     setSaved(false);
     const q = questions[activeQ];
@@ -1966,8 +1972,10 @@ export default function ContestPageClient() {
           if (!f.id.endsWith(":main")) return f;
           return {
             ...f,
-            name: questionFileName(q, newLanguage),
-            content: isPristineStarter(f.content) ? defaultStarterFor(newLanguage) : f.content,
+            name: questionFileName(q, normalizedLanguage),
+            content: isPristineStarter(f.content)
+              ? defaultStarterFor(normalizedLanguage)
+              : f.content,
           };
         }),
       };
@@ -2058,7 +2066,8 @@ export default function ContestPageClient() {
       const resolvedId = created.id ?? created.attempt_id ?? "";
       attemptId = resolvedId;
       setRunResult({ id: resolvedId, attempt_no: created.attempt_no, status: "QUEUED" });
-      setTerminalTab("stdout");
+      setTerminalTab("submissions");
+      void fetchSubmissions();
     } catch {
       setIsRunning(false);
       setRunError("Could not reach the judge. Check your connection and retry.");
@@ -2078,11 +2087,19 @@ export default function ContestPageClient() {
         );
         if (!pollRes.ok) continue; // transient — keep polling
         const attempts = (await pollRes.json()) as SubmissionAttemptRecord[];
+        const qId = questions[activeQ]?.id;
+        if (qId) {
+          const filtered = attempts
+            .filter((attempt) => attempt.problem_id === qId)
+            .sort((a, b) => b.attempt_no - a.attempt_no);
+          setAllSubmissionsList(attempts);
+          setSubmissionsList(filtered);
+        }
         const attempt = attempts.find((a) => a.id === attemptId);
         if (attempt) {
           const normalized = normalizeAttemptForRunResult(attempt);
           setRunResult(normalized);
-          if (normalized.status !== "QUEUED" && normalized.status !== "RUNNING") {
+          if (!isPendingSubmissionStatus(normalized.status)) {
             setIsRunning(false);
             setTerminalTab(normalized.status === "CE" ? "logs" : "submissions");
             await fetchSubmissions();
@@ -2095,7 +2112,9 @@ export default function ContestPageClient() {
     }
 
     setIsRunning(false);
-    setRunError("Judge is taking longer than expected. Your code was queued — check back shortly.");
+    setRunError(null);
+    setTerminalTab("submissions");
+    void fetchSubmissions();
   }
 
   async function handleSave(): Promise<boolean> {

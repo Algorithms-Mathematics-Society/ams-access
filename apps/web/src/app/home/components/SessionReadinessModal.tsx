@@ -4,12 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api-client";
-import {
-  getThemeColors,
-  toPreflightPolicyItem,
-  calculateReadinessScore,
-  API_URL,
-} from "./utils";
+import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore, API_URL } from "./utils";
 import { deriveContestantReadiness } from "./readiness-context";
 import { useFocusTrap } from "./hooks";
 import { parseLogLine } from "./SecurityOperationsLog";
@@ -95,6 +90,7 @@ interface SessionReadinessModalProps {
   sessionType: "new" | "resume";
   theme: "dark" | "light";
   onClose: () => void;
+  onProceed?: () => Promise<void> | void;
   readiness: ReadinessState;
   readinessReport: ReadinessReport | null;
   onSettingsRedirect: () => void;
@@ -106,6 +102,7 @@ export function SessionReadinessModal({
   sessionType,
   theme,
   onClose,
+  onProceed,
   readiness,
   readinessReport,
   onSettingsRedirect,
@@ -193,7 +190,6 @@ export function SessionReadinessModal({
           : context.status === "advisory_warning"
             ? "Device ready — review advisory warnings"
             : "Contest window not open";
-
 
   const decisionTone =
     context.status === "ready" || context.status === "advisory_warning"
@@ -407,7 +403,9 @@ export function SessionReadinessModal({
             <div style={{ color: decisionTone.color, fontSize: "24px", fontWeight: 800 }}>
               {Math.round(currentProgress)}%
             </div>
-            <div style={{ color: c.textMuted, fontSize: "10px", fontWeight: 600, marginTop: "2px" }}>
+            <div
+              style={{ color: c.textMuted, fontSize: "10px", fontWeight: 600, marginTop: "2px" }}
+            >
               complete
             </div>
           </div>
@@ -429,14 +427,23 @@ export function SessionReadinessModal({
               padding: "16px 18px",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "8px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
               <h4 style={{ color: c.text, fontSize: "13px", fontWeight: 750, margin: 0 }}>
                 Required checks
               </h4>
               <span
                 style={{
                   color: context.failedRequired > 0 ? "#fca5a5" : c.dot,
-                  background: context.failedRequired > 0 ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)",
+                  background:
+                    context.failedRequired > 0 ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)",
                   border: `1px solid ${context.failedRequired > 0 ? "rgba(239,68,68,0.22)" : "rgba(34,197,94,0.2)"}`,
                   borderRadius: "999px",
                   padding: "3px 8px",
@@ -447,7 +454,9 @@ export function SessionReadinessModal({
                 {context.failedRequired > 0 ? `${context.failedRequired} to fix` : "Required ready"}
               </span>
             </div>
-            <p style={{ color: c.textMuted, fontSize: "11px", lineHeight: 1.5, margin: "0 0 10px" }}>
+            <p
+              style={{ color: c.textMuted, fontSize: "11px", lineHeight: 1.5, margin: "0 0 10px" }}
+            >
               These checks must pass before this device can enter the contest.
             </p>
             <div style={{ display: "flex", flexDirection: "column" }}>
@@ -478,7 +487,15 @@ export function SessionReadinessModal({
               padding: "16px 18px",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "8px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
               <h4 style={{ color: c.text, fontSize: "13px", fontWeight: 750, margin: 0 }}>
                 Optional warnings
               </h4>
@@ -496,7 +513,9 @@ export function SessionReadinessModal({
                 {optionalWarningCount > 0 ? `${optionalWarningCount} advisory` : "Advisory only"}
               </span>
             </div>
-            <p style={{ color: c.textMuted, fontSize: "11px", lineHeight: 1.5, margin: "0 0 10px" }}>
+            <p
+              style={{ color: c.textMuted, fontSize: "11px", lineHeight: 1.5, margin: "0 0 10px" }}
+            >
               These do not block entry, but they may help support diagnose issues.
             </p>
             {optionalPreflightItems.length > 0 ? (
@@ -603,30 +622,51 @@ export function SessionReadinessModal({
           }}
         >
           {canProceed ? (
-            <Link
-              href={proceedHref}
-              prefetch
-              onClick={onClose}
-              style={{
-                minWidth: "170px",
-                height: "42px",
-                borderRadius: "6px",
-                border: `1px solid ${c.dot}`,
-                background: c.dot,
-                color: isLight ? "#ffffff" : "#04110a",
-                fontSize: "13px",
-                fontWeight: 700,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                transition: "all 150ms ease",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                textDecoration: "none",
-              }}
-            >
-              {primaryActionLabel}
-            </Link>
+            onProceed ? (
+              <button
+                onClick={() => void onProceed()}
+                style={{
+                  minWidth: "170px",
+                  height: "42px",
+                  borderRadius: "6px",
+                  border: `1px solid ${c.dot}`,
+                  background: c.dot,
+                  color: isLight ? "#ffffff" : "#04110a",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                  transition: "all 150ms ease",
+                }}
+              >
+                {primaryActionLabel}
+              </button>
+            ) : (
+              <Link
+                href={proceedHref}
+                prefetch
+                onClick={onClose}
+                style={{
+                  minWidth: "170px",
+                  height: "42px",
+                  borderRadius: "6px",
+                  border: `1px solid ${c.dot}`,
+                  background: c.dot,
+                  color: isLight ? "#ffffff" : "#04110a",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                  transition: "all 150ms ease",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textDecoration: "none",
+                }}
+              >
+                {primaryActionLabel}
+              </Link>
+            )
           ) : scanStatus === "scanning" ? (
             <button
               disabled

@@ -222,9 +222,7 @@ export function postJsonKeepalive(url: string, body?: unknown, init: RequestInit
   return fetch(url, {
     ...init,
     method: init.method ?? "POST",
-    headers: payload
-      ? { "Content-Type": "application/json", ...init.headers }
-      : init.headers,
+    headers: payload ? { "Content-Type": "application/json", ...init.headers } : init.headers,
     body: payload,
     keepalive,
   });
@@ -232,10 +230,15 @@ export function postJsonKeepalive(url: string, body?: unknown, init: RequestInit
 
 export function sendJsonBeacon(url: string, body: unknown) {
   const payload = JSON.stringify(body);
-  if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+  const target = typeof window !== "undefined" ? new URL(url, window.location.href) : null;
+  const isCrossOrigin = target ? target.origin !== window.location.origin : false;
+
+  if (typeof navigator !== "undefined" && navigator.sendBeacon && !isCrossOrigin) {
     return navigator.sendBeacon(url, new Blob([payload], { type: "application/json" }));
   }
 
-  void postJsonKeepalive(url, body).catch(() => {});
+  void postJsonKeepalive(url, body, {
+    credentials: "omit",
+  }).catch(() => {});
   return false;
 }

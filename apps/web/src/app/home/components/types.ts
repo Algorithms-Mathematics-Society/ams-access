@@ -101,6 +101,10 @@ export type ActiveSession = {
   candidate_email?: string;
   status?: string;
   expires_at?: string;
+  resume_request_id?: string;
+  resume_request_status?: string;
+  resume_request_requested_at?: string;
+  resume_request_review_note?: string | null;
 };
 
 export type ResumeVerificationState = "none" | "unverified" | "checking" | "verified" | "invalid";

@@ -104,6 +104,7 @@ export default function HomePage() {
   const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
   const inviteCodeInFlightRef = useRef(false);
   const resumeInFlightRef = useRef(false);
+  const resumeConsumeInFlightRef = useRef(false);
   const [readiness, setReadiness] = useState<ReadinessState>({
     camera: "checking",
     mic: "checking",
@@ -447,6 +448,132 @@ export default function HomePage() {
     setResumeStatus(reason);
   }
 
+  function mergeResumeRequestIntoSession(
+    session: ActiveSession,
+    request:
+      | {
+          id?: string;
+          status?: string;
+          requested_at?: string;
+          review_note?: string | null;
+        }
+      | null
+      | undefined
+  ): ActiveSession {
+    if (!request) return session;
+    return {
+      ...session,
+      resume_request_id: request.id ?? session.resume_request_id,
+      resume_request_status: request.status ?? session.resume_request_status,
+      resume_request_requested_at: request.requested_at ?? session.resume_request_requested_at,
+      resume_request_review_note: request.review_note ?? session.resume_request_review_note ?? null,
+    };
+  }
+
+  async function consumeApprovedResume(session: ActiveSession) {
+    if (!session.id || !session.contest_id || resumeConsumeInFlightRef.current) return;
+    resumeConsumeInFlightRef.current = true;
+    setResumeBusy(true);
+    try {
+      const res = await fetchWithTimeout(
+        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-consume`,
+        {
+          method: "POST",
+        }
+      );
+      if (!res.ok) {
+        setResumeStatus("Resume approval expired. Request access again.");
+        return;
+      }
+      const consumed = (await res.json()) as { status?: string };
+      const nextSession = mergeResumeRequestIntoSession(session, {
+        status: consumed.status ?? "CONSUMED",
+      });
+      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+      setActiveSession(nextSession);
+      setResumeStatus("Resume approved. Re-entering contest...");
+      router.push(`/session/contest?contestId=${encodeURIComponent(session.contest_id)}`);
+    } catch {
+      setResumeStatus("Could not consume organizer approval. Try again.");
+    } finally {
+      setResumeBusy(false);
+      resumeConsumeInFlightRef.current = false;
+    }
+  }
+
+  async function refreshResumeRequest(session: ActiveSession) {
+    if (!session.id) return;
+    try {
+      const res = await fetchWithTimeout(
+        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`
+      );
+      if (!res.ok) return;
+      const request = (await res.json()) as {
+        id?: string;
+        status?: string;
+        requested_at?: string;
+        review_note?: string | null;
+      };
+      const nextSession = mergeResumeRequestIntoSession(session, request);
+      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+      setActiveSession(nextSession);
+
+      const requestStatus = String(request.status ?? "").toUpperCase();
+      if (requestStatus === "PENDING") {
+        setResumeStatus("Resume requested. Waiting for organizer approval.");
+        setResumeBusy(false);
+      } else if (requestStatus === "REJECTED") {
+        setResumeStatus(request.review_note?.trim() || "Organizer rejected this resume request.");
+        setResumeBusy(false);
+      } else if (requestStatus === "EXPIRED") {
+        setResumeStatus("Resume request expired. Submit it again to rejoin.");
+        setResumeBusy(false);
+      } else if (requestStatus === "APPROVED") {
+        await consumeApprovedResume(nextSession);
+      }
+    } catch {
+      setResumeStatus("Waiting for organizer approval.");
+    }
+  }
+
+  async function submitResumeRequest(session: ActiveSession) {
+    if (!session.id) return;
+    setResumeBusy(true);
+    setResumeStatus("Requesting organizer approval...");
+    appendSecurityEvent("SESSION: Resume approval requested");
+    try {
+      const res = await fetchWithTimeout(
+        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            device_id: getOrCreateDeviceId(),
+            reason: "app_rejoin",
+          }),
+        }
+      );
+      if (!res.ok) {
+        setResumeStatus("Could not request organizer approval.");
+        setResumeBusy(false);
+        return;
+      }
+      const request = (await res.json()) as {
+        id?: string;
+        status?: string;
+        requested_at?: string;
+        review_note?: string | null;
+      };
+      const nextSession = mergeResumeRequestIntoSession(session, request);
+      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+      setActiveSession(nextSession);
+      setResumeStatus("Resume requested. Waiting for organizer approval.");
+    } catch {
+      setResumeStatus("Could not request organizer approval.");
+      setResumeBusy(false);
+    }
+  }
+
   async function validateStoredActiveSession(session: ActiveSession, mode: "hydrate" | "resume") {
     if (!session.id) {
       clearStoredActiveSession("No active session found on this device.");
@@ -472,10 +599,19 @@ export default function HomePage() {
 
       const data = (await res.json()) as Partial<ActiveSession> & {
         contest_id?: string;
+        contest_title?: string;
         candidate_email?: string;
+        candidate_name?: string;
         status?: string;
         expires_at?: string;
         ended_at?: string | null;
+        resume_request_status?: string;
+        resume_request?: {
+          id?: string;
+          status?: string;
+          requested_at?: string;
+          review_note?: string | null;
+        } | null;
       };
       const contestId = data.contest_id;
       if (!contestId || (session.contest_id && contestId !== session.contest_id)) {
@@ -518,12 +654,27 @@ export default function HomePage() {
         candidate_email: data.candidate_email ?? session.candidate_email ?? userEmail,
         updated_at: new Date().toISOString(),
       };
-      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(verifiedSession));
-      setActiveSession(verifiedSession);
+      const withResume = mergeResumeRequestIntoSession(verifiedSession, data.resume_request);
+      const resumeRequestStatus = String(data.resume_request_status ?? "").toUpperCase();
+      if (resumeRequestStatus === "PENDING") {
+        setResumeStatus("Resume requested. Waiting for organizer approval.");
+      } else if (resumeRequestStatus === "REJECTED") {
+        setResumeStatus(
+          data.resume_request?.review_note?.trim() ||
+            "Organizer rejected the previous resume request."
+        );
+      } else if (resumeRequestStatus === "EXPIRED") {
+        setResumeStatus("Previous resume request expired. Submit again to rejoin.");
+      } else if (mode === "hydrate") {
+        setResumeStatus("Stored session verified.");
+      } else {
+        setResumeStatus(null);
+      }
+      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(withResume));
+      setActiveSession(withResume);
       setResumeVerification("verified");
-      setResumeStatus(mode === "hydrate" ? "Stored session verified." : null);
       appendSecurityEvent("SESSION: Active session verified for contest " + contestId);
-      return verifiedSession;
+      return withResume;
     } catch {
       clearStoredActiveSession("Stored active session could not be verified.");
       appendSecurityEvent("SESSION: Active session validation failed");
@@ -567,6 +718,15 @@ export default function HomePage() {
     if (!userEmailHydrated || resumeVerification !== "unverified" || !activeSession?.id) return;
     void validateStoredActiveSession(activeSession, "hydrate");
   }, [activeSession, resumeVerification, userEmailHydrated]);
+
+  useEffect(() => {
+    if (!activeSession?.id) return;
+    const requestStatus = String(activeSession.resume_request_status ?? "").toUpperCase();
+    if (requestStatus !== "PENDING" && requestStatus !== "APPROVED") return;
+    const timer = setInterval(() => void refreshResumeRequest(activeSession), 3000);
+    void refreshResumeRequest(activeSession);
+    return () => clearInterval(timer);
+  }, [activeSession]);
 
   async function handleInviteCodeSubmit() {
     if (inviteCodeBusy || inviteCodeInFlightRef.current) return;
@@ -678,6 +838,11 @@ export default function HomePage() {
     try {
       const verifiedSession = await validateStoredActiveSession(activeSession, "resume");
       if (!verifiedSession?.contest_id) return;
+      const requestStatus = String(verifiedSession.resume_request_status ?? "").toUpperCase();
+      if (requestStatus === "PENDING" || requestStatus === "APPROVED") {
+        await refreshResumeRequest(verifiedSession);
+        return;
+      }
       setPreflightContestId(verifiedSession.contest_id);
       setPreflightSessionType("resume");
     } finally {
@@ -1098,6 +1263,14 @@ export default function HomePage() {
           sessionType={preflightSessionType}
           theme={theme}
           onClose={() => setPreflightContestId(null)}
+          onProceed={
+            preflightSessionType === "resume" && activeSession
+              ? async () => {
+                  setPreflightContestId(null);
+                  await submitResumeRequest(activeSession);
+                }
+              : undefined
+          }
           readiness={readiness}
           readinessReport={readinessReport}
           onSettingsRedirect={() => {
