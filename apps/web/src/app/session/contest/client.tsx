@@ -306,6 +306,10 @@ const VERDICT_BG: Record<string, string> = {
   AC: "rgba(34,197,94,0.1)",
   QUEUED: "rgba(168,85,247,0.1)",
   RUNNING: "rgba(168,85,247,0.1)",
+  WA: "rgba(239,68,68,0.1)",
+  RE: "rgba(249,115,22,0.1)",
+  CE: "rgba(239,68,68,0.1)",
+  IE: "rgba(100,116,139,0.12)",
   TLE: "rgba(245,158,11,0.1)",
   MLE: "rgba(245,158,11,0.1)",
   OLE: "rgba(245,158,11,0.1)",
@@ -314,6 +318,10 @@ const VERDICT_BORDER: Record<string, string> = {
   AC: "rgba(34,197,94,0.28)",
   QUEUED: "rgba(168,85,247,0.28)",
   RUNNING: "rgba(168,85,247,0.28)",
+  WA: "rgba(239,68,68,0.28)",
+  RE: "rgba(249,115,22,0.28)",
+  CE: "rgba(239,68,68,0.28)",
+  IE: "rgba(100,116,139,0.3)",
   TLE: "rgba(245,158,11,0.28)",
   MLE: "rgba(245,158,11,0.28)",
   OLE: "rgba(245,158,11,0.28)",
@@ -1361,6 +1369,9 @@ export default function ContestPageClient() {
   const [runResult, setRunResult] = useState<RunAttempt | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  // Set when the judge hasn't returned a verdict within the polling window — the
+  // submission is still queued (distinct from a hard connection error).
+  const [runTimedOut, setRunTimedOut] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -2034,6 +2045,7 @@ export default function ContestPageClient() {
     setIsRunning(true);
     setRunResult(null);
     setRunError(null);
+    setRunTimedOut(false);
     setSubmitError(null);
     setTerminalTab("stdout");
 
@@ -2111,8 +2123,11 @@ export default function ContestPageClient() {
       }
     }
 
+    // Polling window elapsed without a terminal verdict: the submission is still
+    // queued on the judge. Surface that clearly instead of leaving a silent spinner.
     setIsRunning(false);
     setRunError(null);
+    setRunTimedOut(true);
     setTerminalTab("submissions");
     void fetchSubmissions();
   }
@@ -2695,26 +2710,34 @@ export default function ContestPageClient() {
   };
   const runStatus = runError
     ? {
-        label: "Run Error",
+        // Client-side failure reaching the judge — distinct from a judge verdict.
+        label: "Connection Error",
         color: "#fca5a5",
         bg: "rgba(239,68,68,0.1)",
         border: "rgba(239,68,68,0.28)",
         icon: "error" as const,
       }
-    : runResult
+    : runTimedOut
       ? {
-          label: runStatusLabelMap[runResult.status] ?? runResult.status,
-          color: VERDICT_COLORS[runResult.status] ?? "#94a3b8",
-          bg: VERDICT_BG[runResult.status] ?? "rgba(239,68,68,0.1)",
-          border: VERDICT_BORDER[runResult.status] ?? "rgba(239,68,68,0.28)",
-          icon:
-            runResult.status === "QUEUED" || runResult.status === "RUNNING"
-              ? ("loading" as const)
-              : runResult.status === "AC"
-                ? ("saved" as const)
-                : ("error" as const),
+          // Verdict not back yet — the submission is still queued on the judge.
+          label: "Still Queued",
+          color: "#fcd34d",
+          bg: "rgba(245,158,11,0.1)",
+          border: "rgba(245,158,11,0.28)",
+          icon: "pending" as const,
         }
-      : null;
+      : runResult
+        ? {
+            label: runStatusLabelMap[runResult.status] ?? runResult.status,
+            color: VERDICT_COLORS[runResult.status] ?? "#94a3b8",
+            bg: VERDICT_BG[runResult.status] ?? "rgba(100,116,139,0.12)",
+            border: VERDICT_BORDER[runResult.status] ?? "rgba(100,116,139,0.3)",
+            icon:
+              runResult.status === "QUEUED" || runResult.status === "RUNNING"
+                ? ("loading" as const)
+                : ("dot" as const),
+          }
+        : null;
   const runProgressPhase = runError
     ? 3
     : !runResult
@@ -2736,7 +2759,7 @@ export default function ContestPageClient() {
           .filter(Boolean)
           .join(" · ")
       : "";
-  const shouldShowRunProgress = Boolean(isRunning || runResult || runError);
+  const shouldShowRunProgress = Boolean(isRunning || runResult || runError || runTimedOut);
   const latestAttempt = submissionsList[0] ?? null;
   const latestAttemptTests = latestAttempt ? testResults[latestAttempt.id] : null;
   const latestAttemptPending = latestAttempt
@@ -4603,10 +4626,18 @@ export default function ContestPageClient() {
                           strokeWidth={2}
                           style={{ animation: "spin 0.8s linear infinite" }}
                         />
-                      ) : runStatus.icon === "saved" ? (
-                        <Check size={12} strokeWidth={2} />
                       ) : (
-                        <AlertCircle size={12} strokeWidth={2} />
+                        // Neutral status dot in the verdict colour — no tick/cross glyphs.
+                        <span
+                          style={{
+                            width: "7px",
+                            height: "7px",
+                            borderRadius: "50%",
+                            background: runStatus.color,
+                            boxShadow: `0 0 6px ${runStatus.color}`,
+                            flexShrink: 0,
+                          }}
+                        />
                       )}
                       {runStatus.label}
                       {runMetrics && (
