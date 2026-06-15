@@ -1,7 +1,23 @@
 use core_rs::exam::{
     CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
 };
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+/// CreateProcess flag that suppresses the console window of a child process.
+/// Without it, every console helper we shell out to (tasklist, reg, netsh,
+/// taskkill, systeminfo) flashes a black cmd window — and because the live scan
+/// and the kill-shield run on tight loops, those windows flicker continuously.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Build a `Command` for a console helper that never flashes a window.
+/// Use this for every spawn that runs a console-mode program; GUI launchers
+/// (e.g. explorer.exe) don't need it and should not be silenced.
+fn hidden_command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 
 static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
@@ -150,9 +166,16 @@ pub fn is_elevated() -> bool {
     }
 }
 
+/// Command-line marker handed to the elevated instance so it knows it is the
+/// product of a relaunch. Startup auto-elevation checks for this and refuses to
+/// prompt again, so a declined or ineffective elevation can never loop into a
+/// UAC storm. A fresh manual launch (no marker) is free to prompt again.
+pub const RELAUNCH_MARKER: &str = "--ams-relaunched";
+
 /// Relaunch this executable elevated via the `runas` shell verb. This raises
 /// the standard one-click UAC consent prompt — the candidate never has to
-/// find the exe and right-click "Run as administrator" themselves.
+/// find the exe and right-click "Run as administrator" themselves. The elevated
+/// instance is started with [`RELAUNCH_MARKER`] so it won't try to elevate again.
 ///
 /// Returns Ok(()) once the elevated instance has been started; the caller is
 /// responsible for exiting the current (unelevated) instance. `uac_declined`
@@ -173,7 +196,8 @@ pub fn relaunch_as_admin() -> Result<(), String> {
             None,
             w!("runas"),
             PCWSTR(exe_w.as_ptr()),
-            PCWSTR::null(),
+            // w! needs a literal; must stay equal to RELAUNCH_MARKER above.
+            w!("--ams-relaunched"),
             PCWSTR::null(),
             SW_SHOWNORMAL,
         )
@@ -221,7 +245,7 @@ pub struct FoundProcess {
 /// Returns restricted processes with their PIDs for precise kill-by-PID.
 pub fn scan_processes_with_pids() -> Vec<FoundProcess> {
     let mut found = Vec::new();
-    let Ok(out) = std::process::Command::new("tasklist")
+    let Ok(out) = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
         .output()
     else {
@@ -267,7 +291,7 @@ pub fn scan_processes() -> ProcessScanResult {
 /// `apply_capture_protection()` is the prevention layer (makes window black).
 /// This function is the detection layer for logging and UI warnings.
 pub fn detect_screen_capture() -> bool {
-    let ps = std::process::Command::new("tasklist")
+    let ps = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
@@ -344,7 +368,7 @@ pub fn apply_capture_protection(hwnd_raw: isize) -> bool {
 // ── Registry helpers ──────────────────────────────────────────────────────────
 
 fn reg_dword_nonzero(key: &str, value: &str) -> bool {
-    let Ok(out) = std::process::Command::new("reg")
+    let Ok(out) = hidden_command("reg")
         .args(["query", key, "/v", value])
         .output()
     else {
@@ -362,7 +386,7 @@ fn reg_dword_nonzero(key: &str, value: &str) -> bool {
 }
 
 fn reg_key_exists(key: &str) -> bool {
-    std::process::Command::new("reg")
+    hidden_command("reg")
         .args(["query", key])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -372,7 +396,7 @@ fn reg_key_exists(key: &str) -> bool {
 }
 
 fn reg_set(key: &str, value_name: &str, data: &str) {
-    let _ = std::process::Command::new("reg")
+    let _ = hidden_command("reg")
         .args([
             "add",
             key,
@@ -388,7 +412,7 @@ fn reg_set(key: &str, value_name: &str, data: &str) {
 }
 
 fn reg_delete_value(key: &str, value_name: &str) {
-    let _ = std::process::Command::new("reg")
+    let _ = hidden_command("reg")
         .args(["delete", key, "/v", value_name, "/f"])
         .output();
 }
@@ -476,7 +500,7 @@ fn set_game_bar_enabled(enabled: bool) {
 /// enable_keyboard_intercept() call can race the restore.
 pub fn recover_registry_if_crashed() {
     let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
-    let task_mgr_set = std::process::Command::new("reg")
+    let task_mgr_set = hidden_command("reg")
         .args(["query", key, "/v", "DisableTaskMgr"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -510,7 +534,7 @@ pub fn lock_desktop() -> bool {
             }
             for proc in scan_processes_with_pids() {
                 // Kill by PID — avoids name collision with legitimate same-named processes
-                let _ = std::process::Command::new("taskkill")
+                let _ = hidden_command("taskkill")
                     .args(["/F", "/PID", &proc.pid.to_string()])
                     .output();
             }
@@ -594,7 +618,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     }
 
     // Method 3: ACPI table name scan (~30ms) — catches QEMU / bochs without guest tools.
-    if let Ok(out) = std::process::Command::new("reg")
+    if let Ok(out) = hidden_command("reg")
         .args(["query", r"HKLM\HARDWARE\ACPI\DSDT"])
         .output()
     {
@@ -619,7 +643,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         let _ = std::thread::Builder::new()
             .name("ams-sysinfo-vm".into())
             .spawn(move || {
-                let _ = tx.send(std::process::Command::new("systeminfo").output());
+                let _ = tx.send(hidden_command("systeminfo").output());
             });
         if let Ok(Ok(out)) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
             let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
@@ -672,7 +696,7 @@ pub fn detect_remote_desktop() -> bool {
 
     // Method 3: Known third-party remote agents not already in RESTRICTED
     // (belt-and-suspenders — RESTRICTED kill-shield covers these too)
-    let ps = std::process::Command::new("tasklist")
+    let ps = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
@@ -941,7 +965,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     let program_arg = format!("program=\"{}\"", exe);
 
     // Block-all outbound rule for this exe
-    let out = std::process::Command::new("netsh")
+    let out = hidden_command("netsh")
         .args([
             "advfirewall",
             "firewall",
@@ -972,7 +996,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
         if ip.parse::<std::net::IpAddr>().is_err() {
             continue;
         }
-        let out = std::process::Command::new("netsh")
+        let out = hidden_command("netsh")
             .args([
                 "advfirewall",
                 "firewall",
@@ -1007,7 +1031,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 
 /// Remove all AMS firewall rules and restore unrestricted outbound access.
 pub fn disable_network_lockdown() -> Result<(), String> {
-    let _ = std::process::Command::new("netsh")
+    let _ = hidden_command("netsh")
         .args([
             "advfirewall",
             "firewall",
@@ -1016,7 +1040,7 @@ pub fn disable_network_lockdown() -> Result<(), String> {
             "name=AMS_PROCTOR_BLOCK_ALL",
         ])
         .output();
-    let _ = std::process::Command::new("netsh")
+    let _ = hidden_command("netsh")
         .args([
             "advfirewall",
             "firewall",
@@ -1051,7 +1075,7 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
         let mut killed = false;
 
         for _ in 0..3 {
-            let _ = std::process::Command::new("taskkill")
+            let _ = hidden_command("taskkill")
                 .args(["/IM", &exe, "/F", "/T"])
                 .output();
             std::thread::sleep(std::time::Duration::from_millis(600));

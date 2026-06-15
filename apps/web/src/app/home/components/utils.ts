@@ -269,12 +269,21 @@ export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
 export function toPreflightPolicyItem(check: ReadinessCheck, scope: "required" | "optional") {
   const copy = readinessCheckCopy(check.kind);
   const warningLabel = scope === "optional" ? "Optional warning" : "Warning";
+  // The platform check reports UnsupportedPlatform both for a genuinely
+  // unsupported OS and for Windows launched without Administrator rights. The
+  // latter is recoverable in one click (the ResolveModal offers "Relaunch as
+  // Administrator"), so surface it as "Administrator required" rather than the
+  // dead-end "Platform not supported". Only the no-admin case carries an
+  // admin-mentioning detail (see core-rs evaluate_requirement / Platform).
+  const needsAdmin =
+    check.kind === "platform" && (check.detail?.toLowerCase().includes("administrator") ?? false);
+  const failCopy = needsAdmin ? "Administrator required" : copy.fail;
   return {
     key: scope + "-" + check.kind,
     label: copy.label,
     status: readinessCheckStatus(check),
     successLabel: copy.success,
-    failLabel: check.outcome === "warn" ? warningLabel : copy.fail,
+    failLabel: check.outcome === "warn" ? warningLabel : failCopy,
   };
 }
 

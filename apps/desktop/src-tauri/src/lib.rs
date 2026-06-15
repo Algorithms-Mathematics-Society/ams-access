@@ -1788,6 +1788,36 @@ pub fn run() {
     platform_rs::linux::recover_keyboard_if_crashed();
     #[cfg(target_os = "windows")]
     platform_rs::windows::recover_registry_if_crashed();
+
+    // Auto-elevate on Windows: full exam lockdown (firewall, registry, taskkill)
+    // requires Administrator. Rather than make the candidate discover the Resolve
+    // flow, raise the standard one-click UAC prompt up front — before any window
+    // exists, so there's no flash of an unelevated UI. Runs at most once per
+    // launch chain:
+    //   • already elevated            → nothing to do.
+    //   • a relaunched instance       → carries the marker arg, so we never
+    //                                    prompt again; a declined/failed
+    //                                    elevation therefore can't loop.
+    //   • otherwise                   → prompt. On approval the elevated instance
+    //                                    takes over and this one exits; on
+    //                                    decline we continue unelevated and let
+    //                                    the readiness check surface
+    //                                    "Administrator required" with its
+    //                                    Relaunch-as-Administrator action.
+    #[cfg(target_os = "windows")]
+    {
+        let relaunched = std::env::args().any(|a| a == platform_rs::windows::RELAUNCH_MARKER);
+        if !relaunched && !platform_rs::windows::is_elevated() {
+            match platform_rs::windows::relaunch_as_admin() {
+                Ok(()) => std::process::exit(0),
+                Err(e) => eprintln!(
+                    "auto-elevation skipped ({e}); continuing unelevated — readiness \
+                     will offer Relaunch as Administrator"
+                ),
+            }
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
         platform_rs::macos::recover_lockdown_if_crashed();

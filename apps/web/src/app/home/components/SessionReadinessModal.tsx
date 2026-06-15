@@ -272,6 +272,7 @@ export function SessionReadinessModal({
       checkLog("virtualization", "SEC", "Virtual machine check"),
       checkLog("keyboard_lockdown", "SEC", "Keyboard lockdown"),
       checkLog("restricted_apps", "SEC", "Restricted app check"),
+      checkLog("platform", "SEC", "Platform compatibility"),
       `Entry decision: ${activeReport.decision.toUpperCase()}`,
     ];
   }, [activeReport, entryWindow.reason, entryWindow.status, entryWindowChecking, scanStatus]);
