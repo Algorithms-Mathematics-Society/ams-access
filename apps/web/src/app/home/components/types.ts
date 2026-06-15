@@ -13,6 +13,7 @@ export type InvitedContest = {
   org_name: string;
   question_count: number;
   verification_window_minutes?: number | null;
+  results_visible_at?: string | null;
 };
 
 export type ReadinessStatus = "ok" | "fail" | "checking";

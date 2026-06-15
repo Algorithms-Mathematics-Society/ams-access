@@ -1,18 +1,29 @@
 "use client";
 
 import { useState, useEffect, useMemo, memo } from "react";
+import { useRouter } from "next/navigation";
 import { CalendarDays, Clock3, ListChecks, Play, ShieldCheck } from "lucide-react";
 import { getThemeColors, getContestEntryState, getScheduledContestTickDelay } from "./utils";
 import { Button, ContestStatePill } from "./ui-primitives";
-import type { InvitedContest, ContestantReadinessContext, ContestantReadinessStatus } from "./types";
+import { STORAGE_KEYS } from "@/constants/storage-keys";
+import type {
+  InvitedContest,
+  ContestantReadinessContext,
+  ContestantReadinessStatus,
+} from "./types";
 
 function readinessStatusColor(status: ContestantReadinessStatus): string {
   switch (status) {
-    case "ready": return "#4ade80";
-    case "needs_action": return "#fca5a5";
-    case "advisory_warning": return "#fcd34d";
-    case "blocked_by_policy": return "#fca5a5";
-    default: return "rgba(168,85,247,0.7)";
+    case "ready":
+      return "#4ade80";
+    case "needs_action":
+      return "#fca5a5";
+    case "advisory_warning":
+      return "#fcd34d";
+    case "blocked_by_policy":
+      return "#fca5a5";
+    default:
+      return "rgba(168,85,247,0.7)";
   }
 }
 
@@ -82,7 +93,8 @@ export const ScheduledContestCard = memo(
           border: `1px solid ${hovered ? themeColors.accent : themeColors.borderStrong}`,
           borderRadius: "8px",
           padding: "28px 32px",
-          transition: "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+          transition:
+            "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
           boxShadow: hovered ? cardHoverShadow : themeColors.shadow,
           transform: hovered ? "translateY(-4px)" : "translateY(0)",
           display: "flex",
@@ -280,6 +292,7 @@ export const ActiveContestCard = memo(
     col: { dot: string; bg: string; border: string };
     readinessContext?: ContestantReadinessContext;
   }) {
+    const router = useRouter();
     const [now, setNow] = useState(() => Date.now());
     const [hovered, setHovered] = useState(false);
     const [btnHovered, setBtnHovered] = useState(false);
@@ -287,6 +300,17 @@ export const ActiveContestCard = memo(
     const isLight = theme === "light";
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
+
+    // Results visibility for ended contests.
+    const resultsVisibleAt = c.results_visible_at ? new Date(c.results_visible_at).getTime() : null;
+    const resultsUnlocked = resultsVisibleAt !== null && now >= resultsVisibleAt;
+    const resultsLockedCountdown = useMemo(() => {
+      if (!resultsVisibleAt || resultsUnlocked) return null;
+      const diff = resultsVisibleAt - now;
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }, [resultsVisibleAt, resultsUnlocked, now]);
 
     useEffect(() => {
       let active = true;
@@ -403,7 +427,8 @@ export const ActiveContestCard = memo(
           borderLeft: `3px solid ${entryTone.rail}`,
           borderRadius: "8px",
           padding: "26px 30px",
-          transition: "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+          transition:
+            "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
           boxShadow: hovered && canEnter ? cardHoverShadow : themeColors.shadow,
           transform: hovered && canEnter ? "translateY(-4px)" : "translateY(0)",
           display: "flex",
@@ -539,7 +564,14 @@ export const ActiveContestCard = memo(
               fontSize: "12px",
             }}
           >
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
               <CalendarDays size={13} strokeWidth={1.8} />
               {entryState.contestDateLabel}
             </span>
@@ -558,10 +590,20 @@ export const ActiveContestCard = memo(
             }}
             disabled={!canEnter}
             theme={theme}
-            variant={canEnter ? "primary" : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable" ? "danger" : "secondary"}
-            onMouseEnter={() => { if (canEnter) setBtnHovered(true); }}
+            variant={
+              canEnter
+                ? "primary"
+                : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable"
+                  ? "danger"
+                  : "secondary"
+            }
+            onMouseEnter={() => {
+              if (canEnter) setBtnHovered(true);
+            }}
             onMouseLeave={() => setBtnHovered(false)}
-            onFocus={() => { if (canEnter) setBtnHovered(true); }}
+            onFocus={() => {
+              if (canEnter) setBtnHovered(true);
+            }}
             onBlur={() => setBtnHovered(false)}
             style={{
               border: `1px solid ${btnHovered && canEnter ? "#c084fc" : entryTone.actionBorder}`,
@@ -632,6 +674,47 @@ export const ActiveContestCard = memo(
             >
               {readinessContext.message}
             </span>
+          </div>
+        )}
+
+        {/* Results availability row for ended contests */}
+        {entryState.phase === "ended" && resultsVisibleAt !== null && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
+              paddingTop: "12px",
+              borderTop: `1px solid ${themeColors.border}`,
+            }}
+          >
+            <span style={{ fontSize: "12px", color: themeColors.textMuted }}>
+              {resultsUnlocked ? "Results available" : `Results in ${resultsLockedCountdown}`}
+            </span>
+            {resultsUnlocked && (
+              <button
+                onClick={() => {
+                  const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
+                  router.push(
+                    `/results?contestId=${encodeURIComponent(c.id)}&email=${encodeURIComponent(email)}`
+                  );
+                }}
+                style={{
+                  padding: "5px 14px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  background: "rgba(168,85,247,0.12)",
+                  border: "1px solid rgba(168,85,247,0.3)",
+                  borderRadius: "5px",
+                  color: "#c084fc",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                View Results
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -729,8 +729,9 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
   return isVideoRendering(video);
 }
 
-function useCountdown(endAt: string) {
+function useCountdown(endAt: string, onExpiry?: () => void) {
   const totalMsRef = useRef<number | null>(null);
+  const firedExpiryRef = useRef(false);
   const [state, setState] = useState({
     remaining: "",
     urgent: false,
@@ -740,6 +741,7 @@ function useCountdown(endAt: string) {
 
   useEffect(() => {
     totalMsRef.current = null;
+    firedExpiryRef.current = false;
     let id: ReturnType<typeof setInterval> | null = null;
     function tick() {
       const diff = new Date(endAt).getTime() - Date.now();
@@ -752,6 +754,10 @@ function useCountdown(endAt: string) {
             ? prev
             : { remaining: "00:00:00", urgent: false, pulse: false, percentLeft: 0 }
         );
+        if (!firedExpiryRef.current && onExpiry) {
+          firedExpiryRef.current = true;
+          onExpiry();
+        }
         if (id) clearInterval(id);
         return;
       }
@@ -777,8 +783,14 @@ function useCountdown(endAt: string) {
   return state;
 }
 
-const CountdownBadge = memo(function CountdownBadge({ endAt }: { endAt: string }) {
-  const { remaining, urgent, pulse, percentLeft } = useCountdown(endAt);
+const CountdownBadge = memo(function CountdownBadge({
+  endAt,
+  onExpiry,
+}: {
+  endAt: string;
+  onExpiry?: () => void;
+}) {
+  const { remaining, urgent, pulse, percentLeft } = useCountdown(endAt, onExpiry);
   const R = 10;
   const CIRC = 2 * Math.PI * R;
   const offset = CIRC * (1 - percentLeft);
@@ -1430,6 +1442,11 @@ export default function ContestPageClient() {
   const [testResultFilter, setTestResultFilter] = useState<"all" | "failed" | "passed">("all");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  // Timer expiry auto-submit overlay state.
+  const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
+    "idle"
+  );
+  const timeUpRetriesRef = useRef(0);
   const [savedAnswers, setSavedAnswers] = useState<
     Record<string, { language: string; content: string }>
   >({});
@@ -2273,7 +2290,81 @@ export default function ContestPageClient() {
     try {
       await window.__TAURI__?.core.invoke("unlock_desktop");
     } catch {}
-    router.push("/home");
+    const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
+    router.push(
+      `/results?contestId=${encodeURIComponent(contestId)}&email=${encodeURIComponent(email)}`
+    );
+  }
+
+  // Called by the countdown timer when end_at is reached.
+  // Auto-submits the session so candidates never need to manually click "Submit & Exit".
+  async function handleContestExpiry() {
+    if (!sessionId) return;
+    setTimeUpState("submitting");
+    timeUpRetriesRef.current = 0;
+    const MAX_RETRIES = 5;
+    while (timeUpRetriesRef.current <= MAX_RETRIES) {
+      try {
+        await handleSave();
+        const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
+        if (response.ok) {
+          setTimeUpState("submitted");
+          // Clean up proctoring and redirect after brief confirmation delay.
+          localStorage.removeItem(ACTIVE_SESSION_KEY);
+          cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+          cameraStreamRef.current = null;
+          setCameraStream(null);
+          const win = window.__TAURI__?.window.getCurrentWindow();
+          if (win) {
+            await win.setFullscreen(false).catch(() => {});
+            await win.setAlwaysOnTop(false).catch(() => {});
+            await win.setDecorations(true).catch(() => {});
+          }
+          try {
+            await window.__TAURI__?.core.invoke("unlock_desktop");
+          } catch {}
+          setTimeout(() => {
+            const em = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
+            router.push(
+              `/results?contestId=${encodeURIComponent(contestId)}&email=${encodeURIComponent(em)}`
+            );
+          }, 3000);
+          return;
+        }
+        const errData = (await response.json().catch(() => ({}))) as { code?: string };
+        // Backend already auto-submitted (orchestrator beat the client) — treat as success.
+        if (errData.code === "CONTEST_ENDED" || errData.code === "SESSION_ALREADY_SUBMITTED") {
+          setTimeUpState("submitted");
+          localStorage.removeItem(ACTIVE_SESSION_KEY);
+          cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+          cameraStreamRef.current = null;
+          setCameraStream(null);
+          const win2 = window.__TAURI__?.window.getCurrentWindow();
+          if (win2) {
+            await win2.setFullscreen(false).catch(() => {});
+            await win2.setAlwaysOnTop(false).catch(() => {});
+            await win2.setDecorations(true).catch(() => {});
+          }
+          try {
+            await window.__TAURI__?.core.invoke("unlock_desktop");
+          } catch {}
+          setTimeout(() => {
+            const em = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
+            router.push(
+              `/results?contestId=${encodeURIComponent(contestId)}&email=${encodeURIComponent(em)}`
+            );
+          }, 3000);
+          return;
+        }
+      } catch {
+        // network failure — will retry
+      }
+      timeUpRetriesRef.current += 1;
+      if (timeUpRetriesRef.current <= MAX_RETRIES) {
+        await new Promise<void>((r) => setTimeout(r, 3000));
+      }
+    }
+    setTimeUpState("error");
   }
 
   useEffect(() => {
@@ -3249,7 +3340,7 @@ export default function ContestPageClient() {
         </div>
 
         {/* Center: Timer */}
-        <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} />
+        <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} onExpiry={handleContestExpiry} />
 
         {/* Right: Submit */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -5615,6 +5706,85 @@ export default function ContestPageClient() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Time's Up Auto-Submit Overlay ── */}
+      {timeUpState !== "idle" && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 99999,
+            background: "rgba(10,10,10,0.92)",
+            backdropFilter: "blur(24px) saturate(180%)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 20,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              letterSpacing: "0.12em",
+              color: "#94a3b8",
+              textTransform: "uppercase",
+            }}
+          >
+            Contest Ended
+          </div>
+          {timeUpState === "submitting" && (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>
+                Submitting your session…
+              </div>
+              <div style={{ fontSize: 13, color: "#64748b" }}>
+                Please stay connected. Do not close the app.
+              </div>
+            </>
+          )}
+          {timeUpState === "submitted" && (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>
+                Session submitted.
+              </div>
+              <div style={{ fontSize: 13, color: "#64748b" }}>Redirecting to results…</div>
+            </>
+          )}
+          {timeUpState === "error" && (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>
+                Could not submit automatically.
+              </div>
+              <div style={{ fontSize: 13, color: "#94a3b8", maxWidth: 340, textAlign: "center" }}>
+                Your answers are saved. Reconnect and click the button below to submit.
+              </div>
+              <button
+                onClick={() => {
+                  setTimeUpState("submitting");
+                  void handleContestExpiry();
+                }}
+                style={{
+                  marginTop: 8,
+                  padding: "10px 24px",
+                  background: "#7c3aed",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Retry Submit
+              </button>
+            </>
+          )}
         </div>
       )}
 
