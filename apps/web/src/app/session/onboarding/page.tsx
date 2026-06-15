@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
 import { fetchJson } from "@/lib/api-client";
+import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { Button } from "@/app/home/components/ui-primitives";
 
 function useTheme() {
@@ -1306,9 +1307,13 @@ function Stage8_CameraInit({
 function Stage9_FaceCalibration({
   stream,
   onPass,
+  dryRun = false,
 }: {
   stream: MediaStream | null;
   onPass(): void;
+  // When true (practice run) the native side should validate the capture for
+  // feedback but NOT persist the image — no session exists to attach it to.
+  dryRun?: boolean;
 }) {
   type FaceKeypointLike = { x: number; y: number; label?: string };
   type FacePredictionLike = {
@@ -1463,6 +1468,7 @@ function Stage9_FaceCalibration({
               const result = await invoke<FaceSaveResult>("save_face_image", {
                 imageData: dataUrl,
                 index: 0,
+                dryRun,
               });
 
               if (!result?.face_verified) {
@@ -1477,7 +1483,7 @@ function Stage9_FaceCalibration({
               captureAccepted = true;
             } else {
               // Dev/browser mode — fire-and-forget, no validation.
-              await invoke("save_face_image", { imageData: dataUrl, index: 0 });
+              await invoke("save_face_image", { imageData: dataUrl, index: 0, dryRun });
               captureAccepted = true;
             }
           }
@@ -2902,6 +2908,171 @@ function ProgressBar({
   );
 }
 
+// ─── Dry-run rehearsal summary ────────────────────────────────────────────────
+
+function DryRunSummary({
+  results,
+  networkOutcome,
+  onDone,
+}: {
+  results: Record<number, StageStatus>;
+  networkOutcome: "skipped" | "ok" | "failed";
+  onDone: () => void;
+}) {
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // Stages 1–12 are the real device/identity/connection checks. 13–15 are
+  // review/transition steps with no standalone pass/fail.
+  const checkStages = STAGES.filter((s) => s.id >= 1 && s.id <= 12);
+  const rows = checkStages.map((s) => ({
+    label: s.label,
+    status: results[s.id] ?? "pass",
+  }));
+  rows.push({
+    label: "Network Lockdown",
+    status: networkOutcome === "ok" ? "pass" : networkOutcome === "failed" ? "fail" : "warn",
+  });
+
+  const anyFail = rows.some((r) => r.status === "fail");
+  const anyWarn = rows.some((r) => r.status === "warn");
+
+  const dot = (status: StageStatus) => {
+    const color =
+      status === "pass"
+        ? "#22c55e"
+        : status === "warn"
+          ? "#f59e0b"
+          : status === "fail"
+            ? "#ef4444"
+            : "#475569";
+    const label =
+      status === "pass"
+        ? "Ready"
+        : status === "warn"
+          ? "Check"
+          : status === "fail"
+            ? "Failed"
+            : "—";
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 7, color }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+        {label}
+      </span>
+    );
+  };
+
+  return (
+    <div
+      style={{
+        maxWidth: 520,
+        width: "100%",
+        background: "#0F0F0F",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 10,
+        boxShadow: "0 24px 60px rgba(0,0,0,0.48)",
+        padding: "36px 40px",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.14em",
+          color: "#71717a",
+          textTransform: "uppercase",
+          marginBottom: 8,
+        }}
+      >
+        Practice run complete
+      </div>
+      <h2 style={{ fontSize: 22, fontWeight: 700, color: "#f8fafc", margin: "0 0 6px" }}>
+        {anyFail
+          ? "Fix these before your exam"
+          : anyWarn
+            ? "You're almost ready"
+            : "You're ready for exam day"}
+      </h2>
+      <p style={{ fontSize: 13, color: "#A8A8A8", margin: "0 0 24px", lineHeight: 1.6 }}>
+        {anyFail
+          ? "Some checks failed. Resolve them now — on exam day a failed check can keep you out of the contest."
+          : "Your device passed the full setup rehearsal. Nothing was submitted and your machine is fully unlocked."}
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 26 }}>
+        {rows.map((r) => (
+          <div
+            key={r.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontSize: 13,
+              color: "#e2e8f0",
+              paddingBottom: 8,
+              borderBottom: "1px solid rgba(255,255,255,0.05)",
+            }}
+          >
+            <span>{r.label}</span>
+            {dot(r.status)}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        {(anyFail || anyWarn) && (
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            style={{
+              flex: 1,
+              padding: "12px 18px",
+              borderRadius: 8,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "transparent",
+              color: "#e2e8f0",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Get help
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onDone}
+          style={{
+            flex: 1,
+            padding: "12px 18px",
+            borderRadius: 8,
+            border: "1px solid #a855f7",
+            background: "#a855f7",
+            color: "#fff",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          Back to home
+        </button>
+      </div>
+
+      <HelpRequestModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        kind="READINESS"
+        summary="Practice setup run reported failing checks."
+        details={{
+          source: "dry_run",
+          checks: rows.reduce<Record<string, string>>((acc, r) => {
+            acc[r.label] = r.status;
+            return acc;
+          }, {}),
+        }}
+      />
+    </div>
+  );
+}
+
 // ─── Main orchestrator ────────────────────────────────────────────────────────
 
 export default function OnboardingPage() {
@@ -2910,6 +3081,15 @@ export default function OnboardingPage() {
     typeof window !== "undefined"
       ? (new URLSearchParams(window.location.search).get("contestId") ?? "")
       : "";
+  // Pre-flight dry-run ("practice run"): runs the full readiness gauntlet but
+  // never creates a session or enters a contest, and tears down all lockdown at
+  // the end. Lets candidates rehearse exam-day setup days early.
+  const dryRun =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("mode") === "dry-run"
+      : false;
+  const [dryRunComplete, setDryRunComplete] = useState(false);
+  const [dryRunNetwork, setDryRunNetwork] = useState<"skipped" | "ok" | "failed">("skipped");
   const [currentStage, setCurrentStage] = useState(0);
   const [results, setResults] = useState<Record<number, StageStatus>>({});
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -3060,6 +3240,43 @@ export default function OnboardingPage() {
 
   const finalizeSecureStart = useCallback(async () => {
     setPolicyBlock(null);
+
+    // ── Dry-run rehearsal ────────────────────────────────────────────────────
+    // Exercise the network lockdown (so install/permission friction surfaces),
+    // then release ALL lockdown. Never create a session or enter a contest.
+    if (dryRun) {
+      const tauriBridge = window.__TAURI__;
+      if (tauriBridge) {
+        try {
+          const ok = await tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
+            allowedDomains: [getNetworkProbeHost()],
+          });
+          setDryRunNetwork(ok ? "ok" : "failed");
+        } catch {
+          setDryRunNetwork("failed");
+        }
+        // Always release — a rehearsal must never leave the machine locked down.
+        await tauriBridge.core.invoke("disable_network_lockdown").catch(() => {});
+      }
+
+      const win = await tauriWindow();
+      if (win) {
+        await win.setFullscreen(false).catch(() => {});
+        await win.setAlwaysOnTop(false).catch(() => {});
+        await win.setDecorations(true).catch(() => {});
+      }
+      await window.__TAURI__?.core.invoke("unlock_desktop").catch(() => {});
+      await window.__TAURI__?.core.invoke("disable_keyboard_intercept").catch(() => {});
+      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+      setCameraStream(null);
+
+      setReadyForStart(false);
+      setTransitioning(false);
+      setDryRunComplete(true);
+      return;
+    }
+
     let windowMeta = contestWindow;
     const windowMetaRequest =
       !windowMeta && contestId
@@ -3265,7 +3482,7 @@ export default function OnboardingPage() {
       setReadyForStart(false);
       setPolicyBlock(msg);
     }
-  }, [contestId, router, contestWindow, readyForStart]);
+  }, [contestId, router, contestWindow, readyForStart, dryRun]);
 
   useEffect(() => {
     if (!contestWindow) return;
@@ -3431,8 +3648,17 @@ export default function OnboardingPage() {
           transition: "opacity 300ms ease, transform 300ms cubic-bezier(0.22,1,0.36,1)",
         }}
       >
+        {/* Dry-run rehearsal summary replaces the stage flow once complete. */}
+        {dryRunComplete && (
+          <DryRunSummary
+            results={results}
+            networkOutcome={dryRunNetwork}
+            onDone={() => router.push("/home")}
+          />
+        )}
+
         {/* Group label — hidden on intro screen */}
-        {currentStage > 0 && (
+        {currentStage > 0 && !dryRunComplete && (
           <div style={{ marginBottom: "4px", textAlign: "center" }}>
             <p
               style={{
@@ -3449,7 +3675,7 @@ export default function OnboardingPage() {
         )}
 
         {/* Intro screen — shown before stage 1 begins */}
-        {currentStage === 0 && (
+        {currentStage === 0 && !dryRunComplete && (
           <div
             style={{
               maxWidth: "480px",
@@ -3470,12 +3696,14 @@ export default function OnboardingPage() {
                 marginBottom: "8px",
               }}
             >
-              Before you begin
+              {dryRun ? "Practice run" : "Before you begin"}
             </h2>
             <p
               style={{ fontSize: "13px", color: "#A8A8A8", marginBottom: "28px", lineHeight: 1.6 }}
             >
-              This usually takes about 2 minutes.
+              {dryRun
+                ? "Rehearse your exam-day setup now. Nothing is submitted, you won't enter a contest, and your machine is unlocked at the end. Takes about 2 minutes."
+                : "This usually takes about 2 minutes."}
             </p>
             <div
               style={{
@@ -3542,7 +3770,7 @@ export default function OnboardingPage() {
         )}
 
         {/* Stage content frame */}
-        {currentStage > 0 && (
+        {currentStage > 0 && !dryRunComplete && (
           <div
             style={{
               maxWidth: "480px",
@@ -3636,7 +3864,7 @@ export default function OnboardingPage() {
             )}
             {!isTooEarly && (!isAfterStart || showWaitLock) && !isEnded && (
               <>
-                {currentStage === 15 && contestWindow && waitMs > 0 && (
+                {currentStage === 15 && !dryRun && contestWindow && waitMs > 0 && (
                   <div
                     style={{
                       border: "1px solid rgba(255, 255, 255, 0.05)",
@@ -3698,7 +3926,7 @@ export default function OnboardingPage() {
                     </div>
                   </div>
                 )}
-                {currentStage === 15 && (!contestWindow || waitMs <= 0) && (
+                {currentStage === 15 && !dryRun && (!contestWindow || waitMs <= 0) && (
                   <div
                     style={{
                       border: "1px solid rgba(255, 255, 255, 0.05)",
@@ -3765,7 +3993,11 @@ export default function OnboardingPage() {
                   <Stage8_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
                 )}
                 {currentStage === 9 && (
-                  <Stage9_FaceCalibration stream={cameraStream} onPass={advancePass} />
+                  <Stage9_FaceCalibration
+                    stream={cameraStream}
+                    onPass={advancePass}
+                    dryRun={dryRun}
+                  />
                 )}
                 {currentStage === 10 && (
                   <Stage10_PresenceVerification stream={cameraStream} onPass={advancePass} />

@@ -1227,6 +1227,7 @@ export default function HomePage() {
                 theme={theme}
                 onResolve={(key) => setActiveResolveModal(key)}
                 context={contestantReadiness}
+                onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
               />
             </div>
           )}

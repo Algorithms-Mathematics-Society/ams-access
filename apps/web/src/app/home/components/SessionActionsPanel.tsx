@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { AlertTriangle, CheckCircle, Loader2, Play, RefreshCw, X } from "lucide-react";
 import { getThemeColors } from "./utils";
 import { Button, Field, InlineAlert } from "./ui-primitives";
+import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { ActiveSession, ResumeVerificationState } from "./types";
 
 export function SessionActionsPanel({
@@ -41,6 +43,9 @@ export function SessionActionsPanel({
   theme: "dark" | "light";
 }) {
   const c = getThemeColors(theme);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const resumeFailed =
+    !!resumeStatus && /rejected|expired|failed|not found|mismatch|could not/i.test(resumeStatus);
   const resumeVerified = resumeVerification === "verified";
   const resumeChecking = resumeVerification === "checking" || resumeVerification === "unverified";
   const resumeRequestPending =
@@ -383,7 +388,22 @@ export function SessionActionsPanel({
             {resumeStatus}
           </InlineAlert>
         )}
+        {resumeFailed && (
+          <Button theme={theme} variant="secondary" onClick={() => setHelpOpen(true)}>
+            Get help rejoining
+          </Button>
+        )}
       </div>
+
+      <HelpRequestModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        kind="DISCONNECT"
+        sessionId={activeSession?.id ?? null}
+        contestId={activeSession?.contest_id ?? null}
+        summary="I was disconnected and can't rejoin my contest session."
+        details={{ source: "resume_flow", resume_status: resumeStatus }}
+      />
     </div>
   );
 }

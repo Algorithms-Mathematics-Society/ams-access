@@ -8,6 +8,7 @@ import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore, API_URL
 import { deriveContestantReadiness } from "./readiness-context";
 import { useFocusTrap } from "./hooks";
 import { parseLogLine } from "./SecurityOperationsLog";
+import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { ReadinessState, ReadinessStatus } from "./types";
 import type { ReadinessReport } from "@ams/api-client";
 
@@ -113,6 +114,7 @@ export function SessionReadinessModal({
   const isLight = theme === "light";
   const [isRescanning, setIsRescanning] = useState(false);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [entryWindow, setEntryWindow] = useState<{
     status: "checking" | "allowed" | "blocked";
     reason: string | null;
@@ -783,8 +785,46 @@ export function SessionReadinessModal({
               Back to contests
             </button>
           )}
+          {!canProceed && scanStatus !== "scanning" && (
+            <button
+              onClick={() => setHelpOpen(true)}
+              style={{
+                height: "42px",
+                borderRadius: "6px",
+                border: `1px solid ${c.border}`,
+                background: "transparent",
+                color: c.textMutedStrong,
+                padding: "0 16px",
+                fontSize: "13px",
+                fontWeight: 600,
+                fontFamily: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              Get help
+            </button>
+          )}
         </div>
       </div>
+      <HelpRequestModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        kind={entryWindow.status === "blocked" ? "POLICY_BLOCK" : "READINESS"}
+        contestId={contestId}
+        summary={
+          entryWindow.status === "blocked"
+            ? `Blocked from entering the contest: ${entryWindow.reason ?? "entry window not open"}.`
+            : "I can't pass the device readiness checks to enter the contest."
+        }
+        details={{
+          source: "readiness_modal",
+          session_type: sessionType,
+          entry_window: entryWindow.status,
+          entry_window_reason: entryWindow.reason,
+          decision: activeReport?.decision,
+          diagnostics: consoleLogs,
+        }}
+      />
       <style>{`
         @keyframes spin {
           100% { transform: rotate(360deg); }

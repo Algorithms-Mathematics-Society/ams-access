@@ -1,11 +1,10 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { Settings } from "lucide-react";
+import { Settings, PlayCircle } from "lucide-react";
 import { getThemeColors } from "./utils";
 import { Button, ChecklistItem, InlineAlert } from "./ui-primitives";
 import type { ReadinessState, ContestantReadinessContext } from "./types";
-
 
 export const ReadinessWidget = memo(function ReadinessWidget({
   readiness,
@@ -13,12 +12,14 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   theme,
   onResolve,
   context,
+  onPracticeRun,
 }: {
   readiness: ReadinessState;
   onSettingsRedirect: () => void;
   theme: "dark" | "light";
   onResolve?: (key: string) => void;
   context?: ContestantReadinessContext;
+  onPracticeRun?: () => void;
 }) {
   const themeColors = useMemo(() => getThemeColors(theme), [theme]);
 
@@ -127,6 +128,18 @@ export const ReadinessWidget = memo(function ReadinessWidget({
         <Settings size={14} strokeWidth={2} />
         Open Settings
       </Button>
+
+      {onPracticeRun && (
+        <Button
+          onClick={onPracticeRun}
+          theme={theme}
+          variant="secondary"
+          style={{ width: "100%", marginTop: "10px" }}
+        >
+          <PlayCircle size={14} strokeWidth={2} />
+          Test my setup (practice run)
+        </Button>
+      )}
     </div>
   );
 });

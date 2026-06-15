@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { invoke } from "@ams/api-client";
 import { getNetworkProbeHost, getThemeColors } from "./utils";
 import { useFocusTrap } from "./hooks";
+import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { TelemetryQueryState } from "./types";
 
 interface ResolveModalProps {
@@ -258,6 +259,7 @@ export function ResolveModal({
   const [copied, setCopied] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const c = getThemeColors(theme);
   const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
   const flow = useMemo(
@@ -500,6 +502,23 @@ export function ResolveModal({
           </button>
           <button
             type="button"
+            onClick={() => setHelpOpen(true)}
+            style={{
+              height: "40px",
+              padding: "0 14px",
+              background: "transparent",
+              color: c.textMutedStrong,
+              border: `1px solid ${c.border}`,
+              borderRadius: "6px",
+              fontWeight: 600,
+              fontSize: "13px",
+              cursor: "pointer",
+            }}
+          >
+            Get help
+          </button>
+          <button
+            type="button"
             onClick={onClose}
             style={{
               height: "40px",
@@ -607,6 +626,21 @@ export function ResolveModal({
           </button>
         </div>
       </div>
+
+      <HelpRequestModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        kind="READINESS"
+        summary={`I can't resolve the “${activeFlow.title}” device check.`}
+        details={{
+          source: "resolve_modal",
+          issue: activeCheckKey,
+          problem: activeFlow.problem,
+          diagnostics: Object.fromEntries(
+            activeFlow.details.map((item) => [item.label, item.value])
+          ),
+        }}
+      />
     </div>
   );
 }
