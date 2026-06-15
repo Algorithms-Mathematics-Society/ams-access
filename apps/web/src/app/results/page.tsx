@@ -109,6 +109,7 @@ export default function ResultsPage() {
     (typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "");
 
   const [results, setResults] = useState<ResultsData | null>(null);
+  const [locked, setLocked] = useState(false);
   const [lockedUntil, setLockedUntil] = useState<string | null>(null);
   const [countdown, setCountdown] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -123,9 +124,15 @@ export default function ResultsPage() {
         `${API_URL}/contests/${contestId}/results?email=${encodeURIComponent(email)}`
       );
       if (res.status === 403) {
-        const data = (await res.json()) as { code: string; results_visible_at: string };
+        const data = (await res.json().catch(() => ({}))) as {
+          code?: string;
+          results_visible_at?: string;
+        };
         if (data.code === "RESULTS_LOCKED") {
-          setLockedUntil(data.results_visible_at);
+          setLocked(true);
+          // Backend guarantees a concrete timestamp, but guard against an empty
+          // value so the locked screen always renders (never stuck on Loading).
+          setLockedUntil(data.results_visible_at ? data.results_visible_at : null);
           return;
         }
       }
@@ -135,6 +142,7 @@ export default function ResultsPage() {
       }
       const data = (await res.json()) as ResultsData;
       setResults(data);
+      setLocked(false);
       setLockedUntil(null);
     } catch {
       setError("Could not connect. Check your network and retry.");
@@ -185,7 +193,7 @@ export default function ResultsPage() {
     : null;
 
   // ── Locked screen ──────────────────────────────────────────────────────────
-  if (lockedUntil) {
+  if (locked) {
     return (
       <div
         style={{
@@ -213,7 +221,7 @@ export default function ResultsPage() {
           Results Locked
         </div>
         <div style={{ fontSize: 28, fontWeight: 600, color: "#e2e8f0" }}>
-          Available in {countdown}
+          {lockedUntil ? `Available in ${countdown}` : "Available soon"}
         </div>
         <div style={{ fontSize: 13, color: "#475569", maxWidth: 360, textAlign: "center" }}>
           Results will be released 48 hours after the contest ended. Check back then.
