@@ -2069,7 +2069,20 @@ export default function ContestPageClient() {
           source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        if (errData.code === "SESSION_ALREADY_SUBMITTED") {
+          setIsRunning(false);
+          setRunError("Your session has already been submitted.");
+          return;
+        }
+        if (errData.code === "QUEUE_ERROR") {
+          setIsRunning(false);
+          setRunError("Failed to queue submission — please retry.");
+          return;
+        }
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
       const created = (await res.json()) as {
         id?: string;
         attempt_id?: string;
@@ -2196,7 +2209,18 @@ export default function ContestPageClient() {
       });
 
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
+        const errData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (errData.code === "SESSION_ALREADY_SUBMITTED") {
+          setSubmissionError("Your session has already been submitted.");
+          return;
+        }
+        if (errData.code === "QUEUE_ERROR") {
+          setSubmissionError("Failed to queue submission — please retry.");
+          return;
+        }
         throw new Error(errData.error || `Submission failed with HTTP ${response.status}`);
       }
 
@@ -2218,7 +2242,19 @@ export default function ContestPageClient() {
     if (sessionId) {
       try {
         const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
-        if (!response.ok) throw new Error("submit failed");
+        if (!response.ok) {
+          const errData = (await response.json().catch(() => ({}))) as {
+            error?: string;
+            code?: string;
+          };
+          if (errData.code === "CONTEST_ENDED") {
+            setSubmitError(
+              "The contest has ended — your answers were saved but the session cannot be submitted."
+            );
+            return;
+          }
+          throw new Error(errData.error || "submit failed");
+        }
       } catch {
         setSubmitError("Submit failed. Your answer was saved; retry submit when connected.");
         return;
