@@ -1308,12 +1308,17 @@ function Stage9_FaceCalibration({
   stream,
   onPass,
   dryRun = false,
+  onFaceFallback,
 }: {
   stream: MediaStream | null;
   onPass(): void;
   // When true (practice run) the native side should validate the capture for
   // feedback but NOT persist the image — no session exists to attach it to.
   dryRun?: boolean;
+  // Equity fallback: after repeated capture rejections (lighting/glasses/skin-tone
+  // can defeat the model), let the candidate proceed for manual proctor review
+  // rather than being hard-blocked. Never a silent skip — the parent records it.
+  onFaceFallback?: () => void;
 }) {
   type FaceKeypointLike = { x: number; y: number; label?: string };
   type FacePredictionLike = {
@@ -1390,6 +1395,9 @@ function Stage9_FaceCalibration({
   const [lostTracking, setLostTracking] = useState(false);
   const [stageBlocked, setStageBlocked] = useState(false);
   const [scanState, setScanState] = useState<FaceScanState>("loading");
+  // Count of rejected captures; after a few we surface the proctor-review fallback.
+  const [captureRejections, setCaptureRejections] = useState(0);
+  const FACE_FALLBACK_AFTER = 3;
 
   const PHASE_HOLD_MS = 700;
 
@@ -1477,6 +1485,7 @@ function Stage9_FaceCalibration({
                   kind: "face_capture_rejected",
                   detail: `Backend rejected face image: ${reason}`,
                 });
+                setCaptureRejections((n) => n + 1);
                 resetCaptureAttempt(`Capture rejected: ${reason.replace(/_/g, " ")}`);
                 return; // do not advance stage
               }
@@ -1489,6 +1498,7 @@ function Stage9_FaceCalibration({
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "capture_validation_failed";
+          setCaptureRejections((n) => n + 1);
           resetCaptureAttempt(
             `Capture validation failed: ${message}`,
             "Capture failed — try again"
@@ -1499,6 +1509,7 @@ function Stage9_FaceCalibration({
     }
 
     if (!captureAccepted) {
+      setCaptureRejections((n) => n + 1);
       resetCaptureAttempt("Capture could not be validated.", "Capture failed — try again");
       return;
     }
@@ -2139,7 +2150,7 @@ function Stage9_FaceCalibration({
                 lineHeight: 1.65,
               }}
             >
-              Contact your proctor to proceed
+              Use the option below to continue for a proctor review.
             </span>
           </div>
         )}
@@ -2269,6 +2280,49 @@ function Stage9_FaceCalibration({
         >
           {runtimeNote}
         </p>
+      )}
+
+      {/* Equity fallback: repeated rejections — or a detector that can't load at
+          all — shouldn't trap a real candidate. */}
+      {onFaceFallback && !done && (captureRejections >= FACE_FALLBACK_AFTER || detectorFailed) && (
+        <div
+          style={{
+            maxWidth: 320,
+            textAlign: "center",
+            marginBottom: "18px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "12px",
+              color: "#A8A8A8",
+              lineHeight: 1.6,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            Still having trouble with the camera check? You can continue and have a proctor review
+            this manually — your contest won&rsquo;t be blocked.
+          </p>
+          <button
+            type="button"
+            onClick={() => onFaceFallback()}
+            style={{
+              padding: "10px 18px",
+              borderRadius: "8px",
+              border: "1px solid rgba(168,85,247,0.5)",
+              background: "rgba(168,85,247,0.12)",
+              color: "#e2e8f0",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Continue — request a proctor review
+          </button>
+        </div>
       )}
 
       {/* Lock progress bar */}
@@ -2831,6 +2885,30 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
 
 // ─── Progress indicator ───────────────────────────────────────────────────────
 
+// Friendly, de-jargoned names for each setup phase (the raw STAGES groups still
+// drive logic elsewhere; this is display only).
+const PHASE_FRIENDLY_NAME: Record<string, string> = {
+  "Workspace Lockdown": "Setting up your workspace",
+  "System Checks": "Checking your device",
+  "Media Setup": "Camera & microphone",
+  "Identity Scan": "Quick identity check",
+  Finalizing: "Finishing up",
+};
+
+// Contiguous runs of the same group, in stage order — the candidate-facing "phases".
+function computePhases(): { group: string; start: number; end: number }[] {
+  const phases: { group: string; start: number; end: number }[] = [];
+  for (const s of STAGES) {
+    const last = phases[phases.length - 1];
+    if (last && last.group === s.group) {
+      last.end = s.id;
+    } else {
+      phases.push({ group: s.group, start: s.id, end: s.id });
+    }
+  }
+  return phases;
+}
+
 function ProgressBar({
   current,
   results,
@@ -2839,7 +2917,17 @@ function ProgressBar({
   results: Record<number, StageStatus>;
 }) {
   const currentStageInfo = STAGES[current - 1];
-  const groupLabel = currentStageInfo?.group ?? "Secure Setup";
+  const groupLabel = currentStageInfo?.group ?? "Finalizing";
+  const phaseName = PHASE_FRIENDLY_NAME[groupLabel] ?? groupLabel;
+
+  const phases = computePhases();
+  const phaseIndex = phases.findIndex((p) => current >= p.start && current <= p.end);
+  const currentPhase = phaseIndex < 0 ? phases.length : phaseIndex + 1;
+
+  // Rough, reassuring time estimate (~8s/stage). Shown as "about …", never exact.
+  const remainingStages = Math.max(0, STAGES.length - current);
+  const estMinutes = Math.max(1, Math.ceil((remainingStages * 8) / 60));
+  const timeLabel = remainingStages <= 0 ? "Almost done" : `about ${estMinutes} min left`;
 
   return (
     <div
@@ -2856,14 +2944,14 @@ function ProgressBar({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span
           style={{
-            fontSize: "10px",
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: 700,
+            fontSize: "11px",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontWeight: 600,
             color: "#FFF",
-            letterSpacing: "0.1em",
+            letterSpacing: "0.01em",
           }}
         >
-          {groupLabel.toUpperCase()}
+          {phaseName}
         </span>
         <span
           style={{
@@ -2873,7 +2961,7 @@ function ProgressBar({
             color: "#A8A8A8",
           }}
         >
-          STEP {current} OF {STAGES.length}
+          Step {currentPhase} of {phases.length} · {timeLabel}
         </span>
       </div>
 
@@ -3100,6 +3188,9 @@ export default function OnboardingPage() {
   const [readyForStart, setReadyForStart] = useState(false);
   const [sessionPrepared, setSessionPrepared] = useState(false);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  // Set when the candidate proceeds past the face check via the equity fallback;
+  // recorded durably once the session exists so a proctor can review it.
+  const faceFallbackRef = useRef(false);
   const theme = useTheme();
   const isLight = theme === "light";
 
@@ -3394,6 +3485,15 @@ export default function OnboardingPage() {
             apiUrl: API_URL,
             sessionId: body.id,
           }).catch(() => {});
+          // Now that the session exists and the event stream is armed, durably
+          // record a face-check fallback so the proctor sees it server-side.
+          if (faceFallbackRef.current) {
+            await invoke("log_proctoring_event", {
+              kind: "face_verification_fallback",
+              detail: "Candidate proceeded past the face check for manual proctor review.",
+              payload: { stage: 9 },
+            }).catch(() => {});
+          }
         }
         setSessionPrepared(true);
       }
@@ -3514,6 +3614,18 @@ export default function OnboardingPage() {
 
   const advancePass = useCallback(() => advance("pass"), [advance]);
   const advanceWarn = useCallback(() => advance("warn"), [advance]);
+  // Equity fallback from the face check: flag for proctor review, record it
+  // best-effort now (buffered until the session exists, then re-logged durably in
+  // finalizeSecureStart), and advance as a warning rather than a clean pass.
+  const handleFaceFallback = useCallback(() => {
+    faceFallbackRef.current = true;
+    void invoke("log_proctoring_event", {
+      kind: "face_verification_fallback",
+      detail: "Candidate proceeded past the face check for manual proctor review.",
+      payload: { stage: 9, dry_run: dryRun },
+    }).catch(() => {});
+    advanceWarn();
+  }, [advanceWarn, dryRun]);
   const emergencyExit = useCallback(async () => {
     cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     cameraStreamRef.current = null;
@@ -3669,7 +3781,8 @@ export default function OnboardingPage() {
                 fontWeight: 500,
               }}
             >
-              {STAGES[currentStage - 1]?.group}
+              {PHASE_FRIENDLY_NAME[STAGES[currentStage - 1]?.group ?? ""] ??
+                STAGES[currentStage - 1]?.group}
             </p>
           </div>
         )}
@@ -3997,6 +4110,7 @@ export default function OnboardingPage() {
                     stream={cameraStream}
                     onPass={advancePass}
                     dryRun={dryRun}
+                    onFaceFallback={handleFaceFallback}
                   />
                 )}
                 {currentStage === 10 && (
