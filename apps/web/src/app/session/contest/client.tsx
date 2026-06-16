@@ -2290,10 +2290,9 @@ export default function ContestPageClient() {
     try {
       await window.__TAURI__?.core.invoke("unlock_desktop");
     } catch {}
-    const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
-    router.push(
-      `/results?contestId=${encodeURIComponent(contestId)}&email=${encodeURIComponent(email)}`
-    );
+    // Show the unified calm confirmation instead of a forced auto-redirect.
+    // The candidate leaves on their own from the "submitted" overlay.
+    setTimeUpState("submitted");
   }
 
   // Called by the countdown timer when end_at is reached.
@@ -2309,7 +2308,8 @@ export default function ContestPageClient() {
         const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
         if (response.ok) {
           setTimeUpState("submitted");
-          // Clean up proctoring and redirect after brief confirmation delay.
+          // Clean up proctoring. The candidate leaves on their own from the
+          // calm confirmation overlay (no forced auto-redirect).
           localStorage.removeItem(ACTIVE_SESSION_KEY);
           cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
           cameraStreamRef.current = null;
@@ -2323,12 +2323,6 @@ export default function ContestPageClient() {
           try {
             await window.__TAURI__?.core.invoke("unlock_desktop");
           } catch {}
-          setTimeout(() => {
-            const em = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
-            router.push(
-              `/results?contestId=${encodeURIComponent(contestId)}&email=${encodeURIComponent(em)}`
-            );
-          }, 3000);
           return;
         }
         const errData = (await response.json().catch(() => ({}))) as { code?: string };
@@ -2348,12 +2342,6 @@ export default function ContestPageClient() {
           try {
             await window.__TAURI__?.core.invoke("unlock_desktop");
           } catch {}
-          setTimeout(() => {
-            const em = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
-            router.push(
-              `/results?contestId=${encodeURIComponent(contestId)}&email=${encodeURIComponent(em)}`
-            );
-          }, 3000);
           return;
         }
       } catch {
@@ -2989,6 +2977,14 @@ export default function ContestPageClient() {
     (submissionsByQuestion[q.id] ?? []).some((sub) => (sub.final_verdict ?? sub.status) === "AC")
   ).length;
   const remainingQuestionCount = Math.max(questions.length - attemptedQuestionCount, 0);
+  // Coverage shown on the calm post-submit confirmation: problems the candidate
+  // engaged with (submitted to OR saved an answer for). Derived from LOCAL state
+  // only — never correctness/verdicts/scores (those unlock after the 48h embargo).
+  const engagedQuestionCount = questions.filter(
+    (q) => (submissionsByQuestion[q.id] ?? []).length > 0 || Boolean(savedAnswers[q.id])
+  ).length;
+  const candidateEmail =
+    typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "";
   useEffect(() => {
     if (!availableProblemTabs.includes(problemTab)) setProblemTab("statement");
     setCopiedSampleKey(null);
@@ -5736,7 +5732,7 @@ export default function ContestPageClient() {
               textTransform: "uppercase",
             }}
           >
-            Contest Ended
+            {timeUpState === "submitted" ? "Submitted" : "Contest Ended"}
           </div>
           {timeUpState === "submitting" && (
             <>
@@ -5750,10 +5746,85 @@ export default function ContestPageClient() {
           )}
           {timeUpState === "submitted" && (
             <>
-              <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>
-                Session submitted.
+              <div style={{ fontSize: 26, fontWeight: 600, color: "#e2e8f0" }}>
+                You&rsquo;re all done
               </div>
-              <div style={{ fontSize: 13, color: "#64748b" }}>Redirecting to results…</div>
+              <div
+                style={{
+                  fontSize: 14,
+                  color: "#94a3b8",
+                  maxWidth: 380,
+                  textAlign: "center",
+                  lineHeight: 1.5,
+                }}
+              >
+                Your work has been submitted safely.
+              </div>
+              {questions.length > 0 && engagedQuestionCount > 0 && (
+                <div style={{ fontSize: 13, color: "#64748b" }}>
+                  You worked on {engagedQuestionCount} of {questions.length} problem
+                  {questions.length !== 1 ? "s" : ""}.
+                </div>
+              )}
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#64748b",
+                  maxWidth: 400,
+                  textAlign: "center",
+                  lineHeight: 1.5,
+                  marginTop: 4,
+                }}
+              >
+                Results unlock in 48 hours
+                {candidateEmail ? (
+                  <>
+                    {" "}
+                    — we&rsquo;ll email you at{" "}
+                    <span style={{ color: "#94a3b8" }}>{candidateEmail}</span> when they&rsquo;re
+                    ready.
+                  </>
+                ) : (
+                  <> — we&rsquo;ll email you when they&rsquo;re ready.</>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                <button
+                  onClick={() => router.push("/home")}
+                  style={{
+                    padding: "10px 24px",
+                    background: "#7c3aed",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Back to home
+                </button>
+                <button
+                  onClick={() =>
+                    router.push(
+                      `/results?contestId=${encodeURIComponent(
+                        contestId
+                      )}&email=${encodeURIComponent(candidateEmail)}`
+                    )
+                  }
+                  style={{
+                    padding: "10px 24px",
+                    background: "rgba(255,255,255,0.06)",
+                    color: "#94a3b8",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 6,
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  Check results status
+                </button>
+              </div>
             </>
           )}
           {timeUpState === "error" && (

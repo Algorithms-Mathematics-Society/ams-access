@@ -218,13 +218,15 @@ export default function ResultsPage() {
             textTransform: "uppercase",
           }}
         >
-          Results Locked
+          You&rsquo;re done
         </div>
         <div style={{ fontSize: 28, fontWeight: 600, color: "#e2e8f0" }}>
-          {lockedUntil ? `Available in ${countdown}` : "Available soon"}
+          {lockedUntil ? `Results unlock in ${countdown}` : "Results unlock soon"}
         </div>
         <div style={{ fontSize: 13, color: "#475569", maxWidth: 360, textAlign: "center" }}>
-          Results will be released 48 hours after the contest ended. Check back then.
+          {email
+            ? `Your work is safely submitted. We'll email you at ${email} when results are ready.`
+            : "Your work is safely submitted. We'll email you when results are ready."}
         </div>
         <button
           onClick={() => router.push("/home")}
