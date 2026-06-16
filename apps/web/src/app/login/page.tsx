@@ -20,6 +20,61 @@ export default function LoginPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [resetState, setResetState] = useState<"idle" | "sending" | "sent">("idle");
 
+  // Passwordless email-code sign-in (additive; password path stays for testing).
+  const [mode, setMode] = useState<"password" | "otp">("password");
+  const [otpStep, setOtpStep] = useState<"email" | "code">("email");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpState, setOtpState] = useState<"idle" | "sending" | "verifying">("idle");
+
+  async function handleSendOtp() {
+    if (otpState === "sending") return;
+    if (!email.trim()) {
+      setError("Enter your email to receive a code.");
+      return;
+    }
+    setError(null);
+    setOtpState("sending");
+    try {
+      await fetch(`${resolveApiBase()}/students/request-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+    } catch {
+      // request-otp always responds 200; ignore transport errors for neutral UX.
+    }
+    setOtpState("idle");
+    setOtpStep("code");
+  }
+
+  async function handleVerifyOtp() {
+    if (otpState === "verifying") return;
+    if (otpCode.trim().length < 6) {
+      setError("Enter the 6-digit code from your email.");
+      return;
+    }
+    setError(null);
+    setOtpState("verifying");
+    try {
+      const res = await fetch(`${resolveApiBase()}/students/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), code: otpCode.trim() }),
+      });
+      if (!res.ok) {
+        setOtpState("idle");
+        setError("That code is invalid or has expired. Request a new one.");
+        return;
+      }
+      const data = (await res.json()) as { email?: string };
+      localStorage.setItem("ams_user_email", data.email || email.trim());
+      setTimeout(() => router.push("/home"), 400);
+    } catch {
+      setOtpState("idle");
+      setError("Couldn't verify the code. Check your connection and try again.");
+    }
+  }
+
   async function handlePasswordReset() {
     if (resetState === "sending") return;
     if (!email.trim()) {
@@ -241,114 +296,224 @@ export default function LoginPage() {
           <div className="login-form-sub">AMS Derive &middot; This session will be proctored</div>
           <div className="login-rule" />
 
-          <form onSubmit={handleSubmit} noValidate>
-            <div className="login-field">
-              <label
-                htmlFor="login-email"
-                className={`login-label${emailFocused ? " login-label--focused" : ""}`}
-              >
-                Email
-              </label>
-              <input
-                id="login-email"
-                type="email"
-                value={email}
-                onChange={(e) => {
-                  setError(null);
-                  setEmail(e.target.value);
-                }}
-                onFocus={() => setEmailFocused(true)}
-                onBlur={() => setEmailFocused(false)}
-                placeholder="you@institution.edu"
-                autoComplete="email"
-                required
-                disabled={loading}
-                aria-describedby={error ? "login-error" : undefined}
-                aria-invalid={error ? "true" : undefined}
-                className="login-input"
-              />
-            </div>
-
-            <div className="login-field">
-              <label
-                htmlFor="login-password"
-                className={`login-label${passFocused ? " login-label--focused" : ""}`}
-              >
-                Password
-              </label>
-              <input
-                id="login-password"
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setError(null);
-                  setPassword(e.target.value);
-                }}
-                onFocus={() => setPassFocused(true)}
-                onBlur={() => setPassFocused(false)}
-                placeholder="••••••••••••"
-                autoComplete="current-password"
-                required
-                disabled={loading}
-                aria-describedby={error ? "login-error" : undefined}
-                aria-invalid={error ? "true" : undefined}
-                className="login-input"
-              />
-            </div>
-
-            <div className="login-submit-wrap">
-              <button type="submit" disabled={loading} className="login-submit">
-                {loading ? (
-                  <>
-                    <svg
-                      className="login-spinner"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <circle
-                        cx="6"
-                        cy="6"
-                        r="4.5"
-                        stroke="rgba(168,85,247,0.25)"
-                        strokeWidth="1.5"
-                      />
-                      <path
-                        d="M6 1.5A4.5 4.5 0 0 1 10.5 6"
-                        stroke="#a855f7"
-                        strokeWidth="1.5"
-                        strokeLinecap="butt"
-                      />
-                    </svg>
-                    Verifying...
-                  </>
-                ) : (
-                  "Sign in"
-                )}
-              </button>
-
-              {error && (
-                <p id="login-error" role="alert" className="login-error">
-                  {error}
-                </p>
-              )}
-
-              {process.env.NODE_ENV === "development" && (
-                <button
-                  type="button"
-                  disabled={loading}
-                  className="login-dev-btn"
-                  onClick={handleDevSignIn}
+          {mode === "password" ? (
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="login-field">
+                <label
+                  htmlFor="login-email"
+                  className={`login-label${emailFocused ? " login-label--focused" : ""}`}
                 >
-                  Dev sign in
-                </button>
-              )}
-            </div>
-          </form>
+                  Email
+                </label>
+                <input
+                  id="login-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => {
+                    setError(null);
+                    setEmail(e.target.value);
+                  }}
+                  onFocus={() => setEmailFocused(true)}
+                  onBlur={() => setEmailFocused(false)}
+                  placeholder="you@institution.edu"
+                  autoComplete="email"
+                  required
+                  disabled={loading}
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? "true" : undefined}
+                  className="login-input"
+                />
+              </div>
 
-          <div className="login-sso-wrap">
+              <div className="login-field">
+                <label
+                  htmlFor="login-password"
+                  className={`login-label${passFocused ? " login-label--focused" : ""}`}
+                >
+                  Password
+                </label>
+                <input
+                  id="login-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => {
+                    setError(null);
+                    setPassword(e.target.value);
+                  }}
+                  onFocus={() => setPassFocused(true)}
+                  onBlur={() => setPassFocused(false)}
+                  placeholder="••••••••••••"
+                  autoComplete="current-password"
+                  required
+                  disabled={loading}
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? "true" : undefined}
+                  className="login-input"
+                />
+              </div>
+
+              <div className="login-submit-wrap">
+                <button type="submit" disabled={loading} className="login-submit">
+                  {loading ? (
+                    <>
+                      <svg
+                        className="login-spinner"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <circle
+                          cx="6"
+                          cy="6"
+                          r="4.5"
+                          stroke="rgba(168,85,247,0.25)"
+                          strokeWidth="1.5"
+                        />
+                        <path
+                          d="M6 1.5A4.5 4.5 0 0 1 10.5 6"
+                          stroke="#a855f7"
+                          strokeWidth="1.5"
+                          strokeLinecap="butt"
+                        />
+                      </svg>
+                      Verifying...
+                    </>
+                  ) : (
+                    "Sign in"
+                  )}
+                </button>
+
+                {error && (
+                  <p id="login-error" role="alert" className="login-error">
+                    {error}
+                  </p>
+                )}
+
+                {process.env.NODE_ENV === "development" && (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    className="login-dev-btn"
+                    onClick={handleDevSignIn}
+                  >
+                    Dev sign in
+                  </button>
+                )}
+              </div>
+            </form>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (otpStep === "email") void handleSendOtp();
+                else void handleVerifyOtp();
+              }}
+              noValidate
+            >
+              <div className="login-field">
+                <label
+                  htmlFor="login-email-otp"
+                  className={`login-label${emailFocused ? " login-label--focused" : ""}`}
+                >
+                  Email
+                </label>
+                <input
+                  id="login-email-otp"
+                  type="email"
+                  value={email}
+                  onChange={(e) => {
+                    setError(null);
+                    setEmail(e.target.value);
+                  }}
+                  onFocus={() => setEmailFocused(true)}
+                  onBlur={() => setEmailFocused(false)}
+                  placeholder="you@institution.edu"
+                  autoComplete="email"
+                  required
+                  disabled={otpStep === "code" || otpState !== "idle"}
+                  className="login-input"
+                />
+              </div>
+
+              {otpStep === "code" && (
+                <div className="login-field">
+                  <label htmlFor="login-otp-code" className="login-label">
+                    6-digit code
+                  </label>
+                  <input
+                    id="login-otp-code"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => {
+                      setError(null);
+                      setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                    }}
+                    placeholder="••••••"
+                    autoComplete="one-time-code"
+                    className="login-input"
+                    style={{ letterSpacing: "0.4em" }}
+                  />
+                  <p className="login-form-note" style={{ marginTop: 8 }}>
+                    We emailed a code to {email.trim() || "your inbox"}. It expires in 10 minutes.
+                  </p>
+                </div>
+              )}
+
+              <div className="login-submit-wrap">
+                <button type="submit" disabled={otpState !== "idle"} className="login-submit">
+                  {otpState === "sending"
+                    ? "Sending code..."
+                    : otpState === "verifying"
+                      ? "Verifying..."
+                      : otpStep === "email"
+                        ? "Send code"
+                        : "Verify & sign in"}
+                </button>
+
+                {error && (
+                  <p id="login-error" role="alert" className="login-error">
+                    {error}
+                  </p>
+                )}
+
+                {otpStep === "code" && (
+                  <button
+                    type="button"
+                    className="login-dev-btn"
+                    disabled={otpState !== "idle"}
+                    onClick={() => {
+                      setOtpStep("email");
+                      setOtpCode("");
+                      setError(null);
+                    }}
+                  >
+                    Use a different email
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+
+          <div
+            className="login-sso-wrap"
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setMode((m) => (m === "password" ? "otp" : "password"));
+                setError(null);
+                setOtpStep("email");
+                setOtpCode("");
+              }}
+              className="login-sso-btn"
+            >
+              {mode === "password" ? "Email me a sign-in code instead" : "Use password instead"}
+            </button>
             <button type="button" onClick={() => setShowSSOModal(true)} className="login-sso-btn">
               Institution SSO
             </button>
