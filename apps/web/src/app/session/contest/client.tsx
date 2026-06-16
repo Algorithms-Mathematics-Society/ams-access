@@ -2849,20 +2849,20 @@ export default function ContestPageClient() {
           };
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",
-    RUNNING: "Running",
+    RUNNING: "Running…",
     AC: "Accepted",
-    WA: "Wrong Answer",
-    TLE: "Time Limit",
-    MLE: "Memory Limit",
-    RE: "Runtime Error",
-    CE: "Compile Error",
-    OLE: "Output Limit",
-    IE: "Judge Error",
+    WA: "Wrong answer",
+    TLE: "Too slow (time limit)",
+    MLE: "Out of memory",
+    RE: "Runtime error",
+    CE: "Didn’t compile",
+    OLE: "Too much output",
+    IE: "Judge error — please retry",
   };
   const runStatus = runError
     ? {
         // Client-side failure reaching the judge — distinct from a judge verdict.
-        label: "Connection Error",
+        label: "Couldn’t reach the judge",
         color: "#fca5a5",
         bg: "rgba(239,68,68,0.1)",
         border: "rgba(239,68,68,0.28)",
@@ -2871,7 +2871,7 @@ export default function ContestPageClient() {
     : runTimedOut
       ? {
           // Verdict not back yet — the submission is still queued on the judge.
-          label: "Still Queued",
+          label: "Still running…",
           color: "#fcd34d",
           bg: "rgba(245,158,11,0.1)",
           border: "rgba(245,158,11,0.28)",

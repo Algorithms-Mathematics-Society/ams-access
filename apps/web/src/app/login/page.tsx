@@ -170,7 +170,7 @@ export default function LoginPage() {
           </svg>
           <div className="login-logo-label">
             <span className="login-logo-name">AMS Access</span>
-            <span className="login-logo-sub">Derive Examination System</span>
+            <span className="login-logo-sub">Exam workspace</span>
           </div>
         </div>
 
@@ -204,10 +204,10 @@ export default function LoginPage() {
           <h2 className="login-brand-headline">
             Your contest.
             <br />
-            <em>Verified.</em>
+            <em>Made fair.</em>
           </h2>
           <p className="login-brand-sub">
-            A secure, proctored environment for high-stakes competitive programming.
+            A calm, fair space for your coding contest — so your work is the only thing that counts.
           </p>
 
           <div className="login-brand-features">
@@ -228,9 +228,10 @@ export default function LoginPage() {
                 </svg>
               </div>
               <div className="login-brand-feature-text">
-                <span className="login-brand-feature-label">Native lockdown</span>
+                <span className="login-brand-feature-label">Distraction-free</span>
                 <span className="login-brand-feature-desc">
-                  OS-level keyboard intercept and process isolation
+                  Other apps and shortcuts pause during the exam, so everyone competes on equal
+                  footing.
                 </span>
               </div>
             </div>
@@ -253,9 +254,9 @@ export default function LoginPage() {
                 </svg>
               </div>
               <div className="login-brand-feature-text">
-                <span className="login-brand-feature-label">Continuous proctoring</span>
+                <span className="login-brand-feature-label">Fair for everyone</span>
                 <span className="login-brand-feature-desc">
-                  Face presence verified throughout your session
+                  A quick camera check confirms you&rsquo;re present during the exam.
                 </span>
               </div>
             </div>
@@ -277,15 +278,15 @@ export default function LoginPage() {
                 </svg>
               </div>
               <div className="login-brand-feature-text">
-                <span className="login-brand-feature-label">Live judging</span>
+                <span className="login-brand-feature-label">Instant feedback</span>
                 <span className="login-brand-feature-desc">
-                  Submissions evaluated in seconds, results in real time
+                  Your code is checked the moment you submit.
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="login-brand-footer">AMS Derive · Secure Exam Platform</div>
+          <div className="login-brand-footer">AMS Access · Fair, secure exams</div>
         </div>
       </div>
 
@@ -293,7 +294,7 @@ export default function LoginPage() {
       <div className="login-right">
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
-          <div className="login-form-sub">AMS Derive &middot; This session will be proctored</div>
+          <div className="login-form-sub">AMS Access &middot; A calm, proctored exam space</div>
           <div className="login-rule" />
 
           {mode === "password" ? (
@@ -520,7 +521,8 @@ export default function LoginPage() {
           </div>
 
           <p className="login-form-note">
-            This is a proctored session. Your device will be verified after you sign in.
+            This exam is proctored to keep it fair. After you sign in, we&rsquo;ll set up your
+            camera and check your device.
           </p>
           <div
             className="login-form-support"

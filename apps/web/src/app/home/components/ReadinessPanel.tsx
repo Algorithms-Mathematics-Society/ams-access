@@ -50,43 +50,43 @@ export const ReadinessWidget = memo(function ReadinessWidget({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: "24px" }}>
         <ReadinessItem
-          label="Network Connection"
+          label="Internet connection"
           status={readiness.network}
           theme={theme}
           onResolve={onResolve ? () => onResolve("network") : undefined}
         />
         <ReadinessItem
-          label="Video Capture"
+          label="Camera"
           status={readiness.camera}
           theme={theme}
           onResolve={onResolve ? () => onResolve("camera") : undefined}
         />
         <ReadinessItem
-          label="Audio Input"
+          label="Microphone"
           status={readiness.mic}
           theme={theme}
           onResolve={onResolve ? () => onResolve("mic") : undefined}
         />
         <ReadinessItem
-          label="Virtual machine check"
+          label="Real device"
           status={readiness.vm}
           theme={theme}
           onResolve={onResolve ? () => onResolve("vm") : undefined}
         />
         <ReadinessItem
-          label="Keyboard Lockdown"
+          label="Keyboard"
           status={readiness.keyboard}
           theme={theme}
           onResolve={onResolve ? () => onResolve("keyboard") : undefined}
         />
         <ReadinessItem
-          label="Platform Support"
+          label="Supported system"
           status={readiness.platform}
           theme={theme}
           onResolve={onResolve ? () => onResolve("platform") : undefined}
         />
         <ReadinessItem
-          label="Restricted apps"
+          label="Other apps closed"
           status={readiness.restrictedApps}
           theme={theme}
           onResolve={onResolve ? () => onResolve("restrictedApps") : undefined}

@@ -72,7 +72,7 @@ const NAV_ITEMS = [
   },
   {
     id: "diagnostics",
-    label: "Diagnostics",
+    label: "Device",
     icon: <Activity size={16} strokeWidth={1.8} />,
   },
 ];

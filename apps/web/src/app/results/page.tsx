@@ -79,6 +79,34 @@ function verdictColor(v: string | null): string {
   }
 }
 
+// Plain-language verdict labels for candidates (the org views keep the raw codes).
+function verdictLabel(v: string | null): string {
+  switch (v) {
+    case "AC":
+      return "Accepted";
+    case "WA":
+      return "Wrong answer";
+    case "TLE":
+      return "Too slow";
+    case "MLE":
+      return "Out of memory";
+    case "RE":
+      return "Runtime error";
+    case "CE":
+      return "Didn’t compile";
+    case "OLE":
+      return "Too much output";
+    case "IE":
+      return "Judge error";
+    case "RUNNING":
+      return "Running…";
+    case "UNATTEMPTED":
+      return "Not attempted";
+    default:
+      return v ?? "—";
+  }
+}
+
 function formatPenalty(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -602,7 +630,7 @@ export default function ResultsPage() {
                                     fontWeight: 600,
                                   }}
                                 >
-                                  {s.final_verdict ?? s.status}
+                                  {s.final_verdict ? verdictLabel(s.final_verdict) : s.status}
                                 </td>
                                 <td style={{ padding: "7px 0", color: "#94a3b8" }}>{s.score}</td>
                                 <td style={{ padding: "7px 0", color: "#94a3b8" }}>
@@ -745,7 +773,7 @@ export default function ResultsPage() {
                                 background:
                                   v === "UNATTEMPTED" ? "rgba(255,255,255,0.1)" : verdictColor(v),
                               }}
-                              title={v}
+                              title={`${q.title}: ${verdictLabel(v)}`}
                             />
                           </td>
                         );
