@@ -290,41 +290,45 @@ type EditorFile = {
   content: string;
 };
 
+// Verdict dot/text color resolves to the canonical --verdict-* tokens so a
+// verdict reads identically here, in the trust strip, and on the results page.
+// (CE is now a distinct violet, not WA-red; RUNNING is blue so purple stays the
+// primary-action accent.) The BG/BORDER tints below match those same hues.
 const VERDICT_COLORS: Record<string, string> = {
-  AC: "#22c55e",
-  WA: "#ef4444",
-  TLE: "#f59e0b",
-  MLE: "#f59e0b",
-  RE: "#f97316",
-  CE: "#ef4444",
-  OLE: "#f59e0b",
-  IE: "#64748b",
-  QUEUED: "#a855f7",
-  RUNNING: "#a855f7",
+  AC: "var(--verdict-ac)",
+  WA: "var(--verdict-wa)",
+  TLE: "var(--verdict-tle)",
+  MLE: "var(--verdict-mle)",
+  RE: "var(--verdict-re)",
+  CE: "var(--verdict-ce)",
+  OLE: "var(--verdict-mle)",
+  IE: "var(--verdict-ie)",
+  QUEUED: "var(--verdict-running)",
+  RUNNING: "var(--verdict-running)",
 };
 const VERDICT_BG: Record<string, string> = {
   AC: "rgba(34,197,94,0.1)",
-  QUEUED: "rgba(168,85,247,0.1)",
-  RUNNING: "rgba(168,85,247,0.1)",
+  QUEUED: "rgba(96,165,250,0.1)",
+  RUNNING: "rgba(96,165,250,0.1)",
   WA: "rgba(239,68,68,0.1)",
   RE: "rgba(249,115,22,0.1)",
-  CE: "rgba(239,68,68,0.1)",
-  IE: "rgba(100,116,139,0.12)",
+  CE: "rgba(167,139,250,0.12)",
+  IE: "rgba(148,163,184,0.12)",
   TLE: "rgba(245,158,11,0.1)",
-  MLE: "rgba(245,158,11,0.1)",
-  OLE: "rgba(245,158,11,0.1)",
+  MLE: "rgba(251,146,60,0.1)",
+  OLE: "rgba(251,146,60,0.1)",
 };
 const VERDICT_BORDER: Record<string, string> = {
   AC: "rgba(34,197,94,0.28)",
-  QUEUED: "rgba(168,85,247,0.28)",
-  RUNNING: "rgba(168,85,247,0.28)",
+  QUEUED: "rgba(96,165,250,0.28)",
+  RUNNING: "rgba(96,165,250,0.28)",
   WA: "rgba(239,68,68,0.28)",
   RE: "rgba(249,115,22,0.28)",
-  CE: "rgba(239,68,68,0.28)",
-  IE: "rgba(100,116,139,0.3)",
+  CE: "rgba(167,139,250,0.3)",
+  IE: "rgba(148,163,184,0.3)",
   TLE: "rgba(245,158,11,0.28)",
-  MLE: "rgba(245,158,11,0.28)",
-  OLE: "rgba(245,158,11,0.28)",
+  MLE: "rgba(251,146,60,0.28)",
+  OLE: "rgba(251,146,60,0.28)",
 };
 
 type ContestMeta = {
@@ -4477,13 +4481,10 @@ export default function ContestPageClient() {
                         justifyContent: "center",
                         gap: "8px",
                         padding: "0 16px",
-                        border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.16)" : "rgba(148,163,184,0.24)"}`,
-                        borderRadius: "6px",
-                        background:
-                          isRunning || !sessionId
-                            ? "rgba(148,163,184,0.06)"
-                            : "rgba(148,163,184,0.1)",
-                        color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#e2e8f0",
+                        border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.14)" : "rgba(148,163,184,0.22)"}`,
+                        borderRadius: "var(--radius-sm)",
+                        background: "transparent",
+                        color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#cbd5e1",
                         fontSize: "13px",
                         fontWeight: 500,
                         fontFamily: "Inter, system-ui, sans-serif",
@@ -4499,8 +4500,8 @@ export default function ContestPageClient() {
                       }}
                       onMouseLeave={(e) => {
                         if (isRunning || !sessionId) return;
-                        e.currentTarget.style.background = "rgba(148,163,184,0.1)";
-                        e.currentTarget.style.borderColor = "rgba(148,163,184,0.24)";
+                        e.currentTarget.style.background = "transparent";
+                        e.currentTarget.style.borderColor = "rgba(148,163,184,0.22)";
                         e.currentTarget.style.transform = "scale(1)";
                       }}
                       onMouseDown={(e) => {
@@ -4534,7 +4535,7 @@ export default function ContestPageClient() {
                         gap: "8px",
                         padding: "0 18px",
                         border: `1px solid ${saving || isSubmitting ? "rgba(168,85,247,0.24)" : "#a855f7"}`,
-                        borderRadius: "6px",
+                        borderRadius: "var(--radius-sm)",
                         background: saving || isSubmitting ? "rgba(168,85,247,0.14)" : "#a855f7",
                         color: saving || isSubmitting ? "rgba(255,255,255,0.58)" : "#ffffff",
                         fontSize: "13px",
@@ -4542,22 +4543,18 @@ export default function ContestPageClient() {
                         fontFamily: "Inter, system-ui, sans-serif",
                         cursor: saving || isSubmitting ? "not-allowed" : "pointer",
                         opacity: saving || isSubmitting ? 0.82 : 1,
-                        boxShadow:
-                          saving || isSubmitting ? "none" : "0 8px 22px rgba(168,85,247,0.18)",
                         transition:
-                          "background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease",
+                          "background 150ms ease, border-color 150ms ease, transform 120ms ease",
                       }}
                       onMouseEnter={(e) => {
                         if (saving || isSubmitting) return;
                         e.currentTarget.style.background = "#9333ea";
                         e.currentTarget.style.borderColor = "#c084fc";
-                        e.currentTarget.style.boxShadow = "0 10px 26px rgba(168,85,247,0.26)";
                       }}
                       onMouseLeave={(e) => {
                         if (saving || isSubmitting) return;
                         e.currentTarget.style.background = "#a855f7";
                         e.currentTarget.style.borderColor = "#a855f7";
-                        e.currentTarget.style.boxShadow = "0 8px 22px rgba(168,85,247,0.18)";
                         e.currentTarget.style.transform = "scale(1)";
                       }}
                       onMouseDown={(e) => {
@@ -4691,14 +4688,14 @@ export default function ContestPageClient() {
                     }}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                      Build
+                      Compiler output
                       {runResult?.status === "CE" && (
                         <span
                           style={{
                             padding: "1px 5px",
-                            borderRadius: "999px",
-                            background: "rgba(239,68,68,0.12)",
-                            color: "#fca5a5",
+                            borderRadius: "var(--radius-pill)",
+                            background: "rgba(167,139,250,0.16)",
+                            color: "var(--verdict-ce)",
                             fontSize: "9px",
                             fontWeight: 700,
                           }}
@@ -4806,9 +4803,8 @@ export default function ContestPageClient() {
                           style={{
                             width: "7px",
                             height: "7px",
-                            borderRadius: "50%",
+                            borderRadius: "var(--radius-pill)",
                             background: runStatus.color,
-                            boxShadow: `0 0 6px ${runStatus.color}`,
                             flexShrink: 0,
                           }}
                         />
@@ -5504,10 +5500,8 @@ export default function ContestPageClient() {
             style={{
               width: "6px",
               height: "6px",
-              borderRadius: "50%",
-              background: proctoringOk ? "#22c55e" : "#ef4444",
-              boxShadow: `0 0 6px ${proctoringOk ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)"}`,
-              animation: "pulse-preview 2s ease-in-out infinite",
+              borderRadius: "var(--radius-pill)",
+              background: proctoringOk ? "var(--verdict-ac)" : "var(--verdict-wa)",
             }}
           />
           <span
@@ -5571,9 +5565,8 @@ export default function ContestPageClient() {
             style={{
               width: "6px",
               height: "6px",
-              borderRadius: "50%",
-              background: online ? "#22c55e" : "#f59e0b",
-              boxShadow: `0 0 6px ${online ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
+              borderRadius: "var(--radius-pill)",
+              background: online ? "var(--verdict-ac)" : "var(--verdict-tle)",
             }}
           />
           <span

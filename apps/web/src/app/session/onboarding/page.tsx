@@ -3052,11 +3052,11 @@ function DryRunSummary({
   return (
     <div
       style={{
-        maxWidth: 520,
+        maxWidth: 480,
         width: "100%",
         background: "#0F0F0F",
         border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 10,
+        borderRadius: "var(--radius-lg)",
         boxShadow: "0 24px 60px rgba(0,0,0,0.48)",
         padding: "36px 40px",
       }}
@@ -3795,7 +3795,7 @@ export default function OnboardingPage() {
               width: "100%",
               background: "#0F0F0F",
               border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: "10px",
+              borderRadius: "var(--radius-lg)",
               boxShadow: "0 24px 60px rgba(0, 0, 0, 0.48)",
               padding: "40px 44px",
             }}
@@ -3890,7 +3890,7 @@ export default function OnboardingPage() {
               width: "100%",
               background: "#0F0F0F",
               border: "1px solid rgba(255,255,255,0.06)",
-              borderRadius: "10px",
+              borderRadius: "var(--radius-lg)",
               boxShadow: "0 24px 60px rgba(0, 0, 0, 0.48)",
               padding: "36px 40px",
               position: "relative",

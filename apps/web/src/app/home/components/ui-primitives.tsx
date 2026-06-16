@@ -2,22 +2,13 @@
 
 import { forwardRef } from "react";
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
-import {
-  AlertCircle,
-  CheckCircle,
-  Loader2,
-  XCircle,
-  type LucideIcon,
-} from "lucide-react";
+import { AlertCircle, CheckCircle, Loader2, XCircle, type LucideIcon } from "lucide-react";
 import { getThemeColors } from "./utils";
 
 type ThemeName = "dark" | "light";
 type Tone = "neutral" | "success" | "warning" | "danger" | "accent" | "muted";
 
-const toneTokens: Record<
-  Tone,
-  { text: string; bg: string; border: string; icon: LucideIcon }
-> = {
+const toneTokens: Record<Tone, { text: string; bg: string; border: string; icon: LucideIcon }> = {
   neutral: {
     text: "rgba(255,255,255,0.72)",
     bg: "rgba(255,255,255,0.045)",
@@ -188,9 +179,10 @@ export function Field({
   return (
     <input
       {...props}
+      className={`ams-field${props.className ? ` ${props.className}` : ""}`}
       style={{
         height: "38px",
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         border: `1px solid ${c.border}`,
         background: "rgba(255,255,255,0.02)",
         color: c.text,
@@ -220,7 +212,7 @@ export function StatusBadge({
   style?: CSSProperties;
 }) {
   const t = toneStyles(tone, theme);
-  const Icon = icon === false ? null : icon ?? t.icon;
+  const Icon = icon === false ? null : (icon ?? t.icon);
   return (
     <span
       style={{
@@ -370,7 +362,8 @@ export function Dialog({
         background: c.cardBg,
         border: `1px solid ${c.borderStrong}`,
         borderRadius: "10px",
-        boxShadow: theme === "light" ? "0 24px 70px rgba(0,0,0,0.18)" : "0 24px 80px rgba(0,0,0,0.55)",
+        boxShadow:
+          theme === "light" ? "0 24px 70px rgba(0,0,0,0.18)" : "0 24px 80px rgba(0,0,0,0.55)",
         ...style,
       }}
     >

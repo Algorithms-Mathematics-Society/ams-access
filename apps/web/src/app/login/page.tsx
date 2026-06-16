@@ -456,7 +456,7 @@ export default function LoginPage() {
                     placeholder="••••••"
                     autoComplete="one-time-code"
                     className="login-input"
-                    style={{ letterSpacing: "0.4em" }}
+                    style={{ letterSpacing: "0.3em" }}
                   />
                   <p className="login-form-note" style={{ marginTop: 8 }}>
                     We emailed a code to {email.trim() || "your inbox"}. It expires in 10 minutes.

@@ -999,8 +999,7 @@ export default function HomePage() {
                     bottom: "8px",
                     width: "3px",
                     background: c.accent,
-                    borderRadius: "2px",
-                    boxShadow: `0 0 8px ${c.accent}`,
+                    borderRadius: "var(--radius-pill)",
                     opacity: active ? 1 : 0,
                     transition: "opacity 160ms ease",
                   }}

@@ -6,6 +6,7 @@ import { resolveApiBase } from "@/lib/api-base";
 
 const API_URL = resolveApiBase();
 import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { verdictColor, verdictLabel } from "@/lib/verdict";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,57 +56,6 @@ type MySubmission = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function verdictColor(v: string | null): string {
-  switch (v) {
-    case "AC":
-      return "#22c55e";
-    case "WA":
-      return "#ef4444";
-    case "TLE":
-      return "#f59e0b";
-    case "MLE":
-      return "#fb923c";
-    case "RE":
-      return "#f97316";
-    case "CE":
-      return "#a78bfa";
-    case "IE":
-      return "#94a3b8";
-    case "RUNNING":
-      return "#60a5fa";
-    default:
-      return "rgba(255,255,255,0.25)";
-  }
-}
-
-// Plain-language verdict labels for candidates (the org views keep the raw codes).
-function verdictLabel(v: string | null): string {
-  switch (v) {
-    case "AC":
-      return "Accepted";
-    case "WA":
-      return "Wrong answer";
-    case "TLE":
-      return "Too slow";
-    case "MLE":
-      return "Out of memory";
-    case "RE":
-      return "Runtime error";
-    case "CE":
-      return "Didn’t compile";
-    case "OLE":
-      return "Too much output";
-    case "IE":
-      return "Judge error";
-    case "RUNNING":
-      return "Running…";
-    case "UNATTEMPTED":
-      return "Not attempted";
-    default:
-      return v ?? "—";
-  }
-}
 
 function formatPenalty(secs: number): string {
   const h = Math.floor(secs / 3600);
@@ -226,7 +176,7 @@ export default function ResultsPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "#070a10",
+          background: "var(--surface-0)",
           color: "#e2e8f0",
           display: "flex",
           flexDirection: "column",
@@ -280,7 +230,7 @@ export default function ResultsPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "#070a10",
+          background: "var(--surface-0)",
           color: "#e2e8f0",
           display: "flex",
           flexDirection: "column",
@@ -328,7 +278,7 @@ export default function ResultsPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "#070a10",
+          background: "var(--surface-0)",
           color: "#64748b",
           display: "flex",
           alignItems: "center",
@@ -346,7 +296,7 @@ export default function ResultsPage() {
     <div
       style={{
         minHeight: "100vh",
-        background: "#070a10",
+        background: "var(--surface-0)",
         color: "#e2e8f0",
         fontFamily: "system-ui, sans-serif",
         padding: "40px 20px",
@@ -406,10 +356,9 @@ export default function ResultsPage() {
         {myEntry && (
           <div
             style={{
-              background:
-                "linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(168,85,247,0.06) 100%)",
+              background: "rgba(168,85,247,0.08)",
               border: "1px solid rgba(168,85,247,0.25)",
-              borderRadius: 10,
+              borderRadius: "var(--radius-lg)",
               padding: "20px 24px",
               display: "flex",
               gap: 32,
@@ -559,10 +508,13 @@ export default function ResultsPage() {
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <span
+                          role="img"
+                          aria-label={verdictLabel(bestVerdict)}
+                          title={verdictLabel(bestVerdict)}
                           style={{
                             width: 7,
                             height: 7,
-                            borderRadius: "50%",
+                            borderRadius: "var(--radius-pill)",
                             background: verdictColor(bestVerdict),
                             flexShrink: 0,
                             display: "inline-block",
@@ -765,13 +717,15 @@ export default function ResultsPage() {
                         return (
                           <td key={q.id} style={{ padding: "10px 8px", textAlign: "center" }}>
                             <span
+                              role="img"
+                              aria-label={`${q.title}: ${verdictLabel(v)}`}
                               style={{
                                 display: "inline-block",
                                 width: 8,
                                 height: 8,
-                                borderRadius: "50%",
+                                borderRadius: "var(--radius-pill)",
                                 background:
-                                  v === "UNATTEMPTED" ? "rgba(255,255,255,0.1)" : verdictColor(v),
+                                  v === "UNATTEMPTED" ? "var(--verdict-none)" : verdictColor(v),
                               }}
                               title={`${q.title}: ${verdictLabel(v)}`}
                             />
