@@ -130,6 +130,19 @@ const CAPTURE_PROCESSES: &[&str] = &[
     "skype.exe",
     "parsec.exe",
     "nomachine.exe",
+    // Remote-access / screen-share tools: presence here means a remote party can
+    // see the candidate's screen (a possible proctoring bypass). These are also in
+    // RESTRICTED (killed at lockdown) but were never *flagged* at readiness.
+    "teamviewer.exe",
+    "teamviewerhost.exe",
+    "anydesk.exe",
+    "vncviewer.exe",
+    "tvnviewer.exe",
+    "rustdesk.exe",
+    "mstsc.exe",
+    "webex.exe",
+    "remotedesktopmanager.exe",
+    "nxplayer.exe",
 ];
 
 // ── Elevation check ───────────────────────────────────────────────────────────
@@ -942,6 +955,52 @@ pub fn spawn_virtual_desktop_guard(hwnd_raw: isize) {
 
             unsafe { CoUninitialize() };
         });
+}
+
+// ── Foreground-window predicate ───────────────────────────────────────────────
+
+/// True when the exam window (HWND passed as isize) is the system foreground
+/// window, i.e. the candidate is actually looking at the exam. Used by the
+/// Tauri layer to poll for focus-loss (taskbar click / mouse window-switch that
+/// bypasses the keyboard hook). Returns true on a null/equal foreground so a
+/// transient query failure never produces a false violation.
+pub fn is_foreground_window(hwnd_raw: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let hwnd = HWND(hwnd_raw as *mut _);
+    let fg = unsafe { GetForegroundWindow() };
+    fg.0.is_null() || fg == hwnd
+}
+
+// ── DLL search-path hardening ─────────────────────────────────────────────────
+
+/// Harden the DLL search path against planted-DLL hijacking of the proctor
+/// process: drop the current working directory from the search order and
+/// restrict default LoadLibrary resolution to the application + System32 + user
+/// directories (DEFAULT_DIRS), excluding the insecure CWD and %PATH%. Call ONCE
+/// at process start, before any non-system DLL is loaded. Best-effort; failures
+/// are non-fatal. Note: only affects DLLs loaded after this call — the exe's
+/// static imports are already resolved by the loader (see the /DEPENDENTLOADFLAG
+/// linker flag in the desktop crate's build.rs for loader-level coverage).
+pub fn harden_dll_search_path() {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::LibraryLoader::{
+        SetDefaultDllDirectories, SetDllDirectoryW, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+    };
+
+    unsafe {
+        // Remove the current working directory from the legacy DLL search order.
+        // CRITICAL: pass an EMPTY string, NOT null — SetDllDirectory(null) RESTORES
+        // the default (CWD-included) order; only "" removes the CWD.
+        let empty: [u16; 1] = [0];
+        let _ = SetDllDirectoryW(PCWSTR(empty.as_ptr()));
+        // Default search = application dir + System32 + user dirs. Drops the
+        // insecure CWD/%PATH% while still resolving the app's own bundled DLLs
+        // (WebView2Loader, ANGLE EGL, etc.). NOT System32-only, which would break
+        // loading those co-located DLLs and blank the webview.
+        let _ = SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    }
 }
 
 // ── Network lockdown (process-scoped, not global policy) ─────────────────────

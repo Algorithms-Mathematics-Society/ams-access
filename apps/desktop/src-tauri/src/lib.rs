@@ -14,6 +14,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
+/// Backend TLS pin (base64 SHA-256 of the SubjectPublicKeyInfo). EMPTY = pinning
+/// disabled (system roots + warning). Populate with the backend's stable
+/// intermediate-CA SPKI before production. See remediation F4.
+const BACKEND_SPKI_PIN: &str = ""; // TODO(security/F4): set before launch
+
 const MAX_FACE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FACE_IMAGE_PIXELS: u64 = 2_000_000;
 const EXPECTED_BLAZEFACE_ASSETS: &[(&str, &str, u64)] = &[
@@ -233,6 +238,52 @@ fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, e
     }
 }
 
+// ── F4: pinned HTTP client ─────────────────────────────────────────────────────
+//
+// Single construction point for every outbound HTTPS client so the backend TLS
+// pin (when set) is enforced uniformly. Returns a `reqwest::ClientBuilder` —
+// callers add their own timeout and `.build()`, preserving the per-site timeouts
+// that already existed.
+//
+// When `BACKEND_SPKI_PIN` is empty (current state) the builder is exactly what
+// every site used before: system roots, no pinning. A one-time warning is logged
+// so an un-pinned release is never silent.
+//
+// When the pin is non-empty, true SPKI pinning requires a rustls custom
+// `ServerCertVerifier` that hashes the leaf's SubjectPublicKeyInfo and compares
+// it to the pin. reqwest exposes that only via `use_preconfigured_tls` with a
+// hand-built `rustls::ClientConfig`, which is a non-trivial amount of code and
+// no new crates here. Until that lands we MUST NOT silently fall back to an
+// un-pinned client (that would defeat the pin), so we panic with a clear
+// message. See fable-sec-june-12.md (F4 / TLS pinning).
+fn pinned_http_client_builder() -> reqwest::ClientBuilder {
+    use std::sync::Once;
+
+    if BACKEND_SPKI_PIN.trim().is_empty() {
+        static WARN_ONCE: Once = Once::new();
+        WARN_ONCE.call_once(|| {
+            eprintln!(
+                "WARNING: TLS certificate pinning is DISABLED (BACKEND_SPKI_PIN is empty); \
+                 using system roots only. Set the pin before production — see remediation F4."
+            );
+        });
+        return reqwest::Client::builder();
+    }
+
+    // TODO(security/F4): enforce BACKEND_SPKI_PIN here. Build a
+    // `rustls::ClientConfig` with a custom `ServerCertVerifier` that, after the
+    // normal webpki chain check, computes base64(SHA-256(SubjectPublicKeyInfo))
+    // of the leaf cert and rejects any connection whose SPKI is not the pin,
+    // then pass it to `reqwest::ClientBuilder::use_preconfigured_tls`. Do not add
+    // heavy deps for this. Until implemented, refuse rather than connect
+    // un-pinned (an un-pinned client when a pin is configured is a silent
+    // downgrade).
+    panic!(
+        "BACKEND_SPKI_PIN is set but SPKI pinning enforcement is not yet implemented; \
+         see TODO(security/F4) in pinned_http_client_builder"
+    );
+}
+
 fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
     let entry = violation_entry(kind, detail);
     if let Ok(mut log) = violation_log().lock() {
@@ -347,7 +398,7 @@ fn read_new_jsonl_events(
 /// session is configured or nothing is pending.
 fn spawn_event_sync_task(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let Ok(client) = reqwest::Client::builder()
+        let Ok(client) = pinned_http_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
         else {
@@ -598,7 +649,7 @@ async fn deliver_readiness_report(
     };
 
     let url = format!("{api}/contests/{contest_id}/readiness-reports");
-    let delivered = match reqwest::Client::builder()
+    let delivered = match pinned_http_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
     {
@@ -1017,7 +1068,7 @@ async fn check_network_stability(host: String, api_url: Option<String>) -> Netwo
 /// one RTT of error, which is far finer than the 120 s readiness bound.
 /// Returns `None` when no trustworthy signal could be obtained.
 async fn measure_clock_skew(api_url: &str) -> Option<i64> {
-    let client = reqwest::Client::builder()
+    let client = pinned_http_client_builder()
         .timeout(Duration::from_secs(3))
         .build()
         .ok()?;
@@ -1136,6 +1187,37 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
         if let Ok(hwnd) = win.hwnd() {
             platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
             platform_rs::windows::spawn_virtual_desktop_guard(hwnd.0 as isize);
+
+            // F1: native focus-loss watchdog. The webview's own blur events can be
+            // suppressed, so poll the OS foreground window directly. Edge-triggered
+            // (only the true→false transition is recorded) so a candidate who alt-tabs
+            // away logs exactly one focus_loss, not one per tick.
+            //
+            // The thread is spawned before LOCKDOWN_ENGAGED is set true (that happens
+            // right after lock_desktop() returns, below), so it MUST sleep before its
+            // first flag check — otherwise it would observe `false` and exit at once.
+            // The 750 ms initial sleep guarantees the flag is observed in its engaged
+            // state; the loop then exits cleanly on unlock (flag cleared).
+            let app_handle = app.clone();
+            let hwnd_raw = hwnd.0 as isize;
+            std::thread::spawn(move || {
+                let mut was_foreground = true;
+                loop {
+                    std::thread::sleep(Duration::from_millis(750));
+                    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let fg = platform_rs::windows::is_foreground_window(hwnd_raw);
+                    if was_foreground && !fg {
+                        record_violation(
+                            Some(&app_handle),
+                            "focus_loss",
+                            "native_foreground_changed",
+                        );
+                    }
+                    was_foreground = fg;
+                }
+            });
         }
     }
 
@@ -1757,6 +1839,12 @@ extern "C" fn handle_sigterm(_sig: std::os::raw::c_int) {
 }
 
 pub fn run() {
+    // F5: harden the DLL search path before anything else loads a library, so a
+    // malicious DLL planted in the launch directory or %CWD% can never be
+    // preferred over the system copy (DLL preloading / search-order hijack).
+    #[cfg(target_os = "windows")]
+    platform_rs::windows::harden_dll_search_path();
+
     // The GUI must run inside the user's desktop session for WebKit camera,
     // microphone, DBus, and portal permissions to work correctly. Network
     // lockdown still requires elevated privileges and will report failure from

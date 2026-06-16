@@ -1475,6 +1475,7 @@ export default function ContestPageClient() {
   const [cameraVideoReady, setCameraVideoReady] = useState(false);
   const processScanInFlightRef = useRef(false);
   const activeViolationDetailRef = useRef("");
+  const lastFocusLossRef = useRef(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
@@ -2842,6 +2843,38 @@ export default function ContestPageClient() {
     }
     window.addEventListener("keydown", blockShortcuts, { capture: true });
     return () => window.removeEventListener("keydown", blockShortcuts, { capture: true });
+  }, []);
+
+  // Focus-loss proctoring — when the locked window is hidden/blurred (alt-tab,
+  // minimize, another window, virtual-desktop switch), log a violation. This is
+  // the immediate signal; a native backstop exists elsewhere. Debounced so one
+  // switch (which can fire both blur and visibilitychange) logs at most once.
+  useEffect(() => {
+    const reportFocusLoss = (detail: "document_hidden" | "window_blur") => {
+      const now = Date.now();
+      if (now - lastFocusLossRef.current < 1000) return;
+      lastFocusLossRef.current = now;
+      try {
+        void window.__TAURI__?.core.invoke("log_violation", {
+          kind: "focus_loss",
+          detail,
+        });
+      } catch {
+        // Tauri not available (browser/dev); ignore.
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) reportFocusLoss("document_hidden");
+    };
+    const onBlur = () => reportFocusLoss("window_blur");
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", onBlur);
+    };
   }, []);
 
   const currentQId = questions[activeQ]?.id ?? "";
