@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../web/out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "if [ -f apps/desktop/src-tauri/scripts/prepare-network-helper.mjs ]; then node apps/desktop/src-tauri/scripts/prepare-network-helper.mjs; else node src-tauri/scripts/prepare-network-helper.mjs; fi && pnpm --filter @ams/web dev",
-    "beforeBuildCommand": "if [ -f apps/desktop/src-tauri/scripts/prepare-network-helper.mjs ]; then node apps/desktop/src-tauri/scripts/prepare-network-helper.mjs; else node src-tauri/scripts/prepare-network-helper.mjs; fi && pnpm --filter @ams/web build"
+    "beforeDevCommand": "pnpm --filter @ams/desktop prepare:helper && pnpm --filter @ams/web dev",
+    "beforeBuildCommand": "pnpm --filter @ams/desktop prepare:helper && pnpm --filter @ams/web build"
   },
   "app": {
     "withGlobalTauri": true,
