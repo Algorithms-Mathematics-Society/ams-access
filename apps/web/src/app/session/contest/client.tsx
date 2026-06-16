@@ -65,6 +65,18 @@ const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
 const EDITOR_THEME_KEY = "ams_contest_editor_theme";
 const PROBLEM_SPLIT_WIDTH_KEY = "ams_contest_problem_split_width";
 const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
+// Local answer buffer: last unsaved editor content per session+problem. This is
+// the safety net so a failed network save is never data loss (see handleSave /
+// writeLocalAnswerBuffer). Cleared on a confirmed successful save.
+const LOCAL_ANSWER_BUFFER_PREFIX = "ams_contest_answer_buffer";
+const localAnswerBufferKey = (sessionId: string, questionId: string) =>
+  `${LOCAL_ANSWER_BUFFER_PREFIX}:${sessionId}:${questionId}`;
+// Autosave backoff: after MAX_SAVE_RETRIES tight retries we stop the ~1.5s loop
+// and fall back to an occasional retry, surfacing a "saved locally" state. Delay
+// grows exponentially with jitter, capped at SAVE_RETRY_MAX_DELAY_MS.
+const SAVE_RETRY_BASE_DELAY_MS = 1500;
+const SAVE_RETRY_MAX_DELAY_MS = 30_000;
+const MAX_SAVE_RETRIES = 5;
 type ProblemSectionKey = "statement" | "examples" | "constraints";
 
 /**
@@ -1476,8 +1488,26 @@ export default function ContestPageClient() {
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
   // even when the candidate has stopped typing (e.g. a transient network blip).
   const [saveRetryNonce, setSaveRetryNonce] = useState(0);
+  // Consecutive failed-save count, drives the exponential backoff in the autosave
+  // effect. Reset to 0 on any successful save.
+  const saveRetryCountRef = useRef(0);
+  // True once we've blown past MAX_SAVE_RETRIES: the work is buffered locally and
+  // we back off to occasional retries instead of a tight ~1.5s loop.
+  const [savedLocallyOnly, setSavedLocallyOnly] = useState(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // In-flight guards so double-clicks / rapid retries can't fire a second POST to
+  // /submissions while one is already pending (prevents duplicate QUEUED rows).
+  const runInFlightRef = useRef(false);
+  const submitInFlightRef = useRef(false);
+  // Guards the exit/teardown path so a manual "Submit & Exit" and the timer-driven
+  // expiry can't both run (double unlock / double /submit). Never reset: once exit
+  // begins the candidate is leaving.
+  const exitInFlightRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Non-blocking warning surfaced after the candidate has been unlocked/exited but
+  // we could NOT confirm the final save/submit landed (their work is buffered
+  // locally). The exit teardown still runs — they are never trapped.
+  const [submitWarning, setSubmitWarning] = useState<string | null>(null);
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
@@ -1538,7 +1568,6 @@ export default function ContestPageClient() {
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
     "idle"
   );
-  const timeUpRetriesRef = useRef(0);
   const [savedAnswers, setSavedAnswers] = useState<
     Record<string, { language: string; content: string }>
   >({});
@@ -2185,6 +2214,10 @@ export default function ContestPageClient() {
 
   async function triggerRun() {
     if (!questions[activeQ] || !sessionId || isRunning) return;
+    // In-flight guard: block a second POST while one is already pending so rapid
+    // double-clicks / retries can't enqueue duplicate attempts.
+    if (runInFlightRef.current) return;
+    runInFlightRef.current = true;
 
     setIsRunning(true);
     setRunResult(null);
@@ -2196,10 +2229,16 @@ export default function ContestPageClient() {
     // Persist the current code before dispatching to the judge.
     const savedOk = await handleSave();
     if (!savedOk) {
+      runInFlightRef.current = false;
       setIsRunning(false);
       setRunError("Save failed — check your connection and retry.");
       return;
     }
+
+    // Idempotency key for this logical run. Harmless if the backend ignores it
+    // today; lets it dedupe retries of the same attempt once it consumes the key.
+    const idempotencyKey =
+      crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     // Create the submission attempt.
     let attemptId: string;
@@ -2211,6 +2250,7 @@ export default function ContestPageClient() {
           problem_id: questions[activeQ].id,
           language: toLanguageId(selectedLanguage),
           source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+          idempotency_key: idempotencyKey,
         }),
       });
       if (!res.ok) {
@@ -2218,6 +2258,11 @@ export default function ContestPageClient() {
         if (errData.code === "SESSION_ALREADY_SUBMITTED") {
           setIsRunning(false);
           setRunError("Your session has already been submitted.");
+          return;
+        }
+        if (errData.code === "ALREADY_PENDING") {
+          setIsRunning(false);
+          setRunError("Your previous attempt is still being judged — please wait.");
           return;
         }
         if (errData.code === "QUEUE_ERROR") {
@@ -2241,6 +2286,10 @@ export default function ContestPageClient() {
       setIsRunning(false);
       setRunError("Could not reach the judge. Check your connection and retry.");
       return;
+    } finally {
+      // The duplicate-POST window closes once the attempt request has resolved;
+      // the subsequent polling phase is already gated by isRunning.
+      runInFlightRef.current = false;
     }
 
     // Poll for the result with exponential back-off (max ~25 s total).
@@ -2289,17 +2338,53 @@ export default function ContestPageClient() {
     void fetchSubmissions();
   }
 
+  // Persist the current editor content to localStorage so an unconfirmed network
+  // save is never data loss. Best-effort: storage failures (quota / private mode)
+  // must never throw into the save/submit/exit paths.
+  function writeLocalAnswerBuffer() {
+    if (!sessionId) return;
+    const qId = questions[activeQ]?.id;
+    if (!qId) return;
+    try {
+      localStorage.setItem(
+        localAnswerBufferKey(sessionId, qId),
+        JSON.stringify({
+          language: toLanguageId(selectedLanguage),
+          files: editorFiles,
+          active_file_id: activeFileId,
+          saved_at: Date.now(),
+        })
+      );
+    } catch {
+      // storage unavailable — nothing more we can do here
+    }
+  }
+
+  function clearLocalAnswerBuffer(questionId: string) {
+    if (!sessionId) return;
+    try {
+      localStorage.removeItem(localAnswerBufferKey(sessionId, questionId));
+    } catch {
+      // ignore
+    }
+  }
+
   async function handleSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) {
       setSaveError("No active session is available. Reopen the contest and try again.");
       return false;
     }
 
+    // Mirror the current content locally before hitting the network, so even a
+    // hard failure (or tab close mid-request) leaves the work recoverable.
+    writeLocalAnswerBuffer();
+
+    const qId = questions[activeQ].id;
     setSaving(true);
     setSaveError(null);
     try {
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/answers`, {
-        question_id: questions[activeQ].id,
+        question_id: qId,
         answer_text: JSON.stringify({
           language: toLanguageId(selectedLanguage),
           files: editorFiles,
@@ -2310,21 +2395,32 @@ export default function ContestPageClient() {
 
       setSavedAnswers((prev) => ({
         ...prev,
-        [questions[activeQ].id]: {
+        [qId]: {
           language: toLanguageId(selectedLanguage),
           content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
         },
       }));
 
+      // Confirmed save: clear unsaved state, drop the local buffer + backoff.
       setHasUnsavedChanges(false);
+      saveRetryCountRef.current = 0;
+      setSavedLocallyOnly(false);
+      clearLocalAnswerBuffer(qId);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       return true;
     } catch {
       setSaved(false);
-      setSaveError("Save failed. Check your connection and retry before submitting.");
+      // The buffer write above means the work is safe locally regardless.
+      saveRetryCountRef.current += 1;
+      if (saveRetryCountRef.current >= MAX_SAVE_RETRIES) {
+        setSavedLocallyOnly(true);
+        setSaveError("Save failed — your work is saved locally and will retry automatically.");
+      } else {
+        setSaveError("Save failed. Check your connection and retry before submitting.");
+      }
       // Re-arm the autosave so it keeps trying once connectivity returns, even if
-      // the candidate has stopped typing.
+      // the candidate has stopped typing. The effect applies exponential backoff.
       setSaveRetryNonce((n) => n + 1);
       return false;
     } finally {
@@ -2337,6 +2433,10 @@ export default function ContestPageClient() {
       setSubmissionError("No active session is available.");
       return;
     }
+    // In-flight guard: block a second POST while one is pending so rapid
+    // double-clicks / retries can't enqueue duplicate attempts.
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
 
     setIsSubmitting(true);
     setSubmissionError(null);
@@ -2349,10 +2449,15 @@ export default function ContestPageClient() {
       }
 
       const qId = questions[activeQ].id;
+      // Idempotency key for this logical submission. Harmless if ignored today;
+      // lets the backend dedupe retries of the same submission once it consumes it.
+      const idempotencyKey =
+        crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submissions`, {
         problem_id: qId,
         language: toLanguageId(selectedLanguage),
         source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        idempotency_key: idempotencyKey,
       });
 
       if (!response.ok) {
@@ -2362,6 +2467,10 @@ export default function ContestPageClient() {
         };
         if (errData.code === "SESSION_ALREADY_SUBMITTED") {
           setSubmissionError("Your session has already been submitted.");
+          return;
+        }
+        if (errData.code === "ALREADY_PENDING") {
+          setSubmissionError("Your previous attempt is still being judged — please wait.");
           return;
         }
         if (errData.code === "QUEUE_ERROR") {
@@ -2376,38 +2485,19 @@ export default function ContestPageClient() {
       setSubmissionError(err.message || "An unexpected error occurred.");
     } finally {
       setIsSubmitting(false);
+      submitInFlightRef.current = false;
     }
   }
 
-  async function handleSubmitConfirmed() {
-    setSubmitError(null);
-    const savedOk = await handleSave();
-    if (!savedOk) {
-      setSubmitError("Final save failed. Resolve this before submitting.");
-      return;
+  // Exit teardown: release every OS-level lock and stop proctoring. This MUST run
+  // on every exit path — confirmed or not — so a network failure can never trap a
+  // candidate inside the locked-down shell. Every step is failure-tolerant.
+  async function runExitTeardown() {
+    try {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {
+      // ignore storage errors
     }
-    if (sessionId) {
-      try {
-        const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
-        if (!response.ok) {
-          const errData = (await response.json().catch(() => ({}))) as {
-            error?: string;
-            code?: string;
-          };
-          if (errData.code === "CONTEST_ENDED") {
-            setSubmitError(
-              "The contest has ended — your answers were saved but the session cannot be submitted."
-            );
-            return;
-          }
-          throw new Error(errData.error || "submit failed");
-        }
-      } catch {
-        setSubmitError("Submit failed. Your answer was saved; retry submit when connected.");
-        return;
-      }
-    }
-    localStorage.removeItem(ACTIVE_SESSION_KEY);
     cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
     cameraStreamRef.current = null;
     setCameraStream(null);
@@ -2419,7 +2509,57 @@ export default function ContestPageClient() {
     }
     try {
       await window.__TAURI__?.core.invoke("unlock_desktop");
-    } catch {}
+    } catch {
+      // even if the native unlock fails, the window chrome above is already restored
+    }
+  }
+
+  // Attempt the final save + /submit with a bounded retry. Returns whether the
+  // submit was confirmed by the backend. SESSION_ALREADY_SUBMITTED and
+  // CONTEST_ENDED are treated as SUCCESS (the backend already has the session).
+  // Crucially this NEVER unlocks/exits — callers always run runExitTeardown after.
+  async function attemptFinalSubmit(): Promise<boolean> {
+    if (!sessionId) return false;
+    const MAX_ATTEMPTS = 4;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // Always mirror the latest content locally before each network try.
+      writeLocalAnswerBuffer();
+      try {
+        await handleSave();
+        const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
+        if (response.ok) return true;
+        const errData = (await response.json().catch(() => ({}))) as { code?: string };
+        // Backend already has/closed the session — treat as a confirmed submit.
+        if (errData.code === "SESSION_ALREADY_SUBMITTED" || errData.code === "CONTEST_ENDED") {
+          return true;
+        }
+      } catch {
+        // network failure — fall through to the backoff and retry
+      }
+      if (attempt < MAX_ATTEMPTS - 1) {
+        const delay = Math.min(1500 * 2 ** attempt, 8000) + Math.round(Math.random() * 400);
+        await new Promise<void>((r) => setTimeout(r, delay));
+      }
+    }
+    return false;
+  }
+
+  async function handleSubmitConfirmed() {
+    if (exitInFlightRef.current) return;
+    exitInFlightRef.current = true;
+    setSubmitError(null);
+    setSubmitWarning(null);
+    setTimeUpState("submitting");
+    const confirmed = await attemptFinalSubmit();
+    if (!confirmed) {
+      // We couldn't confirm — but we NEVER trap the candidate. Surface a clear
+      // non-blocking warning, then unlock anyway. Work is buffered locally.
+      setSubmitWarning(
+        "We couldn't confirm your final save — your work is stored locally on this device."
+      );
+    }
+    // Teardown ALWAYS runs, regardless of whether the submit was confirmed.
+    await runExitTeardown();
     // Show the unified calm confirmation instead of a forced auto-redirect.
     // The candidate leaves on their own from the "submitted" overlay.
     setTimeUpState("submitted");
@@ -2429,60 +2569,20 @@ export default function ContestPageClient() {
   // Auto-submits the session so candidates never need to manually click "Submit & Exit".
   async function handleContestExpiry() {
     if (!sessionId) return;
+    if (exitInFlightRef.current) return;
+    exitInFlightRef.current = true;
+    setSubmitWarning(null);
     setTimeUpState("submitting");
-    timeUpRetriesRef.current = 0;
-    const MAX_RETRIES = 5;
-    while (timeUpRetriesRef.current <= MAX_RETRIES) {
-      try {
-        await handleSave();
-        const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
-        if (response.ok) {
-          setTimeUpState("submitted");
-          // Clean up proctoring. The candidate leaves on their own from the
-          // calm confirmation overlay (no forced auto-redirect).
-          localStorage.removeItem(ACTIVE_SESSION_KEY);
-          cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
-          cameraStreamRef.current = null;
-          setCameraStream(null);
-          const win = window.__TAURI__?.window.getCurrentWindow();
-          if (win) {
-            await win.setFullscreen(false).catch(() => {});
-            await win.setAlwaysOnTop(false).catch(() => {});
-            await win.setDecorations(true).catch(() => {});
-          }
-          try {
-            await window.__TAURI__?.core.invoke("unlock_desktop");
-          } catch {}
-          return;
-        }
-        const errData = (await response.json().catch(() => ({}))) as { code?: string };
-        // Backend already auto-submitted (orchestrator beat the client) — treat as success.
-        if (errData.code === "CONTEST_ENDED" || errData.code === "SESSION_ALREADY_SUBMITTED") {
-          setTimeUpState("submitted");
-          localStorage.removeItem(ACTIVE_SESSION_KEY);
-          cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
-          cameraStreamRef.current = null;
-          setCameraStream(null);
-          const win2 = window.__TAURI__?.window.getCurrentWindow();
-          if (win2) {
-            await win2.setFullscreen(false).catch(() => {});
-            await win2.setAlwaysOnTop(false).catch(() => {});
-            await win2.setDecorations(true).catch(() => {});
-          }
-          try {
-            await window.__TAURI__?.core.invoke("unlock_desktop");
-          } catch {}
-          return;
-        }
-      } catch {
-        // network failure — will retry
-      }
-      timeUpRetriesRef.current += 1;
-      if (timeUpRetriesRef.current <= MAX_RETRIES) {
-        await new Promise<void>((r) => setTimeout(r, 3000));
-      }
+    const confirmed = await attemptFinalSubmit();
+    if (!confirmed) {
+      setSubmitWarning(
+        "We couldn't confirm your final save — your work is stored locally on this device."
+      );
     }
-    setTimeUpState("error");
+    // The time-up path ALWAYS unlocks too: a network failure must not imprison
+    // the candidate. We never end in an "error" state with the shell still locked.
+    await runExitTeardown();
+    setTimeUpState("submitted");
   }
 
   useEffect(() => {
@@ -2989,9 +3089,18 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!hasUnsavedChanges || !sessionId || !currentQId) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    // Exponential backoff with jitter, capped, so a persistent failure can't spin
+    // a tight ~1.5s retry loop. A fresh edit (saveRetryCountRef reset on success)
+    // debounces at the base delay; consecutive failures stretch the interval.
+    const failures = saveRetryCountRef.current;
+    const backoff =
+      failures === 0
+        ? SAVE_RETRY_BASE_DELAY_MS
+        : Math.min(SAVE_RETRY_BASE_DELAY_MS * 2 ** failures, SAVE_RETRY_MAX_DELAY_MS);
+    const jitter = Math.round(Math.random() * 400);
     autosaveTimerRef.current = setTimeout(() => {
       void handleSave();
-    }, 1500);
+    }, backoff + jitter);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
@@ -5481,20 +5590,26 @@ export default function ContestPageClient() {
                                     <span style={{ fontSize: "11px", color: "#64748b" }}>
                                       Attempt #{sub.attempt_no}
                                     </span>
-                                    <span
-                                      style={{
-                                        fontSize: "10px",
-                                        padding: "1px 6px",
-                                        border: "1px solid rgba(148,163,184,0.14)",
-                                        background: "rgba(148,163,184,0.06)",
-                                        borderRadius: "999px",
-                                        color: "#94a3b8",
-                                        fontFamily: "Inter, system-ui, sans-serif",
-                                        fontWeight: 600,
-                                      }}
-                                    >
-                                      Evaluated
-                                    </span>
+                                    {/* Only show an "Evaluated" badge once judging is
+                                        actually done — never alongside a live QUEUED /
+                                        RUNNING status (the right-side status is the
+                                        source of truth). */}
+                                    {!isPending && (
+                                      <span
+                                        style={{
+                                          fontSize: "10px",
+                                          padding: "1px 6px",
+                                          border: "1px solid rgba(148,163,184,0.14)",
+                                          background: "rgba(148,163,184,0.06)",
+                                          borderRadius: "999px",
+                                          color: "#94a3b8",
+                                          fontFamily: "Inter, system-ui, sans-serif",
+                                          fontWeight: 600,
+                                        }}
+                                      >
+                                        Evaluated
+                                      </span>
+                                    )}
                                     <span
                                       style={{
                                         fontSize: "10px",
@@ -6088,8 +6203,22 @@ export default function ContestPageClient() {
                   lineHeight: 1.5,
                 }}
               >
-                Your work has been submitted safely.
+                {submitWarning ?? "Your work has been submitted safely."}
               </div>
+              {submitWarning && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#fbbf24",
+                    maxWidth: 380,
+                    textAlign: "center",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  You have been unlocked and can exit safely. We&rsquo;ll keep retrying the upload
+                  in the background.
+                </div>
+              )}
               {questions.length > 0 && engagedQuestionCount > 0 && (
                 <div style={{ fontSize: 13, color: "#64748b" }}>
                   You worked on {engagedQuestionCount} of {questions.length} problem
