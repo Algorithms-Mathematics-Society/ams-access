@@ -71,6 +71,32 @@ const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
 const LOCAL_ANSWER_BUFFER_PREFIX = "ams_contest_answer_buffer";
 const localAnswerBufferKey = (sessionId: string, questionId: string) =>
   `${LOCAL_ANSWER_BUFFER_PREFIX}:${sessionId}:${questionId}`;
+
+// A "Run on Judge" attempt (sample-only, never scored) is tagged by the backend
+// with submission_kind === "RUN". These must never appear in the Attempts
+// history — they surface only in the Output panel. Missing/legacy rows have no
+// kind and are treated as real submissions (SUBMIT) for back-compat. The field
+// isn't on SubmissionAttemptRecord (server-side addition), so we read it loosely.
+function isRunSubmission(sub: object | null | undefined): boolean {
+  const kind = (sub as { submission_kind?: string | null } | null | undefined)?.submission_kind;
+  return String(kind ?? "SUBMIT").toUpperCase() === "RUN";
+}
+
+// A test row is a "sample" test (expected/got may be shown) only when it is not
+// flagged hidden by any of the indicators the Attempts UI already recognizes.
+// Hidden/fallback tests show verdict only — never expected/got.
+function isSampleTestRow(tr: {
+  is_sample?: boolean | null;
+  sample?: boolean | null;
+  hidden?: boolean | null;
+  is_hidden?: boolean | null;
+}): boolean {
+  if (tr.hidden || tr.is_hidden) return false;
+  if (tr.is_sample === true || tr.sample === true) return true;
+  // No explicit sample flag and not flagged hidden → treat as visible/sample,
+  // mirroring how the Attempts expansion shows non-hidden tests.
+  return true;
+}
 // Autosave backoff: after MAX_SAVE_RETRIES tight retries we stop the ~1.5s loop
 // and fall back to an occasional retry, surfacing a "saved locally" state. Delay
 // grows exponentially with jitter, capped at SAVE_RETRY_MAX_DELAY_MS.
@@ -1479,6 +1505,11 @@ export default function ContestPageClient() {
   // Set when the judge hasn't returned a verdict within the polling window — the
   // submission is still queued (distinct from a hard connection error).
   const [runTimedOut, setRunTimedOut] = useState(false);
+  // Attempt id of the most recent "Run on Judge" (sample-only) run. Used to pull
+  // its per-test results out of `testResults` and render them LeetCode-style in
+  // the Output panel. RUN attempts are hidden from the Attempts history, so this
+  // is the only place their results surface.
+  const [runResultAttemptId, setRunResultAttemptId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1642,7 +1673,11 @@ export default function ContestPageClient() {
         }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const allSubmissions = (await response.json()) as SubmissionAttemptRecord[];
+      const rawSubmissions = (await response.json()) as SubmissionAttemptRecord[];
+      // Exclude RUN attempts everywhere the Attempts history is derived: the
+      // visible list, the per-question status map, and the "evaluated attempt"
+      // summary all read from these. Runs surface only in the Output panel.
+      const allSubmissions = rawSubmissions.filter((sub) => !isRunSubmission(sub));
       setAllSubmissionsList(allSubmissions);
       const qId = questions[activeQ].id;
       const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
@@ -2137,6 +2172,7 @@ export default function ContestPageClient() {
     setActiveQ(idx);
     loadQuestion(questions[idx], selectedLanguage);
     setRunResult(null);
+    setRunResultAttemptId(null);
     setRunError(null);
   }
 
@@ -2221,6 +2257,7 @@ export default function ContestPageClient() {
 
     setIsRunning(true);
     setRunResult(null);
+    setRunResultAttemptId(null);
     setRunError(null);
     setRunTimedOut(false);
     setSubmitError(null);
@@ -2251,6 +2288,9 @@ export default function ContestPageClient() {
           language: toLanguageId(selectedLanguage),
           source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
           idempotency_key: idempotencyKey,
+          // Sample-only run: judged against sample tests, never scored, excluded
+          // from the Attempts history. Submit omits this and defaults to submit.
+          mode: "run",
         }),
       });
       if (!res.ok) {
@@ -2280,7 +2320,9 @@ export default function ContestPageClient() {
       const resolvedId = created.id ?? created.attempt_id ?? "";
       attemptId = resolvedId;
       setRunResult({ id: resolvedId, attempt_no: created.attempt_no, status: "QUEUED" });
-      setTerminalTab("submissions");
+      setRunResultAttemptId(resolvedId);
+      // Keep results in the Output panel — runs never appear under Attempts.
+      setTerminalTab("stdout");
       void fetchSubmissions();
     } catch {
       setIsRunning(false);
@@ -2305,12 +2347,15 @@ export default function ContestPageClient() {
         );
         if (!pollRes.ok) continue; // transient — keep polling
         const attempts = (await pollRes.json()) as SubmissionAttemptRecord[];
+        // The current RUN attempt is found from the raw list below; the Attempts
+        // history lists exclude RUN rows (this run included).
+        const visibleAttempts = attempts.filter((a) => !isRunSubmission(a));
         const qId = questions[activeQ]?.id;
         if (qId) {
-          const filtered = attempts
+          const filtered = visibleAttempts
             .filter((attempt) => attempt.problem_id === qId)
             .sort((a, b) => b.attempt_no - a.attempt_no);
-          setAllSubmissionsList(attempts);
+          setAllSubmissionsList(visibleAttempts);
           setSubmissionsList(filtered);
         }
         const attempt = attempts.find((a) => a.id === attemptId);
@@ -2319,7 +2364,14 @@ export default function ContestPageClient() {
           setRunResult(normalized);
           if (!isPendingSubmissionStatus(normalized.status)) {
             setIsRunning(false);
-            setTerminalTab(normalized.status === "CE" ? "logs" : "submissions");
+            // Compile errors go to the Build tab (as today); sample results render
+            // in the Output panel. Runs never appear under Attempts.
+            setTerminalTab(normalized.status === "CE" ? "logs" : "stdout");
+            // Pull the per-sample results so the Output panel can show them,
+            // reusing the same test-results fetch the Attempts expansion uses.
+            if (normalized.status !== "CE") {
+              void fetchTestResults(attemptId);
+            }
             await fetchSubmissions();
             return;
           }
@@ -2334,7 +2386,9 @@ export default function ContestPageClient() {
     setIsRunning(false);
     setRunError(null);
     setRunTimedOut(true);
-    setTerminalTab("submissions");
+    // Keep the timed-out state visible in the Output panel — the run is never an
+    // Attempts row to navigate to.
+    setTerminalTab("stdout");
     void fetchSubmissions();
   }
 
@@ -3231,6 +3285,13 @@ export default function ContestPageClient() {
           .join(" · ")
       : "";
   const shouldShowRunProgress = Boolean(isRunning || runResult || runError || runTimedOut);
+  // Per-sample results for the most recent "Run on Judge". Pulled from the same
+  // `testResults` cache the Attempts expansion uses, keyed by the run's attempt
+  // id. Only populated once the run reaches a terminal (non-CE) verdict.
+  const runSampleTests: any[] | null =
+    runResultAttemptId && runResult && !isPendingSubmissionStatus(runResult.status)
+      ? (testResults[runResultAttemptId] ?? null)
+      : null;
   const latestAttempt = submissionsList[0] ?? null;
   const latestAttemptTests = latestAttempt ? testResults[latestAttempt.id] : null;
   const latestAttemptPending = latestAttempt
@@ -4818,7 +4879,7 @@ export default function ContestPageClient() {
                       type="button"
                       onClick={() => void triggerRun()}
                       disabled={isRunning || !sessionId}
-                      title="Runs are evaluated by the judge and appear in Attempts. They do not end the contest."
+                      title="Runs your code against the sample tests only — does not count toward your score."
                       aria-label="Run on judge"
                       style={{
                         height: "40px",
@@ -5249,10 +5310,83 @@ export default function ContestPageClient() {
                       >
                         Output
                       </div>
+                      {/* LeetCode-style sample results for a "Run on Judge". Runs
+                          are judged against sample tests only and never appear in
+                          Attempts, so this is the only place they render. Sample
+                          tests may show expected-vs-got; hidden/fallback tests show
+                          the verdict only (mirroring the Attempts masking). */}
+                      {!isRunning && runResult?.status !== "CE" && runSampleTests && (
+                        <div style={{ marginBottom: runResult?.stdout ? "12px" : "0" }}>
+                          {runSampleTests.length === 0 ? (
+                            <div style={{ color: "#475569" }}>
+                              No sample tests to run for this problem.
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              {runSampleTests.map((tr: any, idx: number) => {
+                                const isAC = tr.verdict === "AC";
+                                const isSample = isSampleTestRow(tr);
+                                const testNumber = tr.test_number ?? idx + 1;
+                                const expected =
+                                  tr.expected ?? tr.expected_output ?? tr.answer ?? null;
+                                const got =
+                                  tr.got_output ??
+                                  tr.got ??
+                                  tr.actual ??
+                                  tr.output ??
+                                  tr.stdout ??
+                                  null;
+                                return (
+                                  <div
+                                    key={`run-sample-${testNumber}-${idx}`}
+                                    style={{
+                                      whiteSpace: "pre-wrap",
+                                      color: isAC ? "#86efac" : "#fca5a5",
+                                    }}
+                                  >
+                                    <span style={{ fontWeight: 700 }}>
+                                      {isSample ? "Sample" : "Test"} {testNumber}:
+                                    </span>{" "}
+                                    <span>{isAC ? "✓" : "✗"}</span>{" "}
+                                    <span style={{ color: isAC ? "#86efac" : "#fca5a5" }}>
+                                      {tr.verdict ?? (isAC ? "AC" : "Failed")}
+                                    </span>
+                                    {tr.runtime_ms != null && (
+                                      <span style={{ color: "#64748b" }}>
+                                        {` ${tr.runtime_ms}ms`}
+                                      </span>
+                                    )}
+                                    {!isSample && (
+                                      <span style={{ color: "#64748b" }}> · hidden test</span>
+                                    )}
+                                    {/* Expected/got only for sample tests, and
+                                        only when the test failed (matches the
+                                        LeetCode-style "got X expected Y"). Hidden
+                                        tests never reveal expected/got. */}
+                                    {!isAC && isSample && (expected != null || got != null) && (
+                                      <span style={{ color: "#94a3b8" }}>
+                                        {` — expected ${JSON.stringify(String(expected ?? ""))} got ${JSON.stringify(String(got ?? ""))}`}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {isRunning ? (
                         <div style={{ color: "#475569" }}>Running…</div>
                       ) : runResult?.status === "CE" ? (
                         <div style={{ color: "#475569" }}>Compilation failed — see Build.</div>
+                      ) : runSampleTests && runSampleTests.length > 0 ? (
+                        // Sample rows above already convey the result; only add
+                        // raw stdout if the judge returned any.
+                        runResult?.stdout ? (
+                          <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>
+                            {runResult.stdout}
+                          </div>
+                        ) : null
                       ) : runResult?.stdout ? (
                         <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>
                           {runResult.stdout}
