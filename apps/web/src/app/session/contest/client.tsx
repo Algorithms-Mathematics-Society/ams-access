@@ -1390,6 +1390,10 @@ export default function ContestPageClient() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  // Bumped on a failed save so the debounced autosave effect re-arms and retries
+  // even when the candidate has stopped typing (e.g. a transient network blip).
+  const [saveRetryNonce, setSaveRetryNonce] = useState(0);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
@@ -2196,6 +2200,9 @@ export default function ContestPageClient() {
     } catch {
       setSaved(false);
       setSaveError("Save failed. Check your connection and retry before submitting.");
+      // Re-arm the autosave so it keeps trying once connectivity returns, even if
+      // the candidate has stopped typing.
+      setSaveRetryNonce((n) => n + 1);
       return false;
     } finally {
       setSaving(false);
@@ -2762,6 +2769,31 @@ export default function ContestPageClient() {
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
+
+  // Debounced autosave: persist the active answer ~1.5s after the candidate stops
+  // editing, so saving is invisible and they never sit on an "unsaved" warning.
+  // Re-arms on every content/language/file change (debounces typing) and on a
+  // failed save (retry). Switching question bumps currentQId, whose cleanup clears
+  // any pending timer; switchQuestion already saves the outgoing answer first.
+  useEffect(() => {
+    if (!hasUnsavedChanges || !sessionId || !currentQId) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      void handleSave();
+    }, 1500);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    hasUnsavedChanges,
+    currentCode,
+    selectedLanguage,
+    activeFileId,
+    currentQId,
+    sessionId,
+    saveRetryNonce,
+  ]);
   const currentDescriptionMd = questions[activeQ]?.description ?? "*No description provided.*";
   const problemSections = useMemo(
     () => splitProblemDescription(currentDescriptionMd),
@@ -2780,9 +2812,13 @@ export default function ContestPageClient() {
       ),
     [activeProblemTab, copiedSampleKey, currentDescriptionMd, problemSections]
   );
+  // One trustworthy, invisible-saving model (Google-Docs style): the candidate
+  // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
+  // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
+  // surfaced (and the debounced autosave keeps retrying in the background).
   const saveIndicator = saveError
     ? {
-        label: "Save failed",
+        label: "Couldn't save — retrying",
         color: "#fca5a5",
         bg: "rgba(239,68,68,0.1)",
         border: "rgba(239,68,68,0.28)",
@@ -2790,7 +2826,7 @@ export default function ContestPageClient() {
       }
     : saving
       ? {
-          label: "Saving",
+          label: "Saving…",
           color: "#c084fc",
           bg: "rgba(168,85,247,0.1)",
           border: "rgba(168,85,247,0.28)",
@@ -2798,14 +2834,14 @@ export default function ContestPageClient() {
         }
       : hasUnsavedChanges
         ? {
-            label: "Unsaved changes",
-            color: "#fbbf24",
-            bg: "rgba(245,158,11,0.1)",
-            border: "rgba(245,158,11,0.26)",
+            label: "Saving…",
+            color: "#c084fc",
+            bg: "rgba(168,85,247,0.1)",
+            border: "rgba(168,85,247,0.28)",
             icon: "pending" as const,
           }
         : {
-            label: saved ? "Saved" : "Saved",
+            label: "All changes saved",
             color: "#86efac",
             bg: "rgba(34,197,94,0.08)",
             border: "rgba(34,197,94,0.24)",
