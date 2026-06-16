@@ -1208,6 +1208,19 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
             platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
             platform_rs::windows::spawn_virtual_desktop_guard(hwnd.0 as isize);
 
+            // F6: native clipboard monitor. Subscribes to WM_CLIPBOARDUPDATE and
+            // emits classified clipboard events (image capture / external write /
+            // write) as proctoring audit events. Metadata only — never reads
+            // clipboard contents. Register the callback once, then start the
+            // message-only-window monitor for the exam HWND.
+            let cb_app = app.clone();
+            platform_rs::windows::set_clipboard_event_callback(move |kind, detail, payload| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
+                record_proctoring_event(Some(&cb_app), kind, detail, payload);
+            });
+            platform_rs::windows::start_clipboard_monitor(hwnd.0 as isize);
+
             // F1: native focus-loss watchdog. The webview's own blur events can be
             // suppressed, so poll the OS foreground window directly. Edge-triggered
             // (only the true→false transition is recorded) so a candidate who alt-tabs
@@ -1258,6 +1271,8 @@ async fn unlock_desktop(app: tauri::AppHandle) {
         let _ = win.set_always_on_top(false);
         let _ = win.set_fullscreen(false);
     }
+    #[cfg(target_os = "windows")]
+    platform_rs::windows::stop_clipboard_monitor();
     platform_dispatch!(unlock_desktop(), else ())
 }
 

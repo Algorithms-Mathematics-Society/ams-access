@@ -23,7 +23,11 @@ import {
   type PresenceDetector,
 } from "@/lib/presence-monitor";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
-import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "./editor-pane";
+import {
+  CONTEST_EDITOR_THEMES,
+  registerAllowedClipboard,
+  type ContestEditorThemeId,
+} from "./editor-pane";
 import {
   isPendingSubmissionStatus,
   normalizeAttemptForRunResult,
@@ -1476,6 +1480,7 @@ export default function ContestPageClient() {
   const processScanInFlightRef = useRef(false);
   const activeViolationDetailRef = useRef("");
   const lastFocusLossRef = useRef(0);
+  const lastStatementCopyRef = useRef(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
@@ -1768,6 +1773,9 @@ export default function ContestPageClient() {
     const sample = button.getAttribute("data-copy-sample") ?? "";
     const key = button.getAttribute("data-copy-key") ?? "sample";
     void navigator.clipboard?.writeText(sample).catch(() => {});
+    // Mark this sample as an allowed clipboard source so pasting it back into the
+    // editor is classified internal (F6), not flagged as an external code dump.
+    registerAllowedClipboard(sample);
     setCopiedSampleKey(key);
     window.setTimeout(
       () => setCopiedSampleKey((current) => (current === key ? null : current)),
@@ -2874,6 +2882,50 @@ export default function ContestPageClient() {
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
+  // Statement copy proctoring (F6) — copying *out of the problem statement* is a
+  // weak cheating signal (e.g. pasting it into an external tool), so log it as a
+  // medium-severity event. We never block it (candidates legitimately copy sample
+  // I/O), and never record the copied text — metadata only. Debounced like the
+  // focus-loss effect so one gesture logs at most once.
+  useEffect(() => {
+    const reportStatementCopy = (verb: "copy" | "cut") => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) return;
+      const anchor = selection.anchorNode;
+      const anchorEl = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
+      if (!anchorEl?.closest(".pb-body")) return;
+
+      const now = Date.now();
+      if (now - lastStatementCopyRef.current < 1000) return;
+      lastStatementCopyRef.current = now;
+
+      try {
+        void window.__TAURI__?.core.invoke("log_proctoring_event", {
+          kind: "clipboard_copy",
+          detail: `Statement ${verb}`,
+          timestamp: Date.now(),
+          payload: {
+            source: "statement",
+            len: String(selection).length,
+            severity: "medium",
+          },
+        });
+      } catch {
+        // Tauri not available (browser/dev); ignore.
+      }
+    };
+
+    const onCopy = () => reportStatementCopy("copy");
+    const onCut = () => reportStatementCopy("cut");
+
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("cut", onCut);
+    return () => {
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("cut", onCut);
     };
   }, []);
 
@@ -4723,6 +4775,7 @@ export default function ContestPageClient() {
                   onCodeChange={handleCodeChange}
                   editorTheme={editorTheme}
                   selectedLanguage={selectedLanguage}
+                  problemId={currentQId}
                 />
               </div>
 

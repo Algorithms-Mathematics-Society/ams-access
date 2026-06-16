@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cpp } from "@codemirror/lang-cpp";
 import { python } from "@codemirror/lang-python";
 import { java } from "@codemirror/lang-java";
@@ -50,6 +50,7 @@ type EditorPaneProps = {
   onCodeChange: (value: string) => void;
   editorTheme: ContestEditorThemeId;
   selectedLanguage: string;
+  problemId?: string;
 };
 
 export const CONTEST_EDITOR_THEMES: Array<{ id: ContestEditorThemeId; label: string }> = [
@@ -585,11 +586,52 @@ function setNativeEscapeBlocked(blocked: boolean) {
   void tauri?.core.invoke("set_escape_blocked", { blocked }).catch(() => {});
 }
 
+/// F6 clipboard anti-cheat — distinguishes paste of editor-internal / allowed
+/// content (always permitted) from external content (soft-blocked when it looks
+/// like a code dump). Tracks the last thing copied *out of* the editor and any
+/// content explicitly marked allowed (e.g. the sample "Copy" button), normalised
+/// so trivial whitespace differences don't cause a false external classification.
+let lastInternalCopy = { text: "", ts: 0 };
+
+const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/// Mark a string as an allowed clipboard source — pasting it back will be
+/// classified internal, not external. Used by the statement sample "Copy" button.
+export function registerAllowedClipboard(text: string) {
+  lastInternalCopy = { text: norm(text), ts: Date.now() };
+}
+
+/// Fire-and-forget proctoring event to the native audit log. Metadata only —
+/// never clipboard content. No-op (silently) outside Tauri, like the focus-loss
+/// effect in client.tsx.
+function logClipboardEvent(kind: string, detail: string, payload: Record<string, unknown>) {
+  type TauriGlobal = {
+    core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+  };
+  const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
+  try {
+    void tauri?.core
+      .invoke("log_proctoring_event", { kind, detail, timestamp: Date.now(), payload })
+      .catch(() => {});
+  } catch {
+    // Tauri not available (browser/dev); ignore.
+  }
+}
+
+// External paste is soft-blocked only when it looks like a code dump (multi-line
+// or long); a short single-line paste (e.g. an identifier) is allowed but logged.
+const EXTERNAL_PASTE_MIN = 80;
+// Internal-copy provenance only counts for a few minutes — stale matches are external.
+const INTERNAL_COPY_TTL_MS = 5 * 60 * 1000;
+
 function createEditorExtensions(
   onCodeChange: (value: string) => void,
   editorTheme: ContestEditorThemeId,
-  language: string
+  language: string,
+  onBlockedPaste?: () => void,
+  proctorMeta?: { problemId?: string }
 ): Extension[] {
+  const metaPayload = proctorMeta?.problemId ? { problem_id: proctorMeta.problemId } : {};
   return [
     EditorView.domEventHandlers({
       focus: () => {
@@ -597,6 +639,89 @@ function createEditorExtensions(
       },
       blur: () => {
         setNativeEscapeBlocked(true);
+      },
+      copy: (_event, view) => {
+        const sel = view.state.sliceDoc(
+          view.state.selection.main.from,
+          view.state.selection.main.to
+        );
+        lastInternalCopy = { text: norm(sel), ts: Date.now() };
+        logClipboardEvent("clipboard_copy", "Editor copy", {
+          ...metaPayload,
+          source: "editor",
+          len: sel.length,
+          severity: "info",
+        });
+        return false; // don't block — let CodeMirror copy normally.
+      },
+      cut: (_event, view) => {
+        const sel = view.state.sliceDoc(
+          view.state.selection.main.from,
+          view.state.selection.main.to
+        );
+        lastInternalCopy = { text: norm(sel), ts: Date.now() };
+        logClipboardEvent("clipboard_copy", "Editor cut", {
+          ...metaPayload,
+          source: "editor",
+          len: sel.length,
+          severity: "info",
+        });
+        return false; // don't block — let CodeMirror cut normally.
+      },
+      paste: (event, _view): boolean => {
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!text) return false;
+
+        const n = norm(text);
+        const prev = lastInternalCopy.text;
+        const fresh = Date.now() - lastInternalCopy.ts < INTERNAL_COPY_TTL_MS;
+        // Exact match always counts as internal. Substring matches (paste a piece
+        // of what you copied, or vice-versa) only count when the copied block was
+        // itself substantial — otherwise a one-char internal copy (e.g. "}") would
+        // whitelist any external dump that merely contains it, defeating the block.
+        const internal =
+          n.length > 0 &&
+          fresh &&
+          (n === prev ||
+            (prev.length >= EXTERNAL_PASTE_MIN && (prev.includes(n) || n.includes(prev))));
+
+        const lines = text.split("\n").length;
+
+        if (internal) {
+          logClipboardEvent("clipboard_paste", "Internal paste", {
+            ...metaPayload,
+            internal: true,
+            len: text.length,
+            lines,
+            severity: "info",
+          });
+          return false; // allow.
+        }
+
+        // External, and large enough to look like a code dump → soft-block.
+        if (lines > 1 || text.length >= EXTERNAL_PASTE_MIN) {
+          event.preventDefault();
+          logClipboardEvent("clipboard_paste_blocked", "External paste blocked", {
+            ...metaPayload,
+            external: true,
+            len: text.length,
+            lines,
+            severity: "high",
+          });
+          onBlockedPaste?.();
+          return true; // handled → CodeMirror does NOT insert.
+        }
+
+        // External but trivial (short, single line) — allow, but log it.
+        logClipboardEvent("clipboard_paste", "External trivial paste", {
+          ...metaPayload,
+          external: true,
+          trivial: true,
+          len: text.length,
+          lines,
+          severity: "low",
+        });
+        return false; // allow.
       },
     }),
     lineNumbers(),
@@ -640,6 +765,7 @@ export default function EditorPane({
   onCodeChange,
   editorTheme,
   selectedLanguage,
+  problemId,
 }: EditorPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -648,6 +774,32 @@ export default function EditorPane({
   // Ref so the init effect can read the current language without being in its
   // dep array (which would destroy and recreate the editor on every language change).
   const selectedLanguageRef = useRef(selectedLanguage);
+  // Latest problemId, read by the (mount-time) memoised paste handler without
+  // forcing an editor recreation when the candidate switches problems.
+  const problemIdRef = useRef(problemId);
+
+  // Transient, non-accusatory notice shown when an external paste is soft-blocked.
+  // Auto-dismisses; never blocks typing.
+  const [pasteNotice, setPasteNotice] = useState(false);
+  const pasteNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    problemIdRef.current = problemId;
+  }, [problemId]);
+
+  const showPasteNotice = () => {
+    setPasteNotice(true);
+    if (pasteNoticeTimerRef.current) clearTimeout(pasteNoticeTimerRef.current);
+    pasteNoticeTimerRef.current = setTimeout(() => setPasteNotice(false), 3000);
+  };
+  const showPasteNoticeRef = useRef(showPasteNotice);
+  showPasteNoticeRef.current = showPasteNotice;
+
+  useEffect(() => {
+    return () => {
+      if (pasteNoticeTimerRef.current) clearTimeout(pasteNoticeTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     onCodeChangeRef.current = onCodeChange;
@@ -666,7 +818,9 @@ export default function EditorPane({
           if (!applyingExternalUpdateRef.current) onCodeChangeRef.current(value);
         },
         editorTheme,
-        selectedLanguage
+        selectedLanguage,
+        () => showPasteNoticeRef.current(),
+        { problemId: problemIdRef.current }
       ),
     []
   );
@@ -731,12 +885,40 @@ export default function EditorPane({
   }, [currentCode]);
 
   return (
-    <div
-      ref={containerRef}
-      className="contest-editor-pane contest-editor-pane--codemirror"
-      aria-label={`${activeTab} ${selectedLanguage} editor`}
-      data-active-question={activeQ}
-      data-active-file={activeTab}
-    />
+    <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex" }}>
+      <div
+        ref={containerRef}
+        className="contest-editor-pane contest-editor-pane--codemirror"
+        aria-label={`${activeTab} ${selectedLanguage} editor`}
+        data-active-question={activeQ}
+        data-active-file={activeTab}
+        style={{ flex: 1, minWidth: 0 }}
+      />
+      {pasteNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "absolute",
+            top: "10px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 20,
+            padding: "8px 14px",
+            borderRadius: "8px",
+            background: "rgba(15,15,15,0.96)",
+            border: "1px solid rgba(168,85,247,0.4)",
+            color: "#e2e8f0",
+            fontSize: "12px",
+            fontFamily: "Inter, system-ui, sans-serif",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Pasting external content is disabled during the exam.
+        </div>
+      )}
+    </div>
   );
 }

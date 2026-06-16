@@ -2,7 +2,8 @@ use core_rs::exam::{
     CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
 };
 use std::os::windows::process::CommandExt;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use std::sync::OnceLock;
 
 /// CreateProcess flag that suppresses the console window of a child process.
 /// Without it, every console helper we shell out to (tasklist, reg, netsh,
@@ -1160,4 +1161,247 @@ fn win_process_alive(name: &str) -> bool {
         .found
         .iter()
         .any(|f| f.eq_ignore_ascii_case(name))
+}
+
+// ── Clipboard monitor ─────────────────────────────────────────────────────────
+//
+// Native clipboard surveillance for the lockdown session. A message-only window
+// subscribes to `WM_CLIPBOARDUPDATE` via AddClipboardFormatListener; on each
+// update we inspect only *metadata* (available formats + owner/foreground HWND),
+// never the clipboard contents, and classify the event. Classified events flow
+// out through `CLIPBOARD_EVENT_CALLBACK`, mirroring the macOS lockdown-event
+// callback pattern (set_lockdown_event_callback / emit_lockdown_event): the
+// host registers one closure and we invoke it under catch_unwind, because the
+// wndproc is `extern "system"` and a panic unwinding across the FFI boundary
+// would abort the process (the SIGABRT class of bug).
+
+/// Host callback for clipboard events: `callback(kind, detail, payload_json)`.
+/// Only the first registration per process wins; later calls are ignored.
+type ClipboardEventCallback = Box<dyn Fn(&str, &str, String) + Send + Sync>;
+static CLIPBOARD_EVENT_CALLBACK: OnceLock<ClipboardEventCallback> = OnceLock::new();
+
+/// Thread id of the clipboard pump thread, or 0 when not running. Used by
+/// `stop_clipboard_monitor` to PostThreadMessage(WM_QUIT) into the pump.
+static CLIPBOARD_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+/// Last clipboard sequence number we processed — dedup for the duplicate
+/// WM_CLIPBOARDUPDATE messages Windows can deliver for a single change.
+static CLIPBOARD_LAST_SEQ: AtomicU32 = AtomicU32::new(0);
+/// The exam window HWND (as isize) so the stateless wndproc can compare it
+/// against the clipboard owner / foreground window.
+static CLIPBOARD_EXAM_HWND: AtomicIsize = AtomicIsize::new(0);
+/// Guard against starting a second monitor while one is already running.
+static CLIPBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Set by `stop_clipboard_monitor` so a `stop` that races the pump thread's
+/// startup (before it has entered GetMessageW) still tears down cleanly instead
+/// of leaking the thread with a lost WM_QUIT.
+static CLIPBOARD_STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Register the host callback invoked on every classified clipboard event.
+///
+/// `callback(kind, detail, payload_json)` is invoked from the clipboard pump
+/// thread's wndproc — it must be cheap and non-blocking. Only the first
+/// registration per process wins; later calls are ignored.
+pub fn set_clipboard_event_callback<F>(callback: F)
+where
+    F: Fn(&str, &str, String) + Send + Sync + 'static,
+{
+    let _ = CLIPBOARD_EVENT_CALLBACK.set(Box::new(callback));
+}
+
+/// Raise a clipboard event to the host app.
+///
+/// Called from the `extern "system"` wndproc. The host callback ends up in
+/// Tauri's emit machinery, which can panic (e.g. if the webview is gone); a
+/// panic unwinding out of an FFI callback escalates to a process abort, so it
+/// is contained here and never allowed to take down the exam app.
+fn emit_clipboard_event(kind: &str, detail: &str, payload_json: String) {
+    eprintln!("AMS Access: {kind}: {detail}");
+    if let Some(callback) = CLIPBOARD_EVENT_CALLBACK.get() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            callback(kind, detail, payload_json)
+        }));
+    }
+}
+
+/// Start the native clipboard monitor for the exam window `hwnd_raw`.
+///
+/// Idempotent: a second call while a monitor is already running is a no-op. The
+/// monitor runs on its own thread (a message-only window + GetMessage pump) and
+/// is torn down by `stop_clipboard_monitor`.
+pub fn start_clipboard_monitor(hwnd_raw: isize) {
+    if CLIPBOARD_ACTIVE.swap(true, Ordering::SeqCst) {
+        return; // already running
+    }
+    CLIPBOARD_EXAM_HWND.store(hwnd_raw, Ordering::SeqCst);
+    CLIPBOARD_STOP_REQUESTED.store(false, Ordering::SeqCst);
+
+    let _ = std::thread::Builder::new()
+        .name("ams-clipboard-monitor".into())
+        .spawn(|| {
+            use windows::core::w;
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::System::DataExchange::AddClipboardFormatListener;
+            use windows::Win32::System::DataExchange::RemoveClipboardFormatListener;
+            use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+            use windows::Win32::System::Threading::GetCurrentThreadId;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, RegisterClassW,
+                TranslateMessage, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+            };
+
+            // Publish the thread id BEFORE creating the window so a `stop` that
+            // arrives during startup has a valid target for WM_QUIT. Paired with
+            // the CLIPBOARD_STOP_REQUESTED check below, this closes the race where
+            // a quick lock->unlock could otherwise leak this thread forever (a
+            // WM_QUIT posted to tid 0 is lost and GetMessageW blocks for good).
+            CLIPBOARD_THREAD_ID.store(unsafe { GetCurrentThreadId() }, Ordering::SeqCst);
+
+            unsafe {
+                let hinstance = GetModuleHandleW(None).unwrap_or_default();
+                let class_name = w!("AmsAccessClipboardMonitor");
+
+                let wc = WNDCLASSW {
+                    lpfnWndProc: Some(clipboard_wndproc),
+                    hInstance: hinstance.into(),
+                    lpszClassName: class_name,
+                    ..Default::default()
+                };
+                // RegisterClassW returns 0 on failure; a non-zero atom means OK.
+                // If the class was already registered (atom 0 / ERROR_CLASS_ALREADY_EXISTS)
+                // CreateWindowExW will still succeed, so we don't hard-fail here.
+                let _atom = RegisterClassW(&wc);
+
+                let hwnd = match CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    class_name,
+                    w!("AMS Access Clipboard Monitor"),
+                    WINDOW_STYLE(0),
+                    0,
+                    0,
+                    0,
+                    0,
+                    Some(HWND_MESSAGE),
+                    None,
+                    Some(hinstance.into()),
+                    None,
+                ) {
+                    Ok(h) => h,
+                    Err(_) => {
+                        CLIPBOARD_THREAD_ID.store(0, Ordering::SeqCst);
+                        CLIPBOARD_ACTIVE.store(false, Ordering::SeqCst);
+                        return;
+                    }
+                };
+
+                if AddClipboardFormatListener(hwnd).is_err() {
+                    let _ = DestroyWindow(hwnd);
+                    CLIPBOARD_THREAD_ID.store(0, Ordering::SeqCst);
+                    CLIPBOARD_ACTIVE.store(false, Ordering::SeqCst);
+                    return;
+                }
+
+                // If stop was requested during window setup, skip the pump and go
+                // straight to teardown (the posted WM_QUIT, if any, would be left
+                // unconsumed otherwise).
+                if !CLIPBOARD_STOP_REQUESTED.load(Ordering::SeqCst) {
+                    let mut msg = MSG::default();
+                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
+
+                // Pump exited (WM_QUIT) or was skipped — tear down.
+                let _ = RemoveClipboardFormatListener(hwnd);
+                let _ = DestroyWindow(hwnd);
+                let _: HWND = hwnd; // keep hwnd typed for clarity
+            }
+
+            CLIPBOARD_THREAD_ID.store(0, Ordering::SeqCst);
+            CLIPBOARD_ACTIVE.store(false, Ordering::SeqCst);
+        });
+}
+
+/// Stop the clipboard monitor: break the pump so its thread tears down the
+/// listener and window. Safe to call when not running (no-op).
+pub fn stop_clipboard_monitor() {
+    // Set the stop flag first so the pump thread bails even if it has not yet
+    // entered GetMessageW (and thus might miss the WM_QUIT below).
+    CLIPBOARD_STOP_REQUESTED.store(true, Ordering::SeqCst);
+    let tid = CLIPBOARD_THREAD_ID.load(Ordering::SeqCst);
+    if tid != 0 {
+        unsafe {
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+            PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).ok();
+        }
+    }
+}
+
+/// Message-only window procedure for the clipboard monitor. Stateless (cannot
+/// capture), so it reads shared statics; the only path into Rust closure code
+/// is `emit_clipboard_event`, which is catch_unwind-guarded.
+unsafe extern "system" fn clipboard_wndproc(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::{HWND, LRESULT};
+    use windows::Win32::System::DataExchange::{
+        GetClipboardOwner, GetClipboardSequenceNumber, IsClipboardFormatAvailable,
+    };
+    use windows::Win32::System::Ole::{CF_BITMAP, CF_DIB, CF_UNICODETEXT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DefWindowProcW, GetForegroundWindow, WM_CLIPBOARDUPDATE,
+    };
+
+    if msg == WM_CLIPBOARDUPDATE {
+        // Dedup duplicate update notifications for a single clipboard change.
+        let seq = GetClipboardSequenceNumber();
+        if CLIPBOARD_LAST_SEQ.swap(seq, Ordering::SeqCst) == seq && seq != 0 {
+            return LRESULT(0);
+        }
+
+        let exam = HWND(CLIPBOARD_EXAM_HWND.load(Ordering::SeqCst) as *mut _);
+        let owner_is_exam = GetClipboardOwner().unwrap_or_default() == exam;
+        let fg = GetForegroundWindow();
+        let foreground_is_exam = !fg.0.is_null() && fg == exam;
+        // A genuinely-different app is focused (non-null AND not the exam). NULL
+        // foreground happens transiently during the lock/desktop switch, so we do
+        // NOT escalate to "external write" on it — that would spam false highs.
+        let foreground_other_app = !fg.0.is_null() && fg != exam;
+
+        // Metadata only — never OpenClipboard to read contents.
+        let fmt = if IsClipboardFormatAvailable(CF_BITMAP.0 as u32).is_ok()
+            || IsClipboardFormatAvailable(CF_DIB.0 as u32).is_ok()
+        {
+            "image"
+        } else if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok() {
+            "text"
+        } else {
+            "other"
+        };
+
+        let (kind, sev) = match fmt {
+            "image" => ("clipboard_capture_image", "high"),
+            "text" if foreground_other_app => ("clipboard_external_write", "high"),
+            "text" if !owner_is_exam => ("clipboard_write", "medium"),
+            "text" => ("clipboard_write", "info"),
+            _ => ("clipboard_write", "info"),
+        };
+
+        let payload = serde_json::json!({
+            "format": fmt,
+            "owner_is_exam": owner_is_exam,
+            "foreground_is_exam": foreground_is_exam,
+            "severity": sev,
+        })
+        .to_string();
+
+        emit_clipboard_event(kind, sev, payload);
+        return LRESULT(0);
+    }
+
+    DefWindowProcW(hwnd, msg, wparam, lparam)
 }
