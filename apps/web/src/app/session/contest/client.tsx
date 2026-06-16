@@ -1398,6 +1398,9 @@ export default function ContestPageClient() {
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
+  // Ambient connection signal for the trust strip. Defaults online; the effect
+  // syncs the real value on mount (navigator is unavailable during SSR).
+  const [online, setOnline] = useState(true);
   const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -2504,6 +2507,18 @@ export default function ContestPageClient() {
     const id = setInterval(sendHeartbeat, 60_000);
     return () => clearInterval(id);
   }, [sessionId]);
+
+  // Track browser connectivity for the ambient trust strip.
+  useEffect(() => {
+    const sync = () => setOnline(navigator.onLine);
+    sync();
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
 
   // Arm the native event-stream uploader: the Rust side tails the local
   // violation/proctoring spool and ships batches to
@@ -5545,6 +5560,54 @@ export default function ContestPageClient() {
               : faceStatus === "away"
                 ? "Look forward"
                 : "Camera starting"}
+          </span>
+        </div>
+
+        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
+
+        {/* Connection */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <div
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: online ? "#22c55e" : "#f59e0b",
+              boxShadow: `0 0 6px ${online ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
+            }}
+          />
+          <span
+            role="status"
+            aria-live="polite"
+            style={{
+              fontSize: "10px",
+              color: online ? "#22c55e" : "#f59e0b",
+              letterSpacing: "0.06em",
+            }}
+          >
+            {online ? "Connected" : "Reconnecting…"}
+          </span>
+        </div>
+
+        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
+
+        {/* Saved — mirrors the editor save indicator so candidates always know
+            their work is safe without hunting for it. */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <div
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: saveIndicator.color,
+            }}
+          />
+          <span
+            role="status"
+            aria-live="polite"
+            style={{ fontSize: "10px", color: saveIndicator.color, letterSpacing: "0.06em" }}
+          >
+            {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           </span>
         </div>
 
