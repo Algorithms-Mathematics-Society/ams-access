@@ -14,10 +14,13 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
-/// Backend TLS pin (base64 SHA-256 of the SubjectPublicKeyInfo). EMPTY = pinning
-/// disabled (system roots + warning). Populate with the backend's stable
-/// intermediate-CA SPKI before production. See remediation F4.
-const BACKEND_SPKI_PIN: &str = ""; // TODO(security/F4): set before launch
+/// Pinned TLS trust anchors (PEM) for every Rust-side HTTPS call to the backend.
+/// These are the Google Trust Services roots that all Cloud Run (`*.run.app`)
+/// certificates chain to. Pinning to them (built-in OS roots OFF) defeats a
+/// locally-installed MITM root (mitmproxy/Burp/corporate TLS inspection) while
+/// surviving Google's routine leaf-cert rotation. Blank this string to disable
+/// pinning in an emergency (kill-switch). See remediation F4.
+const PINNED_ROOTS_PEM: &str = include_str!("../assets/tls/gts-roots.pem");
 
 const MAX_FACE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FACE_IMAGE_PIXELS: u64 = 2_000_000;
@@ -241,47 +244,64 @@ fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, e
 // ── F4: pinned HTTP client ─────────────────────────────────────────────────────
 //
 // Single construction point for every outbound HTTPS client so the backend TLS
-// pin (when set) is enforced uniformly. Returns a `reqwest::ClientBuilder` —
+// trust anchors are enforced uniformly. Returns a `reqwest::ClientBuilder` —
 // callers add their own timeout and `.build()`, preserving the per-site timeouts
 // that already existed.
 //
-// When `BACKEND_SPKI_PIN` is empty (current state) the builder is exactly what
-// every site used before: system roots, no pinning. A one-time warning is logged
-// so an un-pinned release is never silent.
+// MECHANISM: trust-anchor pinning. We parse the embedded Google Trust Services
+// roots (`PINNED_ROOTS_PEM`) and hand them to reqwest's `tls_certs_only`, which
+// trusts ONLY those roots — the OS/built-in root store is turned OFF. Because
+// every Cloud Run (`*.run.app`) leaf chains to these long-lived Google roots,
+// the backend continues to validate, but a locally-installed MITM root
+// (mitmproxy/Burp/corporate TLS inspection) — which chains to the user's own
+// root, not GTS — is rejected. Pinning the long-lived roots (not the leaf) means
+// Google's routine leaf-cert rotation does not break us.
 //
-// When the pin is non-empty, true SPKI pinning requires a rustls custom
-// `ServerCertVerifier` that hashes the leaf's SubjectPublicKeyInfo and compares
-// it to the pin. reqwest exposes that only via `use_preconfigured_tls` with a
-// hand-built `rustls::ClientConfig`, which is a non-trivial amount of code and
-// no new crates here. Until that lands we MUST NOT silently fall back to an
-// un-pinned client (that would defeat the pin), so we panic with a clear
-// message. See fable-sec-june-12.md (F4 / TLS pinning).
+// KILL-SWITCH: if `PINNED_ROOTS_PEM` is blanked, we log a one-time warning and
+// fall back to an un-pinned, system-root client. This is intentional and is the
+// only path to an un-pinned client; when roots ARE configured we never silently
+// fall back (that would be a security downgrade) — a parse failure of the
+// embedded, build-time-constant bundle is an impossible-without-a-corrupted-build
+// state, so we `.expect` and fail fast.
+//
+// SCOPE: This pins ONLY the Rust-side reqwest calls — the event-stream upload,
+// the readiness-report delivery, and the clock-skew probe — all of which are
+// best-effort / non-fatal telemetry or probe traffic. The exam SUBMISSION
+// traffic does NOT pass through here: it is issued by the embedded webview
+// (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux) via JS `fetch`,
+// which uses the OS trust store and is therefore NOT pinned by this function.
+// Truly pinning the submission path would require routing submissions through a
+// Rust `#[tauri::command]` that uses this pinned client — an architectural
+// follow-up gated on the production submission API. Tracked as F4-followup.
 fn pinned_http_client_builder() -> reqwest::ClientBuilder {
     use std::sync::Once;
 
-    if BACKEND_SPKI_PIN.trim().is_empty() {
+    if PINNED_ROOTS_PEM.trim().is_empty() {
         static WARN_ONCE: Once = Once::new();
         WARN_ONCE.call_once(|| {
             eprintln!(
-                "WARNING: TLS certificate pinning is DISABLED (BACKEND_SPKI_PIN is empty); \
-                 using system roots only. Set the pin before production — see remediation F4."
+                "WARNING: TLS certificate pinning is DISABLED (PINNED_ROOTS_PEM is empty; \
+                 kill-switch engaged); using system roots only — see remediation F4."
             );
         });
         return reqwest::Client::builder();
     }
 
-    // TODO(security/F4): enforce BACKEND_SPKI_PIN here. Build a
-    // `rustls::ClientConfig` with a custom `ServerCertVerifier` that, after the
-    // normal webpki chain check, computes base64(SHA-256(SubjectPublicKeyInfo))
-    // of the leaf cert and rejects any connection whose SPKI is not the pin,
-    // then pass it to `reqwest::ClientBuilder::use_preconfigured_tls`. Do not add
-    // heavy deps for this. Until implemented, refuse rather than connect
-    // un-pinned (an un-pinned client when a pin is configured is a silent
-    // downgrade).
-    panic!(
-        "BACKEND_SPKI_PIN is set but SPKI pinning enforcement is not yet implemented; \
-         see TODO(security/F4) in pinned_http_client_builder"
+    // The embedded bundle is build-time-constant data already verified to parse
+    // and validate by the orchestrator; a failure here means a corrupted build,
+    // so fail fast rather than silently downgrade to an un-pinned client.
+    let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
+        .expect("embedded GTS roots PEM must parse");
+    // Guard the fail-closed footgun: a non-blank bundle that parses to ZERO certs
+    // (e.g. comments/whitespace only) would yield an empty root store that rejects
+    // EVERY connection. That can only happen if the asset is gutted, so treat it
+    // as a build error and fail fast rather than ship a client that can't talk to
+    // the backend at all. (Real asset = 4 GTS roots, so this never fires.)
+    assert!(
+        !certs.is_empty(),
+        "PINNED_ROOTS_PEM is non-empty but contained no certificates — corrupted gts-roots.pem"
     );
+    reqwest::Client::builder().tls_certs_only(certs)
 }
 
 fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
