@@ -607,7 +607,9 @@ export const SettingsPanel = memo(function SettingsPanel({
               style={{
                 padding: "12px 16px",
                 borderRadius: "6px",
-                border: "none",
+                borderTop: "none",
+                borderRight: "none",
+                borderBottom: "none",
                 borderLeft: activeTab === tab ? `3px solid ${c.accent}` : "3px solid transparent",
                 background: activeTab === tab ? c.accentLight : "transparent",
                 color: activeTab === tab ? c.accentText : c.textMuted,

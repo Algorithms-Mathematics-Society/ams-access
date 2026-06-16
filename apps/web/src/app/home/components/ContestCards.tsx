@@ -423,7 +423,9 @@ export const ActiveContestCard = memo(
           background: isLight
             ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
             : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
-          border: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
+          borderTop: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
+          borderRight: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
+          borderBottom: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
           borderLeft: `3px solid ${entryTone.rail}`,
           borderRadius: "8px",
           padding: "26px 30px",

@@ -4083,8 +4083,10 @@ export default function OnboardingPage() {
                           style={{
                             width: 12,
                             height: 12,
-                            border: "2px solid rgba(168,85,247,0.3)",
-                            borderTopColor: "#a855f7",
+                            borderTop: "2px solid #a855f7",
+                            borderRight: "2px solid rgba(168,85,247,0.3)",
+                            borderBottom: "2px solid rgba(168,85,247,0.3)",
+                            borderLeft: "2px solid rgba(168,85,247,0.3)",
                             borderRadius: "50%",
                             animation: "spin 0.9s linear infinite",
                           }}
