@@ -34,6 +34,7 @@
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "framer-motion": "^11.0.0",
+    "katex": "^0.16.11",
     "lucide-react": "^1.17.0",
     "marked": "^18.0.4",
     "next": "^15.0.0",
@@ -42,6 +43,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
+    "@types/katex": "^0.16.7",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

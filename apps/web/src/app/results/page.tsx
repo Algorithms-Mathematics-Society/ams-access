@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 
@@ -77,7 +77,28 @@ function formatCountdown(targetIso: string): string {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ResultsPage() {
+// Shared loading screen — used both as the data-fetch placeholder and as the
+// Suspense fallback for useSearchParams(), so the UI is identical in both cases.
+function ResultsLoading() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "var(--surface-0)",
+        color: "#64748b",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "system-ui, sans-serif",
+        fontSize: 14,
+      }}
+    >
+      Loading results…
+    </div>
+  );
+}
+
+function ResultsView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contestId = searchParams?.get("contestId") ?? "";
@@ -274,22 +295,7 @@ export default function ResultsPage() {
   }
 
   if (!results) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--surface-0)",
-          color: "#64748b",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "system-ui, sans-serif",
-          fontSize: 14,
-        }}
-      >
-        Loading results…
-      </div>
-    );
+    return <ResultsLoading />;
   }
 
   return (
@@ -741,5 +747,16 @@ export default function ResultsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() requires a Suspense boundary under static export (output:
+// "export"). Wrapping the view keeps the rendered UI unchanged — the fallback
+// is the same loading screen the page already shows while fetching.
+export default function ResultsPage() {
+  return (
+    <Suspense fallback={<ResultsLoading />}>
+      <ResultsView />
+    </Suspense>
   );
 }

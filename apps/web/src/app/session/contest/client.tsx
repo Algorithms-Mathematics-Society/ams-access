@@ -11,7 +11,8 @@ import {
 } from "react";
 import MarkovEditor, { type MarkovChain, normalizeChain } from "@/components/MarkovEditor";
 import dynamic from "next/dynamic";
-import { marked, type MarkedExtension } from "marked";
+import { marked } from "marked";
+import katex from "katex";
 import DOMPurify from "dompurify";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
@@ -143,35 +144,50 @@ function isContestEditorTheme(value: string | null): value is ContestEditorTheme
 }
 
 // Configure marked once at module level — pays cost on first import, never again.
-const mathInlineExt: MarkedExtension = {
-  extensions: [
-    {
-      name: "mathInline",
-      level: "inline" as const,
-      start: (src: string) => src.indexOf("$"),
-      tokenizer(src: string) {
-        const m = /^\$([^$\n]+?)\$/.exec(src);
-        if (m) return { type: "mathInline", raw: m[0], text: m[1].trim() };
-      },
-      renderer(token) {
-        return `<var class="pb-math">${(token as unknown as { text: string }).text}</var>`;
-      },
-    },
-  ],
-};
-marked.use(mathInlineExt, { breaks: true, gfm: true });
+marked.use({ breaks: true, gfm: true });
+
+// Opaque sentinels used to lift code and math out of the markdown before marked
+// runs, then re-inject them after sanitization. They contain no markdown-active
+// (_ * ` [ ] $) or HTML-active characters, so marked and DOMPurify pass them
+// through verbatim. (HTML comments would be stripped by DOMPurify — don't use them.)
+const MATH_TOKEN = (n: number) => `@@AMSMATH${n}@@`;
+const CODE_TOKEN = (n: number) => `@@AMSCODE${n}@@`;
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Render a single LaTeX fragment to HTML with KaTeX, then sanitize it in
+// isolation. KaTeX HTML is injected AFTER the main DOMPurify pass, so it must be
+// scrubbed here: with output:"html" KaTeX emits only <span> elements carrying
+// class/style, so a tampered LaTeX payload can never produce a script, an event
+// handler, or a javascript: URL that could reach window.__TAURI__.
+function renderMath(tex: string, displayMode: boolean): string {
+  let html: string;
+  try {
+    html = katex.renderToString(tex, {
+      displayMode,
+      throwOnError: false,
+      output: "html",
+      strict: "ignore",
+    });
+  } catch {
+    // throwOnError:false already renders parse errors inline; this guards only
+    // against unexpected exceptions so a bad statement never blanks the view.
+    return `<code class="pb-math-error">${escapeHtml(tex)}</code>`;
+  }
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ["span"],
+    ALLOWED_ATTR: ["class", "style", "aria-hidden"],
+  });
+}
 
 function parseDescription(md: string): string {
-  const tex = md
-    .replace(/\\leq?\b/g, "≤")
-    .replace(/\\geq?\b/g, "≥")
-    .replace(/\\neq\b/g, "≠")
-    .replace(/\\times\b/g, "×")
-    .replace(/\\cdot\b/g, "·")
-    .replace(/\\infty\b/g, "∞")
-    .replace(/\\ldots\b|\\dots\b/g, "…")
-    .replace(/\\pm\b/g, "±")
-    .replace(/\\\\/g, "\n");
   // SECURITY: problem statements are untrusted (backend / contest-authored, and
   // could be tampered with in transit) and are rendered into the privileged
   // Tauri webview via dangerouslySetInnerHTML. Sanitize the marked() output —
@@ -181,8 +197,54 @@ function parseDescription(md: string): string {
   // contest content is only ever fetched and rendered in the browser, so the
   // prerender path only ever sees empty placeholder strings.
   if (typeof window === "undefined") return "";
-  const rawHtml = marked.parse(tex) as string;
-  return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
+
+  const codeFragments: string[] = [];
+  const mathFragments: string[] = [];
+
+  // 1. Lift code out first so a `$` inside code/`...` is never treated as math.
+  //    Fenced blocks before inline spans. The original raw text is preserved and
+  //    re-emitted (escaped) as standard <pre><code>/<code> after sanitization.
+  let working = md.replace(
+    /```[ \t]*([\w-]*)[ \t]*\r?\n([\s\S]*?)```/g,
+    (_m, _lang: string, body: string) => {
+      const i = codeFragments.length;
+      codeFragments.push(`<pre><code>${escapeHtml(String(body).replace(/\n$/, ""))}</code></pre>`);
+      return `\n\n${CODE_TOKEN(i)}\n\n`;
+    }
+  );
+  working = working.replace(/`([^`\n]+?)`/g, (_m, body: string) => {
+    const i = codeFragments.length;
+    codeFragments.push(`<code>${escapeHtml(body)}</code>`);
+    return CODE_TOKEN(i);
+  });
+
+  // 2. Extract math — display $$...$$ before inline $...$ so a $$ pair is not
+  //    misread as two empty inline delimiters. Each fragment is pre-rendered to
+  //    sanitized KaTeX HTML and replaced with an inert token.
+  working = working.replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex: string) => {
+    const i = mathFragments.length;
+    mathFragments.push(renderMath(tex.trim(), true));
+    return MATH_TOKEN(i);
+  });
+  working = working.replace(/\$((?:[^$\\]|\\.)+?)\$/g, (_m, tex: string) => {
+    const i = mathFragments.length;
+    mathFragments.push(renderMath(tex.trim(), false));
+    return MATH_TOKEN(i);
+  });
+
+  // 3. Markdown -> HTML on the now code-free, math-free text.
+  const rawHtml = marked.parse(working) as string;
+
+  // 4. Sanitize the markdown-derived body with the standard untrusted-content
+  //    profile (unchanged). Tokens are inert plain text and survive intact.
+  let safeHtml = DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
+
+  // 5. Re-inject the (independently sanitized / escaped) code and math fragments.
+  safeHtml = safeHtml
+    .replace(/@@AMSCODE(\d+)@@/g, (_m, n: string) => codeFragments[Number(n)] ?? "")
+    .replace(/@@AMSMATH(\d+)@@/g, (_m, n: string) => mathFragments[Number(n)] ?? "");
+
+  return safeHtml;
 }
 function decodeHtmlEntities(value: string): string {
   return value
@@ -3081,8 +3143,10 @@ export default function ContestPageClient() {
             style={{
               width: "40px",
               height: "40px",
-              border: "2px solid rgba(168,85,247,0.3)",
-              borderTopColor: "#a855f7",
+              borderTop: "2px solid #a855f7",
+              borderRight: "2px solid rgba(168,85,247,0.3)",
+              borderBottom: "2px solid rgba(168,85,247,0.3)",
+              borderLeft: "2px solid rgba(168,85,247,0.3)",
               borderRadius: "50%",
               animation: "spin 0.9s linear infinite",
               margin: "0 auto 16px",
@@ -6282,7 +6346,10 @@ export default function ContestPageClient() {
         .pb-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
         .pb-body th,.pb-body td { border: 1px solid rgba(255,255,255,0.06); padding: 6px 10px; text-align: left; }
         .pb-body th { background: rgba(168,85,247,0.08); color: #e2e8f0; font-weight: 600; }
-        .pb-body var.pb-math { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: rgba(56,189,248,0.1); color: #7dd3fc; padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.2); }
+        /* KaTeX math — sized to flow with the 14px statement body. */
+        .pb-body .katex { font-size: 1.05em; color: #e2e8f0; }
+        .pb-body .katex-display { margin: 12px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+        .pb-body .pb-math-error { color: #fca5a5; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); }
 
         /* Interactive widgets embedded in <code> blocks — strip inline-code boxing */
         .pb-body code:has(div),

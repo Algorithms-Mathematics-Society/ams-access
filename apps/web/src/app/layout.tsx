@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+// KaTeX stylesheet — imported through JS so Next/webpack rewrites its
+// url(fonts/KaTeX_*.woff2) references and emits the fonts into the static
+// export (_next/static/media), letting the offline exam shell render math.
+import "katex/dist/katex.min.css";
 
 const inter = Inter({
   subsets: ["latin"],
