@@ -492,7 +492,12 @@ export default function HomePage() {
       localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
       setActiveSession(nextSession);
       setResumeStatus("Resume approved. Re-entering contest...");
-      router.push(`/session/contest?contestId=${encodeURIComponent(session.contest_id)}`);
+      // SECURITY: route the reconnect through onboarding so the session is
+      // re-verified and the desktop lockdown (lock_desktop) is re-engaged before
+      // the contest renders. Going straight to /session/contest would re-enter a
+      // live contest with no lockdown. Onboarding reuses the existing
+      // IN_PROGRESS session, so this does not create a duplicate session.
+      router.push(`/session/onboarding?contestId=${encodeURIComponent(session.contest_id)}`);
     } catch {
       setResumeStatus("Could not consume organizer approval. Try again.");
     } finally {

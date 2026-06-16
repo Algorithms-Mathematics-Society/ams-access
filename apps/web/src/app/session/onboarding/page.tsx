@@ -3562,6 +3562,40 @@ export default function OnboardingPage() {
           return;
         }
       }
+
+      // Lockdown hard-stop (symmetric to the network-lockdown gate above):
+      // lock_desktop runs inside startSecureSession but can fail (e.g. the
+      // keyboard hook is denied) while reporting no error, leaving the desktop
+      // unlocked. Entering then would both defeat proctoring AND make the
+      // contest page's lock guard bounce the candidate straight back here — an
+      // infinite loop. So we probe the authoritative lock state and hard-stop
+      // instead of navigating. Outside the desktop shell there is nothing to
+      // lock, so this is skipped (browser/dev).
+      if (tauriBridge) {
+        let lockEngaged = false;
+        try {
+          lockEngaged = await tauriBridge.core.invoke<boolean>("is_lockdown_engaged");
+        } catch {
+          lockEngaged = false;
+        }
+        if (!lockEngaged) {
+          await invoke("log_violation", {
+            kind: "lockdown_failed",
+            detail: "is_lockdown_engaged returned false after start_secure_session",
+          }).catch(() => {});
+          await invoke("log_proctoring_event", {
+            kind: "lockdown_failed",
+            detail: "Desktop lockdown (keyboard / full-screen) did not engage.",
+          }).catch(() => {});
+          setReadyForStart(false);
+          setTransitioning(false);
+          setPolicyBlock(
+            "We couldn't lock down your screen for the exam — keyboard/full-screen lockdown didn't engage. Re-run device setup and try again. A secured contest can't start without it."
+          );
+          return;
+        }
+      }
+
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {

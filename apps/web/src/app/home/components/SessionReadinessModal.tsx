@@ -286,10 +286,14 @@ export function SessionReadinessModal({
     setIsRescanning(false);
   }
 
-  const proceedHref =
-    sessionType === "new"
-      ? `/session/onboarding?contestId=${contestId}`
-      : `/session/contest?contestId=${contestId}`;
+  // SECURITY: every contest entry — new OR resume — must route through
+  // onboarding, which is the only path that runs verification and engages the
+  // desktop lockdown (lock_desktop via startSecureSession). Sending a resume
+  // straight to /session/contest skips the lock and lets a candidate sit in a
+  // live contest with the machine wide open. Onboarding reuses the existing
+  // IN_PROGRESS session (backend CreateSession reuses it), so re-entering does
+  // not create duplicate sessions.
+  const proceedHref = `/session/onboarding?contestId=${contestId}`;
 
   useEffect(() => {
     router.prefetch(proceedHref);

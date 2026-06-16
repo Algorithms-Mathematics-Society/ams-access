@@ -9,6 +9,7 @@ import {
   useMemo,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { invoke } from "@ams/api-client";
 import MarkovEditor, { type MarkovChain, normalizeChain } from "@/components/MarkovEditor";
 import dynamic from "next/dynamic";
 import { marked } from "marked";
@@ -1436,6 +1437,18 @@ export default function ContestPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contestId = searchParams?.get("contestId") ?? "";
+  const isDryRun = (searchParams?.get("mode") ?? "") === "dry-run";
+
+  // SECURITY (defense-in-depth chokepoint): a real (non-dry-run) proctored
+  // session may only render the contest if the desktop lockdown is engaged.
+  // The ONLY legitimate way in is onboarding → lock_desktop → navigate here, so
+  // a lock-engaged check passing means the candidate came through onboarding.
+  // States: "checking" (probe in flight — render a neutral securing screen),
+  // "ok" (lockdown engaged, dry-run, or no Tauri bridge i.e. dev/browser), or
+  // "redirecting" (reached the contest unlocked — bounce back to onboarding).
+  const [lockGate, setLockGate] = useState<"checking" | "ok" | "redirecting">(
+    isDryRun ? "ok" : "checking"
+  );
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -1556,6 +1569,38 @@ export default function ContestPageClient() {
       },
     }));
   }
+
+  // SECURITY (defense-in-depth): verify the desktop lockdown is engaged before
+  // the contest is usable. Practice (dry-run) is intentionally unlocked, so it
+  // is exempt. Outside the Tauri shell (dev/browser preview) there is no real
+  // lockdown to engage — the invoke throws "Tauri bridge unavailable" and we
+  // ALLOW rather than trap the developer. Only a genuine direct-entry into a
+  // live contest (Tauri present, lock NOT engaged) triggers the bounce back to
+  // onboarding (replace, not push, to avoid a back-button loop). The normal
+  // flow — onboarding locks first, then navigates here — passes the check.
+  useEffect(() => {
+    if (isDryRun) return; // practice mode is intentionally unlocked
+    let cancelled = false;
+    (async () => {
+      try {
+        const engaged = await invoke<boolean>("is_lockdown_engaged");
+        if (cancelled) return;
+        if (engaged) {
+          setLockGate("ok");
+        } else {
+          // Reached the contest without lockdown — never render it.
+          setLockGate("redirecting");
+          router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+        }
+      } catch {
+        // Tauri unavailable (dev/browser) — no real lockdown exists here.
+        if (!cancelled) setLockGate("ok");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDryRun, contestId, router]);
 
   const fetchSubmissions = useCallback(async () => {
     if (!sessionId || !questions[activeQ]) return;
@@ -3211,6 +3256,49 @@ export default function ContestPageClient() {
   const supportDialogRef = useFocusTrap<HTMLDivElement>(showSupportModal, () =>
     setShowSupportModal(false)
   );
+
+  // SECURITY: while the lockdown probe is pending — or while bouncing an
+  // unlocked direct-entry back to onboarding — render a neutral securing screen.
+  // Never flash the contest UI before lockdown is confirmed engaged.
+  if (lockGate !== "ok") {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          background: "#0F0F0F",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              width: "40px",
+              height: "40px",
+              borderTop: "2px solid #a855f7",
+              borderRight: "2px solid rgba(168,85,247,0.3)",
+              borderBottom: "2px solid rgba(168,85,247,0.3)",
+              borderLeft: "2px solid rgba(168,85,247,0.3)",
+              borderRadius: "50%",
+              animation: "spin 0.9s linear infinite",
+              margin: "0 auto 16px",
+            }}
+          />
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#64748b",
+              fontFamily: "Inter, system-ui, sans-serif",
+            }}
+          >
+            Securing session…
+          </p>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -1276,6 +1276,16 @@ async fn unlock_desktop(app: tauri::AppHandle) {
     platform_dispatch!(unlock_desktop(), else ())
 }
 
+/// Read-only probe: is a real exam lockdown (lock_desktop) currently engaged?
+///
+/// The contest UI uses this as a defense-in-depth chokepoint — no real
+/// (non-dry-run) proctored session may render the contest unless lockdown is
+/// engaged. Read-only: it never mutates state or touches the OS.
+#[tauri::command]
+fn is_lockdown_engaged() -> bool {
+    LOCKDOWN_ENGAGED.load(Ordering::SeqCst)
+}
+
 /// Return all recorded violations for this session.
 #[tauri::command]
 fn get_violation_log(app: tauri::AppHandle) -> Vec<ViolationEntry> {
@@ -1966,6 +1976,7 @@ pub fn run() {
             disable_keyboard_intercept,
             lock_desktop,
             unlock_desktop,
+            is_lockdown_engaged,
             get_violation_log,
             get_proctoring_log,
             log_violation,
