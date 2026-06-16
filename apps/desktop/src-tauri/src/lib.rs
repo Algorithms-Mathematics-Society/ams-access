@@ -522,6 +522,18 @@ fn collect_fast_device_state() -> DeviceState {
     let restricted_processes = Some(scan_processes());
     let virtualization = Some(detect_virtualization());
 
+    // Windows-only native probes for the readiness policy: extra/wireless displays
+    // and an active inbound RDP listener. Left None on every other platform so the
+    // policy stays inert there (matches core-rs DisplayScan/rdp_server semantics).
+    #[cfg(target_os = "windows")]
+    let external_displays = Some(platform_rs::windows::detect_external_displays());
+    #[cfg(not(target_os = "windows"))]
+    let external_displays = None;
+    #[cfg(target_os = "windows")]
+    let rdp_server = Some(platform_rs::windows::detect_rdp_server());
+    #[cfg(not(target_os = "windows"))]
+    let rdp_server = None;
+
     DeviceState {
         platform,
         camera_available: None,
@@ -530,6 +542,8 @@ fn collect_fast_device_state() -> DeviceState {
         keyboard: None,
         restricted_processes,
         virtualization,
+        external_displays,
+        rdp_server,
     }
 }
 
@@ -1220,6 +1234,15 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
                 record_proctoring_event(Some(&cb_app), kind, detail, payload);
             });
             platform_rs::windows::start_clipboard_monitor(hwnd.0 as isize);
+
+            // F11: injected-keystroke rejection. The LL keyboard hook swallows any
+            // synthetic (SendInput/keybd_event) keystroke during lockdown and raises
+            // this callback so the blocked attempt is recorded as a proctoring
+            // violation. Emission is throttled (once/sec) inside platform-rs.
+            let inj_app = app.clone();
+            platform_rs::windows::set_injected_input_callback(move |kind, detail| {
+                record_violation(Some(&inj_app), kind, detail);
+            });
 
             // F1: native focus-loss watchdog. The webview's own blur events can be
             // suppressed, so poll the OS foreground window directly. Edge-triggered

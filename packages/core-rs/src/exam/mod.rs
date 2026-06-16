@@ -40,6 +40,16 @@ pub struct MonitorInfo {
     pub name: String,
 }
 
+/// Windows-only display topology probe. On macOS/Linux this is never populated
+/// (`DeviceState::external_displays` stays `None`) so the readiness policy
+/// remains inert on those platforms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayScan {
+    pub count: u32,
+    pub has_extra: bool,    // >1 monitor attached
+    pub has_wireless: bool, // a Miracast/virtual/wireless output present
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessScanResult {
     pub found: Vec<String>,
@@ -95,6 +105,8 @@ pub enum CheckKind {
     RestrictedApps,
     Virtualization,
     Platform,
+    ExternalDisplay,
+    RemoteServer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +138,8 @@ pub enum FailureReasonCode {
     VirtualizationDetected,
     UnsupportedPlatform,
     ClockSkewDetected,
+    ExternalDisplayDetected,
+    RemoteServerDetected,
     ProbeUnavailable,
 }
 
@@ -141,6 +155,7 @@ pub enum RecoveryAction {
     CloseRestrictedApplications,
     UsePhysicalMachine,
     UseSupportedPlatform,
+    DisconnectExtraDisplays,
     RetryReadinessScan,
     ContactOrganizer,
 }
@@ -161,7 +176,22 @@ pub struct SessionPolicy {
 
 impl SessionPolicy {
     pub fn for_profile(profile: EnforcementProfile) -> Self {
+        Self::for_profile_with_platform(profile, None)
+    }
+
+    /// Platform-aware policy builder. The camera and the two Windows-only entry
+    /// checks (`ExternalDisplay`, `RemoteServer`) become hard, blocking
+    /// requirements ONLY when the profile is strict AND the device platform is
+    /// Windows. On macOS/Linux (or when `platform` is `None`, e.g. the legacy
+    /// `for_profile` callers) these stay advisory, so behavior there is
+    /// unchanged.
+    pub fn for_profile_with_platform(profile: EnforcementProfile, platform: Option<&str>) -> Self {
         let strict = matches!(profile, EnforcementProfile::StrictContest);
+        // Prefix match so "windows_no_admin" (the unelevated-Windows platform
+        // string) also counts as Windows — otherwise the new enforcement would
+        // silently disarm on exactly the lower-trust non-admin machines.
+        let is_windows =
+            matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
         let severity = if strict {
             BlockingSeverity::Block
         } else {
@@ -180,20 +210,29 @@ impl SessionPolicy {
             CheckKind::Network,
             CheckKind::Camera,
             CheckKind::Microphone,
+            CheckKind::ExternalDisplay,
+            CheckKind::RemoteServer,
         ]
         .into_iter()
         .map(|kind| {
             // Microphone is advisory-only on all profiles — many contest machines
             // (lab desktops, headless setups) have no audio input. Proctoring
             // continuity does not depend on it.
-            // Camera is advisory-only too — when hardware is absent the dedicated
-            // face-calibration stages will surface the issue with proper UX.
-            let (kind_required, kind_severity) =
-                if matches!(kind, CheckKind::Microphone | CheckKind::Camera) {
-                    (false, BlockingSeverity::Warning)
-                } else {
-                    (required, severity.clone())
-                };
+            let (kind_required, kind_severity) = match kind {
+                CheckKind::Microphone => (false, BlockingSeverity::Warning),
+                // Camera and the two Windows-only entry checks are hard
+                // requirements only under a strict Windows session; everywhere
+                // else (non-strict, or non-Windows) they remain advisory so
+                // macOS/Linux readiness behavior is identical to before.
+                CheckKind::Camera | CheckKind::ExternalDisplay | CheckKind::RemoteServer => {
+                    if strict && is_windows {
+                        (true, BlockingSeverity::Block)
+                    } else {
+                        (false, BlockingSeverity::Warning)
+                    }
+                }
+                _ => (required, severity.clone()),
+            };
             ReadinessRequirement {
                 kind,
                 required: kind_required,
@@ -226,6 +265,8 @@ pub struct DeviceState {
     pub keyboard: Option<KeyboardInterceptResult>,
     pub restricted_processes: Option<ProcessScanResult>,
     pub virtualization: Option<VirtDetectionResult>,
+    pub external_displays: Option<DisplayScan>,
+    pub rdp_server: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -616,6 +657,64 @@ fn evaluate_requirement(
             ),
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
+        // Windows-only entry check. Inert on macOS/Linux: when the device
+        // platform is not Windows (or no display scan was produced) the check
+        // always passes, and `required=false` from the policy on those
+        // platforms makes it doubly inert.
+        CheckKind::ExternalDisplay => {
+            let is_windows = matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
+            let bad = is_windows
+                && device_state
+                    .external_displays
+                    .as_ref()
+                    .map(|d| d.has_extra || d.has_wireless)
+                    .unwrap_or(false);
+            if bad {
+                (
+                    false,
+                    Some(FailureReasonCode::ExternalDisplayDetected),
+                    Some(
+                        "A second or wireless display is connected — disconnect it to continue."
+                            .to_string(),
+                    ),
+                    vec![
+                        RecoveryAction::DisconnectExtraDisplays,
+                        RecoveryAction::RetryReadinessScan,
+                    ],
+                )
+            } else {
+                (
+                    true,
+                    None,
+                    Some("no extra or wireless display detected".to_string()),
+                    vec![],
+                )
+            }
+        }
+        // Windows-only entry check. Inert on macOS/Linux for the same reasons
+        // as `ExternalDisplay`.
+        CheckKind::RemoteServer => {
+            let is_windows = matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
+            let bad = is_windows && device_state.rdp_server == Some(true);
+            if bad {
+                (
+                    false,
+                    Some(FailureReasonCode::RemoteServerDetected),
+                    Some("This machine is hosting a remote-desktop session.".to_string()),
+                    vec![
+                        RecoveryAction::UsePhysicalMachine,
+                        RecoveryAction::ContactOrganizer,
+                    ],
+                )
+            } else {
+                (
+                    true,
+                    None,
+                    Some("not hosting a remote-desktop session".to_string()),
+                    vec![],
+                )
+            }
+        }
     };
 
     let outcome = if passed {
@@ -702,6 +801,8 @@ mod tests {
                 platform: None,
                 confidence: "high".to_string(),
             }),
+            external_displays: None,
+            rdp_server: None,
         }
     }
 
@@ -841,8 +942,10 @@ mod tests {
         assert!(report
             .blocking_reasons
             .contains(&FailureReasonCode::ContestIdMissing));
-        // Camera and microphone are advisory-only on every profile; the other
-        // seven checks stay required under the strict profile.
+        // With no platform supplied (legacy `strict_contest()` / `None`
+        // platform), camera/microphone and the two Windows-only entry checks are
+        // all advisory; the other seven checks stay required under the strict
+        // profile. `optional_kinds` is ordered by `CheckKind`'s derived `Ord`.
         let optional_kinds = report
             .optional_checks
             .iter()
@@ -850,12 +953,251 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             optional_kinds,
-            vec![CheckKind::Camera, CheckKind::Microphone]
+            vec![
+                CheckKind::Camera,
+                CheckKind::Microphone,
+                CheckKind::ExternalDisplay,
+                CheckKind::RemoteServer,
+            ]
         );
         assert_eq!(report.required_checks.len(), 7);
         assert_eq!(
             report.required_checks.len() + report.optional_checks.len(),
             report.checks.len()
         );
+    }
+
+    /// Helper: a fully clean Windows device state.
+    fn windows_state() -> DeviceState {
+        DeviceState {
+            platform: Some("windows".to_string()),
+            camera_available: Some(true),
+            microphone_available: Some(true),
+            network: Some(NetworkCheckResult {
+                reachable: true,
+                latency_ms: Some(40),
+                jitter_ms: Some(5),
+                quality: "good".to_string(),
+                clock_skew_ms: Some(800),
+            }),
+            keyboard: Some(KeyboardInterceptResult {
+                active: true,
+                method: "test".to_string(),
+                platform: "windows".to_string(),
+            }),
+            restricted_processes: Some(ProcessScanResult {
+                found: vec![],
+                clean: true,
+            }),
+            virtualization: Some(VirtDetectionResult {
+                detected: false,
+                platform: None,
+                confidence: "high".to_string(),
+            }),
+            external_displays: Some(DisplayScan {
+                count: 1,
+                has_extra: false,
+                has_wireless: false,
+            }),
+            rdp_server: Some(false),
+        }
+    }
+
+    #[test]
+    fn macos_camera_and_new_checks_stay_non_blocking() {
+        // macOS: camera absent, new probes absent — none of these may block.
+        let mut state = passing_state();
+        state.platform = Some("macos".to_string());
+        state.camera_available = None;
+        state.external_displays = None;
+        state.rdp_server = None;
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("c1".into()),
+            Some("d1".into()),
+            &state,
+        );
+
+        assert_ne!(report.decision, EnforcementDecision::Blocked);
+        // Camera advisory behavior preserved: not required, never blocking.
+        let camera = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::Camera)
+            .expect("camera check present");
+        assert!(!camera.required);
+        assert!(!camera.blocking);
+        for kind in [CheckKind::ExternalDisplay, CheckKind::RemoteServer] {
+            let check = report
+                .checks
+                .iter()
+                .find(|c| c.kind == kind)
+                .expect("check present");
+            assert!(!check.blocking);
+        }
+    }
+
+    #[test]
+    fn linux_camera_and_new_checks_stay_non_blocking() {
+        let mut state = passing_state();
+        state.platform = Some("linux".to_string());
+        state.camera_available = None;
+        state.external_displays = None;
+        state.rdp_server = None;
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("c1".into()),
+            Some("d1".into()),
+            &state,
+        );
+
+        assert_ne!(report.decision, EnforcementDecision::Blocked);
+        let camera = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::Camera)
+            .expect("camera check present");
+        assert!(!camera.required);
+        assert!(!camera.blocking);
+    }
+
+    #[test]
+    fn windows_strict_blocks_missing_camera() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let mut state = windows_state();
+        state.camera_available = Some(false);
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::CameraUnavailable));
+    }
+
+    #[test]
+    fn windows_strict_blocks_extra_display() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let mut state = windows_state();
+        state.external_displays = Some(DisplayScan {
+            count: 2,
+            has_extra: true,
+            has_wireless: false,
+        });
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayDetected));
+    }
+
+    #[test]
+    fn windows_strict_blocks_rdp_server() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let mut state = windows_state();
+        state.rdp_server = Some(true);
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::RemoteServerDetected));
+    }
+
+    #[test]
+    fn windows_no_admin_still_enforces_new_checks() {
+        // Unelevated Windows reports platform "windows_no_admin"; the enforcement
+        // must still apply (prefix match), so the lowest-trust machines are not
+        // the ones that silently lose camera/display/RDP gating.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_no_admin"),
+        );
+        let mut state = windows_state();
+        state.platform = Some("windows_no_admin".into());
+        state.external_displays = Some(DisplayScan {
+            count: 2,
+            has_extra: true,
+            has_wireless: false,
+        });
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayDetected));
+    }
+
+    #[test]
+    fn clean_windows_is_not_blocked_by_new_checks() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let report = evaluate_readiness(
+            &policy,
+            Some("c1".into()),
+            Some("d1".into()),
+            &windows_state(),
+        );
+
+        assert_eq!(report.decision, EnforcementDecision::Allowed);
+        assert!(report.blocking_reasons.is_empty());
+    }
+
+    #[test]
+    fn organizer_override_relaxes_windows_camera() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        // Sanity: camera is a hard requirement under the Windows strict policy.
+        // (`organizer_override_allowed` follows the crate-wide `!strict` pattern,
+        // so it is `false` here — there is no per-check non-overridable set;
+        // override application happens by merging a relaxed requirement below.)
+        let camera_req = policy
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::Camera)
+            .expect("camera requirement present");
+        assert!(camera_req.required);
+
+        // Apply an organizer override that downgrades camera to advisory. The
+        // crate exposes override application via `policy.checks` (merged in
+        // `merge_requirements`), mirroring the existing
+        // `custom_optional_requirement_warns_without_blocking` test.
+        let mut overridden = policy;
+        overridden.checks.push(ReadinessRequirement {
+            kind: CheckKind::Camera,
+            required: false,
+            severity: BlockingSeverity::Warning,
+            organizer_override_allowed: true,
+        });
+
+        let mut state = windows_state();
+        state.camera_available = Some(false);
+
+        let report = evaluate_readiness(&overridden, Some("c1".into()), Some("d1".into()), &state);
+
+        // Camera no longer blocks once overridden to advisory.
+        assert_ne!(report.decision, EnforcementDecision::Blocked);
+        assert!(!report
+            .blocking_reasons
+            .contains(&FailureReasonCode::CameraUnavailable));
     }
 }

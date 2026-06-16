@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { collectDeviceState, startSecureSession, strictContestPolicy } from "@ams/api-client";
+import {
+  applyOrganizerOverrides,
+  collectDeviceState,
+  fetchOrganizerOverrides,
+  startSecureSession,
+  strictContestPolicy,
+  type OrganizerOverride,
+  type ReadinessCheck,
+  type ReadinessReport,
+} from "@ams/api-client";
 import { fetchJson } from "@/lib/api-client";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { Button } from "@/app/home/components/ui-primitives";
@@ -56,6 +65,62 @@ declare const window: Window & {
     };
   };
 };
+
+// ─── Readiness check-kind labels ──────────────────────────────────────────────
+//
+// Human-readable labels for the readiness check kinds, used when a blocked
+// readiness report comes back from the Rust evaluator (`start_secure_session`
+// returns Err(JSON-of-report) on a Blocked decision) so the candidate sees a
+// clear message instead of a raw JSON blob or an "unknown" kind. The two
+// Windows-only entry checks — `external_display` and `remote_server` — are
+// included here so they render with a real label and their detail string.
+const CHECK_KIND_LABELS: Record<string, string> = {
+  contest_id: "Contest link",
+  device_id: "Device registration",
+  camera: "Camera",
+  microphone: "Microphone",
+  network: "Network connection",
+  keyboard_lockdown: "Keyboard lockdown",
+  restricted_apps: "Restricted applications",
+  virtualization: "Virtual machine check",
+  platform: "Platform compatibility",
+  external_display: "External display",
+  remote_server: "Remote-desktop session",
+};
+
+function checkKindLabel(kind: string): string {
+  return CHECK_KIND_LABELS[kind] ?? kind;
+}
+
+/**
+ * Turn a Blocked `ReadinessReport` (the JSON string thrown by
+ * `start_secure_session`) into a candidate-facing message. Each blocking check
+ * is rendered as "<label> — <detail>" so the Windows-only `external_display` /
+ * `remote_server` blocks surface their contract detail strings ("A second or
+ * wireless display is connected…", "This machine is hosting a remote-desktop
+ * session.") rather than an opaque code. Returns null when `raw` is not a
+ * readiness report, so callers can fall back to the original error text.
+ */
+function readinessBlockMessage(raw: string): string | null {
+  let report: ReadinessReport;
+  try {
+    report = JSON.parse(raw) as ReadinessReport;
+  } catch {
+    return null;
+  }
+  if (!report || report.decision !== "blocked" || !Array.isArray(report.checks)) {
+    return null;
+  }
+  const blocking = report.checks.filter(
+    (c): c is ReadinessCheck => !!c && c.blocking && c.outcome === "fail"
+  );
+  if (blocking.length === 0) return null;
+  const lines = blocking.map((c) => {
+    const label = checkKindLabel(c.kind);
+    return c.detail ? `${label} — ${c.detail}` : label;
+  });
+  return `Your device isn't ready for a secured contest:\n${lines.join("\n")}`;
+}
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
 
@@ -384,12 +449,30 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
   );
 }
 
-function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
+function Stage3_MonitorDetection({
+  onPass,
+  platform,
+  externalDisplayOverride,
+}: {
+  onPass(): void;
+  /** Authoritative device platform ("windows" | "macos" | "linux" | null). */
+  platform: string | null;
+  /** True when an organizer has waived the `external_display` check for this device. */
+  externalDisplayOverride: boolean;
+}) {
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
   const theme = useTheme();
   const isLight = theme === "light";
+
+  // Windows-only hard-block: a second / wireless display is a contest-integrity
+  // violation we enforce at the gate (mirrors the `external_display` block in
+  // core-rs). On macOS/Linux — or when an organizer override is present — this
+  // stays an advisory warning so behavior off-Windows is unchanged.
+  const isWindows = platform?.toLowerCase() === "windows";
+  const multiDisplay = monitors.length > 1;
+  const hardBlock = isWindows && multiDisplay && !externalDisplayOverride;
 
   const runDetection = useCallback(async () => {
     setScanning(true);
@@ -492,14 +575,38 @@ function Stage3_MonitorDetection({ onPass }: { onPass(): void }) {
         >
           <CheckLine
             label={`${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`}
-            status={monitors.length > 1 ? "warn" : "pass"}
+            status={multiDisplay ? (hardBlock ? "fail" : "warn") : "pass"}
           />
-          {monitors.length > 1 ? (
+          {multiDisplay ? (
             <>
               <CheckLine
-                label="Multiple displays active — please disconnect external screens"
-                status="warn"
+                label={
+                  hardBlock
+                    ? "Disconnect the second / wireless display to continue"
+                    : "Multiple displays active — please disconnect external screens"
+                }
+                status={hardBlock ? "fail" : "warn"}
               />
+              {hardBlock && (
+                <div
+                  style={{
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    fontSize: "12px",
+                    lineHeight: 1.7,
+                    color: "#ef4444",
+                    marginTop: "4px",
+                  }}
+                >
+                  A second or wireless display is connected. A secured contest requires a single
+                  screen — disconnect the extra display, then re-scan.
+                </div>
+              )}
+              {externalDisplayOverride && (
+                <CheckLine
+                  label="Organizer override active — extra display permitted"
+                  status="warn"
+                />
+              )}
               <Button
                 theme={theme}
                 variant="danger"
@@ -3187,6 +3294,15 @@ export default function OnboardingPage() {
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const [sessionPrepared, setSessionPrepared] = useState(false);
+  // Authoritative device platform ("windows" | "macos" | "linux"), resolved
+  // once via the Tauri `get_platform` command. Drives the Windows-only entry
+  // enforcement (external display / remote-desktop / camera) — every new block
+  // is gated on this being "windows", so macOS/Linux behavior is unchanged.
+  const [platform, setPlatform] = useState<string | null>(null);
+  // Organizer overrides for this device, fetched early so the Windows display
+  // hard-block (Stage 3) can be relaxed for a pre-approved candidate. They are
+  // also re-fetched and applied to the policy in finalizeSecureStart.
+  const [overrides, setOverrides] = useState<OrganizerOverride[]>([]);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   // Set when the candidate proceeds past the face check via the equity fallback;
   // recorded durably once the session exists so a proctor can review it.
@@ -3198,6 +3314,39 @@ export default function OnboardingPage() {
   useEffect(() => {
     cameraStreamRef.current = cameraStream;
   }, [cameraStream]);
+
+  // Resolve the authoritative device platform once. Outside the Tauri shell
+  // (dev / browser preview) this stays null, so no Windows-only block engages.
+  useEffect(() => {
+    let cancelled = false;
+    invoke<{ os: string }>("get_platform")
+      .then((p) => {
+        if (!cancelled && typeof p?.os === "string") setPlatform(p.os);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch organizer overrides early so the Windows display hard-block can be
+  // relaxed for a pre-approved candidate before they reach Stage 3. A fetch
+  // failure (offline / endpoint absent) yields no overrides — the candidate is
+  // never hard-failed on the fetch itself; enforcement just stays at baseline.
+  useEffect(() => {
+    if (!contestId) return;
+    let cancelled = false;
+    fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId())
+      .then((list) => {
+        if (!cancelled) setOverrides(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [contestId]);
+
+  const externalDisplayOverride = overrides.some((o) => o.check_kind === "external_display");
 
   // Stop camera tracks ONLY when this page unmounts (after router.push to contest).
   // Stopping on every cameraStream change would kill the active stream mid-flow
@@ -3540,10 +3689,30 @@ export default function OnboardingPage() {
         }).catch(() => {});
       }
 
+      // Platform-aware strict policy. Prefer the platform reported by
+      // collect_device_state (authoritative at start time); fall back to the
+      // get_platform value resolved at mount. On Windows this makes camera /
+      // external_display / remote_server required+block so the Rust-side
+      // merge_requirements keeps the Windows enforcement; off-Windows they stay
+      // advisory and behavior is unchanged.
+      const devicePlatform = deviceState.platform ?? platform ?? undefined;
+      const deviceId = getOrCreateDeviceId();
+      // Re-fetch overrides at the gate so a freshly issued waiver is honored.
+      // A fetch failure yields the base policy — we never trap the candidate on
+      // a transient overrides-endpoint error.
+      let liveOverrides: OrganizerOverride[] = overrides;
+      try {
+        liveOverrides = await fetchOrganizerOverrides(API_URL, contestId, deviceId);
+        setOverrides(liveOverrides);
+      } catch {
+        liveOverrides = overrides;
+      }
+      const policy = applyOrganizerOverrides(strictContestPolicy(devicePlatform), liveOverrides);
+
       await startSecureSession({
         contestId,
-        deviceId: getOrCreateDeviceId(),
-        policy: strictContestPolicy(),
+        deviceId,
+        policy,
         deviceState,
         // Entry-gate attestation: the evaluated readiness report is delivered
         // to the backend so the server has a durable record of what this
@@ -3599,11 +3768,11 @@ export default function OnboardingPage() {
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
-      const msg =
+      const rawMsg =
         error instanceof Error ? error.message : "Readiness policy blocked contest launch.";
       if (windowMeta) {
         const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
-        if (remaining > 0 && msg.toLowerCase().includes("not accepting sessions")) {
+        if (remaining > 0 && rawMsg.toLowerCase().includes("not accepting sessions")) {
           setCurrentStage(15);
           setTransitioning(false);
           setReadyForStart(true);
@@ -3611,12 +3780,17 @@ export default function OnboardingPage() {
           return;
         }
       }
+      // start_secure_session throws the JSON-encoded readiness report when the
+      // decision is Blocked. Translate it into a candidate-facing message so the
+      // Windows-only external_display / remote_server blocks surface their
+      // detail strings instead of a raw JSON blob.
+      const msg = readinessBlockMessage(rawMsg) ?? rawMsg;
       setCurrentStage(13);
       setTransitioning(false);
       setReadyForStart(false);
       setPolicyBlock(msg);
     }
-  }, [contestId, router, contestWindow, readyForStart, dryRun]);
+  }, [contestId, router, contestWindow, readyForStart, dryRun, platform, overrides]);
 
   useEffect(() => {
     if (!contestWindow) return;
@@ -3774,6 +3948,7 @@ export default function OnboardingPage() {
             padding: "12px 16px",
             fontSize: 11,
             fontFamily: "'JetBrains Mono', monospace",
+            whiteSpace: "pre-line",
           }}
         >
           {policyBlock}
@@ -4131,7 +4306,13 @@ export default function OnboardingPage() {
                 )}
                 {currentStage === 1 && <Stage1_SessionIsolation onPass={advancePass} />}
                 {currentStage === 2 && <Stage2_Fullscreen onPass={advancePass} />}
-                {currentStage === 3 && <Stage3_MonitorDetection onPass={advancePass} />}
+                {currentStage === 3 && (
+                  <Stage3_MonitorDetection
+                    onPass={advancePass}
+                    platform={platform}
+                    externalDisplayOverride={externalDisplayOverride}
+                  />
+                )}
                 {currentStage === 4 && <Stage4_KeyboardLockdown onPass={advancePass} />}
                 {currentStage === 5 && <Stage5_EnvironmentValidation onPass={advancePass} />}
                 {currentStage === 6 && <Stage6_RestrictedApps onPass={advancePass} />}

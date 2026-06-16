@@ -25,7 +25,9 @@ export type CheckKind =
   | "keyboard_lockdown"
   | "restricted_apps"
   | "virtualization"
-  | "platform";
+  | "platform"
+  | "external_display"
+  | "remote_server";
 
 export type EnforcementProfile = "practice" | "internal_pilot" | "strict_contest";
 export type BlockingSeverity = "info" | "warning" | "block";
@@ -43,6 +45,8 @@ export type FailureReasonCode =
   | "virtualization_detected"
   | "unsupported_platform"
   | "clock_skew_detected"
+  | "external_display_detected"
+  | "remote_server_detected"
   | "probe_unavailable";
 
 export type RecoveryAction =
@@ -53,6 +57,7 @@ export type RecoveryAction =
   | "close_restricted_applications"
   | "use_physical_machine"
   | "use_supported_platform"
+  | "disconnect_extra_displays"
   | "retry_readiness_scan"
   | "contact_organizer";
 
@@ -138,31 +143,63 @@ const POLICY_CHECKS: CheckKind[] = [
   "network",
   "camera",
   "microphone",
+  "external_display",
+  "remote_server",
 ];
 
-export function sessionPolicy(profile: EnforcementProfile): SessionPolicy {
+/**
+ * Platform-aware policy builder — the TS mirror of
+ * `SessionPolicy::for_profile_with_platform` in core-rs/src/exam/mod.rs.
+ *
+ * The Rust side re-seeds the non-windows baseline in `merge_requirements` and
+ * overlays `policy.checks`, so the policy emitted here is what makes Windows
+ * enforcement real: on a strict Windows session, `camera`, `external_display`
+ * and `remote_server` are required + block; everywhere else (non-strict, or
+ * non-Windows) they stay advisory so macOS/Linux readiness is unchanged.
+ */
+export function sessionPolicy(profile: EnforcementProfile, platform?: string): SessionPolicy {
   const strict = profile === "strict_contest";
+  // Prefix match so "windows_no_admin" (unelevated Windows) is still treated as
+  // Windows — mirrors core-rs; otherwise enforcement disarms on non-admin machines.
+  const isWindows = typeof platform === "string" && platform.toLowerCase().startsWith("windows");
   return {
     profile,
     checks: POLICY_CHECKS.map((kind) => {
-      // Camera and microphone are advisory-only on EVERY profile — this must
-      // mirror SessionPolicy::for_profile in core-rs/src/exam/mod.rs (the Rust
-      // side is the source of truth). The microphone starts muted and the
-      // camera can be toggled in the contest area; both toggles are
-      // audit-logged, so neither device may block entry here.
-      const advisory = kind === "camera" || kind === "microphone";
+      // Microphone is advisory-only on every profile — many contest machines
+      // (lab desktops, headless setups) have no audio input.
+      if (kind === "microphone") {
+        return {
+          kind,
+          required: false,
+          severity: "warning" as const,
+          organizer_override_allowed: !strict,
+        };
+      }
+      // Camera and the two Windows-only entry checks (external_display,
+      // remote_server) become hard, blocking requirements ONLY under a strict
+      // Windows session; everywhere else they remain advisory so macOS/Linux
+      // behavior is identical to before.
+      if (kind === "camera" || kind === "external_display" || kind === "remote_server") {
+        const block = strict && isWindows;
+        return {
+          kind,
+          required: block,
+          severity: block ? ("block" as const) : ("warning" as const),
+          organizer_override_allowed: !strict,
+        };
+      }
       return {
         kind,
-        required: strict && !advisory,
-        severity: strict && !advisory ? ("block" as const) : ("warning" as const),
+        required: strict,
+        severity: strict ? ("block" as const) : ("warning" as const),
         organizer_override_allowed: !strict,
       };
     }),
   };
 }
 
-export function strictContestPolicy(): SessionPolicy {
-  return sessionPolicy("strict_contest");
+export function strictContestPolicy(platform?: string): SessionPolicy {
+  return sessionPolicy("strict_contest", platform);
 }
 
 export async function collectDeviceState(options: {

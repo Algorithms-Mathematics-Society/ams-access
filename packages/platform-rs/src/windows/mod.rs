@@ -1,8 +1,8 @@
 use core_rs::exam::{
-    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
+    CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
 };
 use std::os::windows::process::CommandExt;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 /// CreateProcess flag that suppresses the console window of a child process.
@@ -733,6 +733,126 @@ pub fn detect_remote_desktop() -> bool {
     false
 }
 
+// ── External-display detection (F10) ──────────────────────────────────────────
+
+/// Probe the attached display topology.
+///
+/// `count` is the number of display monitors currently attached (a candidate
+/// running a second screen the proctor cannot see is a high-value cheating
+/// vector). `has_extra` is the must-have signal (`count > 1`). `has_wireless`
+/// is a best-effort bonus: it scans the active QueryDisplayConfig paths for a
+/// wireless/virtual output technology (Miracast, indirect-virtual, indirect-
+/// wired e.g. Spacedesk/iDisplay), which a plain monitor count can miss when a
+/// wireless sink mirrors rather than extends. Never panics; on any Win32 error
+/// the corresponding signal degrades to a conservative default.
+pub fn detect_external_displays() -> core_rs::exam::DisplayScan {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CMONITORS};
+
+    // Monitor count: SM_CMONITORS counts display monitors on the desktop. It
+    // returns 0 only on failure, in which case we assume a single display so we
+    // never block a candidate on a query glitch.
+    let raw = unsafe { GetSystemMetrics(SM_CMONITORS) };
+    let count = if raw <= 0 { 1 } else { raw as u32 };
+    let has_extra = count > 1;
+
+    DisplayScan {
+        count,
+        has_extra,
+        has_wireless: detect_wireless_display(),
+    }
+}
+
+/// Best-effort: true when an *active* display path uses a wireless or virtual
+/// output technology. Conservative — any QueryDisplayConfig failure returns
+/// false (we never manufacture a wireless signal we can't prove).
+fn detect_wireless_display() -> bool {
+    use windows::Win32::Devices::Display::{
+        GetDisplayConfigBufferSizes, QueryDisplayConfig, DISPLAYCONFIG_MODE_INFO,
+        DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_VIRTUAL,
+        DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_WIRED, DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST,
+        DISPLAYCONFIG_PATH_INFO, QDC_ONLY_ACTIVE_PATHS,
+    };
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+
+    unsafe {
+        let mut path_count: u32 = 0;
+        let mut mode_count: u32 = 0;
+        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count)
+            != ERROR_SUCCESS
+        {
+            return false;
+        }
+        if path_count == 0 {
+            return false;
+        }
+
+        let mut paths: Vec<DISPLAYCONFIG_PATH_INFO> =
+            vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
+        let mut modes: Vec<DISPLAYCONFIG_MODE_INFO> =
+            vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
+
+        if QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS,
+            &mut path_count,
+            paths.as_mut_ptr(),
+            &mut mode_count,
+            modes.as_mut_ptr(),
+            None,
+        ) != ERROR_SUCCESS
+        {
+            return false;
+        }
+
+        // QueryDisplayConfig may report fewer paths than the buffer it sized;
+        // honour the returned count so we don't read stale/zeroed entries.
+        paths.truncate(path_count as usize);
+        paths.iter().any(|p| {
+            let tech = p.targetInfo.outputTechnology;
+            tech == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST
+                || tech == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_VIRTUAL
+                || tech == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_WIRED
+        })
+    }
+}
+
+// ── RDP server detection (F9) ─────────────────────────────────────────────────
+
+/// True when this machine is actively *hosting* an RDP listener (someone could
+/// be driving the exam remotely). This is the inverse of `detect_remote_desktop`,
+/// which detects being INSIDE an RDP session.
+///
+/// Requires BOTH the Remote Desktop Services (`TermService`) to be RUNNING AND a
+/// socket LISTENING on port 3389. Requiring both cuts false positives: an
+/// installed-but-idle TermService is common on Windows Pro, but a 3389 LISTENING
+/// socket means the host is actually accepting inbound RDP. Parsing is lenient
+/// (case-insensitive substring) so it survives locale/format variation.
+pub fn detect_rdp_server() -> bool {
+    let svc_running = hidden_command("sc")
+        .args(["query", "TermService"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .to_uppercase()
+                .contains("RUNNING")
+        })
+        .unwrap_or(false);
+    if !svc_running {
+        return false;
+    }
+
+    let listening_3389 = hidden_command("netstat")
+        .args(["-ano"])
+        .output()
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).to_uppercase();
+            text.lines()
+                .any(|line| line.contains(":3389") && line.contains("LISTENING"))
+        })
+        .unwrap_or(false);
+
+    listening_3389
+}
+
 // ── Keyboard intercept ────────────────────────────────────────────────────────
 
 fn spawn_hook_thread() {
@@ -839,6 +959,62 @@ pub fn disable_keyboard_intercept() {
     }
 }
 
+// ── Injected-input event callback (F11) ───────────────────────────────────────
+//
+// The low-level keyboard hook runs `kbproc` (an `extern "system"` callback). When
+// it detects an injected (synthetic) keystroke it swallows the key and raises a
+// proctoring event through this callback, mirroring the clipboard-event pattern
+// above: a single host closure registered once, invoked under catch_unwind so a
+// panic crossing the FFI boundary can never abort the exam process. Emission is
+// throttled to at most one event per second because a SendInput flood could
+// otherwise produce thousands of identical events; the BLOCK in `kbproc` is NOT
+// throttled and happens on every injected key.
+
+/// Host callback for injected-input events: `callback(kind, detail)`. Only the
+/// first registration per process wins; later calls are ignored.
+type InjectedInputCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
+static INJECTED_EVENT_CALLBACK: OnceLock<InjectedInputCallback> = OnceLock::new();
+
+/// Epoch-millis of the last injected-input event we emitted (0 = none yet). Used
+/// to throttle emission to one event per second.
+static INJECTED_LAST_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Register the host callback invoked when an injected keystroke is blocked.
+///
+/// `callback(kind, detail)` is invoked from the keyboard hook thread — it must be
+/// cheap and non-blocking. Only the first registration per process wins.
+pub fn set_injected_input_callback<F>(f: F)
+where
+    F: Fn(&str, &str) + Send + Sync + 'static,
+{
+    let _ = INJECTED_EVENT_CALLBACK.set(Box::new(f));
+}
+
+/// Raise an injected-input event to the host, throttled to once per second.
+///
+/// Called from the `extern "system"` `kbproc`. Like `emit_clipboard_event`, the
+/// host closure can panic inside Tauri's emit machinery; a panic unwinding out of
+/// an FFI callback escalates to a process abort, so it is contained with
+/// catch_unwind and never allowed to take down the exam app.
+fn emit_injected_input_event(kind: &str, detail: &str) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let last = INJECTED_LAST_MS.load(Ordering::SeqCst);
+    if now.saturating_sub(last) < 1000 {
+        return; // throttle: at most one emit per second
+    }
+    INJECTED_LAST_MS.store(now, Ordering::SeqCst);
+
+    eprintln!("AMS Access: {kind}: {detail}");
+    if let Some(callback) = INJECTED_EVENT_CALLBACK.get() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(kind, detail)));
+    }
+}
+
 unsafe extern "system" fn kbproc(
     code: i32,
     wparam: windows::Win32::Foundation::WPARAM,
@@ -846,11 +1022,22 @@ unsafe extern "system" fn kbproc(
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-    use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_INJECTED,
+    };
 
     if code >= 0 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let vk = kb.vkCode;
+        // Reject synthetic keystrokes (SendInput / keybd_event / many automation
+        // tools) while a lockdown hook is active: an injected key during an exam is
+        // a tampering signal, never legitimate candidate input. Swallow it every
+        // time; the violation emit is throttled below so a flood can't spam events.
+        let injected = kb.flags.0 & LLKHF_INJECTED.0 != 0;
+        if injected && HOOK_ACTIVE.load(Ordering::SeqCst) {
+            emit_injected_input_event("injected_input", "synthetic_keystroke_blocked");
+            return LRESULT(1);
+        }
         let alt_down = kb.flags.0 & LLKHF_ALTDOWN.0 != 0;
         let ctrl_down = (GetAsyncKeyState(0x11) as u16 & 0x8000) != 0;
         let shift_down = (GetAsyncKeyState(0x10) as u16 & 0x8000) != 0;
