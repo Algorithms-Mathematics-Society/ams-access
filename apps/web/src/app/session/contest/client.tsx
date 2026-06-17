@@ -3624,7 +3624,7 @@ export default function ContestPageClient() {
             top: "24px",
             left: "50%",
             transform: "translateX(-50%)",
-            zIndex: 10000,
+            zIndex: "var(--modal-z-base)",
             width: "100%",
             maxWidth: "460px",
             padding: "16px 20px",
@@ -3694,7 +3694,7 @@ export default function ContestPageClient() {
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 9999,
+            zIndex: "var(--modal-z-overlay)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -3879,7 +3879,7 @@ export default function ContestPageClient() {
                   position: "absolute",
                   top: "calc(100% + 8px)",
                   right: 0,
-                  zIndex: 12000,
+                  zIndex: "var(--modal-z-base)",
                   width: "260px",
                   padding: "12px",
                   border: "1px solid rgba(239,68,68,0.45)",
@@ -6286,12 +6286,12 @@ export default function ContestPageClient() {
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 9998,
+            zIndex: "var(--modal-z-critical)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             background: "rgba(2,4,10,0.92)",
-            backdropFilter: "blur(32px) brightness(0.3)",
+            backdropFilter: "blur(16px) brightness(0.5)",
             animation: "fadeIn 280ms var(--ease-cinematic) forwards",
           }}
         >
@@ -6358,7 +6358,7 @@ export default function ContestPageClient() {
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 9999,
+            zIndex: "var(--modal-z-overlay)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -6442,9 +6442,9 @@ export default function ContestPageClient() {
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 99999,
+            zIndex: "var(--modal-z-critical)",
             background: "rgba(10,10,10,0.92)",
-            backdropFilter: "blur(24px) saturate(180%)",
+            backdropFilter: "blur(16px) saturate(180%)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -6470,6 +6470,72 @@ export default function ContestPageClient() {
               </div>
               <div style={{ fontSize: 13, color: "#64748b" }}>
                 Please stay connected. Do not close the app.
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-dim)",
+                  maxWidth: 340,
+                  textAlign: "center",
+                  lineHeight: 1.5,
+                  marginTop: 8,
+                }}
+              >
+                Taking too long? Your work is autosaved — it&rsquo;s safe to leave.
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                <button
+                  onClick={() => router.push("/home")}
+                  style={{
+                    padding: "10px 24px",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#cbd5e1",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 14,
+                    cursor: "pointer",
+                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                    e.currentTarget.style.color = "#cbd5e1";
+                  }}
+                >
+                  Back to home
+                </button>
+                <button
+                  onClick={() =>
+                    router.push(
+                      `/results?contestId=${encodeURIComponent(
+                        contestId
+                      )}&email=${encodeURIComponent(candidateEmail)}`
+                    )
+                  }
+                  style={{
+                    padding: "10px 24px",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#cbd5e1",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 14,
+                    cursor: "pointer",
+                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                    e.currentTarget.style.color = "#cbd5e1";
+                  }}
+                >
+                  Check results status
+                </button>
               </div>
             </>
           )}
@@ -6536,13 +6602,20 @@ export default function ContestPageClient() {
                   onClick={() => router.push("/home")}
                   style={{
                     padding: "10px 24px",
-                    background: "#7c3aed",
+                    background: "var(--color-accent-deep)",
                     color: "#fff",
                     border: "none",
-                    borderRadius: 6,
+                    borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     fontWeight: 600,
                     cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background =
+                      "color-mix(in srgb, var(--color-accent-deep), #fff 12%)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--color-accent-deep)";
                   }}
                 >
                   Back to home
@@ -6557,12 +6630,21 @@ export default function ContestPageClient() {
                   }
                   style={{
                     padding: "10px 24px",
-                    background: "rgba(255,255,255,0.06)",
-                    color: "#94a3b8",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#cbd5e1",
                     border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 6,
+                    borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     cursor: "pointer",
+                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                    e.currentTarget.style.color = "#cbd5e1";
                   }}
                 >
                   Check results status
@@ -6586,17 +6668,78 @@ export default function ContestPageClient() {
                 style={{
                   marginTop: 8,
                   padding: "10px 24px",
-                  background: "#7c3aed",
+                  background: "var(--color-accent-deep)",
                   color: "#fff",
                   border: "none",
-                  borderRadius: 6,
+                  borderRadius: "var(--radius-sm)",
                   fontSize: 14,
                   fontWeight: 600,
                   cursor: "pointer",
                 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background =
+                    "color-mix(in srgb, var(--color-accent-deep), #fff 12%)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--color-accent-deep)";
+                }}
               >
                 Retry Submit
               </button>
+              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                <button
+                  onClick={() => router.push("/home")}
+                  style={{
+                    padding: "10px 24px",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#cbd5e1",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 14,
+                    cursor: "pointer",
+                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                    e.currentTarget.style.color = "#cbd5e1";
+                  }}
+                >
+                  Back to home
+                </button>
+                <button
+                  onClick={() =>
+                    router.push(
+                      `/results?contestId=${encodeURIComponent(
+                        contestId
+                      )}&email=${encodeURIComponent(candidateEmail)}`
+                    )
+                  }
+                  style={{
+                    padding: "10px 24px",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#cbd5e1",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 14,
+                    cursor: "pointer",
+                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                    e.currentTarget.style.color = "#cbd5e1";
+                  }}
+                >
+                  Check results status
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -6611,9 +6754,9 @@ export default function ContestPageClient() {
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 9999,
+            zIndex: "var(--modal-z-overlay)",
             background: "rgba(15,15,15,0.85)",
-            backdropFilter: "blur(20px) saturate(180%)",
+            backdropFilter: "blur(16px) saturate(180%)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

@@ -199,6 +199,14 @@ summary:focus-visible,
   --elevation-2: 0 6px 16px rgba(0,0,0,0.40), 0 20px 46px rgba(0,0,0,0.36);
   --elevation-3: 0 12px 32px rgba(0,0,0,0.48), 0 30px 76px rgba(0,0,0,0.46);
 
+  /* ── Modal / overlay z-index scale (replaces arbitrary inline literals) ──
+     base:     toasts, inline popovers (below full-screen overlays)
+     overlay:  support modal, media-warning, blocked-app proctoring overlays
+     critical: face soft-block, time's-up (must float above everything) ── */
+  --modal-z-base:     9200;
+  --modal-z-overlay:  9500;
+  --modal-z-critical: 10000;
+
   /* ── Radius scale (kills 2px/10px one-offs) ── */
   --radius-sm: 6px;
   --radius-md: 8px;
