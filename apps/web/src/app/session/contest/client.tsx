@@ -5380,6 +5380,16 @@ export default function ContestPageClient() {
                         <div style={{ color: "#475569" }}>Running…</div>
                       ) : runResult?.status === "CE" ? (
                         <div style={{ color: "#475569" }}>Compilation failed — see Build.</div>
+                      ) : runTimedOut ? (
+                        <div style={{ color: "#f59e0b" }}>
+                          Run is taking longer than expected — it may still be queued. Try Run
+                          again.
+                        </div>
+                      ) : runResultAttemptId &&
+                        runSampleTests === null &&
+                        runResult &&
+                        !isPendingSubmissionStatus(runResult.status) ? (
+                        <div style={{ color: "#475569" }}>Loading sample results…</div>
                       ) : runSampleTests && runSampleTests.length > 0 ? (
                         // Sample rows above already convey the result; only add
                         // raw stdout if the judge returned any.
