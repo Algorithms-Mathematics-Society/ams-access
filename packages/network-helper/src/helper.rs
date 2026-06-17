@@ -748,15 +748,20 @@ fn build_chain(bin: &str, allowed: &[&str]) -> Result<(), String> {
     }
 
     // Keep already-established connections alive so the exam session does not
-    // drop the instant the default-DROP rule lands.
+    // drop the instant the default-DROP rule lands. Use the modern `conntrack`
+    // match (xt_conntrack), NOT the legacy `state` match (xt_state): on
+    // nft-backend distros xt_state is typically neither loaded nor built-in, and
+    // the helper's systemd unit drops CAP_SYS_MODULE, so iptables' lazy autoload
+    // of xt_state fails ("Couldn't load match `state'") and the whole enable
+    // aborts. xt_conntrack is already loaded wherever conntrack is in use.
     let out = run_tables(
         bin,
         &[
             "-A",
             CHAIN,
             "-m",
-            "state",
-            "--state",
+            "conntrack",
+            "--ctstate",
             "ESTABLISHED,RELATED",
             "-j",
             "ACCEPT",

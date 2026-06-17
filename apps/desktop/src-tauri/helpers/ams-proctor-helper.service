@@ -9,6 +9,12 @@ After=network.target nss-lookup.target
 
 [Service]
 Type=simple
+# Ensure the conntrack match module is present before the helper builds any
+# firewall chain. The helper drops CAP_SYS_MODULE (see CapabilityBoundingSet),
+# so it cannot lazily autoload a kernel match itself; load it here in the
+# service-manager context where module loading is permitted. Non-fatal ("-"):
+# if conntrack is built-in or already loaded, modprobe is a harmless no-op.
+ExecStartPre=-/usr/sbin/modprobe nf_conntrack
 # The helper binary is installed here by install_network_helper.
 ExecStart=/usr/local/lib/ams-access/ams-access-networkhelper
 User=root
