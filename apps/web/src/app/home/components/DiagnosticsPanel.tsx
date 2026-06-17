@@ -34,7 +34,7 @@ function TelemetryStat({
         padding: "var(--density-standard)",
         background: c.innerBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "6px",
+        borderRadius: "var(--radius-sm)",
       }}
     >
       <p className="text-micro-label" style={{ color: c.textMuted, marginBottom: "4px" }}>
@@ -165,7 +165,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
         style={{
           background: c.cardBg,
           border: `1px solid ${c.border}`,
-          borderRadius: "8px",
+          borderRadius: "var(--radius-md)",
           padding: "var(--density-relaxed)",
         }}
       >
@@ -241,7 +241,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               padding: "9px 16px",
               background: c.accentLight,
               border: `1px solid ${c.accentBorder}`,
-              borderRadius: "6px",
+              borderRadius: "var(--radius-sm)",
               color: c.accentText,
               fontSize: "13px",
               fontWeight: 500,
@@ -249,7 +249,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               cursor: checkingNetwork ? "not-allowed" : "pointer",
               opacity: checkingNetwork ? 0.72 : 1,
               transition:
-                "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
+                "background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast)",
             }}
             onMouseEnter={(e) => {
               if (checkingNetwork) return;
@@ -308,7 +308,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
         style={{
           background: c.cardBg,
           border: `1px solid ${c.border}`,
-          borderRadius: "8px",
+          borderRadius: "var(--radius-md)",
           padding: "20px 24px",
         }}
       >
@@ -338,7 +338,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           style={{
             background: c.innerBg,
             border: `1px solid ${c.border}`,
-            borderRadius: "6px",
+            borderRadius: "var(--radius-sm)",
             padding: "16px",
             fontSize: "11px",
             color: c.consoleText,
@@ -371,7 +371,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             padding: "10px 12px",
             background: "rgba(255,255,255,0.02)",
             border: `1px solid ${c.border}`,
-            borderRadius: "6px",
+            borderRadius: "var(--radius-sm)",
           }}
         >
           This includes device, network, and readiness details. It does not include your password or
@@ -384,13 +384,14 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               padding: "9px 16px",
               background: copied ? "rgba(34,197,94,0.1)" : c.accentLight,
               border: `1px solid ${copied ? "rgba(34,197,94,0.25)" : c.accentBorder}`,
-              borderRadius: "6px",
+              borderRadius: "var(--radius-sm)",
               color: copied ? "#4ade80" : c.accentText,
               fontSize: "13px",
               fontWeight: 500,
               fontFamily: "inherit",
               cursor: "pointer",
-              transition: "background 150ms ease, border-color 150ms ease, color 150ms ease",
+              transition:
+                "background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
             }}
           >
             {copied ? "Copied!" : "Copy support summary"}
@@ -401,13 +402,14 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               padding: "9px 16px",
               background: theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)",
               border: `1px solid ${c.border}`,
-              borderRadius: "6px",
+              borderRadius: "var(--radius-sm)",
               color: c.textMutedStrong,
               fontSize: "13px",
               fontWeight: 500,
               fontFamily: "inherit",
               cursor: "pointer",
-              transition: "background 150ms ease, border-color 150ms ease, color 150ms ease",
+              transition:
+                "background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background =

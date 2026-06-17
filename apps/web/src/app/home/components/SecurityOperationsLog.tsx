@@ -48,7 +48,7 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
       style={{
         background: themeColors.cardBg,
         border: `1px solid ${themeColors.border}`,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         padding: "20px 24px",
       }}
     >
@@ -57,7 +57,7 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
           style={{
             fontSize: "11px",
             fontWeight: 600,
-            color: themeColors.textMuted,
+            color: "rgba(255,255,255,0.45)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             fontFamily: "'JetBrains Mono', monospace",
@@ -70,7 +70,7 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
         style={{
           background: themeColors.innerBg,
           border: `1px solid ${themeColors.border}`,
-          borderRadius: "6px",
+          borderRadius: "var(--radius-sm)",
           padding: "16px",
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           fontSize: "12px",

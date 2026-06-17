@@ -82,7 +82,7 @@ export function Panel({
       style={{
         background: c.cardBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         boxShadow: "none",
         ...style,
       }}
@@ -114,7 +114,7 @@ export const Button = forwardRef<
   ref
 ) {
   const c = getThemeColors(theme);
-  const height = size === "small" ? "32px" : size === "icon" ? "32px" : "38px";
+  const height = size === "small" ? "32px" : size === "icon" ? "32px" : "40px";
   const base =
     variant === "primary"
       ? { border: "var(--color-accent-base)", bg: "var(--color-accent-base)", color: "#ffffff" }
@@ -142,9 +142,9 @@ export const Button = forwardRef<
       ref={ref}
       style={{
         minHeight: height,
-        width: size === "icon" ? "32px" : undefined,
+        width: size === "icon" ? "32px" : "auto",
         minWidth: size === "icon" ? "32px" : undefined,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         border: `1px solid ${colors.border}`,
         background: colors.bg,
         color: colors.color,
@@ -161,7 +161,7 @@ export const Button = forwardRef<
         letterSpacing: 0,
         whiteSpace: "nowrap",
         transition:
-          "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
+          "background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast)",
         ...style,
       }}
     >
@@ -221,11 +221,11 @@ export function StatusBadge({
         gap: "5px",
         minHeight: "24px",
         padding: "0 9px",
-        borderRadius: "6px",
+        borderRadius: "var(--radius-sm)",
         border: `1px solid ${t.border}`,
         background: t.bg,
         color: t.text,
-        fontSize: "10px",
+        fontSize: "11px",
         fontWeight: 700,
         letterSpacing: "0.04em",
         textTransform: "uppercase",
@@ -258,7 +258,7 @@ export function InlineAlert({
       style={{
         border: `1px solid ${t.border}`,
         background: t.bg,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         color: t.text,
         padding: "11px 13px",
         display: "flex",
@@ -297,14 +297,14 @@ export function ChecklistItem({
         gridTemplateColumns: "1fr auto auto",
         alignItems: "center",
         gap: "12px",
-        minHeight: "48px",
+        minHeight: "44px",
         borderBottom: `1px solid ${c.border}`,
       }}
     >
       <span
         style={{
           fontSize: "12px",
-          fontWeight: 550,
+          fontWeight: 500,
           fontFamily: "var(--font-mono), monospace",
           color: c.textMutedStrong,
           letterSpacing: 0,
@@ -361,7 +361,7 @@ export function Dialog({
       style={{
         background: c.cardBg,
         border: `1px solid ${c.borderStrong}`,
-        borderRadius: "10px",
+        borderRadius: "var(--radius-lg)",
         boxShadow:
           theme === "light" ? "0 24px 70px rgba(0,0,0,0.18)" : "0 24px 80px rgba(0,0,0,0.55)",
         ...style,

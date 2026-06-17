@@ -31,9 +31,9 @@ export function ContestsPanel({
       };
     if (s === "SCHEDULED")
       return {
-        dot: theme === "light" ? "#7c3aed" : "#8b5cf6",
-        bg: theme === "light" ? "rgba(124,58,237,0.08)" : "rgba(139,92,246,0.08)",
-        border: theme === "light" ? "rgba(124,58,237,0.2)" : "rgba(139,92,246,0.2)",
+        dot: theme === "light" ? "var(--color-accent-deep)" : "var(--color-accent-base)",
+        bg: theme === "light" ? "rgb(var(--accent-rgb) / 0.08)" : "rgb(var(--accent-rgb) / 0.08)",
+        border: theme === "light" ? "rgb(var(--accent-rgb) / 0.2)" : "rgb(var(--accent-rgb) / 0.2)",
       };
     if (s === "ENDED")
       return {
@@ -50,11 +50,11 @@ export function ContestsPanel({
         <p
           style={{
             fontSize: "11px",
-            color: themeColors.textMuted,
-            letterSpacing: "0.12em",
+            color: "rgba(255,255,255,0.45)",
+            letterSpacing: "0.1em",
             textTransform: "uppercase",
             marginBottom: "16px",
-            fontWeight: 700,
+            fontWeight: 600,
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           }}
         >
@@ -65,7 +65,7 @@ export function ContestsPanel({
             key={i}
             style={{
               height: "90px",
-              borderRadius: "8px",
+              borderRadius: "var(--radius-md)",
               background: "rgba(255,255,255,0.015)",
               border: "1px solid rgba(255,255,255,0.04)",
               marginBottom: "12px",
@@ -94,7 +94,7 @@ export function ContestsPanel({
           style={{
             width: "40px",
             height: "40px",
-            borderRadius: "6px",
+            borderRadius: "var(--radius-sm)",
             background: "rgba(255,255,255,0.01)",
             border: `1px solid ${themeColors.border}`,
             display: "flex",
@@ -103,7 +103,7 @@ export function ContestsPanel({
             flexShrink: 0,
           }}
         >
-<CalendarDays size={18} strokeWidth={1.9} color={themeColors.accent} />
+          <CalendarDays size={18} strokeWidth={1.9} color={themeColors.accent} />
         </div>
         <div style={{ flex: 1 }}>
           <h4
@@ -139,7 +139,7 @@ export function ContestsPanel({
       <p
         style={{
           fontSize: "11px",
-          color: themeColors.textMuted,
+          color: "rgba(255,255,255,0.45)",
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           marginBottom: "16px",
@@ -152,7 +152,14 @@ export function ContestsPanel({
         {contests.map((c) => {
           const col = statusColor(c.status);
           return (
-            <ActiveContestCard key={c.id} c={c} col={col} onPreflight={onPreflight} theme={theme} readinessContext={readinessContext} />
+            <ActiveContestCard
+              key={c.id}
+              c={c}
+              col={col}
+              onPreflight={onPreflight}
+              theme={theme}
+              readinessContext={readinessContext}
+            />
           );
         })}
       </div>

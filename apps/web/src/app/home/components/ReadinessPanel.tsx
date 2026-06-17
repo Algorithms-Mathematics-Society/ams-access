@@ -28,19 +28,19 @@ export const ReadinessWidget = memo(function ReadinessWidget({
       style={{
         background: themeColors.cardBg,
         border: `1px solid ${themeColors.border}`,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         padding: "24px",
         boxShadow: "none",
-        transition: "all 150ms ease",
+        transition: "all var(--transition-fast)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
         <h3
           style={{
             fontSize: "11px",
-            fontWeight: 700,
-            color: themeColors.textMuted,
-            letterSpacing: "0.08em",
+            fontWeight: 600,
+            color: "rgba(255,255,255,0.45)",
+            letterSpacing: "0.1em",
             textTransform: "uppercase",
           }}
         >
@@ -117,7 +117,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
         variant="primary"
         style={{ width: "100%" }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "#9333ea";
+          e.currentTarget.style.background = "var(--color-accent-base)";
           e.currentTarget.style.borderColor = "var(--color-accent-light)";
         }}
         onMouseLeave={(e) => {
@@ -165,7 +165,7 @@ export const ReadinessItem = memo(function ReadinessItem({
           <Button
             type="button"
             theme={theme}
-            variant="danger"
+            variant="secondary"
             size="small"
             onClick={(e) => {
               e.stopPropagation();

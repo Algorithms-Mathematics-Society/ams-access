@@ -63,7 +63,7 @@ export function SessionActionsPanel({
       style={{
         background: c.cardBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         padding: "20px",
         display: "grid",
         gridTemplateColumns: "1.25fr 0.75fr",
@@ -78,7 +78,7 @@ export function SessionActionsPanel({
             style={{
               display: "block",
               fontSize: "11px",
-              color: c.textMuted,
+              color: "rgba(255,255,255,0.45)",
               letterSpacing: "0.1em",
               textTransform: "uppercase",
               marginBottom: "6px",
@@ -266,7 +266,7 @@ export function SessionActionsPanel({
           <p
             style={{
               fontSize: "11px",
-              color: c.textMuted,
+              color: "rgba(255,255,255,0.45)",
               letterSpacing: "0.1em",
               textTransform: "uppercase",
               fontWeight: 600,
@@ -292,7 +292,7 @@ export function SessionActionsPanel({
                   style={{
                     fontSize: "11px",
                     padding: "2px 7px",
-                    borderRadius: "4px",
+                    borderRadius: "var(--radius-sm)",
                     fontWeight: 600,
                     background: resumeRequestPending
                       ? "rgba(245,158,11,0.12)"
@@ -348,7 +348,7 @@ export function SessionActionsPanel({
           }
           onMouseEnter={(e) => {
             if (resumeButtonDisabled) return;
-            e.currentTarget.style.background = "#9333ea";
+            e.currentTarget.style.background = "var(--color-accent-base)";
             e.currentTarget.style.borderColor = "var(--color-accent-light)";
             e.currentTarget.style.boxShadow = "0 10px 24px rgb(var(--accent-rgb) / 0.22)";
           }}
