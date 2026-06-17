@@ -3380,9 +3380,9 @@ export default function ContestPageClient() {
         map[q.id] = {
           label: "Accepted",
           shortLabel: "AC",
-          color: "#22c55e",
-          bg: "rgba(34,197,94,0.1)",
-          border: "rgba(34,197,94,0.28)",
+          color: "var(--verdict-ac)",
+          bg: "color-mix(in srgb, var(--verdict-ac) 10%, transparent)",
+          border: "color-mix(in srgb, var(--verdict-ac) 28%, transparent)",
         };
       } else if (hasPending) {
         map[q.id] = {
@@ -3396,33 +3396,35 @@ export default function ContestPageClient() {
         map[q.id] = {
           label: "Needs review",
           shortLabel: "Review",
-          color: "#f59e0b",
-          bg: "rgba(245,158,11,0.1)",
-          border: "rgba(245,158,11,0.28)",
+          color: "var(--verdict-tle)",
+          bg: "color-mix(in srgb, var(--verdict-tle) 10%, transparent)",
+          border: "color-mix(in srgb, var(--verdict-tle) 28%, transparent)",
         };
       } else if (isActiveUnsaved) {
         map[q.id] = {
           label: "Unsaved",
           shortLabel: "Unsaved",
-          color: "#fbbf24",
-          bg: "rgba(245,158,11,0.1)",
-          border: "rgba(245,158,11,0.24)",
+          color: "var(--verdict-tle)",
+          bg: "color-mix(in srgb, var(--verdict-tle) 10%, transparent)",
+          border: "color-mix(in srgb, var(--verdict-tle) 24%, transparent)",
         };
       } else if (savedAnswers[q.id]) {
         map[q.id] = {
           label: "Saved",
           shortLabel: "Saved",
-          color: "#86efac",
-          bg: "rgba(34,197,94,0.08)",
-          border: "rgba(34,197,94,0.22)",
+          // A muted green — distinct from the bright AC token so "saved" never
+          // reads as "accepted" in the nav.
+          color: "color-mix(in srgb, var(--verdict-ac) 55%, var(--text-dim))",
+          bg: "color-mix(in srgb, var(--verdict-ac) 8%, transparent)",
+          border: "color-mix(in srgb, var(--verdict-ac) 22%, transparent)",
         };
       } else {
         map[q.id] = {
           label: "Not started",
           shortLabel: "Open",
-          color: "#64748b",
-          bg: "rgba(148,163,184,0.06)",
-          border: "rgba(148,163,184,0.14)",
+          color: "var(--text-dim)",
+          bg: "rgba(255,255,255,0.04)",
+          border: "rgba(255,255,255,0.12)",
         };
       }
     }
@@ -4055,14 +4057,15 @@ export default function ContestPageClient() {
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     width: "100%",
                     padding: sidebarCollapsed ? "8px 0" : "10px 12px",
-                    borderRadius: "8px",
-                    border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.30)" : "transparent"}`,
+                    borderRadius: "var(--radius-md)",
+                    border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
                     background: activeQ === i ? "rgb(var(--accent-rgb) / 0.08)" : "transparent",
                     cursor: "pointer",
                     fontFamily: "Inter, system-ui, sans-serif",
                     textAlign: "left",
-                    color: activeQ === i ? "var(--color-accent-light)" : "#64748b",
-                    transition: "all 0.2s",
+                    color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
+                    transition:
+                      "background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
                     position: "relative",
                   }}
                   title={`${q.title} · ${qStatus.label}`}
@@ -4097,9 +4100,9 @@ export default function ContestPageClient() {
                     >
                       <span
                         style={{
-                          fontSize: "10px",
+                          fontSize: "11px",
                           fontWeight: 600,
-                          color: activeQ === i ? "var(--color-accent-light)" : "#64748b",
+                          color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
                           flexShrink: 0,
                         }}
                       >
@@ -4107,11 +4110,13 @@ export default function ContestPageClient() {
                       </span>
                       <span
                         style={{
-                          width: "7px",
-                          height: "7px",
-                          borderRadius: "50%",
+                          width: "9px",
+                          height: "9px",
+                          borderRadius: "var(--radius-pill)",
                           background: qStatus.color,
-                          boxShadow: activeQ === i ? `0 0 8px ${qStatus.color}` : "none",
+                          color: qStatus.color,
+                          // Always-on glow so status reads at a glance, not only when active.
+                          boxShadow: "0 0 6px currentColor",
                           flexShrink: 0,
                         }}
                       />
@@ -4119,7 +4124,7 @@ export default function ContestPageClient() {
                         style={{
                           fontSize: "12px",
                           fontWeight: 500,
-                          color: activeQ === i ? "#ffffff" : "#94a3b8",
+                          color: activeQ === i ? "#ffffff" : "var(--text-soft)",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
@@ -4330,7 +4335,7 @@ export default function ContestPageClient() {
                 <span
                   style={{
                     fontSize: "11px",
-                    color: "#64748b",
+                    color: "var(--text-dim)",
                     letterSpacing: "0.06em",
                     fontFamily: "Inter, system-ui, sans-serif",
                     fontWeight: 700,
@@ -4341,7 +4346,7 @@ export default function ContestPageClient() {
                 <span
                   style={{
                     fontSize: "11px",
-                    color: "#64748b",
+                    color: "var(--text-dim)",
                     fontFamily: "Inter, system-ui, sans-serif",
                     fontVariantNumeric: "tabular-nums",
                   }}
@@ -4393,12 +4398,13 @@ export default function ContestPageClient() {
                             border: "none",
                             borderBottom: `2px solid ${active ? "var(--color-accent-base)" : "transparent"}`,
                             background: "transparent",
-                            color: active ? "var(--color-accent-light)" : "#64748b",
+                            color: active ? "var(--color-accent-light)" : "var(--text-dim)",
                             fontSize: "12px",
                             fontWeight: 600,
                             fontFamily: "Inter, system-ui, sans-serif",
                             cursor: "pointer",
-                            transition: "color 150ms ease, border-color 150ms ease",
+                            transition:
+                              "color var(--transition-fast), border-color var(--transition-fast)",
                           }}
                         >
                           {label}
@@ -4423,8 +4429,8 @@ export default function ContestPageClient() {
                     style={{
                       margin: "0 0 22px",
                       color: "#f8fafc",
-                      fontSize: "26px",
-                      lineHeight: 1.2,
+                      fontSize: "var(--text-xl)",
+                      lineHeight: 1.3,
                       fontWeight: 700,
                       fontFamily: "Inter, system-ui, sans-serif",
                       letterSpacing: 0,
@@ -4448,10 +4454,18 @@ export default function ContestPageClient() {
               title="Drag to resize"
               onMouseDown={handleProblemSplitMouseDown}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLDivElement).style.background = "#111111";
+                const bar = e.currentTarget.querySelector<HTMLDivElement>("[data-split-bar]");
+                if (bar) {
+                  bar.style.width = "3px";
+                  bar.style.background = "rgb(var(--accent-rgb) / 0.6)";
+                }
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLDivElement).style.background = "#0F0F0F";
+                const bar = e.currentTarget.querySelector<HTMLDivElement>("[data-split-bar]");
+                if (bar) {
+                  bar.style.width = "2px";
+                  bar.style.background = "rgba(255,255,255,0.14)";
+                }
               }}
               style={{
                 width: "10px",
@@ -4462,30 +4476,22 @@ export default function ContestPageClient() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                transition: "background 150ms ease",
               }}
             >
+              {/* A single 2px·16px grab bar that thickens + brightens on hover,
+                  replacing the near-invisible 5-dot column. */}
               <div
+                data-split-bar
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "4px",
-                  alignItems: "center",
+                  width: "2px",
+                  height: "16px",
+                  borderRadius: "var(--radius-pill)",
+                  background: "rgba(255,255,255,0.14)",
                   pointerEvents: "none",
+                  transition:
+                    "width var(--transition-fast), background-color var(--transition-fast)",
                 }}
-              >
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <div
-                    key={i}
-                    style={{
-                      width: "3px",
-                      height: "3px",
-                      borderRadius: "50%",
-                      background: "rgba(148,163,184,0.32)",
-                    }}
-                  />
-                ))}
-              </div>
+              />
             </div>
 
             {/* Right panel: Editor (Top) + Terminal (Bottom) */}
@@ -6783,7 +6789,7 @@ export default function ContestPageClient() {
 
         /* Problem description markdown */
         .pb-body { color: #cbd5e1; font-size: 14px; line-height: 1.7; }
-        .pb-body-editorial { font-size: 15px; line-height: 1.75; max-width: 720px; }
+        .pb-body-editorial { font-size: var(--text-base); line-height: 1.65; max-width: 720px; }
         .pb-body p { margin: 0 0 14px; }
         .pb-body h1,.pb-body h2,.pb-body h3,.pb-body h4 { color: #f1f5f9; font-family: Inter, system-ui, sans-serif; font-weight: 700; margin: 24px 0 10px; line-height: 1.28; letter-spacing: 0; }
         .pb-body h1 { font-size: 22px; } .pb-body h2 { font-size: 18px; } .pb-body h3 { font-size: 15px; }
