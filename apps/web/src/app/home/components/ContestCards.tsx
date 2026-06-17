@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, memo } from "react";
 import { useRouter } from "next/navigation";
-import { Clock3, ListChecks, Play, ShieldCheck } from "lucide-react";
+import { Clock3, ListChecks, Loader2, Play, ShieldCheck } from "lucide-react";
 import {
   getThemeColors,
   getContestEntryState,
@@ -94,10 +94,10 @@ export const ScheduledContestCard = memo(
             ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
             : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
           border: `1px solid ${hovered ? themeColors.accent : themeColors.borderStrong}`,
-          borderRadius: "8px",
+          borderRadius: "var(--radius-md)",
           padding: "28px 32px",
           transition:
-            "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+            "border-color var(--transition-slow), box-shadow var(--transition-slow), transform var(--transition-slow)",
           boxShadow: hovered ? cardHoverShadow : "var(--elevation-1)",
           transform: hovered ? "translateY(-4px)" : "translateY(0)",
           display: "flex",
@@ -257,14 +257,14 @@ export const ScheduledContestCard = memo(
                   ? "#f59e0b"
                   : themeColors.textMuted,
               boxShadow: hovered && canJoin ? btnHoverShadow : "none",
-              transition: "box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1)",
+              transition: "box-shadow var(--transition-slow)",
             }}
           >
             <ShieldCheck
               size={14}
               strokeWidth={1.9}
               style={{
-                transition: "transform 300ms cubic-bezier(0.16, 1, 0.3, 1)",
+                transition: "transform var(--transition-standard)",
                 transform: hovered && canJoin ? "translateX(2px)" : "none",
               }}
             />
@@ -299,6 +299,7 @@ export const ActiveContestCard = memo(
     const [now, setNow] = useState(() => Date.now());
     const [hovered, setHovered] = useState(false);
     const [btnHovered, setBtnHovered] = useState(false);
+    const [entering, setEntering] = useState(false);
     const themeColors = useMemo(() => getThemeColors(theme), [theme]);
     const isLight = theme === "light";
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
@@ -464,10 +465,10 @@ export const ActiveContestCard = memo(
           border: `1px solid ${
             hovered && canEnter ? "rgb(var(--accent-rgb) / 0.35)" : themeColors.border
           }`,
-          borderLeft: `3px solid ${entryTone.rail}`,
-          borderRadius: "10px",
+          borderLeft: `2px solid ${entryTone.rail}`,
+          borderRadius: "var(--radius-lg)",
           padding: "22px 24px",
-          transition: "background 160ms ease, border-color 160ms ease",
+          transition: "background var(--transition-fast), border-color var(--transition-fast)",
           boxShadow: "var(--elevation-1)",
           display: "flex",
           flexDirection: "column",
@@ -475,7 +476,7 @@ export const ActiveContestCard = memo(
           position: "relative",
           overflow: "hidden",
           opacity:
-            entryState.phase === "ended" || entryState.phase === "metadata_unavailable" ? 0.85 : 1,
+            entryState.phase === "ended" || entryState.phase === "metadata_unavailable" ? 0.6 : 1,
         }}
       >
         <div>
@@ -491,13 +492,17 @@ export const ActiveContestCard = memo(
             <div style={{ minWidth: 0 }}>
               <h3
                 style={{
-                  fontSize: "18px",
+                  fontSize: "19px",
                   fontWeight: 600,
                   color: themeColors.text,
                   letterSpacing: "-0.01em",
                   lineHeight: 1.3,
                   margin: 0,
                   fontFamily: "var(--font-sans), system-ui, sans-serif",
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
                 {c.title}
@@ -549,6 +554,7 @@ export const ActiveContestCard = memo(
               textTransform: "uppercase" as const,
               color: themeColors.textMuted,
               marginBottom: "6px",
+              fontFamily: "'JetBrains Mono', monospace",
             }}
           >
             {hero.label}
@@ -557,10 +563,10 @@ export const ActiveContestCard = memo(
             style={{
               fontFamily: "'JetBrains Mono', monospace",
               fontVariantNumeric: "tabular-nums",
-              fontSize: hero.big ? "30px" : "20px",
+              fontSize: hero.big ? "var(--text-xl)" : "19px",
               fontWeight: 600,
               letterSpacing: "-0.01em",
-              lineHeight: 1.05,
+              lineHeight: hero.big ? 1.1 : 1.05,
               color: themeColors.text,
             }}
           >
@@ -600,16 +606,24 @@ export const ActiveContestCard = memo(
           <Button
             type="button"
             onClick={() => {
+              if (entering) return;
               if (resultsReady) {
                 const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
                 router.push(
                   `/results?contestId=${encodeURIComponent(c.id)}&email=${encodeURIComponent(email)}`
                 );
               } else if (canEnter) {
-                onPreflight(c.id, entryState.sessionType);
+                setEntering(true);
+                try {
+                  onPreflight(c.id, entryState.sessionType);
+                } finally {
+                  // onPreflight is async-like (navigates away); reset only if still mounted.
+                  // Use a short timeout so the spinner shows during navigation.
+                  setTimeout(() => setEntering(false), 5000);
+                }
               }
             }}
-            disabled={!canEnter && !resultsReady}
+            disabled={(!canEnter && !resultsReady) || entering}
             theme={theme}
             variant={
               canEnter || resultsReady
@@ -628,12 +642,32 @@ export const ActiveContestCard = memo(
             onBlur={() => setBtnHovered(false)}
             style={{
               border: `1px solid ${btnHovered && canEnter ? "var(--color-accent-light)" : entryTone.actionBorder}`,
-              background: btnHovered && canEnter ? "#9333ea" : entryTone.actionBg,
+              background: btnHovered && canEnter ? "var(--color-accent-base)" : entryTone.actionBg,
               color: entryTone.actionText,
-              transition: "background 150ms ease, border-color 150ms ease",
+              transition: "background var(--transition-fast), border-color var(--transition-fast)",
+              cursor: entering ? "wait" : undefined,
             }}
           >
-            {canEnter && <Play size={14} strokeWidth={2} />}
+            {entering ? (
+              <Loader2
+                size={14}
+                strokeWidth={2}
+                style={{
+                  animation: "spin 600ms linear infinite",
+                }}
+              />
+            ) : (
+              canEnter && (
+                <Play
+                  size={14}
+                  strokeWidth={2}
+                  style={{
+                    transition: "transform var(--transition-fast)",
+                    transform: btnHovered ? "translateX(2px)" : "none",
+                  }}
+                />
+              )
+            )}
             {resultsReady ? "View results" : entryState.ctaLabel}
           </Button>
         </div>
