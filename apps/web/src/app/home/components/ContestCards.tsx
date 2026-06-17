@@ -2,8 +2,13 @@
 
 import { useState, useEffect, useMemo, memo } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarDays, Clock3, ListChecks, Play, ShieldCheck } from "lucide-react";
-import { getThemeColors, getContestEntryState, getScheduledContestTickDelay } from "./utils";
+import { Clock3, ListChecks, Play, ShieldCheck } from "lucide-react";
+import {
+  getThemeColors,
+  getContestEntryState,
+  getScheduledContestTickDelay,
+  formatDurationUntil,
+} from "./utils";
 import { Button, ContestStatePill } from "./ui-primitives";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import type {
@@ -73,9 +78,7 @@ export const ScheduledContestCard = memo(
     const joinType = entryState.sessionType;
     const label = entryState.ctaLabel;
 
-    const cardHoverShadow = isLight
-      ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-      : "0 20px 48px rgb(var(--accent-rgb) / 0.08)";
+    const cardHoverShadow = isLight ? "0 20px 40px rgba(124, 58, 237, 0.08)" : "var(--elevation-2)";
     const btnHoverShadow = isLight
       ? "0 8px 20px rgba(124, 58, 237, 0.2)"
       : "0 8px 24px rgb(var(--accent-rgb) / 0.3)";
@@ -95,7 +98,7 @@ export const ScheduledContestCard = memo(
           padding: "28px 32px",
           transition:
             "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
-          boxShadow: hovered ? cardHoverShadow : themeColors.shadow,
+          boxShadow: hovered ? cardHoverShadow : "var(--elevation-1)",
           transform: hovered ? "translateY(-4px)" : "translateY(0)",
           display: "flex",
           flexDirection: "column",
@@ -403,15 +406,48 @@ export const ActiveContestCard = memo(
       }
     }, [col.bg, col.border, col.dot, entryState.phase, themeColors]);
 
-    const cardHoverShadow = isLight
-      ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-      : "0 20px 48px rgb(var(--accent-rgb) / 0.08)";
+    const formatClock = (iso: string) => {
+      const ms = Date.parse(iso);
+      if (Number.isNaN(ms)) return "";
+      try {
+        return new Intl.DateTimeFormat(undefined, {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+          timeZone: c.timezone || undefined,
+        }).format(ms);
+      } catch {
+        return "";
+      }
+    };
 
-    const timingRows = [
-      { label: "Verification opens", value: entryState.verificationOpensAt },
-      { label: "Contest starts", value: entryState.contestStartsAt },
-      { label: "Contest ends", value: entryState.contestEndsAt },
-    ];
+    // The instrument — the single time-to-next-state readout that leads the card.
+    const hero = (() => {
+      const start = Date.parse(c.start_at);
+      const end = Date.parse(c.end_at);
+      if (entryState.phase === "live")
+        return { label: "Time left", value: formatDurationUntil(end, now), big: true };
+      if (entryState.phase === "too_early" || entryState.phase === "verification_open")
+        return { label: "Starts in", value: formatDurationUntil(start, now), big: true };
+      if (entryState.phase === "ended") {
+        if (resultsUnlocked) return { label: "Results", value: "Ready", big: false };
+        if (resultsLockedCountdown)
+          return { label: "Results in", value: resultsLockedCountdown, big: true };
+        return { label: "Status", value: "Ended", big: false };
+      }
+      return { label: "Status", value: entryState.statusLabel, big: false };
+    })();
+
+    const metaParts = [
+      `${c.question_count} ${c.question_count === 1 ? "problem" : "problems"}`,
+      formatClock(c.start_at) ? `${formatClock(c.start_at)}–${formatClock(c.end_at)}` : null,
+      entryState.contestDateLabel && entryState.contestDateLabel !== "Date unavailable"
+        ? entryState.contestDateLabel
+        : null,
+    ].filter(Boolean) as string[];
+
+    const showHelper = ["blocked", "metadata_unavailable", "draft"].includes(entryState.phase);
+    const resultsReady = entryState.phase === "ended" && resultsUnlocked;
 
     return (
       <div
@@ -421,25 +457,25 @@ export const ActiveContestCard = memo(
         onBlur={() => setHovered(false)}
         style={{
           background: isLight
-            ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
-            : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
-          borderTop: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
-          borderRight: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
-          borderBottom: `1px solid ${hovered && canEnter ? themeColors.accent : canEnter ? themeColors.borderStrong : themeColors.border}`,
+            ? "#ffffff"
+            : hovered && canEnter
+              ? "var(--surface-2)"
+              : "var(--surface-1)",
+          border: `1px solid ${
+            hovered && canEnter ? "rgb(var(--accent-rgb) / 0.35)" : themeColors.border
+          }`,
           borderLeft: `3px solid ${entryTone.rail}`,
-          borderRadius: "8px",
-          padding: "26px 30px",
-          transition:
-            "border-color 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1)",
-          boxShadow: hovered && canEnter ? cardHoverShadow : themeColors.shadow,
-          transform: hovered && canEnter ? "translateY(-4px)" : "translateY(0)",
+          borderRadius: "10px",
+          padding: "22px 24px",
+          transition: "background 160ms ease, border-color 160ms ease",
+          boxShadow: "var(--elevation-1)",
           display: "flex",
           flexDirection: "column",
-          gap: "18px",
+          gap: "16px",
           position: "relative",
           overflow: "hidden",
           opacity:
-            entryState.phase === "ended" || entryState.phase === "metadata_unavailable" ? 0.82 : 1,
+            entryState.phase === "ended" || entryState.phase === "metadata_unavailable" ? 0.85 : 1,
         }}
       >
         <div>
@@ -455,23 +491,23 @@ export const ActiveContestCard = memo(
             <div style={{ minWidth: 0 }}>
               <h3
                 style={{
-                  fontSize: "19px",
-                  fontWeight: 700,
+                  fontSize: "18px",
+                  fontWeight: 600,
                   color: themeColors.text,
-                  letterSpacing: "0",
-                  lineHeight: 1.25,
+                  letterSpacing: "-0.01em",
+                  lineHeight: 1.3,
                   margin: 0,
-                  fontFamily: "var(--font-mono), monospace",
+                  fontFamily: "var(--font-sans), system-ui, sans-serif",
                 }}
               >
                 {c.title}
               </h3>
               <p
                 style={{
-                  fontSize: "14px",
+                  fontSize: "13px",
                   color: themeColors.textMuted,
                   fontWeight: 500,
-                  margin: "5px 0 0",
+                  margin: "4px 0 0",
                 }}
               >
                 {c.org_name}
@@ -503,48 +539,33 @@ export const ActiveContestCard = memo(
 
         <div style={{ height: "1px", background: themeColors.border }} />
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-            gap: "10px",
-          }}
-        >
-          {timingRows.map((row) => (
-            <div
-              key={row.label}
-              style={{
-                border: `1px solid ${themeColors.border}`,
-                borderRadius: "6px",
-                background: "rgba(255,255,255,0.025)",
-                padding: "10px 12px",
-              }}
-            >
-              <div
-                style={{
-                  color: themeColors.textMuted,
-                  fontSize: "10px",
-                  fontWeight: 600,
-                  letterSpacing: "0.06em",
-                  textTransform: "uppercase" as const,
-                  marginBottom: "5px",
-                }}
-              >
-                {row.label}
-              </div>
-              <div
-                style={{
-                  color: themeColors.text,
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  lineHeight: 1.25,
-                }}
-              >
-                {row.value}
-              </div>
-            </div>
-          ))}
+        {/* The instrument — time-to-next-state, the readout the eye lands on first */}
+        <div>
+          <div
+            style={{
+              fontSize: "11px",
+              fontWeight: 600,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase" as const,
+              color: themeColors.textMuted,
+              marginBottom: "6px",
+            }}
+          >
+            {hero.label}
+          </div>
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontVariantNumeric: "tabular-nums",
+              fontSize: hero.big ? "30px" : "20px",
+              fontWeight: 600,
+              letterSpacing: "-0.01em",
+              lineHeight: 1.05,
+              color: themeColors.text,
+            }}
+          >
+            {hero.value}
+          </div>
         </div>
 
         <div
@@ -569,31 +590,29 @@ export const ActiveContestCard = memo(
             <span
               style={{
                 fontFamily: "'JetBrains Mono', monospace",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              <CalendarDays size={13} strokeWidth={1.8} />
-              {entryState.contestDateLabel}
-            </span>
-            <span style={{ color: themeColors.borderStrong }}>•</span>
-            <span>{c.question_count} Questions</span>
-            <span style={{ color: themeColors.borderStrong }}>•</span>
-            <span style={{ color: canEnter ? themeColors.accent : entryTone.statusColor }}>
-              {entryState.timingLabel}
+              {metaParts.join("  ·  ")}
             </span>
           </div>
 
           <Button
             type="button"
             onClick={() => {
-              if (canEnter) onPreflight(c.id, entryState.sessionType);
+              if (resultsReady) {
+                const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
+                router.push(
+                  `/results?contestId=${encodeURIComponent(c.id)}&email=${encodeURIComponent(email)}`
+                );
+              } else if (canEnter) {
+                onPreflight(c.id, entryState.sessionType);
+              }
             }}
-            disabled={!canEnter}
+            disabled={!canEnter && !resultsReady}
             theme={theme}
             variant={
-              canEnter
+              canEnter || resultsReady
                 ? "primary"
                 : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable"
                   ? "danger"
@@ -615,38 +634,28 @@ export const ActiveContestCard = memo(
             }}
           >
             {canEnter && <Play size={14} strokeWidth={2} />}
-            {entryState.ctaLabel}
+            {resultsReady ? "View results" : entryState.ctaLabel}
           </Button>
         </div>
 
-        <div
-          style={{
-            borderTop: `1px solid ${themeColors.border}`,
-            paddingTop: "12px",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-          }}
-        >
+        {showHelper && (
           <div
             style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: entryTone.rail,
-              flexShrink: 0,
-            }}
-          />
-          <span
-            style={{
-              color: canEnter ? themeColors.textMutedStrong : entryTone.statusColor,
-              fontSize: "12px",
-              lineHeight: 1.45,
+              borderTop: `1px solid ${themeColors.border}`,
+              paddingTop: "12px",
             }}
           >
-            {entryState.actionHelper}
-          </span>
-        </div>
+            <span
+              style={{
+                color: entryTone.statusColor,
+                fontSize: "12px",
+                lineHeight: 1.45,
+              }}
+            >
+              {entryState.actionHelper}
+            </span>
+          </div>
+        )}
 
         {readinessContext && readinessContext.status !== "checking" && (
           <div
@@ -676,47 +685,6 @@ export const ActiveContestCard = memo(
             >
               {readinessContext.message}
             </span>
-          </div>
-        )}
-
-        {/* Results availability row for ended contests */}
-        {entryState.phase === "ended" && resultsVisibleAt !== null && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: "12px",
-              paddingTop: "12px",
-              borderTop: `1px solid ${themeColors.border}`,
-            }}
-          >
-            <span style={{ fontSize: "12px", color: themeColors.textMuted }}>
-              {resultsUnlocked ? "Results available" : `Results in ${resultsLockedCountdown}`}
-            </span>
-            {resultsUnlocked && (
-              <button
-                onClick={() => {
-                  const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
-                  router.push(
-                    `/results?contestId=${encodeURIComponent(c.id)}&email=${encodeURIComponent(email)}`
-                  );
-                }}
-                style={{
-                  padding: "5px 14px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  background: "rgb(var(--accent-rgb) / 0.12)",
-                  border: "1px solid rgb(var(--accent-rgb) / 0.3)",
-                  borderRadius: "5px",
-                  color: "var(--color-accent-light)",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                }}
-              >
-                View Results
-              </button>
-            )}
           </div>
         )}
       </div>

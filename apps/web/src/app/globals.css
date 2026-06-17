@@ -187,6 +187,13 @@ summary:focus-visible,
   --surface-1: #131318;   /* cards / panels */
   --surface-2: #1B1B22;   /* raised / inputs */
 
+  /* ── Elevation ramp — depth on near-black via layered shadow (a tight contact
+     shadow + a soft ambient one), paired with the surface step + hairline border.
+     e2 is the hover/raised lift (real depth, not accent glow); e3 is for modals. ── */
+  --elevation-1: 0 2px 6px rgba(0,0,0,0.30), 0 8px 22px rgba(0,0,0,0.22);
+  --elevation-2: 0 6px 16px rgba(0,0,0,0.40), 0 20px 46px rgba(0,0,0,0.36);
+  --elevation-3: 0 12px 32px rgba(0,0,0,0.48), 0 30px 76px rgba(0,0,0,0.46);
+
   /* ── Radius scale (kills 2px/10px one-offs) ── */
   --radius-sm: 6px;
   --radius-md: 8px;
