@@ -1,5 +1,7 @@
-import { redirect } from "next/navigation";
-
+"use client";
+import { useRouter } from "next/navigation";
+import WelcomeScreen from "./WelcomeScreen";
 export default function RootPage() {
-  redirect("/login");
+  const router = useRouter();
+  return <WelcomeScreen onEnter={() => router.push("/login")} />;
 }

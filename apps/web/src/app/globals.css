@@ -821,7 +821,7 @@ summary:focus-visible,
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #030610;
+  background: var(--surface-0);
 }
 
 /* ── Background atmosphere ── */
@@ -854,21 +854,6 @@ summary:focus-visible,
   animation: welcome-breathe 8s ease-in-out infinite 4s;
   pointer-events: none;
   will-change: opacity, transform;
-}
-
-/* Faint cool rim light from the very top */
-.welcome-glow-rim {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 35%;
-  background: radial-gradient(
-    ellipse 60% 100% at 50% 0%,
-    rgba(90, 30, 180, 0.12) 0%,
-    transparent              100%
-  );
-  pointer-events: none;
 }
 
 /* Bottom gradient — lifts footer text off the dark canvas */
@@ -1103,20 +1088,16 @@ summary:focus-visible,
   padding: 14px 64px;
   border-radius: var(--radius-md);
   border: 1px solid rgb(var(--accent-rgb) / 0.32);
-  background: linear-gradient(140deg, #5e18b0 0%, var(--color-accent-base) 52%, var(--color-accent-light) 100%);
+  background: var(--surface-2);
   color: rgba(255, 255, 255, 0.92);
   font-family: var(--font-sans, Inter, sans-serif);
-  font-size: 10.5px;
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.32em;
-  padding-left: calc(64px + 0.32em);
+  letter-spacing: 0.18em;
+  padding-left: calc(64px + 0.18em);
   text-transform: uppercase;
   cursor: pointer;
-  box-shadow:
-    0 0 0    1px rgb(var(--accent-rgb) / 0.08),
-    0 0 28px    rgb(var(--accent-rgb) / 0.22),
-    0 4px 18px  rgba(0, 0, 0, 0.60),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  box-shadow: 0 8px 24px rgb(var(--accent-rgb) / 0.25);
   transition:
     transform    var(--transition-standard),
     box-shadow   var(--transition-standard),
@@ -1126,11 +1107,7 @@ summary:focus-visible,
 .welcome-cta:hover {
   transform: translateY(-3px) scale(1.018);
   border-color: rgb(var(--accent-light-rgb) / 0.52);
-  box-shadow:
-    0 0 0    1px rgb(var(--accent-rgb) / 0.14),
-    0 0 48px    rgb(var(--accent-rgb) / 0.38),
-    0 10px 30px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0 rgba(255, 255, 255, 0.13);
+  box-shadow: 0 12px 32px rgb(var(--accent-rgb) / 0.35);
 }
 
 .welcome-cta:active {
