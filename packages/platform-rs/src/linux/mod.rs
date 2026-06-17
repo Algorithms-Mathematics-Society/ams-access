@@ -884,6 +884,106 @@ fn spawn_workspace_watchdog() {
         .ok();
 }
 
+// ── Native lockdown-event sink + focus-loss watchdog (X11 only) ───────────────
+//
+// platform-rs must not depend on tauri, so the desktop shell registers a sink
+// closure here; the focus watchdog raises a `focus_loss` violation through it.
+// This complements the webview blur/visibilitychange signal with an independent,
+// harder-to-suppress native check. X11 only — Wayland does not expose the active
+// window to ordinary clients, so there is no equivalent (the watchdog no-ops).
+
+type LockdownEventCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
+static LOCKDOWN_EVENT_CALLBACK: OnceLock<LockdownEventCallback> = OnceLock::new();
+
+/// Register the host-application sink for lockdown security events. Invoked from
+/// background threads; must be cheap/non-blocking. First registration wins.
+pub fn set_lockdown_event_callback<F>(callback: F)
+where
+    F: Fn(&str, &str) + Send + Sync + 'static,
+{
+    let _ = LOCKDOWN_EVENT_CALLBACK.set(Box::new(callback));
+}
+
+/// Raise a security event to the host app (+ a stderr trail). The host callback
+/// reaches Tauri's emit machinery, which can panic if the webview is gone; a
+/// panic unwinding out of a spawned thread can escalate to process abort(), so
+/// it is contained here (mirrors the macOS guard).
+fn emit_lockdown_event(kind: &str, detail: &str) {
+    eprintln!("AMS Access: {kind}: {detail}");
+    if let Some(callback) = LOCKDOWN_EVENT_CALLBACK.get() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(kind, detail)));
+    }
+}
+
+/// Spawn a native focus-loss watchdog (X11 only; no-op on Wayland or if xdotool
+/// is absent). Emits a `focus_loss` violation once per episode when the exam
+/// window stops being the active window. Detection only — the workspace watchdog
+/// handles desktop-switch correction; this never steals focus back, so it can't
+/// fight a legitimate system modal.
+fn spawn_focus_watchdog() {
+    if std::env::var("DISPLAY").is_err() {
+        return; // X11 only
+    }
+    std::thread::Builder::new()
+        .name("ams-focus-guard".into())
+        .spawn(|| {
+            // Find our window (same approach as the workspace watchdog).
+            let our_pid = std::process::id().to_string();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let win_id: u64 = loop {
+                if let Some(id) = std::process::Command::new("xdotool")
+                    .args(["search", "--pid", &our_pid, "--onlyvisible"])
+                    .output()
+                    .ok()
+                    .and_then(|out| {
+                        String::from_utf8_lossy(&out.stdout)
+                            .lines()
+                            .filter_map(|l| l.trim().parse::<u64>().ok())
+                            .next()
+                    })
+                {
+                    break id;
+                }
+                if std::time::Instant::now() > deadline {
+                    return; // xdotool unavailable or window never appeared
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            };
+
+            // Debounce: emit only on the transition into "not focused", so a
+            // sustained focus loss is one violation, not one per poll.
+            let mut lost = false;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
+                    break;
+                }
+                let active = std::process::Command::new("xdotool")
+                    .arg("getactivewindow")
+                    .output()
+                    .ok()
+                    .and_then(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .trim()
+                            .parse::<u64>()
+                            .ok()
+                    });
+                let Some(active) = active else {
+                    continue; // active window unresolvable — don't flap
+                };
+                if active != win_id {
+                    if !lost {
+                        lost = true;
+                        emit_lockdown_event("focus_loss", "native_focus_lost");
+                    }
+                } else {
+                    lost = false;
+                }
+            }
+        })
+        .ok();
+}
+
 // ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
 /// Restore all DE keybindings to their pre-exam values.
@@ -892,6 +992,7 @@ pub fn lock_desktop() -> bool {
     set_touchpad_enabled(false);
     spawn_kill_shield();
     spawn_workspace_watchdog();
+    spawn_focus_watchdog();
     enable_keyboard_intercept().active
 }
 

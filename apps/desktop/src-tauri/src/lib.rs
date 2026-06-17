@@ -2229,6 +2229,27 @@ pub fn run() {
                     );
                 });
             }
+            // Linux: sink for native lockdown events (the X11 focus-loss
+            // watchdog). Mirrors the macOS registration — persist to the
+            // violation + proctoring logs and notify the webview.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                platform_rs::linux::set_lockdown_event_callback(move |kind, detail| {
+                    record_violation(Some(&handle), kind, detail);
+                    record_proctoring_event(
+                        Some(&handle),
+                        kind,
+                        detail,
+                        serde_json::json!({ "source": "platform_lockdown" }),
+                    );
+                    let _ = handle.emit(
+                        "lockdown-event",
+                        serde_json::json!({ "kind": kind, "detail": detail }),
+                    );
+                });
+            }
             let _ = app;
             Ok(())
         })
