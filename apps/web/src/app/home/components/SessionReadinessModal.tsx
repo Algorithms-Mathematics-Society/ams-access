@@ -72,7 +72,7 @@ function PreflightCheckItem({
         />
         <span
           style={{
-            fontSize: "10px",
+            fontSize: "11px",
             fontFamily: "'JetBrains Mono', monospace",
             fontWeight: 600,
             letterSpacing: "0.06em",
@@ -312,12 +312,13 @@ export function SessionReadinessModal({
         position: "fixed",
         inset: 0,
         zIndex: 9999,
-        background: "rgba(0, 0, 0, 0.65)",
+        background: "rgba(0,0,0,0.6)",
         backdropFilter: "blur(20px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: "24px",
+        animation: "fadeIn var(--transition-standard) forwards",
       }}
     >
       <div
@@ -325,15 +326,13 @@ export function SessionReadinessModal({
         tabIndex={-1}
         style={{
           width: "100%",
-          maxWidth: "920px",
+          maxWidth: "560px",
           minHeight: "540px",
           background: isLight ? "#ffffff" : c.cardBg,
           border: `1px solid ${c.borderStrong}`,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-lg)",
           padding: "36px",
-          boxShadow: isLight
-            ? "0 24px 60px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04)"
-            : "0 24px 64px rgb(var(--accent-rgb) / 0.08)",
+          boxShadow: "var(--elevation-3)",
           position: "relative",
           overflow: "hidden",
           display: "flex",
@@ -359,7 +358,7 @@ export function SessionReadinessModal({
             position: "relative",
             border: `1px solid ${decisionTone.border}`,
             background: decisionTone.bg,
-            borderRadius: "10px",
+            borderRadius: "var(--radius-lg)",
             padding: "20px 22px",
             display: "flex",
             alignItems: "flex-start",
@@ -384,7 +383,7 @@ export function SessionReadinessModal({
               id="session-readiness-title"
               style={{
                 color: c.text,
-                fontSize: "22px",
+                fontSize: "24px",
                 fontWeight: 750,
                 letterSpacing: 0,
                 lineHeight: 1.2,
@@ -403,7 +402,7 @@ export function SessionReadinessModal({
               minWidth: "86px",
               border: `1px solid ${decisionTone.border}`,
               background: isLight ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.16)",
-              borderRadius: "8px",
+              borderRadius: "var(--radius-md)",
               padding: "10px 12px",
               textAlign: "center",
             }}
@@ -412,7 +411,7 @@ export function SessionReadinessModal({
               {Math.round(currentProgress)}%
             </div>
             <div
-              style={{ color: c.textMuted, fontSize: "10px", fontWeight: 600, marginTop: "2px" }}
+              style={{ color: c.textMuted, fontSize: "11px", fontWeight: 600, marginTop: "2px" }}
             >
               complete
             </div>
@@ -431,7 +430,7 @@ export function SessionReadinessModal({
             style={{
               border: `1px solid ${c.border}`,
               background: isLight ? "#ffffff" : c.innerBg,
-              borderRadius: "8px",
+              borderRadius: "var(--radius-md)",
               padding: "16px 18px",
             }}
           >
@@ -455,7 +454,7 @@ export function SessionReadinessModal({
                   border: `1px solid ${context.failedRequired > 0 ? "rgba(239,68,68,0.22)" : "rgba(34,197,94,0.2)"}`,
                   borderRadius: "999px",
                   padding: "3px 8px",
-                  fontSize: "10px",
+                  fontSize: "11px",
                   fontWeight: 700,
                 }}
               >
@@ -491,7 +490,7 @@ export function SessionReadinessModal({
                   : isLight
                     ? "#ffffff"
                     : c.innerBg,
-              borderRadius: "8px",
+              borderRadius: "var(--radius-md)",
               padding: "16px 18px",
             }}
           >
@@ -514,7 +513,7 @@ export function SessionReadinessModal({
                   border: `1px solid ${optionalWarningCount > 0 ? "rgba(245,158,11,0.24)" : c.border}`,
                   borderRadius: "999px",
                   padding: "3px 8px",
-                  fontSize: "10px",
+                  fontSize: "11px",
                   fontWeight: 700,
                 }}
               >
@@ -554,7 +553,7 @@ export function SessionReadinessModal({
           style={{
             border: `1px solid ${c.border}`,
             background: isLight ? "#f8fafc" : c.innerBg,
-            borderRadius: "8px",
+            borderRadius: "var(--radius-md)",
             overflow: "hidden",
           }}
         >
@@ -636,7 +635,7 @@ export function SessionReadinessModal({
                 style={{
                   minWidth: "170px",
                   height: "42px",
-                  borderRadius: "6px",
+                  borderRadius: "var(--radius-md)",
                   border: `1px solid ${c.dot}`,
                   background: c.dot,
                   color: isLight ? "#ffffff" : "#04110a",
@@ -644,7 +643,7 @@ export function SessionReadinessModal({
                   fontWeight: 700,
                   fontFamily: "inherit",
                   cursor: "pointer",
-                  transition: "all 150ms ease",
+                  transition: "all var(--transition-fast)",
                 }}
               >
                 {primaryActionLabel}
@@ -657,7 +656,7 @@ export function SessionReadinessModal({
                 style={{
                   minWidth: "170px",
                   height: "42px",
-                  borderRadius: "6px",
+                  borderRadius: "var(--radius-md)",
                   border: `1px solid ${c.dot}`,
                   background: c.dot,
                   color: isLight ? "#ffffff" : "#04110a",
@@ -665,7 +664,7 @@ export function SessionReadinessModal({
                   fontWeight: 700,
                   fontFamily: "inherit",
                   cursor: "pointer",
-                  transition: "all 150ms ease",
+                  transition: "all var(--transition-fast)",
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -681,7 +680,7 @@ export function SessionReadinessModal({
               style={{
                 minWidth: "170px",
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: `1px solid ${c.accentBorder}`,
                 background: c.accentLight,
                 color: c.accentText,
@@ -700,7 +699,7 @@ export function SessionReadinessModal({
               style={{
                 minWidth: "170px",
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: "1px solid #f59e0b",
                 background: "rgba(245, 158, 11, 0.12)",
                 color: "#f59e0b",
@@ -718,7 +717,7 @@ export function SessionReadinessModal({
               style={{
                 minWidth: "170px",
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: `1px solid ${c.border}`,
                 background: c.innerBg,
                 color: c.textMutedStrong,
@@ -737,7 +736,7 @@ export function SessionReadinessModal({
               disabled={isRescanning}
               style={{
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
                 color: c.textMutedStrong,
@@ -757,7 +756,7 @@ export function SessionReadinessModal({
               onClick={onSettingsRedirect}
               style={{
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
                 color: c.textMutedStrong,
@@ -776,7 +775,7 @@ export function SessionReadinessModal({
               onClick={onClose}
               style={{
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
                 color: c.textMuted,
@@ -795,7 +794,7 @@ export function SessionReadinessModal({
               onClick={() => setHelpOpen(true)}
               style={{
                 height: "42px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-md)",
                 border: `1px solid ${c.border}`,
                 background: "transparent",
                 color: c.textMutedStrong,
