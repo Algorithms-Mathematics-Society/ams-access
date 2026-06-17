@@ -345,15 +345,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => void handlePasswordReset()}
                 disabled={resetState === "sending"}
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  color: "var(--color-accent-base)",
-                  cursor: "pointer",
-                  font: "inherit",
-                  textDecoration: "underline",
-                }}
+                className="login-textlink"
               >
                 {resetState === "sending" ? "Sending…" : "Forgot password?"}
               </button>
@@ -361,15 +353,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => setHelpOpen(true)}
-              style={{
-                background: "none",
-                border: "none",
-                padding: 0,
-                color: "var(--color-accent-base)",
-                cursor: "pointer",
-                font: "inherit",
-                textDecoration: "underline",
-              }}
+              className="login-textlink login-textlink--quiet"
             >
               Can&apos;t sign in? Get help
             </button>
