@@ -108,7 +108,12 @@ export function deriveContestantReadiness({
     const failedOptional = report.optional_checks.filter((c) => c.outcome !== "pass").length;
 
     // Honor a hard policy block regardless of the per-check tally (a Blocked
-    // decision must never be overridden by a passing check count).
+    // decision must never be overridden by a passing check count). When the block
+    // has no failing per-check (a server-side eligibility/window block), say so
+    // instead of a nonsensical "Fix 0 required checks".
+    if (report.decision === "blocked" && failedRequired === 0) {
+      return make("blocked_by_policy", "Entry is blocked by the contest policy.");
+    }
     if (report.decision === "blocked" || failedRequired > 0) {
       return make(
         "needs_action",

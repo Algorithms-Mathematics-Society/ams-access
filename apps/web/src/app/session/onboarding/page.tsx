@@ -1733,8 +1733,12 @@ function Stage9_FaceCalibration({
   }, [captured]);
 
   useEffect(() => {
+    // Test-account face auto-pass — build-time relax flag required (see the
+    // onboarding fast-path note); never honor the localStorage email alone.
+    if (!isGatingRelaxed()) return;
     const email = (localStorage.getItem("ams_user_email") ?? "").trim().toLowerCase();
     if (email !== "tester@ams.local") return;
+    warnGatingRelaxed("tester@ams.local face scan auto-passed");
 
     setDetectorReady(true);
     setPhaseIdx(0);
@@ -1751,8 +1755,10 @@ function Stage9_FaceCalibration({
 
   // ── Init: camera + TensorFlow.js BlazeFace ───────────────────
   useEffect(() => {
+    // Skip the real BlazeFace init only when the relaxed test account is active;
+    // a production build always runs the real face scan regardless of localStorage.
     const email = (localStorage.getItem("ams_user_email") ?? "").trim().toLowerCase();
-    if (email === "tester@ams.local") return;
+    if (isGatingRelaxed() && email === "tester@ams.local") return;
 
     let cancelled = false;
 
@@ -3398,8 +3404,18 @@ export default function OnboardingPage() {
   const externalDisplayOverride = overrides.some((o) => o.check_kind === "external_display");
 
   useEffect(() => {
+    // The tester@ams.local fast-path skips all onboarding gates. It is keyed on a
+    // candidate-controllable localStorage value, so it MUST also require the
+    // build-time relax flag — otherwise a candidate could set the email in devtools
+    // and bypass proctoring in a shipping build. Flag off ⇒ no test account.
+    if (!isGatingRelaxed()) {
+      setIsTestAccount(false);
+      return;
+    }
     const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
-    setIsTestAccount(email.trim().toLowerCase() === "tester@ams.local");
+    const isTester = email.trim().toLowerCase() === "tester@ams.local";
+    if (isTester) warnGatingRelaxed("tester@ams.local onboarding fast-path active");
+    setIsTestAccount(isTester);
   }, []);
 
   useEffect(() => {

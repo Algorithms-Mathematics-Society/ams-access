@@ -366,10 +366,6 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
   };
 
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return unavailable;
-  // A missing/blank status is UNKNOWN, not blocked — surface "unavailable"
-  // (refresh / contact support) instead of a hard "BLOCKED" that reads like an
-  // eligibility denial. A known-but-unhandled status still falls through to blocked.
-  if (!status) return unavailable;
 
   const verificationOpen = start - verificationWindowMinutes * 60 * 1000;
   const verificationOpensAt = formatContestClock(verificationOpen, c.timezone);
@@ -410,6 +406,13 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
       disabledTitle: "This contest has ended",
     };
   }
+
+  // A missing/blank status is UNKNOWN — checked AFTER the time-based ENDED branch
+  // above so an ended contest still surfaces its results CTA. For a live/upcoming
+  // window we can't confirm eligibility, so show "unavailable" (refresh / contact
+  // support), not a hard "blocked". A known-but-unhandled status falls through to
+  // the blocked default below.
+  if (!status) return unavailable;
 
   if (now < verificationOpen) {
     const opensIn = formatDurationUntil(verificationOpen, now);
