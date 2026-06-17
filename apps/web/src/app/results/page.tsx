@@ -6,7 +6,8 @@ import { resolveApiBase } from "@/lib/api-base";
 
 const API_URL = resolveApiBase();
 import { STORAGE_KEYS } from "@/constants/storage-keys";
-import { verdictColor, verdictLabel } from "@/lib/verdict";
+import { verdictColor, verdictLabel, type VerdictCode } from "@/lib/verdict";
+import { VerdictBadge } from "@/lib/VerdictBadge";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -586,11 +587,12 @@ function ResultsView() {
                                 <td
                                   style={{
                                     padding: "7px 0",
-                                    color: verdictColor(s.final_verdict),
-                                    fontWeight: 600,
                                   }}
                                 >
-                                  {s.final_verdict ? verdictLabel(s.final_verdict) : s.status}
+                                  <VerdictBadge
+                                    variant="full"
+                                    code={(s.final_verdict ?? s.status) as VerdictCode}
+                                  />
                                 </td>
                                 <td style={{ padding: "7px 0", color: "#94a3b8" }}>{s.score}</td>
                                 <td style={{ padding: "7px 0", color: "#94a3b8" }}>
