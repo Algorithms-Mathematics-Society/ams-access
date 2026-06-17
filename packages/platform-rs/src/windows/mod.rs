@@ -96,6 +96,14 @@ const RESTRICTED: &[&str] = &[
     "autohotkey64.exe",
     "charles.exe",
     "fiddler.exe",
+    // Interception / tunnel tools — no legitimate exam use (F15). VPN clients and
+    // Burp (runs under javaw.exe) are intentionally NOT here: VPN needs the
+    // organizer-override design and Burp needs behavioral detection — both are
+    // deferred to the network-cluster slice.
+    "mitmproxy.exe",
+    "mitmdump.exe",
+    "mitmweb.exe",
+    "ngrok.exe",
 ];
 
 /// Processes whose mere presence is sufficient to declare active screen capture.
