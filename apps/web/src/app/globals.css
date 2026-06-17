@@ -125,7 +125,7 @@ input::placeholder {
    ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.25); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.25); border-radius: var(--radius-sm); }
 
 /* ─────────────────────────────────────────────────────────────
    ACCESSIBLE FOCUS — one authoritative keyboard-focus ring for every control.
@@ -373,7 +373,7 @@ summary:focus-visible,
 .login-brand-feature-icon {
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--color-accent-hover);
   border: 1px solid var(--color-accent-border);
   display: flex;
@@ -458,7 +458,7 @@ summary:focus-visible,
   width: 100%;
   background: var(--color-obsidian-inner);
   border: 1px solid var(--color-border-input);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--color-text-primary);
   font-size: 12px;
   padding: 11px 13px;
@@ -483,7 +483,7 @@ summary:focus-visible,
   background: var(--color-obsidian-raised);
   color: var(--color-accent-base);
   border: 1px solid var(--color-accent-base);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
@@ -505,7 +505,7 @@ summary:focus-visible,
   padding: 10px 12px;
   border: 1px solid var(--color-border-error);
   background: rgba(239,68,68,0.06);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
   color: #fca5a5;
@@ -617,7 +617,7 @@ summary:focus-visible,
 .login-modal-close {
   background: transparent;
   border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: #d8b4fe;
   font-family: inherit;
   font-size: 10px;
@@ -769,7 +769,7 @@ summary:focus-visible,
 }
 .contest-editor-pane--codemirror .cm-scroller::-webkit-scrollbar-thumb {
   background: rgb(var(--accent-rgb) / 0.2);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 /* ── Contest area icon buttons ─────────────────────────────────────────── */
@@ -781,7 +781,7 @@ summary:focus-visible,
   border: none;
   cursor: pointer;
   padding: 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   transition: background 0.14s ease, color 0.14s ease, opacity 0.14s ease;
   flex-shrink: 0;
 }
@@ -1094,7 +1094,7 @@ summary:focus-visible,
   align-items: center;
   justify-content: center;
   padding: 14px 64px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border: 1px solid rgb(var(--accent-rgb) / 0.32);
   background: linear-gradient(140deg, #5e18b0 0%, #9333ea 52%, var(--color-accent-light) 100%);
   color: rgba(255, 255, 255, 0.92);
