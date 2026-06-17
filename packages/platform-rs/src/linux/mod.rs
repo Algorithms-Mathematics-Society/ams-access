@@ -44,7 +44,10 @@ const RESTRICTED: &[&str] = &[
     "peek",
     "byzanz",
     "byzanz-record",
-    "ffmpeg",
+    // NOTE: `ffmpeg` is intentionally NOT listed — it is spawned as a decode
+    // worker by browsers/Electron/the Tauri webview itself, so a basename match
+    // would kill the exam UI. Detecting recording specifically needs cmdline
+    // arg inspection (`-f x11grab`/`v4l2`/`kmsgrab`), a separate follow-up.
     // Remote-access / screen-sharing
     "nomachine",
     "parsec",
@@ -716,10 +719,14 @@ fn set_touchpad_enabled(enabled: bool) {
         } else {
             "org.kde.touchpad.disable"
         };
-        for kded in ["org.kde.kded6", "org.kde.kded5"] {
-            let _ = std::process::Command::new("qdbus")
-                .args([kded, "/modules/touchpad", method])
-                .output();
+        // Try both the `qdbus`/`qdbus6` binary names and the Plasma 6/5 KDED
+        // service names; the wrong combinations just no-op.
+        for bin in ["qdbus", "qdbus6"] {
+            for kded in ["org.kde.kded6", "org.kde.kded5"] {
+                let _ = std::process::Command::new(bin)
+                    .args([kded, "/modules/touchpad", method])
+                    .output();
+            }
         }
         // fall through to xinput as well (covers KDE on X11).
     }
