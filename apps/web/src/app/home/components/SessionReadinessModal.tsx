@@ -164,6 +164,8 @@ export function SessionReadinessModal({
   }, [contestId, entryWindowRefreshIndex, sessionType]);
 
   const score = calculateReadinessScore(readiness);
+  const requiredReportChecks =
+    activeReport?.required_checks.filter((check) => check.kind !== "network") ?? [];
   const context = useMemo(
     () =>
       deriveContestantReadiness({
@@ -202,12 +204,11 @@ export function SessionReadinessModal({
           ? { color: "#fca5a5", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.26)" }
           : { color: c.accentText, bg: c.accentLight, border: c.accentBorder };
 
-  const requiredPolicyChecks = activeReport?.required_checks ?? [];
+  const requiredPolicyChecks = requiredReportChecks;
   const requiredChecksPassed =
     !!activeReport &&
     requiredPolicyChecks.every((check) => check.outcome === "pass" && !check.blocking);
-  const policyAllowsProceed =
-    !!activeReport && activeReport.decision !== "blocked" && requiredChecksPassed;
+  const policyAllowsProceed = !!activeReport && requiredChecksPassed;
   const entryWindowAllowed = entryWindow.status === "allowed";
   const canProceed = scanStatus === "done" && entryWindowAllowed && policyAllowsProceed;
   const primaryActionLabel = canProceed
@@ -220,7 +221,9 @@ export function SessionReadinessModal({
         ? "Open settings"
         : "Back to contests";
   const requiredPreflightItems = activeReport
-    ? activeReport.required_checks.map((check) => toPreflightPolicyItem(check, "required"))
+    ? activeReport.required_checks
+        .filter((check) => check.kind !== "network")
+        .map((check) => toPreflightPolicyItem(check, "required"))
     : [
         {
           key: "required-policy-pending",
@@ -259,6 +262,7 @@ export function SessionReadinessModal({
     }
 
     const checkLog = (kind: string, prefix: string, label: string) => {
+      if (kind === "network") return null;
       const check = activeReport.checks.find((item) => item.kind === kind);
       if (!check) return `[${prefix}] ${label}: unavailable`;
       const outcome = check.outcome === "pass" ? "PASS" : "FAIL";
@@ -268,7 +272,6 @@ export function SessionReadinessModal({
 
     return [
       `Readiness report received at ${new Date(activeReport.generated_at_ms).toLocaleTimeString()}`,
-      checkLog("network", "NET", "Network connectivity"),
       checkLog("microphone", "AUD", "Microphone"),
       checkLog("camera", "CAM", "Camera"),
       checkLog("virtualization", "SEC", "Virtual machine check"),
@@ -276,7 +279,7 @@ export function SessionReadinessModal({
       checkLog("restricted_apps", "SEC", "Restricted app check"),
       checkLog("platform", "SEC", "Platform compatibility"),
       `Entry decision: ${activeReport.decision.toUpperCase()}`,
-    ];
+    ].filter((log): log is string => Boolean(log));
   }, [activeReport, entryWindow.reason, entryWindow.status, entryWindowChecking, scanStatus]);
 
   async function handleRescan() {

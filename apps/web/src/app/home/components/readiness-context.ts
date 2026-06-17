@@ -85,6 +85,9 @@ export function deriveContestantReadiness({
   activeSession?: Pick<ActiveSession, "contest_id" | "updated_at"> | null;
   now?: number;
 }): ContestantReadinessContext {
+  const reportRequiredChecks =
+    report?.required_checks.filter((check) => check.kind !== "network") ?? [];
+
   // ── 1. Still scanning ──────────────────────────────────────────
   const anyChecking = Object.values(readiness).some((s) => s === "checking");
   if (anyChecking || entryWindowStatus === "checking") {
@@ -93,24 +96,17 @@ export function deriveContestantReadiness({
 
   // ── 2. Entry window blocked by server ─────────────────────────
   if (entryWindowStatus === "blocked") {
-    return make(
-      "blocked_by_policy",
-      entryWindowReason?.trim() || "Contest entry is not open."
-    );
+    return make("blocked_by_policy", entryWindowReason?.trim() || "Contest entry is not open.");
   }
 
   // ── 3. Derive from policy report when available ────────────────
   if (report) {
     // Count failures against required checks (any non-pass outcome).
-    const failedRequired = report.required_checks.filter(
-      (c) => c.outcome !== "pass"
-    ).length;
+    const failedRequired = reportRequiredChecks.filter((c) => c.outcome !== "pass").length;
     // Count advisory warnings from optional checks.
-    const failedOptional = report.optional_checks.filter(
-      (c) => c.outcome !== "pass"
-    ).length;
+    const failedOptional = report.optional_checks.filter((c) => c.outcome !== "pass").length;
 
-    if (report.decision === "blocked" || failedRequired > 0) {
+    if (failedRequired > 0) {
       return make(
         "needs_action",
         `Fix ${pluralChecks(failedRequired)} before entering.`,
@@ -152,19 +148,12 @@ export function deriveContestantReadiness({
 
   if (failedKeys.length > 0) {
     const n = failedKeys.length;
-    return make(
-      "needs_action",
-      `Fix ${pluralChecks(n)} before entering.`,
-      n,
-      0
-    );
+    return make("needs_action", `Fix ${pluralChecks(n)} before entering.`, n, 0);
   }
 
   // All statuses ok, no report.
   if (activeSession) {
-    const ago = activeSession.updated_at
-      ? formatTimeAgo(activeSession.updated_at, now)
-      : null;
+    const ago = activeSession.updated_at ? formatTimeAgo(activeSession.updated_at, now) : null;
     return make("ready", ago ? `Resume available. Last verified ${ago}.` : "Resume available.");
   }
 

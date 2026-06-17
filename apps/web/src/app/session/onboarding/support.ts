@@ -8,6 +8,12 @@ export const API_URL = resolveApiBase();
 export const BLAZEFACE_MODEL_URL = "/models/blazeface/model.json";
 
 export function getNetworkProbeHost() {
+  // Readiness uses a neutral connectivity canary so AMS service outages do not
+  // look like local network failures.
+  return "www.google.com";
+}
+
+export function getNetworkLockdownAllowlistHost() {
   try {
     return new URL(API_URL).hostname;
   } catch {}
