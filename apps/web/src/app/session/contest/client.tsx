@@ -5025,7 +5025,7 @@ export default function ContestPageClient() {
                         e.currentTarget.style.background =
                           "color-mix(in srgb, var(--color-accent-base), #fff 12%)";
                         e.currentTarget.style.borderColor = "var(--color-accent-light)";
-                        e.currentTarget.style.transform = "translateY(-1px)";
+                        e.currentTarget.style.transform = "translateY(-1px) scale(1.02)";
                         e.currentTarget.style.boxShadow =
                           "0 4px 14px rgb(var(--accent-rgb) / 0.35)";
                       }}
@@ -5042,7 +5042,7 @@ export default function ContestPageClient() {
                       }}
                       onMouseUp={(e) => {
                         if (!saving && !isSubmitting)
-                          e.currentTarget.style.transform = "translateY(-1px)";
+                          e.currentTarget.style.transform = "translateY(-1px) scale(1.02)";
                       }}
                     >
                       {isSubmitting || saving ? (
@@ -5255,10 +5255,11 @@ export default function ContestPageClient() {
                       {(() => {
                         const latestCode = (latestAttempt.final_verdict ??
                           latestAttempt.status) as VerdictCode;
-                        // key by code so the reveal re-fires each time the verdict resolves anew.
+                        // key by attempt+code so the reveal re-fires even when two consecutive
+                        // attempts resolve to the same verdict (e.g. AC → AC).
                         return (
                           <VerdictBadge
-                            key={String(latestCode)}
+                            key={`${latestAttempt?.id ?? ""}-${String(latestCode)}`}
                             variant="chip"
                             code={latestCode}
                             reveal
@@ -6468,7 +6469,7 @@ export default function ContestPageClient() {
               <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>
                 Submitting your session…
               </div>
-              <div style={{ fontSize: 13, color: "#64748b" }}>
+              <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
                 Please stay connected. Do not close the app.
               </div>
               <div
@@ -6483,13 +6484,20 @@ export default function ContestPageClient() {
               >
                 Taking too long? Your work is autosaved — it&rsquo;s safe to leave.
               </div>
+              {/*
+               * Escape hatches while auto-submit is in-flight. Navigating away is
+               * intentionally allowed here: the candidate's work is already autosaved
+               * and the submission/teardown promise will continue to resolve after
+               * unmount. A stuck network request must never trap the candidate on
+               * this screen.
+               */}
               <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
                 <button
                   onClick={() => router.push("/home")}
                   style={{
                     padding: "10px 24px",
                     background: "rgba(255,255,255,0.08)",
-                    color: "#cbd5e1",
+                    color: "var(--text-soft)",
                     border: "1px solid rgba(255,255,255,0.12)",
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
@@ -6502,7 +6510,7 @@ export default function ContestPageClient() {
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "#cbd5e1";
+                    e.currentTarget.style.color = "var(--text-soft)";
                   }}
                 >
                   Back to home
@@ -6518,7 +6526,7 @@ export default function ContestPageClient() {
                   style={{
                     padding: "10px 24px",
                     background: "rgba(255,255,255,0.08)",
-                    color: "#cbd5e1",
+                    color: "var(--text-soft)",
                     border: "1px solid rgba(255,255,255,0.12)",
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
@@ -6531,7 +6539,7 @@ export default function ContestPageClient() {
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "#cbd5e1";
+                    e.currentTarget.style.color = "var(--text-soft)";
                   }}
                 >
                   Check results status
