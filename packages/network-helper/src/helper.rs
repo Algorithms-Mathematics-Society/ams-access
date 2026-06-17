@@ -69,14 +69,12 @@ const IP6TABLES: &str = "ip6tables";
 const CHAIN: &str = "AMS_PROCTOR";
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 const MARKER_PATH: &str = "/run/ams-proctor.lock";
 
 /// Persisted lockdown state. Lives in /run (tmpfs) so it shares the iptables
 /// rules' boot-scoped lifetime: a reboot clears both; a same-boot helper
 /// restart preserves both.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Marker {
     token: String,
@@ -84,7 +82,6 @@ struct Marker {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 #[derive(Debug, PartialEq)]
 enum MarkerState {
     Absent,
@@ -93,7 +90,6 @@ enum MarkerState {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 #[derive(Debug, PartialEq)]
 enum StartupAction {
     ReApply(Vec<String>),
@@ -102,7 +98,6 @@ enum StartupAction {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 #[derive(Debug, PartialEq)]
 enum DisableDecision {
     Proceed,
@@ -113,7 +108,6 @@ enum DisableDecision {
 /// Decide what a starting daemon should do with the firewall. Fail-closed:
 /// only a confidently-absent marker permits a flush.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 fn startup_action(state: MarkerState) -> StartupAction {
     match state {
         MarkerState::Present(m) => StartupAction::ReApply(m.ips),
@@ -125,7 +119,6 @@ fn startup_action(state: MarkerState) -> StartupAction {
 /// Authorize a disable request against the stored marker. Only the owning
 /// session's exact, non-empty token may lift an active lockdown.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // consumed in Task 2/3
 fn authorize_disable(stored: Option<&Marker>, presented_token: &str) -> DisableDecision {
     match stored {
         None => DisableDecision::NoOp,
@@ -175,19 +168,16 @@ fn remove_marker_at(path: &std::path::Path) {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // wired in Task 3
 fn read_marker() -> MarkerState {
     read_marker_at(std::path::Path::new(MARKER_PATH))
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // wired in Task 3
 fn write_marker(marker: &Marker) -> std::io::Result<()> {
     write_marker_at(std::path::Path::new(MARKER_PATH), marker)
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // wired in Task 3
 fn remove_marker() {
     remove_marker_at(std::path::Path::new(MARKER_PATH))
 }
@@ -196,8 +186,15 @@ fn remove_marker() {
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
     Ping,
-    Enable { ips: Vec<String> },
-    Disable,
+    Enable {
+        ips: Vec<String>,
+        #[serde(default)]
+        token: String,
+    },
+    Disable {
+        #[serde(default)]
+        token: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -225,16 +222,30 @@ pub fn run() {
 
     secure_socket(socket_path);
 
-    // A starting daemon implies there is NO active exam, so any AMS_PROCTOR chain
-    // still present in the kernel is a leftover from a crashed/rebooted session.
-    // The app-side recovery only flushes when it can reach a *running* helper, so
-    // if we don't clear it here a post-reboot candidate is stranded offline behind
-    // stale DROP rules. Flush both tables before accepting any client. teardown_chain
-    // swallows all errors (incl. ip6tables being absent), so this is safe.
+    // Marker-driven recovery (fail-closed). A starting daemon may be a reboot
+    // (no marker → flush stale rules) OR a same-boot restart mid-exam (marker
+    // present → re-apply, never drop the live lockdown). An unreadable marker
+    // leaves existing rules untouched.
     #[cfg(target_os = "linux")]
     {
-        teardown_chain(IPTABLES);
-        teardown_chain(IP6TABLES);
+        let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        match startup_action(read_marker()) {
+            StartupAction::ReApply(ips) => {
+                if let Err(e) = iptables_enable(&ips) {
+                    eprintln!("AMS helper: startup re-apply failed (rules left as-is): {e}");
+                }
+            }
+            StartupAction::Flush => {
+                teardown_chain(IPTABLES);
+                teardown_chain(IP6TABLES);
+            }
+            StartupAction::LeaveAsIs => {
+                eprintln!(
+                    "AMS helper: lock file unreadable at startup; leaving existing \
+                     firewall in place (fail-closed)"
+                );
+            }
+        }
     }
 
     eprintln!("AMS network helper ready on {socket_path}");
@@ -486,14 +497,40 @@ fn pid_path(pid: libc::pid_t) -> Result<String, String> {
 fn dispatch(json: &str) -> String {
     match serde_json::from_str::<Request>(json.trim()) {
         Ok(Request::Ping) => json_ok(),
-        Ok(Request::Enable { ips }) => match firewall_enable(&ips) {
-            Ok(()) => json_ok(),
-            Err(e) => json_err(&e),
-        },
-        Ok(Request::Disable) => match firewall_disable() {
-            Ok(()) => json_ok(),
-            Err(e) => json_err(&e),
-        },
+        Ok(Request::Enable { ips, token }) => {
+            let result = {
+                #[cfg(target_os = "linux")]
+                {
+                    firewall_enable(&ips, &token)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = &token;
+                    firewall_enable(&ips)
+                }
+            };
+            match result {
+                Ok(()) => json_ok(),
+                Err(e) => json_err(&e),
+            }
+        }
+        Ok(Request::Disable { token }) => {
+            let result = {
+                #[cfg(target_os = "linux")]
+                {
+                    firewall_disable(&token)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = &token;
+                    firewall_disable()
+                }
+            };
+            match result {
+                Ok(()) => json_ok(),
+                Err(e) => json_err(&e),
+            }
+        }
         Err(e) => json_err(&format!("invalid request: {e}")),
     }
 }
@@ -510,13 +547,47 @@ fn firewall_disable() -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn firewall_enable(ips: &[String]) -> Result<(), String> {
-    iptables_enable(ips)
+static FIREWALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Marker-first enable: persist intent, then apply. A crash between the two
+/// leaves a marker → next startup re-applies (fail-closed). On apply failure
+/// remove the marker so we never claim locked while open.
+#[cfg(target_os = "linux")]
+fn firewall_enable(ips: &[String], token: &str) -> Result<(), String> {
+    let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let marker = Marker {
+        token: token.to_string(),
+        ips: ips.to_vec(),
+    };
+    write_marker(&marker).map_err(|e| format!("write marker: {e}"))?;
+    if let Err(e) = iptables_enable(ips) {
+        remove_marker();
+        return Err(e);
+    }
+    Ok(())
 }
 
+/// Token-gated, marker-first disable: only the owning session lifts the
+/// lockdown. Remove the marker before the rules so a crash mid-disable lands
+/// on 'no marker → flush → open' at the next startup.
 #[cfg(target_os = "linux")]
-fn firewall_disable() -> Result<(), String> {
-    iptables_disable()
+fn firewall_disable(token: &str) -> Result<(), String> {
+    let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let state = read_marker();
+    let stored = match &state {
+        MarkerState::Present(m) => Some(m),
+        MarkerState::Absent => None,
+        // Unreadable lock: cannot authorize, leave rules in place (fail-closed).
+        MarkerState::Corrupt => return Err("disable refused: lock state unreadable".to_string()),
+    };
+    match authorize_disable(stored, token) {
+        DisableDecision::NoOp => Ok(()),
+        DisableDecision::Reject => Err("unauthorized disable: token mismatch".to_string()),
+        DisableDecision::Proceed => {
+            remove_marker();
+            iptables_disable()
+        }
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
