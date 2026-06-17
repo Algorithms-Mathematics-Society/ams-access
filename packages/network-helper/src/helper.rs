@@ -136,6 +136,62 @@ fn authorize_disable(stored: Option<&Marker>, presented_token: &str) -> DisableD
     }
 }
 
+#[cfg(target_os = "linux")]
+fn read_marker_at(path: &std::path::Path) -> MarkerState {
+    match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => MarkerState::Absent,
+        Err(_) => MarkerState::Corrupt, // exists but unreadable → fail-closed
+        Ok(s) => match serde_json::from_str::<Marker>(&s) {
+            Ok(m) => MarkerState::Present(m),
+            Err(_) => MarkerState::Corrupt,
+        },
+    }
+}
+
+/// Atomic write: a temp file in the same dir + rename, created 0600 so the
+/// token is never world-readable and a reader never sees a half-written file.
+#[cfg(target_os = "linux")]
+fn write_marker_at(path: &std::path::Path, marker: &Marker) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let json = serde_json::to_string(marker).map_err(std::io::Error::other)?;
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
+#[cfg(target_os = "linux")]
+fn remove_marker_at(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // wired in Task 3
+fn read_marker() -> MarkerState {
+    read_marker_at(std::path::Path::new(MARKER_PATH))
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // wired in Task 3
+fn write_marker(marker: &Marker) -> std::io::Result<()> {
+    write_marker_at(std::path::Path::new(MARKER_PATH), marker)
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // wired in Task 3
+fn remove_marker() {
+    remove_marker_at(std::path::Path::new(MARKER_PATH))
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
@@ -785,8 +841,9 @@ fn iptables_disable() -> Result<(), String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::{
-        authorize_disable, should_build_v6_chain, split_ip_families, startup_action,
-        DisableDecision, Marker, MarkerState, StartupAction,
+        authorize_disable, read_marker_at, remove_marker_at, should_build_v6_chain,
+        split_ip_families, startup_action, write_marker_at, DisableDecision, Marker, MarkerState,
+        StartupAction,
     };
 
     #[test]
@@ -883,5 +940,46 @@ mod tests {
         let json = serde_json::to_string(&m).unwrap();
         let back: Marker = serde_json::from_str(&json).unwrap();
         assert_eq!(m, back);
+    }
+
+    #[test]
+    fn marker_write_then_read_round_trips_on_disk() {
+        let path = std::env::temp_dir().join(format!("ams-marker-rt-{}.lock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let m = Marker {
+            token: "tok".into(),
+            ips: vec!["1.1.1.1".into()],
+        };
+        write_marker_at(&path, &m).expect("write");
+        assert_eq!(read_marker_at(&path), MarkerState::Present(m));
+        remove_marker_at(&path);
+        assert_eq!(read_marker_at(&path), MarkerState::Absent);
+    }
+
+    #[test]
+    fn unreadable_marker_contents_are_corrupt_not_absent() {
+        let path = std::env::temp_dir().join(format!("ams-marker-bad-{}.lock", std::process::id()));
+        std::fs::write(&path, b"not json").unwrap();
+        assert_eq!(read_marker_at(&path), MarkerState::Corrupt);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn written_marker_is_owner_only_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let path =
+            std::env::temp_dir().join(format!("ams-marker-perm-{}.lock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        write_marker_at(
+            &path,
+            &Marker {
+                token: "t".into(),
+                ips: vec![],
+            },
+        )
+        .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_file(&path);
     }
 }
