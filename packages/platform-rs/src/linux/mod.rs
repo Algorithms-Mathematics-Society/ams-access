@@ -32,6 +32,41 @@ const RESTRICTED: &[&str] = &[
     "skype",
     "teams",
     "chrome-remote-desktop",
+    // Screen recorders (common on Linux; argv[0] basename match)
+    "simplescreenrecorder",
+    "recordmydesktop",
+    "wf-recorder",
+    "kooha",
+    "gpu-screen-recorder",
+    "vokoscreen",
+    "vokoscreenng",
+    "kazam",
+    "peek",
+    "byzanz",
+    "byzanz-record",
+    "ffmpeg",
+    // Remote-access / screen-sharing
+    "nomachine",
+    "parsec",
+    "parsecd",
+    "dwagent",
+    "dwservice",
+    "krfb",
+    "gnome-remote-desktop",
+    "vino-server",
+    "remmina",
+    "barrier",
+    "synergy",
+    "synergyc",
+    "synergys",
+    "deskreen",
+    // Comms apps that can screen-share
+    "telegram-desktop",
+    "telegram",
+    "signal-desktop",
+    "slack",
+    "element-desktop",
+    "whatsapp-for-linux",
 ];
 
 const VM_STRINGS: &[&str] = &[
@@ -50,9 +85,52 @@ const VM_STRINGS: &[&str] = &[
     "proxmox",
 ];
 
+/// Lowercase basename of a path-like string (after the last '/').
+fn lower_basename(path: &str) -> String {
+    let lower = path.to_lowercase();
+    lower.rsplit('/').next().unwrap_or(&lower).to_string()
+}
+
+/// Collect the identifying basenames for a pid: argv[0] from `/proc/<pid>/cmdline`
+/// AND the real executable from `readlink /proc/<pid>/exe`. The `/proc/exe` link
+/// is the kernel's record of the actual binary, which argv[0] spoofing cannot
+/// forge, so checking both catches a process that lies in its cmdline. NOTE:
+/// renaming the binary on disk evades both basenames — blocklists are advisory;
+/// this is defense-in-depth, not a guarantee. `/proc/<pid>/exe` is only readable
+/// for same-user (or root) processes; an unreadable link is skipped.
+fn proc_identity_names(pid: u32) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(raw) = std::fs::read(format!("/proc/{}/cmdline", pid)) {
+        if !raw.is_empty() {
+            let argv0 = raw.split(|&b| b == 0).next().unwrap_or(&[]);
+            let b = lower_basename(&String::from_utf8_lossy(argv0));
+            if !b.is_empty() {
+                names.push(b);
+            }
+        }
+    }
+    if let Ok(target) = std::fs::read_link(format!("/proc/{}/exe", pid)) {
+        // readlink may append " (deleted)" if the binary was replaced after exec.
+        let b = lower_basename(&target.to_string_lossy().replace(" (deleted)", ""));
+        if !b.is_empty() && !names.contains(&b) {
+            names.push(b);
+        }
+    }
+    names
+}
+
+/// Return the first RESTRICTED entry that exactly matches any of `names`
+/// (each already a lowercase basename). Pure — unit tested.
+fn match_restricted(names: &[String]) -> Option<&'static str> {
+    RESTRICTED
+        .iter()
+        .copied()
+        .find(|&r| names.iter().any(|n| n == r))
+}
+
 /// Scan /proc for running restricted processes.
 pub fn scan_processes() -> ProcessScanResult {
-    let mut found = Vec::new();
+    let mut found: Vec<String> = Vec::new();
 
     let Ok(proc_dir) = std::fs::read_dir("/proc") else {
         return ProcessScanResult { found, clean: true };
@@ -60,23 +138,11 @@ pub fn scan_processes() -> ProcessScanResult {
 
     for entry in proc_dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let cmdline_path = format!("/proc/{}/cmdline", name);
-        let Ok(raw) = std::fs::read(&cmdline_path) else {
+        let Ok(pid) = name.parse::<u32>() else {
             continue;
         };
-        if raw.is_empty() {
-            continue;
-        }
-        // cmdline is null-separated; argv[0] is the executable path
-        let exe = raw.split(|&b| b == 0).next().unwrap_or(&[]);
-        let exe_str = String::from_utf8_lossy(exe).to_lowercase();
-        // match only the basename so "/usr/bin/obs-studio" → "obs-studio"
-        let basename = exe_str.rsplit('/').next().unwrap_or(&exe_str).to_string();
-        for &r in RESTRICTED {
-            if basename == r && !found.contains(&r.to_string()) {
+        if let Some(r) = match_restricted(&proc_identity_names(pid)) {
+            if !found.iter().any(|f| f == r) {
                 found.push(r.to_string());
             }
         }
@@ -385,6 +451,10 @@ const GNOME_SHORTCUTS: &[(&str, &str, &str)] = &[
         "restore-shortcuts",
         "@as []",
     ),
+    // Hot corner: a mouse flick to the top-left opens the Activities overview
+    // (a desktop-switch surface) and is NOT a keybinding, so it must be turned
+    // off separately. Boolean key — disable value is `false`.
+    ("org.gnome.desktop.interface", "enable-hot-corners", "false"),
 ];
 
 const KDE_SHORTCUTS: &[(&str, &str, &str)] = &[
@@ -398,6 +468,14 @@ const KDE_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("kwin", "ExposeAll", "none"),
     ("kwin", "ExposeClass", "none"),
     ("kwin", "Overview", "none"),
+    // Virtual-desktop switching (the actual desktop-switch vectors — previously
+    // unblocked on KDE).
+    ("kwin", "Switch to Next Desktop", "none"),
+    ("kwin", "Switch to Previous Desktop", "none"),
+    ("kwin", "Switch One Desktop to the Left", "none"),
+    ("kwin", "Switch One Desktop to the Right", "none"),
+    ("kwin", "Switch One Desktop Up", "none"),
+    ("kwin", "Switch One Desktop Down", "none"),
     ("org.kde.plasmashell", "manage activities", "none"),
     ("org.kde.plasmashell", "next activity", "none"),
 ];
@@ -624,6 +702,28 @@ fn set_touchpad_enabled(enabled: bool) {
         return;
     }
 
+    // KDE: the xinput fallback below covers KDE on X11, but does nothing on
+    // Wayland. On KDE Wayland the touchpad is driven by the KDED `touchpad`
+    // module — ask it to disable/enable over DBus. BEST-EFFORT: the method lives
+    // under `org.kde.kded6` (Plasma 6) or `org.kde.kded5` (Plasma 5); a missing
+    // service / wrong version simply no-ops (no regression vs today). This path
+    // is unverified on a live KDE Wayland session and should be smoke-tested
+    // there. Runtime-only (not persisted) — `unlock` re-enables; matches xinput.
+    let is_kde = desktop.contains("kde") || desktop.contains("plasma");
+    if is_kde {
+        let method = if enabled {
+            "org.kde.touchpad.enable"
+        } else {
+            "org.kde.touchpad.disable"
+        };
+        for kded in ["org.kde.kded6", "org.kde.kded5"] {
+            let _ = std::process::Command::new("qdbus")
+                .args([kded, "/modules/touchpad", method])
+                .output();
+        }
+        // fall through to xinput as well (covers KDE on X11).
+    }
+
     // X11 fallback — xinput does nothing on Wayland but won't panic.
     let Ok(out) = std::process::Command::new("xinput").arg("list").output() else {
         return;
@@ -663,20 +763,8 @@ fn scan_restricted_pids() -> Vec<(String, u32)> {
         let Ok(pid) = fname.parse::<u32>() else {
             continue;
         };
-        let Ok(raw) = std::fs::read(format!("/proc/{}/cmdline", pid)) else {
-            continue;
-        };
-        if raw.is_empty() {
-            continue;
-        }
-        let exe = raw.split(|&b| b == 0).next().unwrap_or(&[]);
-        let exe_str = String::from_utf8_lossy(exe).to_lowercase();
-        let basename = exe_str.rsplit('/').next().unwrap_or(&exe_str).to_string();
-        for &r in RESTRICTED {
-            if basename == r {
-                result.push((r.to_string(), pid));
-                break;
-            }
+        if let Some(r) = match_restricted(&proc_identity_names(pid)) {
+            result.push((r.to_string(), pid));
         }
     }
     result
@@ -1219,7 +1307,7 @@ fn linux_process_alive(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::mint_token;
+    use super::{lower_basename, match_restricted, mint_token};
 
     #[test]
     fn mint_token_is_32_hex_chars_and_varies() {
@@ -1228,5 +1316,31 @@ mod tests {
         assert_eq!(a.len(), 32, "16 bytes hex-encoded = 32 chars");
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b, "two mints must differ");
+    }
+
+    #[test]
+    fn lower_basename_strips_dir_and_lowercases() {
+        assert_eq!(lower_basename("/usr/bin/OBS-Studio"), "obs-studio");
+        assert_eq!(lower_basename("ffmpeg"), "ffmpeg");
+        assert_eq!(lower_basename("/tmp/.mount_x/AppRun"), "apprun");
+    }
+
+    #[test]
+    fn match_restricted_matches_any_identity_name() {
+        // argv[0] lied as "bash" but the real exe basename is a recorder.
+        let names = vec!["bash".to_string(), "obs".to_string()];
+        assert_eq!(match_restricted(&names), Some("obs"));
+        // Newly-added recorder is caught.
+        assert_eq!(
+            match_restricted(&["gpu-screen-recorder".to_string()]),
+            Some("gpu-screen-recorder")
+        );
+        // Nothing restricted → None.
+        assert_eq!(
+            match_restricted(&["bash".to_string(), "firefox".to_string()]),
+            None
+        );
+        // Empty → None.
+        assert_eq!(match_restricted(&[]), None);
     }
 }
