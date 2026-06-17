@@ -396,10 +396,12 @@ type EditorFile = {
   content: string;
 };
 
-// Verdict dot/text color resolves to the canonical --verdict-* tokens so a
+// Verdict dot/text colour resolves to the canonical --verdict-* tokens so a
 // verdict reads identically here, in the trust strip, and on the results page.
-// (CE is now a distinct violet, not WA-red; RUNNING is blue so purple stays the
-// primary-action accent.) The BG/BORDER tints below match those same hues.
+// (CE is a distinct violet, not WA-red; RUNNING is blue so purple stays the
+// primary-action accent.) The BG/BORDER tints are DERIVED from those same tokens
+// via color-mix — re-hueing a verdict in globals.css updates every surface at
+// once, with no second hardcoded copy to drift out of sync.
 const VERDICT_COLORS: Record<string, string> = {
   AC: "var(--verdict-ac)",
   WA: "var(--verdict-wa)",
@@ -412,29 +414,33 @@ const VERDICT_COLORS: Record<string, string> = {
   QUEUED: "var(--verdict-running)",
   RUNNING: "var(--verdict-running)",
 };
+// A verdict hue at `pct`% opacity over the dark surface (equivalent to the old
+// rgba(...,pct/100) tints, but sourced from the one canonical token).
+const tint = (token: string, pct: number) =>
+  `color-mix(in srgb, var(${token}) ${pct}%, transparent)`;
 const VERDICT_BG: Record<string, string> = {
-  AC: "rgba(34,197,94,0.1)",
-  QUEUED: "rgba(96,165,250,0.1)",
-  RUNNING: "rgba(96,165,250,0.1)",
-  WA: "rgba(239,68,68,0.1)",
-  RE: "rgba(249,115,22,0.1)",
-  CE: "rgba(167,139,250,0.12)",
-  IE: "rgba(148,163,184,0.12)",
-  TLE: "rgba(245,158,11,0.1)",
-  MLE: "rgba(251,146,60,0.1)",
-  OLE: "rgba(251,146,60,0.1)",
+  AC: tint("--verdict-ac", 10),
+  QUEUED: tint("--verdict-running", 10),
+  RUNNING: tint("--verdict-running", 10),
+  WA: tint("--verdict-wa", 10),
+  RE: tint("--verdict-re", 10),
+  CE: tint("--verdict-ce", 12),
+  IE: tint("--verdict-ie", 12),
+  TLE: tint("--verdict-tle", 10),
+  MLE: tint("--verdict-mle", 10),
+  OLE: tint("--verdict-mle", 10),
 };
 const VERDICT_BORDER: Record<string, string> = {
-  AC: "rgba(34,197,94,0.28)",
-  QUEUED: "rgba(96,165,250,0.28)",
-  RUNNING: "rgba(96,165,250,0.28)",
-  WA: "rgba(239,68,68,0.28)",
-  RE: "rgba(249,115,22,0.28)",
-  CE: "rgba(167,139,250,0.3)",
-  IE: "rgba(148,163,184,0.3)",
-  TLE: "rgba(245,158,11,0.28)",
-  MLE: "rgba(251,146,60,0.28)",
-  OLE: "rgba(251,146,60,0.28)",
+  AC: tint("--verdict-ac", 28),
+  QUEUED: tint("--verdict-running", 28),
+  RUNNING: tint("--verdict-running", 28),
+  WA: tint("--verdict-wa", 28),
+  RE: tint("--verdict-re", 28),
+  CE: tint("--verdict-ce", 30),
+  IE: tint("--verdict-ie", 30),
+  TLE: tint("--verdict-tle", 28),
+  MLE: tint("--verdict-mle", 28),
+  OLE: tint("--verdict-mle", 28),
 };
 
 type ContestMeta = {
@@ -1244,7 +1250,6 @@ function FollowUpPane({
                           color: "#e2e8f0",
                           fontSize: "13px",
                           fontFamily: "system-ui, sans-serif",
-                          outline: "none",
                         }}
                       />
                       <button
@@ -4706,7 +4711,6 @@ export default function ContestPageClient() {
                         fontSize: "12px",
                         fontFamily: "Inter, system-ui, sans-serif",
                         padding: "0 9px",
-                        outline: "none",
                         cursor: "pointer",
                       }}
                     >
@@ -6841,7 +6845,7 @@ export default function ContestPageClient() {
           -webkit-appearance: none; appearance: none;
           width: 100%; height: 2px;
           background: rgba(255,255,255,0.08);
-          outline: none; border: none; cursor: pointer; margin: 10px 0; display: block;
+          border: none; cursor: pointer; margin: 10px 0; display: block;
         }
         .pb-body input[type="range"]::-webkit-slider-thumb {
           -webkit-appearance: none; appearance: none;

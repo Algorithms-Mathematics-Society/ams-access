@@ -205,7 +205,6 @@ const inputStyle: React.CSSProperties = {
   padding: "9px 11px",
   color: "#e2e8f0",
   fontSize: 13,
-  outline: "none",
   boxSizing: "border-box",
 };
 
