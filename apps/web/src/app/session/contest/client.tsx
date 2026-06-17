@@ -3694,7 +3694,7 @@ export default function ContestPageClient() {
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: "var(--modal-z-overlay)",
+            zIndex: "var(--modal-z-critical)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -6494,7 +6494,7 @@ export default function ContestPageClient() {
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                    transition: "background var(--transition-fast), color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.12)";
@@ -6523,7 +6523,7 @@ export default function ContestPageClient() {
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                    transition: "background var(--transition-fast), color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.12)";
@@ -6636,7 +6636,7 @@ export default function ContestPageClient() {
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                    transition: "background var(--transition-fast), color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.12)";
@@ -6697,7 +6697,7 @@ export default function ContestPageClient() {
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                    transition: "background var(--transition-fast), color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.12)";
@@ -6726,7 +6726,7 @@ export default function ContestPageClient() {
                     borderRadius: "var(--radius-sm)",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: `background var(--transition-fast), color var(--transition-fast)`,
+                    transition: "background var(--transition-fast), color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.12)";
