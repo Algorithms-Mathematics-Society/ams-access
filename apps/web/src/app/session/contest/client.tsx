@@ -92,9 +92,10 @@ function isSampleTestRow(tr: {
   is_hidden?: boolean | null;
 }): boolean {
   if (tr.hidden || tr.is_hidden) return false;
+  // The API returns an explicit is_sample boolean; a false means hidden/fallback.
+  if (tr.is_sample === false || tr.sample === false) return false;
   if (tr.is_sample === true || tr.sample === true) return true;
-  // No explicit sample flag and not flagged hidden → treat as visible/sample,
-  // mirroring how the Attempts expansion shows non-hidden tests.
+  // No flag at all (legacy rows) → treat as visible, mirroring the Attempts expansion.
   return true;
 }
 // Autosave backoff: after MAX_SAVE_RETRIES tight retries we stop the ~1.5s loop
