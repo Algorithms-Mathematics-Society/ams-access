@@ -915,11 +915,29 @@ fn emit_lockdown_event(kind: &str, detail: &str) {
     }
 }
 
+/// All visible X11 window IDs owned by `pid` (empty if xdotool fails). Checking
+/// the active window against the whole SET — not just one id — means a focus
+/// change to one of the app's OWN windows (a GTK file dialog, a WebKitGTK
+/// sub-surface) is not mistaken for the candidate switching away.
+fn our_window_ids(pid: &str) -> std::collections::HashSet<u64> {
+    std::process::Command::new("xdotool")
+        .args(["search", "--pid", pid, "--onlyvisible"])
+        .output()
+        .ok()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| l.trim().parse::<u64>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Spawn a native focus-loss watchdog (X11 only; no-op on Wayland or if xdotool
-/// is absent). Emits a `focus_loss` violation once per episode when the exam
-/// window stops being the active window. Detection only — the workspace watchdog
-/// handles desktop-switch correction; this never steals focus back, so it can't
-/// fight a legitimate system modal.
+/// is absent). Emits a `focus_loss` violation once per episode when the active
+/// window is none of the app's own windows. Detection only — the workspace
+/// watchdog handles desktop-switch correction; this never steals focus back, so
+/// it can't fight a legitimate system modal.
 fn spawn_focus_watchdog() {
     if std::env::var("DISPLAY").is_err() {
         return; // X11 only
@@ -927,28 +945,18 @@ fn spawn_focus_watchdog() {
     std::thread::Builder::new()
         .name("ams-focus-guard".into())
         .spawn(|| {
-            // Find our window (same approach as the workspace watchdog).
+            // Wait until at least one of our windows has mapped.
             let our_pid = std::process::id().to_string();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            let win_id: u64 = loop {
-                if let Some(id) = std::process::Command::new("xdotool")
-                    .args(["search", "--pid", &our_pid, "--onlyvisible"])
-                    .output()
-                    .ok()
-                    .and_then(|out| {
-                        String::from_utf8_lossy(&out.stdout)
-                            .lines()
-                            .filter_map(|l| l.trim().parse::<u64>().ok())
-                            .next()
-                    })
-                {
-                    break id;
+            loop {
+                if !our_window_ids(&our_pid).is_empty() {
+                    break;
                 }
                 if std::time::Instant::now() > deadline {
                     return; // xdotool unavailable or window never appeared
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
-            };
+            }
 
             // Debounce: emit only on the transition into "not focused", so a
             // sustained focus loss is one violation, not one per poll.
@@ -971,7 +979,14 @@ fn spawn_focus_watchdog() {
                 let Some(active) = active else {
                     continue; // active window unresolvable — don't flap
                 };
-                if active != win_id {
+                // Re-scan our windows each poll (xdotool search is ~ms) so a
+                // newly-mapped dialog counts as ours. An empty set means the scan
+                // transiently failed — skip rather than emit a false positive.
+                let ours = our_window_ids(&our_pid);
+                if ours.is_empty() {
+                    continue;
+                }
+                if !ours.contains(&active) {
                     if !lost {
                         lost = true;
                         emit_lockdown_event("focus_loss", "native_focus_lost");
@@ -1431,6 +1446,32 @@ mod tests {
         assert_eq!(lower_basename("/usr/bin/OBS-Studio"), "obs-studio");
         assert_eq!(lower_basename("ffmpeg"), "ffmpeg");
         assert_eq!(lower_basename("/tmp/.mount_x/AppRun"), "apprun");
+    }
+
+    #[test]
+    fn lockdown_callback_delivers_and_contains_panics() {
+        use super::{emit_lockdown_event, set_lockdown_event_callback};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+
+        // First registration wins, so this single callback handles both cases.
+        set_lockdown_event_callback(|kind, _detail| {
+            HITS.fetch_add(1, Ordering::SeqCst);
+            if kind == "boom" {
+                panic!("a panicking callback must be contained by emit_lockdown_event");
+            }
+        });
+
+        // Suppress the expected panic's backtrace noise from the contained call.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        emit_lockdown_event("focus_loss", "native_focus_lost");
+        // A panic here must NOT unwind out (on a real spawned thread it would
+        // escalate to process abort()).
+        emit_lockdown_event("boom", "x");
+        std::panic::set_hook(prev);
+
+        assert_eq!(HITS.load(Ordering::SeqCst), 2);
     }
 
     #[test]
