@@ -44,27 +44,27 @@ export function verdictColor(v: VerdictCode): string {
   }
 }
 
-// Plain-language labels (sentence case) — the de-jargoned copy from the #6 pass.
+// Standard CP verdict names — used by VerdictBadge and any text that names a verdict.
 export function verdictLabel(v: VerdictCode): string {
   switch (v) {
     case "AC":
       return "Accepted";
     case "WA":
-      return "Wrong answer";
+      return "Wrong Answer";
     case "TLE":
-      return "Too slow";
+      return "Time Limit Exceeded";
     case "MLE":
-      return "Out of memory";
+      return "Memory Limit Exceeded";
     case "RE":
-      return "Runtime error";
+      return "Runtime Error";
     case "CE":
-      return "Didn’t compile";
+      return "Compilation Error";
     case "OLE":
-      return "Too much output";
+      return "Output Limit Exceeded";
     case "IE":
-      return "Judge error";
+      return "Internal Error";
     case "RUNNING":
-      return "Running…";
+      return "Running";
     case "QUEUED":
       return "Queued";
     case "UNATTEMPTED":
@@ -72,4 +72,10 @@ export function verdictLabel(v: VerdictCode): string {
     default:
       return (v as string) ?? "—";
   }
+}
+
+// The bare verdict code for compact badges/chips (e.g. "WA"). Nullish → em-dash.
+export function verdictShort(v: VerdictCode): string {
+  if (v == null || v === "") return "—";
+  return v as string;
 }
