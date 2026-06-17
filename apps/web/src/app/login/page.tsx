@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
+import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
@@ -67,8 +68,8 @@ export default function LoginPage() {
         setError("That code didn't match — request a new one.");
         return;
       }
-      const data = (await res.json()) as { email?: string };
-      localStorage.setItem("ams_user_email", data.email || email.trim());
+      const data = (await res.json().catch(() => ({}))) as { email?: string };
+      localStorage.setItem(STORAGE_KEYS.USER_EMAIL, data.email ?? email.trim());
       setTimeout(() => router.push("/home"), 400);
     } catch {
       setOtpState("idle");
@@ -107,7 +108,7 @@ export default function LoginPage() {
 
     if (isGatingRelaxed() && email === TEST_EMAIL && password === TEST_PASSWORD) {
       warnGatingRelaxed("login test-account backdoor used");
-      localStorage.setItem("ams_user_email", email);
+      localStorage.setItem(STORAGE_KEYS.USER_EMAIL, email);
       setTimeout(() => router.push("/home"), 850);
       return;
     }
@@ -132,7 +133,7 @@ export default function LoginPage() {
         return;
       }
 
-      localStorage.setItem("ams_user_email", email);
+      localStorage.setItem(STORAGE_KEYS.USER_EMAIL, email);
       setTimeout(() => router.push("/home"), 850);
     } catch {
       setError("Cannot reach AMS Access. Check your internet connection and try again.");
@@ -147,8 +148,7 @@ export default function LoginPage() {
     setError(null);
     setEmail(TEST_EMAIL);
     setPassword(TEST_PASSWORD);
-    setLoading(true);
-    localStorage.setItem("ams_user_email", TEST_EMAIL);
+    localStorage.setItem(STORAGE_KEYS.USER_EMAIL, TEST_EMAIL);
     setTimeout(() => router.push("/home"), 250);
   }
 
@@ -331,6 +331,8 @@ export default function LoginPage() {
                   autoComplete="email"
                   required
                   disabled={otpStep === "code" || otpState !== "idle"}
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? "true" : undefined}
                   className="login-input"
                 />
               </div>
@@ -352,6 +354,8 @@ export default function LoginPage() {
                     }}
                     placeholder="••••••"
                     autoComplete="one-time-code"
+                    aria-describedby={error ? "login-error" : undefined}
+                    aria-invalid={error ? "true" : undefined}
                     className="login-input"
                     style={{ letterSpacing: "0.3em" }}
                   />
@@ -466,12 +470,12 @@ export default function LoginPage() {
                           cx="6"
                           cy="6"
                           r="4.5"
-                          stroke="rgba(168,85,247,0.25)"
+                          stroke="rgb(var(--accent-rgb) / 0.25)"
                           strokeWidth="1.5"
                         />
                         <path
                           d="M6 1.5A4.5 4.5 0 0 1 10.5 6"
-                          stroke="#a855f7"
+                          stroke="var(--color-accent-base)"
                           strokeWidth="1.5"
                           strokeLinecap="butt"
                         />
@@ -514,6 +518,8 @@ export default function LoginPage() {
                 setError(null);
                 setOtpStep("email");
                 setOtpCode("");
+                setOtpState("idle");
+                setLoading(false);
               }}
               className="login-sso-btn"
             >
