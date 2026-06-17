@@ -38,6 +38,7 @@ import {
   type RunVerdict,
   type SubmissionAttemptRecord,
 } from "./submission-state";
+import { countdownPhase, type CountdownPhase } from "./countdown";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -60,6 +61,7 @@ import {
   Plus,
   X,
   Settings2,
+  Lock,
 } from "lucide-react";
 
 const API_URL = resolveApiBase();
@@ -850,10 +852,13 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
 function useCountdown(endAt: string, onExpiry?: () => void) {
   const totalMsRef = useRef<number | null>(null);
   const firedExpiryRef = useRef(false);
-  const [state, setState] = useState({
+  const [state, setState] = useState<{
+    remaining: string;
+    phase: CountdownPhase;
+    percentLeft: number;
+  }>({
     remaining: "",
-    urgent: false,
-    pulse: false,
+    phase: "nominal",
     percentLeft: 1,
   });
 
@@ -868,9 +873,9 @@ function useCountdown(endAt: string, onExpiry?: () => void) {
         totalMsRef.current > 0 ? Math.max(0, Math.min(1, diff / totalMsRef.current)) : 0;
       if (diff <= 0) {
         setState((prev) =>
-          prev.remaining === "00:00:00" && !prev.urgent && !prev.pulse
+          prev.remaining === "00:00:00" && prev.phase === "expired"
             ? prev
-            : { remaining: "00:00:00", urgent: false, pulse: false, percentLeft: 0 }
+            : { remaining: "00:00:00", phase: "expired", percentLeft: 0 }
         );
         if (!firedExpiryRef.current && onExpiry) {
           firedExpiryRef.current = true;
@@ -883,12 +888,11 @@ function useCountdown(endAt: string, onExpiry?: () => void) {
       const m = Math.floor((diff % 3600000) / 60000);
       const s = Math.floor((diff % 60000) / 1000);
       const remaining = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-      const urgent = diff < 300000;
-      const pulse = diff >= 300000 && diff < 600000;
+      const phase = countdownPhase(diff);
       setState((prev) =>
-        prev.remaining === remaining && prev.urgent === urgent && prev.pulse === pulse
+        prev.remaining === remaining && prev.phase === phase
           ? prev
-          : { remaining, urgent, pulse, percentLeft }
+          : { remaining, phase, percentLeft }
       );
     }
     tick();
@@ -908,13 +912,40 @@ const CountdownBadge = memo(function CountdownBadge({
   endAt: string;
   onExpiry?: () => void;
 }) {
-  const { remaining, urgent, pulse, percentLeft } = useCountdown(endAt, onExpiry);
+  const { remaining, phase, percentLeft } = useCountdown(endAt, onExpiry);
   const R = 10;
   const CIRC = 2 * Math.PI * R;
-  const offset = CIRC * (1 - percentLeft);
-  const ringColor = urgent ? "#ef4444" : pulse ? "#f59e0b" : "var(--color-accent-base)";
+  // Expired freezes the ring full; otherwise it sweeps down with the clock.
+  const offset = phase === "expired" ? 0 : CIRC * (1 - percentLeft);
+  const PHASE_COLOR: Record<CountdownPhase, string> = {
+    nominal: "var(--color-accent-base)",
+    warning: "var(--verdict-tle)",
+    critical: "var(--verdict-wa)",
+    expired: "var(--text-dim)",
+  };
+  const color = PHASE_COLOR[phase];
+  const isCritical = phase === "critical";
+  const isExpired = phase === "expired";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+    <div
+      role="timer"
+      aria-live="off"
+      aria-label={isExpired ? "Contest time expired" : `Time remaining ${remaining}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        // A tinted pill contains the timer at the critical threshold so urgency
+        // is signalled by shape, not colour alone.
+        padding: isCritical ? "4px 12px" : "4px 0",
+        borderRadius: "var(--radius-pill)",
+        backgroundColor: isCritical ? "rgba(239, 68, 68, 0.12)" : "transparent",
+        border: `1px solid ${isCritical ? "rgba(239, 68, 68, 0.30)" : "transparent"}`,
+        transition:
+          "background-color var(--transition-standard), border-color var(--transition-standard)",
+        animation: isCritical ? "countdown-pulse 1s ease-in-out infinite" : "none",
+      }}
+    >
       <svg
         width="28"
         height="28"
@@ -928,23 +959,33 @@ const CountdownBadge = memo(function CountdownBadge({
           cy="14"
           r={R}
           fill="none"
-          stroke={ringColor}
+          stroke={color}
           strokeWidth="2"
           strokeDasharray={`${CIRC}`}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 1s linear, stroke 600ms ease" }}
+          // Sweep and colour share one duration so the ring never lags the phase.
+          style={{ transition: "stroke-dashoffset 1s linear, stroke 1s linear" }}
         />
       </svg>
+      {isExpired && (
+        <Lock
+          size={12}
+          strokeWidth={2.5}
+          color={color}
+          aria-hidden="true"
+          style={{ flexShrink: 0 }}
+        />
+      )}
       <span
         style={{
           fontSize: "13px",
           fontWeight: 600,
-          color: urgent ? "#ef4444" : pulse ? "#f59e0b" : "var(--color-accent-base)",
+          color,
           fontFamily: "'JetBrains Mono', monospace",
           fontVariantNumeric: "tabular-nums",
           letterSpacing: "0.02em",
-          animation: pulse ? "countdown-pulse 1.5s ease-in-out infinite" : "none",
+          transition: "color 1s linear",
         }}
       >
         {remaining}
@@ -3746,7 +3787,7 @@ export default function ContestPageClient() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "0 20px",
-          height: "48px",
+          height: "52px",
           borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
           background: "#0F0F0F",
           flexShrink: 0,

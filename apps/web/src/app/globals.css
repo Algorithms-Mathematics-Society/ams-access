@@ -1338,8 +1338,8 @@ summary:focus-visible,
    CONTEST — KEYFRAMES
    ───────────────────────────────────────────────────────────── */
 @keyframes countdown-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(0.98); }
 }
 
 /* ─────────────────────────────────────────────────────────────
