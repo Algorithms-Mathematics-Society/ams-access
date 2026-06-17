@@ -896,7 +896,7 @@ export default function HomePage() {
           background: c.sidebarBg,
           padding: "16px 0 0",
           transition:
-            "width 280ms cubic-bezier(0.22,1,0.36,1), border-color 300ms, background 300ms",
+            "width var(--transition-standard), border-color var(--transition-standard), background var(--transition-standard)",
           overflow: "hidden",
           willChange: "width",
         }}
@@ -945,8 +945,8 @@ export default function HomePage() {
                   y2="82"
                   gradientUnits="userSpaceOnUse"
                 >
-                  <stop stopColor="#7C3AED" />
-                  <stop offset="0.5" stopColor="#8B5CF6" />
+                  <stop stopColor="var(--color-accent-deep)" />
+                  <stop offset="0.5" stopColor="var(--color-accent-base)" />
                   <stop offset="1" stopColor="#A78BFA" />
                 </linearGradient>
               </defs>
@@ -964,7 +964,9 @@ export default function HomePage() {
               pointerEvents: "none",
               userSelect: "none",
               opacity: sidebarExpanded ? 1 : 0,
-              transition: sidebarExpanded ? "opacity 180ms ease 160ms" : "opacity 80ms ease",
+              transition: sidebarExpanded
+                ? "opacity var(--transition-standard) 160ms"
+                : "opacity var(--transition-fast)",
             }}
           >
             ACCESS
@@ -978,7 +980,7 @@ export default function HomePage() {
             padding: "0 8px",
             display: "flex",
             flexDirection: "column",
-            gap: "2px",
+            gap: "6px",
           }}
         >
           {NAV_ITEMS.map((item) => {
@@ -997,7 +999,7 @@ export default function HomePage() {
                   width: "100%",
                   height: "40px",
                   padding: 0,
-                  borderRadius: "8px",
+                  borderRadius: "var(--radius-md)",
                   border: "none",
                   cursor: "pointer",
                   fontFamily: "inherit",
@@ -1009,14 +1011,14 @@ export default function HomePage() {
                 <div
                   style={{
                     position: "absolute",
-                    left: "3px",
+                    left: "0",
                     top: "8px",
                     bottom: "8px",
-                    width: "3px",
+                    width: "4px",
                     background: c.accent,
                     borderRadius: "var(--radius-pill)",
                     opacity: active ? 1 : 0,
-                    transition: "opacity 160ms ease",
+                    transition: "opacity var(--transition-fast)",
                   }}
                 />
                 {/* Icon — fixed 44px column, always centered */}
@@ -1028,7 +1030,7 @@ export default function HomePage() {
                     alignItems: "center",
                     flexShrink: 0,
                     color: active ? c.accent : c.textMuted,
-                    transition: "color 200ms ease",
+                    transition: "color var(--transition-fast)",
                   }}
                 >
                   {item.icon}
@@ -1037,13 +1039,15 @@ export default function HomePage() {
                 <span
                   style={{
                     fontSize: "14px",
-                    fontWeight: active ? 500 : 400,
+                    fontWeight: 400,
                     color: active ? c.accentText : c.textMuted,
                     whiteSpace: "nowrap",
                     pointerEvents: "none",
                     userSelect: "none",
                     opacity: sidebarExpanded ? 1 : 0,
-                    transition: sidebarExpanded ? "opacity 180ms ease 160ms" : "opacity 80ms ease",
+                    transition: sidebarExpanded
+                      ? "opacity var(--transition-standard) 160ms"
+                      : "opacity var(--transition-fast)",
                   }}
                 >
                   {item.label}
@@ -1061,13 +1065,14 @@ export default function HomePage() {
               display: "flex",
               alignItems: "center",
               height: "44px",
-              borderRadius: "8px",
-              border: `1px solid`,
+              borderRadius: "var(--radius-md)",
+              border: "1px solid transparent",
               borderColor: sidebarExpanded ? c.border : "transparent",
               background: sidebarExpanded ? "rgba(255,255,255,0.01)" : "transparent",
               marginBottom: "6px",
               overflow: "hidden",
-              transition: "border-color 200ms ease, background 200ms ease",
+              transition:
+                "border-color var(--transition-standard), background var(--transition-standard)",
             }}
           >
             {/* Avatar — fixed column, always visible */}
@@ -1084,8 +1089,9 @@ export default function HomePage() {
                 style={{
                   width: "28px",
                   height: "28px",
-                  borderRadius: "7px",
-                  background: "linear-gradient(135deg, #7c3aed, #8b5cf6)",
+                  borderRadius: "var(--radius-sm)",
+                  background:
+                    "linear-gradient(135deg, rgb(var(--accent-rgb)), rgb(var(--accent-light-rgb)))",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -1107,7 +1113,9 @@ export default function HomePage() {
                 pointerEvents: "none",
                 userSelect: "none",
                 opacity: sidebarExpanded ? 1 : 0,
-                transition: sidebarExpanded ? "opacity 180ms ease 160ms" : "opacity 80ms ease",
+                transition: sidebarExpanded
+                  ? "opacity var(--transition-standard) 160ms"
+                  : "opacity var(--transition-fast)",
               }}
             >
               <p
@@ -1126,7 +1134,7 @@ export default function HomePage() {
               </p>
               <p
                 style={{
-                  fontSize: "10px",
+                  fontSize: "11px",
                   color: c.textMuted,
                   marginTop: "2px",
                   whiteSpace: "nowrap",
@@ -1143,8 +1151,8 @@ export default function HomePage() {
               maxHeight: sidebarExpanded ? "44px" : "0px",
               opacity: sidebarExpanded ? 1 : 0,
               transition: sidebarExpanded
-                ? "max-height 260ms cubic-bezier(0.22,1,0.36,1) 60ms, opacity 180ms ease 140ms"
-                : "opacity 80ms ease, max-height 200ms cubic-bezier(0.55,0,0.6,1) 60ms",
+                ? "max-height var(--transition-standard) 60ms, opacity var(--transition-standard) 140ms"
+                : "opacity var(--transition-fast), max-height var(--transition-standard) 60ms",
             }}
           >
             <SignOutButton onClick={handleSignOut} loading={signingOut} theme={theme} />
@@ -1158,17 +1166,18 @@ export default function HomePage() {
         <header
           className="home-header"
           style={{
-            borderBottom: `1px solid ${c.border}`,
+            background: "var(--surface-0)",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
             flexShrink: 0,
-            transition: "border-color 300ms",
+            transition: "border-color var(--transition-standard)",
           }}
         >
           <h1
             style={{
               fontSize: "24px",
-              fontWeight: 600,
+              fontWeight: 700,
               color: c.text,
-              letterSpacing: "-0.015em",
+              letterSpacing: "0",
             }}
           >
             {activeNav === "overview" && "Contest Home"}
@@ -1183,7 +1192,7 @@ export default function HomePage() {
                   style={{
                     fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                     color: c.text,
-                    fontWeight: 600,
+                    fontWeight: 500,
                   }}
                 >
                   {userEmail}

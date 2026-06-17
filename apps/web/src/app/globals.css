@@ -1153,7 +1153,7 @@ summary:focus-visible,
 /* ─────────────────────────────────────────────────────────────
    RESPONSIVE — HOME LAYOUT CHROME
    ───────────────────────────────────────────────────────────── */
-.home-header  { padding: 36px 48px 24px; }
+.home-header  { padding: 28px 48px 24px; }
 .home-content { padding: 36px 48px; }
 
 @media (max-width: 900px) {

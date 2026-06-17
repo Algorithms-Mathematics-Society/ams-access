@@ -25,22 +25,23 @@ export function SignOutButton({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: "10px",
+        gap: "8px",
         padding: "9px 12px",
-        borderRadius: "8px",
-        border: "none",
+        borderRadius: "var(--radius-md)",
+        border: hovered ? "1px solid rgba(239,68,68,0.2)" : "1px solid transparent",
         background: hovered ? "rgba(239,68,68,0.08)" : "transparent",
-        color: hovered ? "#ef4444" : c.textMuted,
+        color: hovered ? "rgba(239,68,68,0.75)" : c.textMuted,
         fontSize: "13px",
         fontWeight: 400,
         fontFamily: "inherit",
         cursor: loading ? "not-allowed" : "pointer",
-        transition: "all 220ms cubic-bezier(0.22,1,0.36,1)",
+        transition:
+          "background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast)",
         width: "100%",
         textAlign: "left",
       }}
     >
-<LogOut size={16} strokeWidth={1.7} />
+      <LogOut size={16} strokeWidth={1.7} />
       Sign out
     </button>
   );
