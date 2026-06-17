@@ -955,6 +955,27 @@ fn is_ephemeral_client_path(path: &str) -> bool {
 /// so the two must stay in sync (kept here as one source of truth).
 const HELPER_CONNECT_ERR_PREFIX: &str = "connect to helper";
 
+/// In-memory token for the lockdown this process established. Held only in RAM
+/// (never persisted) so a crash-relaunch deliberately cannot lift the lockdown.
+static SESSION_TOKEN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// 16 random bytes from /dev/urandom, hex-encoded (32 chars). Falls back to a
+/// PID+nanos nonce if urandom is unavailable — still unique per session.
+fn mint_token() -> String {
+    use std::io::Read;
+    let mut buf = [0u8; 16];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf.iter().map(|b| format!("{b:02x}")).collect();
+        }
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:032x}", nanos ^ ((std::process::id() as u128) << 80))
+}
+
 /// Connect to the helper socket, preferring /run then /var/run.
 fn helper_connect() -> Result<UnixStream, String> {
     match UnixStream::connect(HELPER_SOCKET) {
@@ -1006,10 +1027,14 @@ pub fn network_helper_running() -> bool {
 /// so the launch gate can refuse to start the exam (egress would be unrestricted
 /// otherwise — see the Tauri `enable_network_lockdown` command in lib.rs).
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
-    // Single round-trip: send the command directly and translate a connection
-    // failure into the actionable "helper not installed" message, rather than
-    // pinging first and then connecting again.
-    let request = serde_json::json!({ "cmd": "enable", "ips": allowed_ips }).to_string();
+    // Mint + remember this session's token, then send it with the allowlist.
+    let token = mint_token();
+    {
+        let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = Some(token.clone());
+    }
+    let request =
+        serde_json::json!({ "cmd": "enable", "ips": allowed_ips, "token": token }).to_string();
     helper_send(&request).map_err(|e| {
         if e.starts_with(HELPER_CONNECT_ERR_PREFIX) {
             "network helper not installed/running: cannot lock egress. \
@@ -1021,13 +1046,22 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     })
 }
 
-/// Lift the network lockdown via the privileged helper.
+/// Lift the network lockdown via the privileged helper, presenting this
+/// session's token. A connection failure means the helper isn't running, so
+/// there is nothing to flush — treated as success. On success the in-memory
+/// token is cleared.
 pub fn disable_network_lockdown() -> Result<(), String> {
-    // A connection failure means the helper isn't running, so no rules can be
-    // live and there is nothing to flush — treat that as success. Any other
-    // error (a real disable failure) is surfaced. Single connect, no pre-ping.
-    match helper_send(r#"{"cmd":"disable"}"#) {
-        Ok(()) => Ok(()),
+    let token = {
+        let slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+        slot.clone().unwrap_or_default()
+    };
+    let request = serde_json::json!({ "cmd": "disable", "token": token }).to_string();
+    match helper_send(&request) {
+        Ok(()) => {
+            let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+            *slot = None;
+            Ok(())
+        }
         Err(e) if e.starts_with(HELPER_CONNECT_ERR_PREFIX) => Ok(()),
         Err(e) => Err(e),
     }
@@ -1181,4 +1215,18 @@ fn linux_process_alive(name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mint_token;
+
+    #[test]
+    fn mint_token_is_32_hex_chars_and_varies() {
+        let a = mint_token();
+        let b = mint_token();
+        assert_eq!(a.len(), 32, "16 bytes hex-encoded = 32 chars");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b, "two mints must differ");
+    }
 }
