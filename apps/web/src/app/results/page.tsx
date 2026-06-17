@@ -82,20 +82,25 @@ function formatCountdown(targetIso: string): string {
 // Suspense fallback for useSearchParams(), so the UI is identical in both cases.
 function ResultsLoading() {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--surface-0)",
-        color: "#64748b",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "system-ui, sans-serif",
-        fontSize: 14,
-      }}
-    >
-      Loading results…
-    </div>
+    <main className="route-loading-shell route-loading-shell--results">
+      <svg className="route-loading-spinner" viewBox="0 0 30 30" fill="none" aria-hidden="true">
+        <circle
+          cx="15"
+          cy="15"
+          r="12.5"
+          stroke="currentColor"
+          strokeOpacity="0.2"
+          strokeWidth="2.5"
+        />
+        <path
+          d="M15 2.5 A12.5 12.5 0 0 1 27.5 15"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        />
+      </svg>
+      <div className="route-loading-label">Loading results…</div>
+    </main>
   );
 }
 
@@ -214,32 +219,24 @@ function ResultsView() {
             fontSize: 11,
             fontWeight: 700,
             letterSpacing: "0.14em",
-            color: "#64748b",
+            color: "var(--text-faint)",
             textTransform: "uppercase",
           }}
         >
           You&rsquo;re done
         </div>
-        <div style={{ fontSize: 28, fontWeight: 600, color: "#e2e8f0" }}>
+        <div style={{ fontSize: 28, fontWeight: 700, color: "#e2e8f0" }}>
           {lockedUntil ? `Results unlock in ${countdown}` : "Results unlock soon"}
         </div>
-        <div style={{ fontSize: 13, color: "#475569", maxWidth: 360, textAlign: "center" }}>
+        <div style={{ fontSize: 13, color: "var(--text-dim)", maxWidth: 360, textAlign: "center" }}>
           {email
             ? `Your work is safely submitted. We'll email you at ${email} when results are ready.`
             : "Your work is safely submitted. We'll email you when results are ready."}
         </div>
         <button
           onClick={() => router.push("/home")}
-          style={{
-            marginTop: 12,
-            padding: "9px 22px",
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: 6,
-            color: "#94a3b8",
-            fontSize: 13,
-            cursor: "pointer",
-          }}
+          className="results-btn results-btn-ghost"
+          style={{ marginTop: 12 }}
         >
           Back to Home
         </button>
@@ -262,33 +259,29 @@ function ResultsView() {
           fontFamily: "system-ui, sans-serif",
         }}
       >
-        <div style={{ fontSize: 15, color: "#fca5a5" }}>{error}</div>
-        <button
-          onClick={() => void fetchResults()}
+        <div
           style={{
-            padding: "8px 20px",
-            background: "#7c3aed",
-            border: "none",
-            borderRadius: 6,
-            color: "#fff",
-            fontSize: 13,
-            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            animation: "slideDown var(--transition-slow) both",
           }}
         >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"
+              stroke="#fca5a5"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span style={{ fontSize: 15, color: "#fca5a5" }}>{error}</span>
+        </div>
+        <button onClick={() => void fetchResults()} className="results-btn results-btn-primary">
           Retry
         </button>
-        <button
-          onClick={() => router.push("/home")}
-          style={{
-            padding: "8px 20px",
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: 6,
-            color: "#94a3b8",
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={() => router.push("/home")} className="results-btn results-btn-ghost">
           Back to Home
         </button>
       </div>
@@ -334,27 +327,18 @@ function ResultsView() {
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: "0.14em",
-                color: "#64748b",
+                color: "var(--text-faint)",
                 textTransform: "uppercase",
                 marginBottom: 6,
               }}
             >
               Contest Results
             </div>
-            <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>Leaderboard</div>
+            <div style={{ fontSize: "var(--text-xl)", fontWeight: 700, color: "#e2e8f0" }}>
+              Leaderboard
+            </div>
           </div>
-          <button
-            onClick={() => router.push("/home")}
-            style={{
-              padding: "8px 18px",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 6,
-              color: "#94a3b8",
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={() => router.push("/home")} className="results-btn results-btn-ghost">
             Back to Home
           </button>
         </div>
@@ -363,83 +347,48 @@ function ResultsView() {
         {myEntry && (
           <div
             style={{
-              background: "rgb(var(--accent-rgb) / 0.08)",
-              border: "1px solid rgb(var(--accent-rgb) / 0.25)",
+              background: "rgb(var(--accent-rgb) / 0.12)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.30)",
               borderRadius: "var(--radius-lg)",
+              boxShadow: "var(--elevation-1)",
               padding: "20px 24px",
               display: "flex",
               gap: 32,
               flexWrap: "wrap",
+              animation: "slideDown var(--transition-slow) both",
             }}
           >
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "#7c3aed",
-                  fontWeight: 700,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  marginBottom: 4,
-                }}
-              >
-                Your Rank
+            {[
+              { label: "Your Rank", value: `#${myEntry.rank}` },
+              { label: "Score", value: myEntry.total_score },
+              { label: "Solved", value: `${myEntry.solved_count} / ${results.questions.length}` },
+              { label: "Penalty", value: formatPenalty(myEntry.penalty_seconds) },
+            ].map((cell) => (
+              <div key={cell.label}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-faint)",
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    marginBottom: 4,
+                  }}
+                >
+                  {cell.label}
+                </div>
+                <div
+                  style={{
+                    fontSize: 24,
+                    fontWeight: 700,
+                    color: "#ffffff",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {cell.value}
+                </div>
               </div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "var(--color-accent-light)" }}>
-                #{myEntry.rank}
-              </div>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "#64748b",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  marginBottom: 4,
-                }}
-              >
-                Score
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 600, color: "#e2e8f0" }}>
-                {myEntry.total_score}
-              </div>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "#64748b",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  marginBottom: 4,
-                }}
-              >
-                Solved
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 600, color: "#e2e8f0" }}>
-                {myEntry.solved_count} / {results.questions.length}
-              </div>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "#64748b",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  marginBottom: 4,
-                }}
-              >
-                Penalty
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 600, color: "#e2e8f0" }}>
-                {formatPenalty(myEntry.penalty_seconds)}
-              </div>
-            </div>
+            ))}
           </div>
         )}
 
@@ -551,10 +500,11 @@ function ResultsView() {
                             fontSize: 12,
                             borderCollapse: "collapse",
                             marginTop: 12,
+                            fontVariantNumeric: "tabular-nums",
                           }}
                         >
                           <thead>
-                            <tr style={{ color: "#475569" }}>
+                            <tr style={{ color: "var(--text-dim)" }}>
                               <th style={{ textAlign: "left", paddingBottom: 8, fontWeight: 600 }}>
                                 #
                               </th>
@@ -579,7 +529,7 @@ function ResultsView() {
                             {submissions.map((s) => (
                               <tr
                                 key={s.id}
-                                style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}
+                                style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
                               >
                                 <td style={{ padding: "7px 0", color: "#64748b" }}>
                                   {s.attempt_no}
@@ -632,9 +582,21 @@ function ResultsView() {
             Full Rankings — {results.entries.length} participants
           </div>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+            <table
+              style={{
+                width: "100%",
+                fontSize: 12,
+                borderCollapse: "collapse",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
               <thead>
-                <tr style={{ color: "#475569", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                <tr
+                  style={{
+                    color: "var(--text-dim)",
+                    borderBottom: "1px solid rgba(255,255,255,0.07)",
+                  }}
+                >
                   <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 600 }}>Rank</th>
                   <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 600 }}>
                     Contestant
@@ -670,9 +632,10 @@ function ResultsView() {
                   return (
                     <tr
                       key={entry.session_id}
+                      className="lb-row"
                       style={{
-                        borderBottom: "1px solid rgba(255,255,255,0.04)",
-                        background: isMe ? "rgba(124,58,237,0.08)" : "transparent",
+                        borderBottom: "1px solid rgba(255,255,255,0.07)",
+                        ...(isMe ? { background: "rgb(var(--accent-rgb) / 0.08)" } : {}),
                       }}
                     >
                       <td
@@ -692,18 +655,7 @@ function ResultsView() {
                         }}
                       >
                         {entry.candidate_name}
-                        {isMe && (
-                          <span
-                            style={{
-                              marginLeft: 6,
-                              fontSize: 10,
-                              color: "#7c3aed",
-                              fontWeight: 700,
-                            }}
-                          >
-                            YOU
-                          </span>
-                        )}
+                        {isMe && <span className="results-you-chip">You</span>}
                       </td>
                       <td
                         style={{

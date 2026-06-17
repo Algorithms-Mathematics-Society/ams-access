@@ -89,7 +89,7 @@ export function HelpRequestModal({
         position: "fixed",
         inset: 0,
         zIndex: 2000,
-        background: "rgba(7,10,16,0.72)",
+        background: "rgba(7,10,16,0.55)",
         backdropFilter: "blur(4px)",
         display: "flex",
         alignItems: "center",
@@ -100,13 +100,15 @@ export function HelpRequestModal({
       onClick={onClose}
     >
       <div
+        className="help-modal-card"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
           maxWidth: 460,
-          background: "#0d1117",
+          background: "var(--surface-1)",
           border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 12,
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--elevation-3)",
           padding: "24px 26px",
           color: "#e2e8f0",
         }}
@@ -121,19 +123,37 @@ export function HelpRequestModal({
             {reference && (
               <div
                 style={{
-                  fontSize: 12,
-                  color: "var(--color-accent-light)",
-                  fontFamily: "monospace",
                   background: "rgb(var(--accent-rgb) / 0.1)",
                   border: "1px solid rgb(var(--accent-rgb) / 0.2)",
-                  borderRadius: 6,
+                  borderRadius: "var(--radius-sm)",
                   padding: "8px 10px",
                 }}
               >
-                Reference: {reference}
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "var(--text-faint)",
+                    marginBottom: 3,
+                  }}
+                >
+                  Reference
+                </div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "var(--color-accent-light)",
+                    fontFamily: "var(--font-mono)",
+                    userSelect: "all",
+                  }}
+                >
+                  {reference}
+                </div>
               </div>
             )}
-            <button onClick={onClose} style={primaryBtn}>
+            <button onClick={onClose} className="help-btn help-btn-primary">
               Done
             </button>
           </div>
@@ -148,7 +168,7 @@ export function HelpRequestModal({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@institution.edu"
-              style={inputStyle}
+              className="help-input"
             />
 
             <label style={labelStyle}>What happened? (optional)</label>
@@ -157,7 +177,8 @@ export function HelpRequestModal({
               onChange={(e) => setNote(e.target.value)}
               rows={3}
               placeholder="Describe the problem so your proctor can help faster."
-              style={{ ...inputStyle, resize: "vertical" }}
+              className="help-input"
+              style={{ resize: "vertical" }}
             />
 
             <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.5 }}>
@@ -171,13 +192,13 @@ export function HelpRequestModal({
             )}
 
             <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-              <button onClick={onClose} style={ghostBtn}>
+              <button onClick={onClose} className="help-btn help-btn-ghost">
                 Cancel
               </button>
               <button
                 onClick={() => void submit()}
                 disabled={state === "sending"}
-                style={primaryBtn}
+                className="help-btn help-btn-primary"
               >
                 {state === "sending" ? "Sending…" : "Send to organizer"}
               </button>
@@ -192,40 +213,7 @@ export function HelpRequestModal({
 const labelStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: "#64748b",
+  color: "var(--text-faint)",
   textTransform: "uppercase",
   letterSpacing: "0.08em",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  background: "rgba(255,255,255,0.04)",
-  border: "1px solid rgba(255,255,255,0.1)",
-  borderRadius: 6,
-  padding: "9px 11px",
-  color: "#e2e8f0",
-  fontSize: 13,
-  boxSizing: "border-box",
-};
-
-const primaryBtn: React.CSSProperties = {
-  flex: 1,
-  padding: "10px 18px",
-  background: "#7c3aed",
-  border: "none",
-  borderRadius: 6,
-  color: "#fff",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const ghostBtn: React.CSSProperties = {
-  padding: "10px 18px",
-  background: "transparent",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: 6,
-  color: "#94a3b8",
-  fontSize: 13,
-  cursor: "pointer",
 };
