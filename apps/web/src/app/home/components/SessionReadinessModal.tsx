@@ -326,7 +326,7 @@ export function SessionReadinessModal({
         tabIndex={-1}
         style={{
           width: "100%",
-          maxWidth: "560px",
+          maxWidth: "680px",
           minHeight: "540px",
           background: isLight ? "#ffffff" : c.cardBg,
           border: `1px solid ${c.borderStrong}`,
