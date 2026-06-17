@@ -85,8 +85,9 @@ export function deriveContestantReadiness({
   activeSession?: Pick<ActiveSession, "contest_id" | "updated_at"> | null;
   now?: number;
 }): ContestantReadinessContext {
-  const reportRequiredChecks =
-    report?.required_checks.filter((check) => check.kind !== "network") ?? [];
+  // Network is a real gating input again (the aa8f474 relaxation now lives in a
+  // flag-gated input mock, not a filter here). Count every required check.
+  const reportRequiredChecks = report?.required_checks ?? [];
 
   // ── 1. Still scanning ──────────────────────────────────────────
   const anyChecking = Object.values(readiness).some((s) => s === "checking");
@@ -106,7 +107,9 @@ export function deriveContestantReadiness({
     // Count advisory warnings from optional checks.
     const failedOptional = report.optional_checks.filter((c) => c.outcome !== "pass").length;
 
-    if (failedRequired > 0) {
+    // Honor a hard policy block regardless of the per-check tally (a Blocked
+    // decision must never be overridden by a passing check count).
+    if (report.decision === "blocked" || failedRequired > 0) {
       return make(
         "needs_action",
         `Fix ${pluralChecks(failedRequired)} before entering.`,

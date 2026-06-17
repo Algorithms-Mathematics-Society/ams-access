@@ -96,7 +96,7 @@ export default function LoginPage() {
           >
             <path
               d="M2.00043 162L87.0004 2L172 162"
-              stroke="#a855f7"
+              stroke="var(--color-accent-base)"
               strokeWidth="6"
               strokeLinecap="square"
               strokeLinejoin="miter"
@@ -120,14 +120,14 @@ export default function LoginPage() {
             >
               <path
                 d="M2.00043 162L87.0004 2L172 162"
-                stroke="#a855f7"
+                stroke="var(--color-accent-base)"
                 strokeWidth="6"
                 strokeLinecap="square"
                 strokeLinejoin="miter"
               />
               <path
                 d="M32 162L87 52L142 162"
-                stroke="rgba(168,85,247,0.25)"
+                stroke="rgb(var(--accent-rgb) / 0.25)"
                 strokeWidth="4"
                 strokeLinecap="square"
                 strokeLinejoin="miter"
@@ -152,7 +152,7 @@ export default function LoginPage() {
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#a855f7"
+                  stroke="var(--color-accent-base)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -177,7 +177,7 @@ export default function LoginPage() {
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#a855f7"
+                  stroke="var(--color-accent-base)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -202,7 +202,7 @@ export default function LoginPage() {
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#a855f7"
+                  stroke="var(--color-accent-base)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -349,7 +349,7 @@ export default function LoginPage() {
                   background: "none",
                   border: "none",
                   padding: 0,
-                  color: "#a855f7",
+                  color: "var(--color-accent-base)",
                   cursor: "pointer",
                   font: "inherit",
                   textDecoration: "underline",
@@ -365,7 +365,7 @@ export default function LoginPage() {
                 background: "none",
                 border: "none",
                 padding: 0,
-                color: "#a855f7",
+                color: "var(--color-accent-base)",
                 cursor: "pointer",
                 font: "inherit",
                 textDecoration: "underline",

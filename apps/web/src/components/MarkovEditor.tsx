@@ -288,10 +288,10 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
                 cursor: "pointer",
                 border:
                   mode === m
-                    ? "1px solid rgba(168,85,247,0.6)"
+                    ? "1px solid rgb(var(--accent-rgb) / 0.6)"
                     : "1px solid rgba(100,116,139,0.35)",
-                background: mode === m ? "rgba(168,85,247,0.12)" : "rgba(255,255,255,0.03)",
-                color: mode === m ? "#c084fc" : "#94a3b8",
+                background: mode === m ? "rgb(var(--accent-rgb) / 0.12)" : "rgba(255,255,255,0.03)",
+                color: mode === m ? "var(--color-accent-light)" : "#94a3b8",
               }}
             >
               {m === "select" ? "↖ Select" : "→ Draw Arrow"}
@@ -378,7 +378,7 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
           height: CANVAS_H,
           background: "#060b18",
           borderRadius: 10,
-          border: "1px solid rgba(168,85,247,0.15)",
+          border: "1px solid rgb(var(--accent-rgb) / 0.15)",
           cursor: dragging ? "grabbing" : mode === "transition" ? "crosshair" : "default",
           display: "block",
         }}
@@ -391,10 +391,10 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
       >
         <defs>
           <marker id="mk-arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0,10 3.5,0 7" fill="#a855f7" />
+            <polygon points="0 0,10 3.5,0 7" fill="var(--color-accent-base)" />
           </marker>
           <marker id="mk-sel" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0,10 3.5,0 7" fill="#c084fc" />
+            <polygon points="0 0,10 3.5,0 7" fill="var(--color-accent-light)" />
           </marker>
         </defs>
         <rect x={0} y={0} width={CANVAS_W} height={CANVAS_H} fill="transparent" />
@@ -410,7 +410,7 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
                 y1={src.y}
                 x2={mousePos.x}
                 y2={mousePos.y}
-                stroke="#a855f755"
+                stroke="rgb(var(--accent-rgb) / 0.333)"
                 strokeWidth={2}
                 strokeDasharray="5 3"
               />
@@ -419,7 +419,7 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
 
         {value.transitions.map((t) => {
           const isSel = selected?.type === "transition" && selected.id === t.id;
-          const stroke = isSel ? "#c084fc" : "#a855f7";
+          const stroke = isSel ? "var(--color-accent-light)" : "var(--color-accent-base)";
           const mrkr = `url(#${isSel ? "mk-sel" : "mk-arr"})`;
           const editing = editingProb?.id === t.id;
 
@@ -514,7 +514,7 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
                   cy={s.y}
                   r={RADIUS + 5}
                   fill="none"
-                  stroke={isSel ? "#c084fc" : "#a855f766"}
+                  stroke={isSel ? "var(--color-accent-light)" : "rgb(var(--accent-rgb) / 0.4)"}
                   strokeWidth={1.5}
                 />
               )}
@@ -524,12 +524,14 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
                 r={RADIUS}
                 fill={
                   isSel
-                    ? "rgba(168,85,247,0.22)"
+                    ? "rgb(var(--accent-rgb) / 0.22)"
                     : isDrawSrc
-                      ? "rgba(168,85,247,0.32)"
-                      : "rgba(168,85,247,0.1)"
+                      ? "rgb(var(--accent-rgb) / 0.32)"
+                      : "rgb(var(--accent-rgb) / 0.1)"
                 }
-                stroke={isSel || isDrawSrc ? "#c084fc" : "#a855f7"}
+                stroke={
+                  isSel || isDrawSrc ? "var(--color-accent-light)" : "var(--color-accent-base)"
+                }
                 strokeWidth={isSel ? 2.4 : 1.8}
               />
               {s.isInitial && (
@@ -538,7 +540,7 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
                   y1={s.y}
                   x2={s.x - RADIUS - 2}
                   y2={s.y}
-                  stroke="#a855f7"
+                  stroke="var(--color-accent-base)"
                   strokeWidth={2}
                   markerEnd="url(#mk-arr)"
                 />
@@ -550,7 +552,7 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
                 dominantBaseline="middle"
                 fontSize={13}
                 fontWeight={600}
-                fill={isSel ? "#c084fc" : "#e2d9f3"}
+                fill={isSel ? "var(--color-accent-light)" : "#e2d9f3"}
                 style={{ userSelect: "none", pointerEvents: "none" }}
               >
                 {s.id}
@@ -625,9 +627,9 @@ function ProbLabel({
             width: "100%",
             height: "100%",
             background: "#1e1b4b",
-            border: "1px solid #a855f7",
+            border: "1px solid var(--color-accent-base)",
             borderRadius: 4,
-            color: "#c084fc",
+            color: "var(--color-accent-light)",
             fontSize: 11,
             textAlign: "center",
             padding: "0 2px",
@@ -645,7 +647,7 @@ function ProbLabel({
         height={20}
         rx={4}
         fill="#0d1323"
-        stroke="#a855f733"
+        stroke="rgb(var(--accent-rgb) / 0.2)"
         strokeWidth={1}
       />
       <text
@@ -654,7 +656,7 @@ function ProbLabel({
         textAnchor="middle"
         dominantBaseline="middle"
         fontSize={11}
-        fill="#c084fc"
+        fill="var(--color-accent-light)"
         style={{ userSelect: "none" }}
       >
         {value}

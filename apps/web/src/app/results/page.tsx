@@ -362,8 +362,8 @@ function ResultsView() {
         {myEntry && (
           <div
             style={{
-              background: "rgba(168,85,247,0.08)",
-              border: "1px solid rgba(168,85,247,0.25)",
+              background: "rgb(var(--accent-rgb) / 0.08)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.25)",
               borderRadius: "var(--radius-lg)",
               padding: "20px 24px",
               display: "flex",
@@ -384,7 +384,9 @@ function ResultsView() {
               >
                 Your Rank
               </div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#c084fc" }}>#{myEntry.rank}</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: "var(--color-accent-light)" }}>
+                #{myEntry.rank}
+              </div>
             </div>
             <div>
               <div
@@ -467,10 +469,10 @@ function ResultsView() {
                 disabled={loadingMySubmissions}
                 style={{
                   padding: "5px 14px",
-                  background: "rgba(168,85,247,0.1)",
-                  border: "1px solid rgba(168,85,247,0.2)",
+                  background: "rgb(var(--accent-rgb) / 0.1)",
+                  border: "1px solid rgb(var(--accent-rgb) / 0.2)",
                   borderRadius: 5,
-                  color: "#c084fc",
+                  color: "var(--color-accent-light)",
                   fontSize: 12,
                   fontWeight: 600,
                   cursor: "pointer",
@@ -675,7 +677,7 @@ function ResultsView() {
                         style={{
                           padding: "10px 12px",
                           fontWeight: isMe ? 700 : 400,
-                          color: isMe ? "#c084fc" : "#64748b",
+                          color: isMe ? "var(--color-accent-light)" : "#64748b",
                         }}
                       >
                         {entry.rank}

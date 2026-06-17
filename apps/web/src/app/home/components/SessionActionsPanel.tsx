@@ -116,12 +116,12 @@ export function SessionActionsPanel({
               style={{ minWidth: "96px" }}
               onMouseEnter={(e) => {
                 if (inviteCodeBusy) return;
-                e.currentTarget.style.background = "rgba(168,85,247,0.12)";
+                e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.12)";
                 e.currentTarget.style.borderColor = c.accentText;
               }}
               onMouseLeave={(e) => {
                 if (inviteCodeBusy) return;
-                e.currentTarget.style.background = "rgba(168,85,247,0.06)";
+                e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.06)";
                 e.currentTarget.style.borderColor = c.accentBorder;
               }}
             >
@@ -299,7 +299,7 @@ export function SessionActionsPanel({
                       : resumeVerification === "verified"
                         ? "rgba(34,197,94,0.12)"
                         : resumeVerification === "checking" || resumeVerification === "unverified"
-                          ? "rgba(168,85,247,0.1)"
+                          ? "rgb(var(--accent-rgb) / 0.1)"
                           : "rgba(239,68,68,0.1)",
                     color: resumeRequestPending
                       ? "#fbbf24"
@@ -349,12 +349,12 @@ export function SessionActionsPanel({
           onMouseEnter={(e) => {
             if (resumeButtonDisabled) return;
             e.currentTarget.style.background = "#9333ea";
-            e.currentTarget.style.borderColor = "#c084fc";
-            e.currentTarget.style.boxShadow = "0 10px 24px rgba(168,85,247,0.22)";
+            e.currentTarget.style.borderColor = "var(--color-accent-light)";
+            e.currentTarget.style.boxShadow = "0 10px 24px rgb(var(--accent-rgb) / 0.22)";
           }}
           onMouseLeave={(e) => {
             if (resumeButtonDisabled) return;
-            e.currentTarget.style.background = "#a855f7";
+            e.currentTarget.style.background = "var(--color-accent-base)";
             e.currentTarget.style.borderColor = c.accentBorder;
             e.currentTarget.style.boxShadow = "none";
             e.currentTarget.style.transform = "scale(1)";

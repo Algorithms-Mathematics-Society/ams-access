@@ -294,12 +294,15 @@ fn secure_socket(socket_path: &str) {
     }
     #[cfg(target_os = "linux")]
     {
-        // 0600, root-owned. The helper runs as root, so it already owns the
-        // socket; SO_PEERCRED then authorizes the connecting user-session app.
-        // 0600 is intentionally strict — the peer-credential check is the real
-        // gate, the mode is defense-in-depth so a non-root local user cannot
-        // even open the socket.
-        let _ = std::fs::set_permissions(socket_path, PermissionsExt::from_mode(0o600));
+        // 0666, root-owned. The helper runs as root and owns the socket, but the
+        // unprivileged user-session app must be able to connect() before the
+        // SO_PEERCRED + pinned-exe check in authorize_client can run. A 0600
+        // socket EACCESes that connect() in the kernel, so the peer check — the
+        // REAL gate — would never execute and no client could ever talk to the
+        // helper. 0666 lets any local process connect; only the root-pinned
+        // client binary is then actually authorized (mirrors the macOS 0660
+        // socket, which likewise relies on the per-connection peer check).
+        let _ = std::fs::set_permissions(socket_path, PermissionsExt::from_mode(0o666));
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {

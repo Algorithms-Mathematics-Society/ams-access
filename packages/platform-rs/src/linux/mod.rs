@@ -1331,7 +1331,8 @@ else
   rm -f "$CONFIG_DEST"
 fi
 systemctl daemon-reload
-systemctl enable --now ams-proctor-helper.service
+systemctl enable ams-proctor-helper.service
+systemctl restart ams-proctor-helper.service
 "#;
 
     let out = std::process::Command::new("pkexec")

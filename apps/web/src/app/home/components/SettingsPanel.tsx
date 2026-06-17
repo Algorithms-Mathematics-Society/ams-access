@@ -653,8 +653,8 @@ export const SettingsPanel = memo(function SettingsPanel({
           <div
             style={{
               padding: "10px 12px",
-              background: "rgba(168,85,247,0.08)",
-              border: "1px solid rgba(168,85,247,0.2)",
+              background: "rgb(var(--accent-rgb) / 0.08)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.2)",
               borderRadius: "6px",
               display: "flex",
               alignItems: "center",
@@ -666,7 +666,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                 fontSize: "12px",
                 fontWeight: 600,
-                color: "#c084fc",
+                color: "var(--color-accent-light)",
               }}
             >
               OBSIDIAN_DARK
@@ -1018,7 +1018,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                         style={{
                           width: `${micLevel}%`,
                           height: "100%",
-                          background: "linear-gradient(90deg, #22c55e, #a855f7)",
+                          background: "linear-gradient(90deg, #22c55e, var(--color-accent-base))",
                           transition: "width 60ms cubic-bezier(0.1, 0.8, 0.2, 1)",
                         }}
                       />

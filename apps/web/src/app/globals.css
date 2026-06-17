@@ -18,12 +18,14 @@
   --color-indicator-error:   #ef4444;
   --color-indicator-info:    #38bdf8;
 
-  /* Accent — violet */
-  --color-accent-base:   #a855f7;
-  --color-accent-light:  #c084fc;
-  --color-accent-faint:  rgba(168,85,247,0.12);
-  --color-accent-border: rgba(168,85,247,0.30);
-  --color-accent-hover:  rgba(168,85,247,0.08);
+  /* Accent — violet. SINGLE SOURCE OF TRUTH: --accent-rgb / --accent-light-rgb
+     (defined in :root below). Every accent token derives from those two triplets,
+     so the whole app reshades from one line. */
+  --color-accent-base:   rgb(var(--accent-rgb));
+  --color-accent-light:  rgb(var(--accent-light-rgb));
+  --color-accent-faint:  rgb(var(--accent-rgb) / 0.12);
+  --color-accent-border: rgb(var(--accent-rgb) / 0.30);
+  --color-accent-hover:  rgb(var(--accent-rgb) / 0.08);
 
   /* Text hierarchy */
   --color-text-primary:  #ffffff;
@@ -34,7 +36,7 @@
   /* Borders */
   --color-border-base:   rgba(255,255,255,0.05);
   --color-border-input:  rgba(255,255,255,0.08);
-  --color-border-focus:  rgba(168,85,247,0.65);
+  --color-border-focus:  rgb(var(--accent-rgb) / 0.65);
   --color-border-error:  rgba(239,68,68,0.25);
 
   /* Legacy aliases used by other pages */
@@ -42,8 +44,8 @@
   --color-bg-elevated:    #09090b;
   --color-bg-secondary:   rgb(14 15 18);
   /* One brand-purple accent ramp (consolidated — was #8b5cf6/#a78bfa). */
-  --color-accent:         #a855f7;
-  --color-accent-bright:  #c084fc;
+  --color-accent:         var(--color-accent-base);
+  --color-accent-bright:  var(--color-accent-light);
   --color-accent-deep:    #7c3aed;
   --color-text-secondary: rgba(255,255,255,0.6);
   --color-success:        #22c55e;
@@ -127,18 +129,18 @@ input::placeholder {
    ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.25); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.25); border-radius: 2px; }
 
 /* ─────────────────────────────────────────────────────────────
    ACCESSIBLE FOCUS — global default for interactive elements.
    :where() keeps specificity 0 so component styles can override.
    ───────────────────────────────────────────────────────────── */
 :where(button, a, [role="button"]):focus-visible {
-  outline: 2px solid rgba(168,85,247,0.7);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.7);
   outline-offset: 2px;
 }
 .ams-field:focus-visible {
-  outline: 2px solid rgba(168,85,247,0.7);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.7);
   outline-offset: 2px;
   border-color: transparent;
 }
@@ -148,6 +150,13 @@ input::placeholder {
    ───────────────────────────────────────────────────────────── */
 :root {
   color-scheme: dark;
+
+  /* ── BRAND ACCENT — single source of truth (RGB triplets) ──────────────
+     All accent tokens, themes, and inline styles resolve to these. Edit the
+     hue here, once, and every accent surface follows. ── */
+  --accent-rgb:       168 85 247;
+  --accent-light-rgb: 192 132 252;
+
   --theme-bg:                #0F0F0F;
   --theme-sidebar-bg:        #1F1F1F;
   --theme-card-bg:           #1F1F1F;
@@ -157,13 +166,13 @@ input::placeholder {
   --theme-text:              #ffffff;
   --theme-text-muted:        rgba(255,255,255,0.45);
   --theme-text-muted-strong: rgba(255,255,255,0.7);
-  --theme-accent:            #a855f7;
-  --theme-accent-light:      rgba(168,85,247,0.12);
-  --theme-accent-border:     rgba(168,85,247,0.3);
-  --theme-accent-text:       #c084fc;
+  --theme-accent:            var(--color-accent-base);
+  --theme-accent-light:      rgb(var(--accent-rgb) / 0.12);
+  --theme-accent-border:     rgb(var(--accent-rgb) / 0.3);
+  --theme-accent-text:       var(--color-accent-light);
   --theme-console-text:      rgba(255,255,255,0.72);
   --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
-  --theme-shadow-hover:      0 12px 36px rgba(168,85,247,0.08);
+  --theme-shadow-hover:      0 12px 36px rgb(var(--accent-rgb) / 0.08);
   --theme-dot:               #22c55e;
 
   --density-compact:  12px;
@@ -206,7 +215,7 @@ input::placeholder {
   --verdict-none:    rgba(255,255,255,0.18);
 
   /* ── Accessible focus ring (used everywhere) ── */
-  --focus-ring: 0 0 0 2px rgba(168,85,247,0.7);
+  --focus-ring: 0 0 0 2px rgb(var(--accent-rgb) / 0.7);
 }
 
 .dark {
@@ -220,13 +229,13 @@ input::placeholder {
   --theme-text:              #ffffff;
   --theme-text-muted:        rgba(255,255,255,0.45);
   --theme-text-muted-strong: rgba(255,255,255,0.7);
-  --theme-accent:            #a855f7;
-  --theme-accent-light:      rgba(168,85,247,0.12);
-  --theme-accent-border:     rgba(168,85,247,0.3);
-  --theme-accent-text:       #c084fc;
+  --theme-accent:            var(--color-accent-base);
+  --theme-accent-light:      rgb(var(--accent-rgb) / 0.12);
+  --theme-accent-border:     rgb(var(--accent-rgb) / 0.3);
+  --theme-accent-text:       var(--color-accent-light);
   --theme-console-text:      rgba(255,255,255,0.72);
   --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
-  --theme-shadow-hover:      0 12px 36px rgba(168,85,247,0.08);
+  --theme-shadow-hover:      0 12px 36px rgb(var(--accent-rgb) / 0.08);
   --theme-dot:               #22c55e;
 }
 
@@ -448,7 +457,7 @@ input::placeholder {
   transition: border-color 0.12s, background 0.12s;
 }
 
-.login-input:focus        { border-color: rgba(168,85,247,0.45); background: #0D0D0D; }
+.login-input:focus        { border-color: rgb(var(--accent-rgb) / 0.45); background: #0D0D0D; }
 .login-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .login-input:disabled     { opacity: 0.45; cursor: not-allowed; }
 
@@ -478,7 +487,7 @@ input::placeholder {
 
 .login-submit:hover:not(:disabled) { background: var(--color-accent-base); color: #000; }
 .login-submit:focus-visible        { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.login-submit:disabled             { background: var(--color-obsidian-raised); border-color: rgba(168,85,247,0.22); color: var(--text-faint); cursor: not-allowed; }
+.login-submit:disabled             { background: var(--color-obsidian-raised); border-color: rgb(var(--accent-rgb) / 0.22); color: var(--text-faint); cursor: not-allowed; }
 
 /* Error alert */
 .login-error {
@@ -553,7 +562,7 @@ input::placeholder {
   line-height: 1.6;
 }
 
-.login-form-support a               { color: rgba(168,85,247,0.8); text-decoration: none; }
+.login-form-support a               { color: rgb(var(--accent-rgb) / 0.8); text-decoration: none; }
 .login-form-support a:hover         { color: var(--color-accent-base); text-decoration: underline; }
 
 /* SSO modal */
@@ -640,7 +649,7 @@ input::placeholder {
   overflow: hidden;
 }
 .syslog-header {
-  color: rgba(168,85,247,0.7);
+  color: rgb(var(--accent-rgb) / 0.7);
   font-weight: 700;
   letter-spacing: 0.15em;
   font-size: 8px;
@@ -660,7 +669,7 @@ input::placeholder {
   font-size: 9px;
 }
 .syslog-level-err  { color: #ef4444; font-weight: 700; flex-shrink: 0; }
-.syslog-level-info { color: rgba(168,85,247,0.8); font-weight: 700; flex-shrink: 0; }
+.syslog-level-info { color: rgb(var(--accent-rgb) / 0.8); font-weight: 700; flex-shrink: 0; }
 .syslog-level-ok   { color: #22c55e; font-weight: 700; flex-shrink: 0; }
 .syslog-msg {
   color: rgba(255,255,255,0.65);
@@ -709,7 +718,7 @@ input::placeholder {
 }
 
 :where(button, input, textarea, select, a):focus-visible {
-  outline: 2px solid var(--theme-accent, #a855f7);
+  outline: 2px solid var(--theme-accent, var(--color-accent-base));
   outline-offset: 2px;
 }
 /* ─────────────────────────────────────────────────────────────
@@ -730,7 +739,7 @@ input::placeholder {
 }
 .route-loading-shell--home { color: rgba(255,255,255,0.85); }
 .route-loading-shell--onboarding { color: #ffffff; }
-.route-loading-shell--contest { color: #a855f7; }
+.route-loading-shell--contest { color: var(--color-accent-base); }
 .contest-editor-pane {
   flex: 1;
   position: relative;
@@ -752,7 +761,7 @@ input::placeholder {
   background: transparent;
 }
 .contest-editor-pane--codemirror .cm-scroller::-webkit-scrollbar-thumb {
-  background: rgba(168,85,247,0.2);
+  background: rgb(var(--accent-rgb) / 0.2);
   border-radius: 3px;
 }
 
@@ -783,8 +792,8 @@ input::placeholder {
 .ic-btn-red     { color: #ef4444; }
 .ic-btn-red:hover:not(:disabled)     { color: #f87171; background: rgba(239,68,68,0.12); }
 
-.ic-btn-violet  { color: #a855f7; }
-.ic-btn-violet:hover:not(:disabled)  { color: #c084fc; background: rgba(168,85,247,0.12); }
+.ic-btn-violet  { color: var(--color-accent-base); }
+.ic-btn-violet:hover:not(:disabled)  { color: var(--color-accent-light); background: rgb(var(--accent-rgb) / 0.12); }
 
 .ic-btn-green   { color: #22c55e; }
 .ic-btn-green:hover:not(:disabled)   { color: #4ade80; background: rgba(34,197,94,0.12); }
@@ -824,7 +833,7 @@ input::placeholder {
   inset: 0;
   background: radial-gradient(
     ellipse 55% 45% at 50% 42%,
-    rgba(168, 85, 247, 0.14) 0%,
+    rgb(var(--accent-rgb) / 0.14) 0%,
     rgba(120, 40, 210, 0.06) 50%,
     transparent              75%
   );
@@ -922,7 +931,7 @@ input::placeholder {
 }
 
 .welcome-mono-tag--accent {
-  color: rgba(168, 85, 247, 0.42);
+  color: rgb(var(--accent-rgb) / 0.42);
   letter-spacing: 0.26em;
 }
 
@@ -957,7 +966,7 @@ input::placeholder {
   transform: translate(-50%, -52%);
   background: radial-gradient(
     ellipse at 50% 55%,
-    rgba(168, 85, 247, 0.16) 0%,
+    rgb(var(--accent-rgb) / 0.16) 0%,
     rgba(100, 30, 200, 0.08) 45%,
     transparent              70%
   );
@@ -971,7 +980,7 @@ input::placeholder {
   height: 98px;
   margin-bottom: 22px;
   filter:
-    drop-shadow(0 0 12px rgba(192, 132, 252, 0.45))
+    drop-shadow(0 0 12px rgb(var(--accent-light-rgb) / 0.45))
     drop-shadow(0 0 28px rgba(120, 40, 220, 0.30));
 }
 
@@ -986,7 +995,7 @@ input::placeholder {
   text-transform: uppercase;
   margin: 0 0 10px;
   line-height: 1;
-  text-shadow: 0 0 40px rgba(192, 132, 252, 0.18);
+  text-shadow: 0 0 40px rgb(var(--accent-light-rgb) / 0.18);
 }
 
 .welcome-byline {
@@ -1058,7 +1067,7 @@ input::placeholder {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(168, 85, 247, 0.28),
+    rgb(var(--accent-rgb) / 0.28),
     transparent
   );
 }
@@ -1079,8 +1088,8 @@ input::placeholder {
   justify-content: center;
   padding: 14px 64px;
   border-radius: 10px;
-  border: 1px solid rgba(168, 85, 247, 0.32);
-  background: linear-gradient(140deg, #5e18b0 0%, #9333ea 52%, #c084fc 100%);
+  border: 1px solid rgb(var(--accent-rgb) / 0.32);
+  background: linear-gradient(140deg, #5e18b0 0%, #9333ea 52%, var(--color-accent-light) 100%);
   color: rgba(255, 255, 255, 0.92);
   font-family: var(--font-sans, Inter, sans-serif);
   font-size: 10.5px;
@@ -1090,8 +1099,8 @@ input::placeholder {
   text-transform: uppercase;
   cursor: pointer;
   box-shadow:
-    0 0 0    1px rgba(168, 85, 247, 0.08),
-    0 0 28px    rgba(168, 85, 247, 0.22),
+    0 0 0    1px rgb(var(--accent-rgb) / 0.08),
+    0 0 28px    rgb(var(--accent-rgb) / 0.22),
     0 4px 18px  rgba(0, 0, 0, 0.60),
     inset 0 1px 0 rgba(255, 255, 255, 0.09);
   transition:
@@ -1102,10 +1111,10 @@ input::placeholder {
 
 .welcome-cta:hover {
   transform: translateY(-3px) scale(1.018);
-  border-color: rgba(192, 132, 252, 0.52);
+  border-color: rgb(var(--accent-light-rgb) / 0.52);
   box-shadow:
-    0 0 0    1px rgba(168, 85, 247, 0.14),
-    0 0 48px    rgba(168, 85, 247, 0.38),
+    0 0 0    1px rgb(var(--accent-rgb) / 0.14),
+    0 0 48px    rgb(var(--accent-rgb) / 0.38),
     0 10px 30px rgba(0, 0, 0, 0.65),
     inset 0 1px 0 rgba(255, 255, 255, 0.13);
 }
@@ -1113,7 +1122,7 @@ input::placeholder {
 .welcome-cta:active {
   transform: translateY(0) scale(0.972);
   box-shadow:
-    0 0 18px rgba(168, 85, 247, 0.18),
+    0 0 18px rgb(var(--accent-rgb) / 0.18),
     0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
@@ -1128,13 +1137,13 @@ input::placeholder {
 }
 
 .welcome-legal span {
-  color: rgba(168, 85, 247, 0.32);
+  color: rgb(var(--accent-rgb) / 0.32);
   cursor: pointer;
   transition: color 0.18s ease;
 }
 
 .welcome-legal span:hover {
-  color: rgba(192, 132, 252, 0.58);
+  color: rgb(var(--accent-light-rgb) / 0.58);
 }
 
 /* ─────────────────────────────────────────────────────────────

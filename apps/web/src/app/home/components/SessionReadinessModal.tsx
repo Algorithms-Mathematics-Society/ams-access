@@ -164,8 +164,7 @@ export function SessionReadinessModal({
   }, [contestId, entryWindowRefreshIndex, sessionType]);
 
   const score = calculateReadinessScore(readiness);
-  const requiredReportChecks =
-    activeReport?.required_checks.filter((check) => check.kind !== "network") ?? [];
+  const requiredReportChecks = activeReport?.required_checks ?? [];
   const context = useMemo(
     () =>
       deriveContestantReadiness({
@@ -208,7 +207,8 @@ export function SessionReadinessModal({
   const requiredChecksPassed =
     !!activeReport &&
     requiredPolicyChecks.every((check) => check.outcome === "pass" && !check.blocking);
-  const policyAllowsProceed = !!activeReport && requiredChecksPassed;
+  const policyAllowsProceed =
+    !!activeReport && activeReport.decision !== "blocked" && requiredChecksPassed;
   const entryWindowAllowed = entryWindow.status === "allowed";
   const canProceed = scanStatus === "done" && entryWindowAllowed && policyAllowsProceed;
   const primaryActionLabel = canProceed
@@ -221,9 +221,7 @@ export function SessionReadinessModal({
         ? "Open settings"
         : "Back to contests";
   const requiredPreflightItems = activeReport
-    ? activeReport.required_checks
-        .filter((check) => check.kind !== "network")
-        .map((check) => toPreflightPolicyItem(check, "required"))
+    ? activeReport.required_checks.map((check) => toPreflightPolicyItem(check, "required"))
     : [
         {
           key: "required-policy-pending",
@@ -262,7 +260,6 @@ export function SessionReadinessModal({
     }
 
     const checkLog = (kind: string, prefix: string, label: string) => {
-      if (kind === "network") return null;
       const check = activeReport.checks.find((item) => item.kind === kind);
       if (!check) return `[${prefix}] ${label}: unavailable`;
       const outcome = check.outcome === "pass" ? "PASS" : "FAIL";
@@ -272,6 +269,7 @@ export function SessionReadinessModal({
 
     return [
       `Readiness report received at ${new Date(activeReport.generated_at_ms).toLocaleTimeString()}`,
+      checkLog("network", "NET", "Network connectivity"),
       checkLog("microphone", "AUD", "Microphone"),
       checkLog("camera", "CAM", "Camera"),
       checkLog("virtualization", "SEC", "Virtual machine check"),
@@ -335,7 +333,7 @@ export function SessionReadinessModal({
           padding: "36px",
           boxShadow: isLight
             ? "0 24px 60px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04)"
-            : "0 24px 64px rgba(168, 85, 247, 0.08)",
+            : "0 24px 64px rgb(var(--accent-rgb) / 0.08)",
           position: "relative",
           overflow: "hidden",
           display: "flex",

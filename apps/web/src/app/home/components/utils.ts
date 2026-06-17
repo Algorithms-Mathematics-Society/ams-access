@@ -366,6 +366,10 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
   };
 
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return unavailable;
+  // A missing/blank status is UNKNOWN, not blocked — surface "unavailable"
+  // (refresh / contact support) instead of a hard "BLOCKED" that reads like an
+  // eligibility denial. A known-but-unhandled status still falls through to blocked.
+  if (!status) return unavailable;
 
   const verificationOpen = start - verificationWindowMinutes * 60 * 1000;
   const verificationOpensAt = formatContestClock(verificationOpen, c.timezone);

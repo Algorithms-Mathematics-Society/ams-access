@@ -34,9 +34,9 @@ const toneTokens: Record<Tone, { text: string; bg: string; border: string; icon:
     icon: XCircle,
   },
   accent: {
-    text: "#c084fc",
-    bg: "rgba(168,85,247,0.09)",
-    border: "rgba(168,85,247,0.3)",
+    text: "var(--color-accent-light)",
+    bg: "rgb(var(--accent-rgb) / 0.09)",
+    border: "rgb(var(--accent-rgb) / 0.3)",
     icon: Loader2,
   },
   muted: {
@@ -117,7 +117,7 @@ export const Button = forwardRef<
   const height = size === "small" ? "32px" : size === "icon" ? "32px" : "38px";
   const base =
     variant === "primary"
-      ? { border: "#a855f7", bg: "#a855f7", color: "#ffffff" }
+      ? { border: "var(--color-accent-base)", bg: "var(--color-accent-base)", color: "#ffffff" }
       : variant === "danger"
         ? { border: "rgba(239,68,68,0.3)", bg: "rgba(239,68,68,0.1)", color: "#fca5a5" }
         : variant === "ghost"

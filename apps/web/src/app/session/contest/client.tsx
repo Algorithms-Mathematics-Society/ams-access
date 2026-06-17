@@ -904,7 +904,7 @@ const CountdownBadge = memo(function CountdownBadge({
   const R = 10;
   const CIRC = 2 * Math.PI * R;
   const offset = CIRC * (1 - percentLeft);
-  const ringColor = urgent ? "#ef4444" : pulse ? "#f59e0b" : "#a855f7";
+  const ringColor = urgent ? "#ef4444" : pulse ? "#f59e0b" : "var(--color-accent-base)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
       <svg
@@ -932,7 +932,7 @@ const CountdownBadge = memo(function CountdownBadge({
         style={{
           fontSize: "13px",
           fontWeight: 600,
-          color: urgent ? "#ef4444" : pulse ? "#f59e0b" : "#a855f7",
+          color: urgent ? "#ef4444" : pulse ? "#f59e0b" : "var(--color-accent-base)",
           fontFamily: "'JetBrains Mono', monospace",
           fontVariantNumeric: "tabular-nums",
           letterSpacing: "0.02em",
@@ -1122,12 +1122,12 @@ function FollowUpPane({
                   ? "1px solid rgba(34,197,94,0.3)"
                   : locked
                     ? "1px solid #1F1F1F"
-                    : "1px solid rgba(168,85,247,0.2)",
+                    : "1px solid rgb(var(--accent-rgb) / 0.2)",
                 background: accepted
                   ? "rgba(34,197,94,0.04)"
                   : locked
                     ? "#111111"
-                    : "rgba(168,85,247,0.03)",
+                    : "rgb(var(--accent-rgb) / 0.03)",
                 overflow: "hidden",
                 opacity: locked ? 0.55 : 1,
                 transition: "all 250ms",
@@ -1145,7 +1145,7 @@ function FollowUpPane({
                     ? "rgba(34,197,94,0.06)"
                     : locked
                       ? "transparent"
-                      : "rgba(168,85,247,0.06)",
+                      : "rgb(var(--accent-rgb) / 0.06)",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -1154,7 +1154,7 @@ function FollowUpPane({
                       fontFamily: "'JetBrains Mono', monospace",
                       fontWeight: 700,
                       fontSize: "13px",
-                      color: accepted ? "#22c55e" : locked ? "#475569" : "#a855f7",
+                      color: accepted ? "#22c55e" : locked ? "#475569" : "var(--color-accent-base)",
                     }}
                   >
                     {label}
@@ -1254,11 +1254,11 @@ function FollowUpPane({
                         style={{
                           padding: "8px 16px",
                           background: state.loading
-                            ? "rgba(168,85,247,0.2)"
-                            : "rgba(168,85,247,0.15)",
-                          border: "1px solid rgba(168,85,247,0.35)",
+                            ? "rgb(var(--accent-rgb) / 0.2)"
+                            : "rgb(var(--accent-rgb) / 0.15)",
+                          border: "1px solid rgb(var(--accent-rgb) / 0.35)",
                           borderRadius: "6px",
-                          color: "#c084fc",
+                          color: "var(--color-accent-light)",
                           fontSize: "12px",
                           fontWeight: 600,
                           cursor:
@@ -1449,9 +1449,9 @@ function MarkovPane({
               alignSelf: "flex-start",
               padding: "8px 24px",
               borderRadius: 8,
-              background: "rgba(168,85,247,0.15)",
-              border: "1px solid rgba(168,85,247,0.45)",
-              color: "#c084fc",
+              background: "rgb(var(--accent-rgb) / 0.15)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.45)",
+              color: "var(--color-accent-light)",
               fontSize: 13,
               fontWeight: 600,
               cursor: loading ? "wait" : "pointer",
@@ -3202,17 +3202,17 @@ export default function ContestPageClient() {
     : saving
       ? {
           label: "Saving…",
-          color: "#c084fc",
-          bg: "rgba(168,85,247,0.1)",
-          border: "rgba(168,85,247,0.28)",
+          color: "var(--color-accent-light)",
+          bg: "rgb(var(--accent-rgb) / 0.1)",
+          border: "rgb(var(--accent-rgb) / 0.28)",
           icon: "loading" as const,
         }
       : hasUnsavedChanges
         ? {
             label: "Saving…",
-            color: "#c084fc",
-            bg: "rgba(168,85,247,0.1)",
-            border: "rgba(168,85,247,0.28)",
+            color: "var(--color-accent-light)",
+            bg: "rgb(var(--accent-rgb) / 0.1)",
+            border: "rgb(var(--accent-rgb) / 0.28)",
             icon: "pending" as const,
           }
         : {
@@ -3348,9 +3348,9 @@ export default function ContestPageClient() {
         map[q.id] = {
           label: "Attempted",
           shortLabel: "Run",
-          color: "#a855f7",
-          bg: "rgba(168,85,247,0.1)",
-          border: "rgba(168,85,247,0.28)",
+          color: "var(--color-accent-base)",
+          bg: "rgb(var(--accent-rgb) / 0.1)",
+          border: "rgb(var(--accent-rgb) / 0.28)",
         };
       } else if (hasAttempt) {
         map[q.id] = {
@@ -3447,10 +3447,10 @@ export default function ContestPageClient() {
             style={{
               width: "40px",
               height: "40px",
-              borderTop: "2px solid #a855f7",
-              borderRight: "2px solid rgba(168,85,247,0.3)",
-              borderBottom: "2px solid rgba(168,85,247,0.3)",
-              borderLeft: "2px solid rgba(168,85,247,0.3)",
+              borderTop: "2px solid var(--color-accent-base)",
+              borderRight: "2px solid rgb(var(--accent-rgb) / 0.3)",
+              borderBottom: "2px solid rgb(var(--accent-rgb) / 0.3)",
+              borderLeft: "2px solid rgb(var(--accent-rgb) / 0.3)",
               borderRadius: "50%",
               animation: "spin 0.9s linear infinite",
               margin: "0 auto 16px",
@@ -3487,10 +3487,10 @@ export default function ContestPageClient() {
             style={{
               width: "40px",
               height: "40px",
-              borderTop: "2px solid #a855f7",
-              borderRight: "2px solid rgba(168,85,247,0.3)",
-              borderBottom: "2px solid rgba(168,85,247,0.3)",
-              borderLeft: "2px solid rgba(168,85,247,0.3)",
+              borderTop: "2px solid var(--color-accent-base)",
+              borderRight: "2px solid rgb(var(--accent-rgb) / 0.3)",
+              borderBottom: "2px solid rgb(var(--accent-rgb) / 0.3)",
+              borderLeft: "2px solid rgb(var(--accent-rgb) / 0.3)",
               borderRadius: "50%",
               animation: "spin 0.9s linear infinite",
               margin: "0 auto 16px",
@@ -4016,12 +4016,12 @@ export default function ContestPageClient() {
                     width: "100%",
                     padding: sidebarCollapsed ? "8px 0" : "10px 12px",
                     borderRadius: "8px",
-                    border: `1px solid ${activeQ === i ? "rgba(168,85,247,0.30)" : "transparent"}`,
-                    background: activeQ === i ? "rgba(168,85,247,0.08)" : "transparent",
+                    border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.30)" : "transparent"}`,
+                    background: activeQ === i ? "rgb(var(--accent-rgb) / 0.08)" : "transparent",
                     cursor: "pointer",
                     fontFamily: "Inter, system-ui, sans-serif",
                     textAlign: "left",
-                    color: activeQ === i ? "#c084fc" : "#64748b",
+                    color: activeQ === i ? "var(--color-accent-light)" : "#64748b",
                     transition: "all 0.2s",
                     position: "relative",
                   }}
@@ -4036,11 +4036,11 @@ export default function ContestPageClient() {
                         alignItems: "center",
                         justifyContent: "center",
                         borderRadius: "8px",
-                        border: `1px solid ${activeQ === i ? "rgba(168,85,247,0.35)" : qStatus.border}`,
-                        background: activeQ === i ? "rgba(168,85,247,0.1)" : qStatus.bg,
+                        border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.35)" : qStatus.border}`,
+                        background: activeQ === i ? "rgb(var(--accent-rgb) / 0.1)" : qStatus.bg,
                         fontSize: "12px",
                         fontWeight: 700,
-                        color: activeQ === i ? "#c084fc" : qStatus.color,
+                        color: activeQ === i ? "var(--color-accent-light)" : qStatus.color,
                       }}
                     >
                       {i + 1}
@@ -4059,7 +4059,7 @@ export default function ContestPageClient() {
                         style={{
                           fontSize: "10px",
                           fontWeight: 600,
-                          color: activeQ === i ? "#c084fc" : "#64748b",
+                          color: activeQ === i ? "var(--color-accent-light)" : "#64748b",
                           flexShrink: 0,
                         }}
                       >
@@ -4351,9 +4351,9 @@ export default function ContestPageClient() {
                             padding: "0 12px",
                             borderRadius: 0,
                             border: "none",
-                            borderBottom: `2px solid ${active ? "#a855f7" : "transparent"}`,
+                            borderBottom: `2px solid ${active ? "var(--color-accent-base)" : "transparent"}`,
                             background: "transparent",
-                            color: active ? "#c084fc" : "#64748b",
+                            color: active ? "var(--color-accent-light)" : "#64748b",
                             fontSize: "12px",
                             fontWeight: 600,
                             fontFamily: "Inter, system-ui, sans-serif",
@@ -4372,7 +4372,7 @@ export default function ContestPageClient() {
                     style={{
                       margin: "0 0 8px",
                       fontSize: "12px",
-                      color: "#a855f7",
+                      color: "var(--color-accent-base)",
                       fontWeight: 700,
                       fontFamily: "Inter, system-ui, sans-serif",
                     }}
@@ -4848,7 +4848,9 @@ export default function ContestPageClient() {
                                 padding: "0 8px",
                                 border: "none",
                                 borderRadius: "6px",
-                                background: active ? "rgba(168,85,247,0.12)" : "transparent",
+                                background: active
+                                  ? "rgb(var(--accent-rgb) / 0.12)"
+                                  : "transparent",
                                 color: active ? "#d8b4fe" : "#cbd5e1",
                                 fontSize: "12px",
                                 fontFamily: "Inter, system-ui, sans-serif",
@@ -4942,9 +4944,12 @@ export default function ContestPageClient() {
                         justifyContent: "center",
                         gap: "8px",
                         padding: "0 18px",
-                        border: `1px solid ${saving || isSubmitting ? "rgba(168,85,247,0.24)" : "#a855f7"}`,
+                        border: `1px solid ${saving || isSubmitting ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
                         borderRadius: "var(--radius-sm)",
-                        background: saving || isSubmitting ? "rgba(168,85,247,0.14)" : "#a855f7",
+                        background:
+                          saving || isSubmitting
+                            ? "rgb(var(--accent-rgb) / 0.14)"
+                            : "var(--color-accent-base)",
                         color: saving || isSubmitting ? "rgba(255,255,255,0.58)" : "#ffffff",
                         fontSize: "13px",
                         fontWeight: 600,
@@ -4957,12 +4962,12 @@ export default function ContestPageClient() {
                       onMouseEnter={(e) => {
                         if (saving || isSubmitting) return;
                         e.currentTarget.style.background = "#9333ea";
-                        e.currentTarget.style.borderColor = "#c084fc";
+                        e.currentTarget.style.borderColor = "var(--color-accent-light)";
                       }}
                       onMouseLeave={(e) => {
                         if (saving || isSubmitting) return;
-                        e.currentTarget.style.background = "#a855f7";
-                        e.currentTarget.style.borderColor = "#a855f7";
+                        e.currentTarget.style.background = "var(--color-accent-base)";
+                        e.currentTarget.style.borderColor = "var(--color-accent-base)";
                         e.currentTarget.style.transform = "scale(1)";
                       }}
                       onMouseDown={(e) => {
@@ -5065,11 +5070,13 @@ export default function ContestPageClient() {
                     onClick={() => setTerminalTab("stdout")}
                     style={{
                       fontSize: "12px",
-                      color: terminalTab === "stdout" ? "#c084fc" : "#64748b",
+                      color: terminalTab === "stdout" ? "var(--color-accent-light)" : "#64748b",
                       background: "transparent",
                       border: "none",
                       borderBottom:
-                        terminalTab === "stdout" ? "2px solid #a855f7" : "2px solid transparent",
+                        terminalTab === "stdout"
+                          ? "2px solid var(--color-accent-base)"
+                          : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
                       fontWeight: 600,
                       cursor: "pointer",
@@ -5084,11 +5091,13 @@ export default function ContestPageClient() {
                     onClick={() => setTerminalTab("logs")}
                     style={{
                       fontSize: "12px",
-                      color: terminalTab === "logs" ? "#c084fc" : "#64748b",
+                      color: terminalTab === "logs" ? "var(--color-accent-light)" : "#64748b",
                       background: "transparent",
                       border: "none",
                       borderBottom:
-                        terminalTab === "logs" ? "2px solid #a855f7" : "2px solid transparent",
+                        terminalTab === "logs"
+                          ? "2px solid var(--color-accent-base)"
+                          : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
                       fontWeight: 600,
                       cursor: "pointer",
@@ -5119,12 +5128,13 @@ export default function ContestPageClient() {
                     onClick={() => setTerminalTab("submissions")}
                     style={{
                       fontSize: "12px",
-                      color: terminalTab === "submissions" ? "#c084fc" : "#64748b",
+                      color:
+                        terminalTab === "submissions" ? "var(--color-accent-light)" : "#64748b",
                       background: "transparent",
                       border: "none",
                       borderBottom:
                         terminalTab === "submissions"
-                          ? "2px solid #a855f7"
+                          ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
                       fontWeight: 600,
@@ -5142,7 +5152,7 @@ export default function ContestPageClient() {
                             borderRadius: "999px",
                             background:
                               terminalTab === "submissions"
-                                ? "rgba(168,85,247,0.16)"
+                                ? "rgb(var(--accent-rgb) / 0.16)"
                                 : "rgba(148,163,184,0.1)",
                             color: terminalTab === "submissions" ? "#d8b4fe" : "#94a3b8",
                             fontSize: "9px",
@@ -5256,10 +5266,12 @@ export default function ContestPageClient() {
                                 background: complete
                                   ? runError
                                     ? "#ef4444"
-                                    : "#a855f7"
+                                    : "var(--color-accent-base)"
                                   : "#334155",
                                 boxShadow:
-                                  current && !runError ? "0 0 8px rgba(168,85,247,0.6)" : "none",
+                                  current && !runError
+                                    ? "0 0 8px rgb(var(--accent-rgb) / 0.6)"
+                                    : "none",
                               }}
                             />
                             <span
@@ -5278,7 +5290,8 @@ export default function ContestPageClient() {
                               style={{
                                 width: "24px",
                                 height: "1px",
-                                background: index < runProgressPhase ? "#a855f7" : "#334155",
+                                background:
+                                  index < runProgressPhase ? "var(--color-accent-base)" : "#334155",
                               }}
                             />
                           )}
@@ -5452,7 +5465,11 @@ export default function ContestPageClient() {
                         )}
                         {isRunning && (
                           <span
-                            style={{ fontSize: "9px", color: "#a855f7", letterSpacing: "0.1em" }}
+                            style={{
+                              fontSize: "9px",
+                              color: "var(--color-accent-base)",
+                              letterSpacing: "0.1em",
+                            }}
                           >
                             Running…
                           </span>
@@ -5509,9 +5526,11 @@ export default function ContestPageClient() {
                                   height: "28px",
                                   padding: "0 12px",
                                   borderRadius: "999px",
-                                  border: `1px solid ${active ? "rgba(168,85,247,0.5)" : "rgba(148,163,184,0.14)"}`,
-                                  background: active ? "rgba(168,85,247,0.14)" : "transparent",
-                                  color: active ? "#c084fc" : "#64748b",
+                                  border: `1px solid ${active ? "rgb(var(--accent-rgb) / 0.5)" : "rgba(148,163,184,0.14)"}`,
+                                  background: active
+                                    ? "rgb(var(--accent-rgb) / 0.14)"
+                                    : "transparent",
+                                  color: active ? "var(--color-accent-light)" : "#64748b",
                                   fontSize: "11px",
                                   fontWeight: 600,
                                   fontFamily: "Inter, system-ui, sans-serif",
@@ -5711,7 +5730,8 @@ export default function ContestPageClient() {
                             else if (finalVerdict === "WA") verdictColor = "#ef4444";
                             else if (finalVerdict === "TLE") verdictColor = "#f59e0b";
                             else if (finalVerdict === "MLE") verdictColor = "#3b82f6";
-                            else if (finalVerdict === "CE") verdictColor = "#a855f7";
+                            else if (finalVerdict === "CE")
+                              verdictColor = "var(--color-accent-base)";
                             else if (finalVerdict === "RE") verdictColor = "#ec4899";
                             else if (isPending) verdictColor = "#06b6d4";
 
@@ -6165,7 +6185,7 @@ export default function ContestPageClient() {
               borderRadius: "8px",
               padding: "32px 28px",
               background: "#1F1F1F",
-              border: "1px solid rgba(168, 85, 247, 0.2)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.2)",
               boxShadow: "0 20px 50px rgba(0, 0, 0, 0.3)",
               textAlign: "center",
             }}
@@ -6175,8 +6195,8 @@ export default function ContestPageClient() {
                 width: "48px",
                 height: "48px",
                 borderRadius: "50%",
-                background: "rgba(168, 85, 247, 0.1)",
-                border: "1px solid rgba(168, 85, 247, 0.3)",
+                background: "rgb(var(--accent-rgb) / 0.1)",
+                border: "1px solid rgb(var(--accent-rgb) / 0.3)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -6188,7 +6208,7 @@ export default function ContestPageClient() {
                 height="22"
                 viewBox="0 0 24 24"
                 fill="none"
-                stroke="#c084fc"
+                stroke="var(--color-accent-light)"
                 strokeWidth="1.8"
               >
                 <circle cx="12" cy="12" r="10" />
@@ -6488,10 +6508,10 @@ export default function ContestPageClient() {
               width: "100%",
               maxWidth: "800px",
               background: "#1F1F1F",
-              border: "1px solid rgba(168,85,247,0.2)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.2)",
               borderRadius: "8px",
               padding: "32px",
-              boxShadow: "0 24px 64px rgba(168, 85, 247, 0.08)",
+              boxShadow: "0 24px 64px rgb(var(--accent-rgb) / 0.08)",
               position: "relative",
               overflow: "hidden",
               display: "grid",
@@ -6588,9 +6608,9 @@ export default function ContestPageClient() {
                           borderRadius: "8px",
                           background:
                             supportCategory === opt.value
-                              ? "rgba(168,85,247,0.08)"
+                              ? "rgb(var(--accent-rgb) / 0.08)"
                               : "rgba(255,255,255,0.01)",
-                          border: `1px solid ${supportCategory === opt.value ? "rgba(168,85,247,0.3)" : "rgba(255,255,255,0.05)"}`,
+                          border: `1px solid ${supportCategory === opt.value ? "rgb(var(--accent-rgb) / 0.3)" : "rgba(255,255,255,0.05)"}`,
                           cursor: "pointer",
                           fontSize: "13px",
                           color: supportCategory === opt.value ? "#ffffff" : "#94a3b8",
@@ -6604,7 +6624,7 @@ export default function ContestPageClient() {
                           checked={supportCategory === opt.value}
                           onChange={(e) => setSupportCategory(e.target.value)}
                           style={{
-                            accentColor: "#a855f7",
+                            accentColor: "var(--color-accent-base)",
                             cursor: "pointer",
                           }}
                         />
@@ -6729,7 +6749,7 @@ export default function ContestPageClient() {
                   overflowY: "auto",
                   fontFamily: "'JetBrains Mono', monospace",
                   fontSize: "10.5px",
-                  color: "rgba(168, 85, 247, 0.8)",
+                  color: "rgb(var(--accent-rgb) / 0.8)",
                   lineHeight: 1.5,
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
@@ -6750,10 +6770,10 @@ export default function ContestPageClient() {
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
-        button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid rgba(168,85,247,0.3); outline-offset: 0; }
+        button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid rgb(var(--accent-rgb) / 0.3); outline-offset: 0; }
         textarea::-webkit-scrollbar { width: 6px; }
         textarea::-webkit-scrollbar-track { background: transparent; }
-        textarea::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 3px; }
+        textarea::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.2); border-radius: 3px; }
 
         /* Problem description markdown */
         .pb-body { color: #cbd5e1; font-size: 14px; line-height: 1.7; }
@@ -6763,7 +6783,7 @@ export default function ContestPageClient() {
         .pb-body h1 { font-size: 22px; } .pb-body h2 { font-size: 18px; } .pb-body h3 { font-size: 15px; }
         .pb-body strong { color: #f1f5f9; font-weight: 600; }
         .pb-body em { color: #a5b4fc; font-style: italic; }
-        .pb-body code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: rgba(168,85,247,0.1); color: #c4b5fd; padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(168,85,247,0.2); }
+        .pb-body code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: rgb(var(--accent-rgb) / 0.1); color: #c4b5fd; padding: 1px 5px; border-radius: 4px; border: 1px solid rgb(var(--accent-rgb) / 0.2); }
         .pb-body pre { background: #071124; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
         .pb-body pre code { background: none; border: none; padding: 0; color: #94a3b8; font-size: 12.5px; }
         .pb-sample-block { position: relative; margin: 14px 0; }
@@ -6783,17 +6803,17 @@ export default function ContestPageClient() {
           font-weight: 600;
           cursor: pointer;
         }
-        .pb-copy-button:hover { border-color: rgba(168,85,247,0.35); color: #d8b4fe; }
+        .pb-copy-button:hover { border-color: rgb(var(--accent-rgb) / 0.35); color: #d8b4fe; }
         .pb-body ul,.pb-body ol { padding-left: 20px; margin: 0 0 12px; }
         .pb-body li { margin-bottom: 4px; color: #cbd5e1; }
-        .pb-body a { color: #a855f7; text-decoration: underline; text-decoration-color: rgba(168,85,247,0.4); }
-        .pb-body a:hover { color: #c084fc; }
+        .pb-body a { color: var(--color-accent-base); text-decoration: underline; text-decoration-color: rgb(var(--accent-rgb) / 0.4); }
+        .pb-body a:hover { color: var(--color-accent-light); }
         .pb-body img { max-width: 100%; border-radius: 8px; margin: 8px 0; border: 1px solid rgba(255,255,255,0.06); }
-        .pb-body blockquote { border-left: 3px solid rgba(168,85,247,0.4); margin: 12px 0; padding: 4px 0 4px 14px; color: #94a3b8; }
+        .pb-body blockquote { border-left: 3px solid rgb(var(--accent-rgb) / 0.4); margin: 12px 0; padding: 4px 0 4px 14px; color: #94a3b8; }
         .pb-body hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 16px 0; }
         .pb-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
         .pb-body th,.pb-body td { border: 1px solid rgba(255,255,255,0.06); padding: 6px 10px; text-align: left; }
-        .pb-body th { background: rgba(168,85,247,0.08); color: #e2e8f0; font-weight: 600; }
+        .pb-body th { background: rgb(var(--accent-rgb) / 0.08); color: #e2e8f0; font-weight: 600; }
         /* KaTeX math — sized to flow with the 14px statement body. */
         .pb-body .katex { font-size: 1.05em; color: #e2e8f0; }
         .pb-body .katex-display { margin: 12px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
@@ -6826,11 +6846,11 @@ export default function ContestPageClient() {
         .pb-body input[type="range"]::-webkit-slider-thumb {
           -webkit-appearance: none; appearance: none;
           width: 10px; height: 10px;
-          background: #a855f7; border-radius: 0; cursor: pointer;
+          background: var(--color-accent-base); border-radius: 0; cursor: pointer;
         }
         .pb-body input[type="range"]::-moz-range-thumb {
           width: 10px; height: 10px;
-          background: #a855f7; border-radius: 0; border: none; cursor: pointer;
+          background: var(--color-accent-base); border-radius: 0; border: none; cursor: pointer;
         }
         .pb-body input[type="range"]::-webkit-slider-runnable-track { background: rgba(255,255,255,0.08); height: 2px; }
         /* Nested output spans inside widgets */

@@ -608,9 +608,11 @@ export function ResolveModal({
               height: "40px",
               padding: "0 16px",
               background:
-                activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.14)" : "#a855f7",
+                activeFlow.primaryAction === "retry"
+                  ? "rgba(245, 158, 11, 0.14)"
+                  : "var(--color-accent-base)",
               color: activeFlow.primaryAction === "retry" ? "#f59e0b" : "#ffffff",
-              border: `1px solid ${activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.36)" : "#a855f7"}`,
+              border: `1px solid ${activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.36)" : "var(--color-accent-base)"}`,
               borderRadius: "6px",
               fontWeight: 700,
               fontSize: "13px",

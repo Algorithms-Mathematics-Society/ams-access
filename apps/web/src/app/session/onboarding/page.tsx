@@ -13,6 +13,7 @@ import {
   type ReadinessReport,
 } from "@ams/api-client";
 import { fetchJson } from "@/lib/api-client";
+import { isGatingRelaxed, warnGatingRelaxed, RELAXED_MODE_BADGE } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { Button } from "@/app/home/components/ui-primitives";
 
@@ -32,6 +33,7 @@ import {
   STAGE_META,
   delay,
   getNetworkLockdownAllowlistHost,
+  getNetworkProbeHost,
   getOrCreateDeviceId,
   getUserMediaWithTimeout,
   getVerificationOpenMs,
@@ -2439,8 +2441,8 @@ function Stage9_FaceCalibration({
             style={{
               padding: "10px 18px",
               borderRadius: "8px",
-              border: "1px solid rgba(168,85,247,0.5)",
-              background: "rgba(168,85,247,0.12)",
+              border: "1px solid rgb(var(--accent-rgb) / 0.5)",
+              background: "rgb(var(--accent-rgb) / 0.12)",
               color: "#e2e8f0",
               fontSize: "13px",
               fontWeight: 600,
@@ -2726,17 +2728,87 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
   const [helperMessage, setHelperMessage] = useState("Network lockdown helper ready");
 
   useEffect(() => {
+    async function ensureNetworkHelper() {
+      if (!window.__TAURI__) return true;
+
+      // macOS (LaunchDaemon) and Linux (systemd + polkit) both apply egress
+      // lockdown through a privileged out-of-process helper that must be
+      // installed before the contest. Windows locks in-process and needs none.
+      const platform = await invoke<{ os: string }>("get_platform");
+      if (platform?.os !== "macos" && platform?.os !== "linux") return true;
+
+      setHelperPhase("checking");
+      const running = await invoke<boolean>("network_helper_running");
+      if (running) {
+        setHelperPhase("pass");
+        setHelperMessage("Network lockdown helper ready");
+        return true;
+      }
+
+      setHelperPhase("installing");
+      setHelperMessage("Administrator approval requested");
+      try {
+        await invokeStrict("install_network_helper");
+        const ready = await invoke<boolean>("network_helper_running");
+        setHelperPhase(ready ? "pass" : "warn");
+        setHelperMessage(
+          ready ? "Network lockdown helper ready" : "Network lockdown helper unavailable"
+        );
+        return Boolean(ready);
+      } catch (error) {
+        const msg =
+          error instanceof Error ? error.message : String(error ?? "helper install failed");
+        setHelperPhase("warn");
+        setHelperMessage(
+          msg.includes("admin_auth_cancelled")
+            ? "Administrator approval was cancelled"
+            : msg.includes("pkexec_not_available")
+              ? "Admin authorization tool (pkexec) is unavailable — ask your organizer to pre-install the helper"
+              : "Network lockdown helper unavailable"
+        );
+        return false;
+      }
+    }
+
     async function go() {
-      // Connectivity gating is disabled for now so the contest flow can continue.
-      const result = {
-        reachable: true,
-        latency_ms: 1,
-        quality: "excellent",
-      };
-      setLatency(result.latency_ms);
-      setQuality(result.quality);
-      setPhase("pass");
-      setTimeout(() => onPass(), 1400);
+      // TEST-ONLY relaxation (build-time flag). Default builds run the real
+      // probe + helper install below. Never a hardcoded bypass in a ship build.
+      if (isGatingRelaxed()) {
+        warnGatingRelaxed("onboarding network-validation stage auto-passed");
+        setLatency(1);
+        setQuality("excellent");
+        setHelperPhase("skipped");
+        setHelperMessage(RELAXED_MODE_BADGE);
+        setPhase("pass");
+        setTimeout(() => onPass(), 1400);
+        return;
+      }
+
+      const [result, helperReady] = await Promise.all([
+        withNullableTimeout(
+          invoke<{
+            reachable: boolean;
+            latency_ms: number | null;
+            quality: string;
+          }>("check_network_stability", { host: getNetworkProbeHost() }),
+          3000
+        ),
+        ensureNetworkHelper(),
+      ]);
+
+      let nextPhase: "pass" | "warn";
+      if (result?.reachable) {
+        setLatency(result.latency_ms);
+        setQuality(result.quality);
+        nextPhase = result.quality === "poor" || !helperReady ? "warn" : "pass";
+        setPhase(nextPhase);
+      } else {
+        setLatency(null);
+        setQuality("unreachable");
+        nextPhase = "warn";
+        setPhase("warn");
+      }
+      setTimeout(() => (nextPhase === "warn" ? (onWarn ?? onPass)() : onPass()), 1400);
     }
     void go();
   }, [onPass, onWarn]);
@@ -3207,8 +3279,8 @@ function DryRunSummary({
             flex: 1,
             padding: "12px 18px",
             borderRadius: 8,
-            border: "1px solid #a855f7",
-            background: "#a855f7",
+            border: "1px solid var(--color-accent-base)",
+            background: "var(--color-accent-base)",
             color: "#fff",
             fontSize: 14,
             fontWeight: 600,
@@ -3583,9 +3655,9 @@ export default function OnboardingPage() {
     }
     const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
     const deviceState = await collectDeviceState({
-      // Network probing is temporarily disabled so the contest submission flow
-      // can be tested without the connectivity gate blocking entry.
-      networkHost: undefined,
+      // Real connectivity probe (neutral canary host) feeds the readiness gate.
+      // Under the test flag we skip it and force a healthy network below.
+      networkHost: isGatingRelaxed() ? undefined : getNetworkProbeHost(),
       apiUrl: API_URL,
       cameraAvailable:
         cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live") ||
@@ -3594,12 +3666,14 @@ export default function OnboardingPage() {
       microphoneAvailable: devices?.some((device) => device.kind === "audioinput") || false,
       activateKeyboard: true,
     });
-    deviceState.network = {
-      reachable: true,
-      latency_ms: 1,
-      jitter_ms: 0,
-      quality: "excellent",
-    };
+    if (isGatingRelaxed()) {
+      // TEST-ONLY (build-time flag): present a healthy network + installed helper
+      // so the readiness gate treats network as fine. Default builds use the real
+      // probe results collected above (and the core-rs network/clock-skew gate).
+      warnGatingRelaxed("launch device-state network forced healthy");
+      deviceState.network = { reachable: true, latency_ms: 1, jitter_ms: 0, quality: "excellent" };
+      deviceState.network_helper_ready = true;
+    }
 
     try {
       const email = isTestAccount ? "tester@ams.local" : "candidate@ams.local";
@@ -3657,9 +3731,17 @@ export default function OnboardingPage() {
         let lockdownEngaged = false;
         let lockdownError: string | null = null;
         try {
-          lockdownEngaged = await tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
-            allowedDomains: [getNetworkLockdownAllowlistHost()],
-          });
+          // Bound the call: a hung/half-installed helper must not freeze the
+          // final stage. withTimeout rejects on timeout AND propagates the
+          // helper's real error, so the catch surfaces a clear reason and the
+          // hard-block path below fires.
+          lockdownEngaged = await withTimeout(
+            tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
+              allowedDomains: [getNetworkLockdownAllowlistHost()],
+            }),
+            8000,
+            "network lockdown timed out after 8s (helper unresponsive?)"
+          );
         } catch (err) {
           lockdownError = err instanceof Error ? err.message : String(err);
         }
@@ -4051,7 +4133,7 @@ export default function OnboardingPage() {
                       width: "5px",
                       height: "5px",
                       borderRadius: "50%",
-                      background: "rgba(168,85,247,0.7)",
+                      background: "rgb(var(--accent-rgb) / 0.7)",
                       flexShrink: 0,
                     }}
                   />
@@ -4072,8 +4154,8 @@ export default function OnboardingPage() {
                 width: "100%",
                 padding: "13px 24px",
                 borderRadius: "8px",
-                border: "1px solid #a855f7",
-                background: "#a855f7",
+                border: "1px solid var(--color-accent-base)",
+                background: "var(--color-accent-base)",
                 color: "#ffffff",
                 fontSize: "14px",
                 fontWeight: 600,
@@ -4083,11 +4165,11 @@ export default function OnboardingPage() {
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = "#9333ea";
-                e.currentTarget.style.borderColor = "#c084fc";
+                e.currentTarget.style.borderColor = "var(--color-accent-light)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "#a855f7";
-                e.currentTarget.style.borderColor = "#a855f7";
+                e.currentTarget.style.background = "var(--color-accent-base)";
+                e.currentTarget.style.borderColor = "var(--color-accent-base)";
               }}
             >
               Begin setup
@@ -4127,7 +4209,14 @@ export default function OnboardingPage() {
                   {STAGE_META[currentStage].checking}
                 </p>
                 {STAGE_META[currentStage].todo && (
-                  <p style={{ fontSize: "12px", color: "#a855f7", lineHeight: 1.5, margin: 0 }}>
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      color: "var(--color-accent-base)",
+                      lineHeight: 1.5,
+                      margin: 0,
+                    }}
+                  >
                     → {STAGE_META[currentStage].todo}
                   </p>
                 )}
@@ -4221,7 +4310,9 @@ export default function OnboardingPage() {
                       <div style={{ color: "#FFF" }}>Ready</div>
 
                       <div style={{ color: "#A8A8A8" }}>Action</div>
-                      <div style={{ color: "#a855f7" }}>Waiting to enter contest...</div>
+                      <div style={{ color: "var(--color-accent-base)" }}>
+                        Waiting to enter contest...
+                      </div>
 
                       <div
                         style={{
@@ -4285,7 +4376,7 @@ export default function OnboardingPage() {
                       <div style={{ color: "#A8A8A8" }}>Action</div>
                       <div
                         style={{
-                          color: "#a855f7",
+                          color: "var(--color-accent-base)",
                           display: "flex",
                           alignItems: "center",
                           gap: "8px",
@@ -4296,10 +4387,10 @@ export default function OnboardingPage() {
                           style={{
                             width: 12,
                             height: 12,
-                            borderTop: "2px solid #a855f7",
-                            borderRight: "2px solid rgba(168,85,247,0.3)",
-                            borderBottom: "2px solid rgba(168,85,247,0.3)",
-                            borderLeft: "2px solid rgba(168,85,247,0.3)",
+                            borderTop: "2px solid var(--color-accent-base)",
+                            borderRight: "2px solid rgb(var(--accent-rgb) / 0.3)",
+                            borderBottom: "2px solid rgb(var(--accent-rgb) / 0.3)",
+                            borderLeft: "2px solid rgb(var(--accent-rgb) / 0.3)",
                             borderRadius: "50%",
                             animation: "spin 0.9s linear infinite",
                           }}

@@ -253,7 +253,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             }}
             onMouseEnter={(e) => {
               if (checkingNetwork) return;
-              e.currentTarget.style.background = "rgba(168,85,247,0.14)";
+              e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.14)";
               e.currentTarget.style.borderColor = c.accentText;
             }}
             onMouseLeave={(e) => {

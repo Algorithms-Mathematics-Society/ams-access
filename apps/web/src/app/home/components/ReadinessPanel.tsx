@@ -118,11 +118,11 @@ export const ReadinessWidget = memo(function ReadinessWidget({
         style={{ width: "100%" }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = "#9333ea";
-          e.currentTarget.style.borderColor = "#c084fc";
+          e.currentTarget.style.borderColor = "var(--color-accent-light)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = "#a855f7";
-          e.currentTarget.style.borderColor = "#a855f7";
+          e.currentTarget.style.background = "var(--color-accent-base)";
+          e.currentTarget.style.borderColor = "var(--color-accent-base)";
         }}
       >
         <Settings size={14} strokeWidth={2} />

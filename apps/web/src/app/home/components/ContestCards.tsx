@@ -23,7 +23,7 @@ function readinessStatusColor(status: ContestantReadinessStatus): string {
     case "blocked_by_policy":
       return "#fca5a5";
     default:
-      return "rgba(168,85,247,0.7)";
+      return "rgb(var(--accent-rgb) / 0.7)";
   }
 }
 
@@ -75,10 +75,10 @@ export const ScheduledContestCard = memo(
 
     const cardHoverShadow = isLight
       ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-      : "0 20px 48px rgba(168, 85, 247, 0.08)";
+      : "0 20px 48px rgb(var(--accent-rgb) / 0.08)";
     const btnHoverShadow = isLight
       ? "0 8px 20px rgba(124, 58, 237, 0.2)"
-      : "0 8px 24px rgba(168, 85, 247, 0.3)";
+      : "0 8px 24px rgb(var(--accent-rgb) / 0.3)";
 
     return (
       <div
@@ -244,7 +244,7 @@ export const ScheduledContestCard = memo(
                       : themeColors.border
               }`,
               background: canJoin
-                ? "#a855f7"
+                ? "var(--color-accent-base)"
                 : phase === "too_early"
                   ? "rgba(245,158,11,0.08)"
                   : "rgba(255,255,255,0.055)",
@@ -355,8 +355,8 @@ export const ActiveContestCard = memo(
             statusColor: themeColors.accentText,
             statusBg: themeColors.accentLight,
             statusBorder: themeColors.accentBorder,
-            actionBg: "#a855f7",
-            actionBorder: "#a855f7",
+            actionBg: "var(--color-accent-base)",
+            actionBorder: "var(--color-accent-base)",
             actionText: "#ffffff",
           };
         case "live":
@@ -365,8 +365,8 @@ export const ActiveContestCard = memo(
             statusColor: col.dot,
             statusBg: col.bg,
             statusBorder: col.border,
-            actionBg: "#a855f7",
-            actionBorder: "#a855f7",
+            actionBg: "var(--color-accent-base)",
+            actionBorder: "var(--color-accent-base)",
             actionText: "#ffffff",
           };
         case "ended":
@@ -405,7 +405,7 @@ export const ActiveContestCard = memo(
 
     const cardHoverShadow = isLight
       ? "0 20px 40px rgba(124, 58, 237, 0.08)"
-      : "0 20px 48px rgba(168, 85, 247, 0.08)";
+      : "0 20px 48px rgb(var(--accent-rgb) / 0.08)";
 
     const timingRows = [
       { label: "Verification opens", value: entryState.verificationOpensAt },
@@ -608,7 +608,7 @@ export const ActiveContestCard = memo(
             }}
             onBlur={() => setBtnHovered(false)}
             style={{
-              border: `1px solid ${btnHovered && canEnter ? "#c084fc" : entryTone.actionBorder}`,
+              border: `1px solid ${btnHovered && canEnter ? "var(--color-accent-light)" : entryTone.actionBorder}`,
               background: btnHovered && canEnter ? "#9333ea" : entryTone.actionBg,
               color: entryTone.actionText,
               transition: "background 150ms ease, border-color 150ms ease",
@@ -706,10 +706,10 @@ export const ActiveContestCard = memo(
                   padding: "5px 14px",
                   fontSize: "12px",
                   fontWeight: 600,
-                  background: "rgba(168,85,247,0.12)",
-                  border: "1px solid rgba(168,85,247,0.3)",
+                  background: "rgb(var(--accent-rgb) / 0.12)",
+                  border: "1px solid rgb(var(--accent-rgb) / 0.3)",
                   borderRadius: "5px",
-                  color: "#c084fc",
+                  color: "var(--color-accent-light)",
                   cursor: "pointer",
                   flexShrink: 0,
                 }}

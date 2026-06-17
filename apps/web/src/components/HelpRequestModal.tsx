@@ -122,10 +122,10 @@ export function HelpRequestModal({
               <div
                 style={{
                   fontSize: 12,
-                  color: "#c084fc",
+                  color: "var(--color-accent-light)",
                   fontFamily: "monospace",
-                  background: "rgba(168,85,247,0.1)",
-                  border: "1px solid rgba(168,85,247,0.2)",
+                  background: "rgb(var(--accent-rgb) / 0.1)",
+                  border: "1px solid rgb(var(--accent-rgb) / 0.2)",
                   borderRadius: 6,
                   padding: "8px 10px",
                 }}
