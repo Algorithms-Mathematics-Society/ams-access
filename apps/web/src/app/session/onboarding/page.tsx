@@ -148,7 +148,7 @@ function CheckLine({
 
   const color =
     status === "checking"
-      ? "#A8A8A8"
+      ? "rgba(255,255,255,0.58)"
       : status === "pass"
         ? "#22c55e"
         : status === "warn"
@@ -177,7 +177,7 @@ function CheckLine({
       <span
         style={{
           fontSize: "13px",
-          color: status === "pass" ? (isLight ? "#475569" : "#e2e8f0") : color,
+          color: status === "pass" ? (isLight ? "rgba(255,255,255,0.58)" : "#ffffff") : color,
           fontWeight: status === "pass" ? 400 : 600,
           lineHeight: 1.5,
         }}
@@ -226,7 +226,7 @@ function StageHeader({ label }: { id?: number; label: string; total?: number }) 
     >
       <h2
         style={{
-          fontSize: "17px",
+          fontSize: "19px",
           fontWeight: 700,
           color: isLight ? "#0f172a" : "#f8fafc",
           letterSpacing: "-0.01em",
@@ -267,7 +267,7 @@ function StatusBadge({ status, label }: { status: StageStatus; label: string }) 
     pending: {
       bg: isLight ? "#f8fafc" : "#0F0F0F",
       border: isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)",
-      color: "#A8A8A8",
+      color: "rgba(255,255,255,0.58)",
     },
   }[status];
   const statusText =
@@ -286,7 +286,7 @@ function StatusBadge({ status, label }: { status: StageStatus; label: string }) 
         background: cfg.bg,
         border: `1px solid ${cfg.border}`,
         padding: "7px 14px",
-        borderRadius: "6px",
+        borderRadius: "var(--radius-sm)",
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         display: "flex",
         alignItems: "center",
@@ -338,37 +338,43 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           fontSize: "12.5px",
           lineHeight: 1.8,
-          color: isLight ? "#334155" : "#A8A8A8",
+          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
           width: "100%",
           padding: "18px 24px",
           background: isLight ? "#f8fafc" : "#0F0F0F",
           border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           marginBottom: "20px",
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Session setup: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Session setup:{" "}
+          </span>
           {phase >= 1 ? (
             <span style={{ color: "#22c55e", fontWeight: 700 }}>Ready</span>
           ) : (
-            <span style={{ color: "#A8A8A8" }}>Starting</span>
+            <span style={{ color: "rgba(255,255,255,0.58)" }}>Starting</span>
           )}
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Device check: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Device check:{" "}
+          </span>
           {phase >= 2 ? (
             <span style={{ color: "#22c55e", fontWeight: 700 }}>Checked</span>
           ) : (
-            <span style={{ color: "#A8A8A8" }}>Pending</span>
+            <span style={{ color: "rgba(255,255,255,0.58)" }}>Pending</span>
           )}
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Contest controls: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Contest controls:{" "}
+          </span>
           {phase >= 3 ? (
             <span style={{ color: "#22c55e", fontWeight: 700 }}>Ready</span>
           ) : (
-            <span style={{ color: "#A8A8A8" }}>Pending</span>
+            <span style={{ color: "rgba(255,255,255,0.58)" }}>Pending</span>
           )}
         </div>
       </div>
@@ -412,29 +418,35 @@ function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           fontSize: "12.5px",
           lineHeight: 1.8,
-          color: isLight ? "#334155" : "#A8A8A8",
+          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
           width: "100%",
           padding: "18px 24px",
           background: isLight ? "#f8fafc" : "#0F0F0F",
           border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           marginBottom: "20px",
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Window mode: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Window mode:{" "}
+          </span>
           <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
             {done ? "Full-screen" : "Starting"}
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Focus mode: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Focus mode:{" "}
+          </span>
           <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
             {done ? "On" : "Starting"}
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Window controls: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Window controls:{" "}
+          </span>
           <span style={{ color: done ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
             {done ? "Hidden" : "Starting"}
           </span>
@@ -533,34 +545,42 @@ function Stage3_MonitorDetection({
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           fontSize: "12.5px",
           lineHeight: 1.8,
-          color: isLight ? "#334155" : "#A8A8A8",
+          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
           width: "100%",
           padding: "18px 24px",
           background: isLight ? "#f8fafc" : "#0F0F0F",
           border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           marginBottom: "20px",
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Primary screen: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Primary screen:{" "}
+          </span>
           <span style={{ color: "#22c55e", fontWeight: 700 }}>Primary display</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Resolution: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Resolution:{" "}
+          </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
             {monitors[0]?.size.width ?? window.screen.width}x
             {monitors[0]?.size.height ?? window.screen.height}
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Color depth: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Color depth:{" "}
+          </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
             {window.screen.colorDepth}-bit
           </span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Screen check: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Screen check:{" "}
+          </span>
           <span style={{ color: "#22c55e", fontWeight: 700 }}>Active</span>
         </div>
       </div>
@@ -727,7 +747,7 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
           style={{
             width: "100%",
             padding: "20px",
-            borderRadius: "4px",
+            borderRadius: "var(--radius-sm)",
             background: isLight ? "#fff7ed" : "#1c1007",
             border: `1px solid ${isLight ? "#fed7aa" : "#78350f"}`,
             marginBottom: "20px",
@@ -757,36 +777,13 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
           </p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             <button
+              className="onb-btn onb-btn--primary"
               onClick={() => void invoke("open_accessibility_settings")}
-              style={{
-                padding: "8px 16px",
-                borderRadius: "3px",
-                border: "none",
-                background: isLight ? "#ea580c" : "#c2410c",
-                color: "#fff",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: "12px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
             >
               Open System Settings
             </button>
             {timedOut && (
-              <button
-                onClick={() => void recheck()}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: "3px",
-                  border: `1px solid ${isLight ? "#d97706" : "#b45309"}`,
-                  background: "transparent",
-                  color: isLight ? "#92400e" : "#fcd34d",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
+              <button className="onb-btn onb-btn--secondary" onClick={() => void recheck()}>
                 Re-check
               </button>
             )}
@@ -827,7 +824,7 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
               alignItems: "center",
               gap: "10px",
               padding: "10px 14px",
-              borderRadius: "2px",
+              borderRadius: "var(--radius-sm)",
               background: isLight
                 ? locked
                   ? "#f8fafc"
@@ -844,7 +841,8 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
                     ? "rgba(0,0,0,0.08)"
                     : "rgba(255,255,255,0.06)"
               }`,
-              transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
+              transition:
+                "background var(--transition-standard), border-color var(--transition-standard)",
             }}
           >
             {locked ? (
@@ -862,7 +860,7 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
             ) : (
               <span
                 style={{
-                  color: "#A8A8A8",
+                  color: "rgba(255,255,255,0.58)",
                   fontWeight: 700,
                   fontSize: "11px",
                   flexShrink: 0,
@@ -878,7 +876,13 @@ function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
                 fontSize: "12.5px",
                 fontWeight: 600,
                 letterSpacing: "-0.01em",
-                color: locked ? (isLight ? "#1e293b" : "#f8fafc") : isLight ? "#64748b" : "#4b5563",
+                color: locked
+                  ? isLight
+                    ? "#1e293b"
+                    : "#f8fafc"
+                  : isLight
+                    ? "rgba(255,255,255,0.58)"
+                    : "#4b5563",
               }}
             >
               {label}
@@ -1024,20 +1028,28 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               fontSize: "12.5px",
               lineHeight: 1.8,
-              color: isLight ? "#334155" : "#A8A8A8",
+              color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
               width: "100%",
               padding: "18px 24px",
               background: isLight ? "#f8fafc" : "#0F0F0F",
               border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-              borderRadius: "2px",
+              borderRadius: "var(--radius-sm)",
             }}
           >
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Checking apps: </span>
+              <span
+                style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}
+              >
+                Checking apps:{" "}
+              </span>
               <span style={{ color: "#f59e0b", fontWeight: 700 }}>Active</span>
             </div>
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Checking conflicts: </span>
+              <span
+                style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}
+              >
+                Checking conflicts:{" "}
+              </span>
               <span style={{ color: "#f59e0b", fontWeight: 700 }}>Running</span>
             </div>
           </div>
@@ -1048,7 +1060,7 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
           <div
             style={{
               marginBottom: "20px",
-              borderRadius: "2px",
+              borderRadius: "var(--radius-sm)",
               padding: "18px 24px",
               background: "rgba(239,68,68,0.05)",
               border: "1px solid rgba(239,68,68,0.25)",
@@ -1082,20 +1094,28 @@ function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               fontSize: "12.5px",
               lineHeight: 1.8,
-              color: isLight ? "#334155" : "#A8A8A8",
+              color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
               width: "100%",
               padding: "18px 24px",
               background: isLight ? "#f8fafc" : "#0F0F0F",
               border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-              borderRadius: "2px",
+              borderRadius: "var(--radius-sm)",
             }}
           >
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>App check: </span>
+              <span
+                style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}
+              >
+                App check:{" "}
+              </span>
               <span style={{ color: "#22c55e", fontWeight: 700 }}>Complete</span>
             </div>
             <div>
-              <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Conflicts: </span>
+              <span
+                style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}
+              >
+                Conflicts:{" "}
+              </span>
               <span style={{ color: "#22c55e", fontWeight: 700 }}>None found</span>
             </div>
           </div>
@@ -1140,17 +1160,19 @@ function Stage7_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(): voi
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
           fontSize: "12.5px",
           lineHeight: 1.8,
-          color: isLight ? "#334155" : "#A8A8A8",
+          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
           width: "100%",
           padding: "18px 24px",
           background: isLight ? "#f8fafc" : "#0F0F0F",
           border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           marginBottom: "20px",
         }}
       >
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Virtual machine: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Virtual machine:{" "}
+          </span>
           {phase === "checking" ? (
             <span style={{ color: "#f59e0b", fontWeight: 700 }}>Checking</span>
           ) : phase === "pass" ? (
@@ -1162,15 +1184,21 @@ function Stage7_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(): voi
           )}
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Device platform: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Device platform:{" "}
+          </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>x86_64</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Operating system: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Operating system:{" "}
+          </span>
           <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>Linux 6.x</span>
         </div>
         <div>
-          <span style={{ color: isLight ? "#64748b" : "#71717a" }}>Device status: </span>
+          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
+            Device status:{" "}
+          </span>
           <span style={{ color: "#22c55e", fontWeight: 700 }}>Active</span>
         </div>
       </div>
@@ -1296,10 +1324,10 @@ function Stage8_CameraInit({
         style={{
           width: 240,
           height: 160,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           background: "#000",
           border: `1px solid ${phase === "pass" ? "rgba(34,197,94,0.45)" : phase === "fail" ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.06)"}`,
-          transition: "border-color 500ms ease",
+          transition: "border-color var(--transition-slow)",
         }}
       >
         <video
@@ -1390,20 +1418,7 @@ function Stage8_CameraInit({
             Try again
           </Button>
           {process.env.NODE_ENV === "development" && (
-            <button
-              onClick={onPass}
-              style={{
-                padding: "6px 16px",
-                borderRadius: "8px",
-                border: "1px solid rgba(245,158,11,0.4)",
-                background: "transparent",
-                color: "#f59e0b",
-                fontSize: "10px",
-                fontWeight: 600,
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                cursor: "pointer",
-              }}
-            >
+            <button className="onb-btn onb-btn--secondary" onClick={onPass}>
               Skip (dev only)
             </button>
           )}
@@ -2181,7 +2196,7 @@ function Stage9_FaceCalibration({
               inset: 0,
               zIndex: 20,
               background: "rgba(255,255,255,0.6)",
-              borderRadius: "16px",
+              borderRadius: "var(--radius-lg)",
               animation: "face-flash 0.35s ease forwards",
             }}
           />
@@ -2194,7 +2209,7 @@ function Stage9_FaceCalibration({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            borderRadius: "2px",
+            borderRadius: "var(--radius-sm)",
             transform: "scaleX(-1)",
           }}
         />
@@ -2203,7 +2218,12 @@ function Stage9_FaceCalibration({
           ref={overlayCanvasRef}
           width={320}
           height={240}
-          style={{ position: "absolute", inset: 0, borderRadius: "2px", pointerEvents: "none" }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "var(--radius-sm)",
+            pointerEvents: "none",
+          }}
         />
 
         <canvas ref={captureCanvasRef} width={320} height={240} style={{ display: "none" }} />
@@ -2213,10 +2233,10 @@ function Stage9_FaceCalibration({
           style={{
             position: "absolute",
             inset: "-1px",
-            borderRadius: "2px",
+            borderRadius: "var(--radius-sm)",
             border: `1px solid ${done ? "rgba(34,197,94,0.4)" : qualityOk ? "rgba(34,197,94,0.3)" : lostTracking ? "rgba(239,68,68,0.5)" : facePresent ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.06)"}`,
             pointerEvents: "none",
-            transition: "border-color 400ms",
+            transition: "border-color var(--transition-standard)",
           }}
         />
 
@@ -2232,7 +2252,7 @@ function Stage9_FaceCalibration({
               alignItems: "center",
               justifyContent: "center",
               background: "#0F0F0F",
-              borderRadius: "2px",
+              borderRadius: "var(--radius-sm)",
               gap: "12px",
             }}
           >
@@ -2240,7 +2260,7 @@ function Stage9_FaceCalibration({
               style={{
                 fontSize: "11px",
                 fontFamily: "'JetBrains Mono', monospace",
-                color: "#A8A8A8",
+                color: "rgba(255,255,255,0.58)",
               }}
             >
               Preparing face check
@@ -2260,7 +2280,7 @@ function Stage9_FaceCalibration({
               alignItems: "center",
               justifyContent: "center",
               background: "rgba(3, 8, 22, 0.94)",
-              borderRadius: "2px",
+              borderRadius: "var(--radius-sm)",
               gap: "10px",
               border: "1px solid rgba(239, 68, 68, 0.45)",
             }}
@@ -2277,9 +2297,9 @@ function Stage9_FaceCalibration({
             </span>
             <span
               style={{
-                fontSize: "10px",
+                fontSize: "11px",
                 fontFamily: "'JetBrains Mono', monospace",
-                color: "#64748B",
+                color: "rgba(255,255,255,0.58)",
                 textAlign: "center",
                 maxWidth: "220px",
                 lineHeight: 1.65,
@@ -2300,7 +2320,7 @@ function Stage9_FaceCalibration({
           width: "320px",
           fontFamily: "'JetBrains Mono', monospace",
           fontSize: "11px",
-          color: "#A8A8A8",
+          color: "rgba(255,255,255,0.58)",
           marginBottom: "16px",
         }}
       >
@@ -2335,7 +2355,7 @@ function Stage9_FaceCalibration({
                     ? "#ef4444"
                     : scanState === "validating"
                       ? "#f59e0b"
-                      : "#A8A8A8",
+                      : "rgba(255,255,255,0.58)",
               fontWeight: 700,
             }}
           >
@@ -2358,8 +2378,8 @@ function Stage9_FaceCalibration({
                 : lostTracking
                   ? "#ef4444"
                   : facePresent
-                    ? "#eab308"
-                    : "#A8A8A8",
+                    ? "var(--color-indicator-warn)"
+                    : "rgba(255,255,255,0.58)",
               fontWeight: 700,
             }}
           >
@@ -2379,7 +2399,12 @@ function Stage9_FaceCalibration({
           }}
         >
           <span>Capture progress:</span>
-          <span style={{ color: displayedLockPct >= 100 ? "#22c55e" : "#A8A8A8", fontWeight: 700 }}>
+          <span
+            style={{
+              color: displayedLockPct >= 100 ? "#22c55e" : "rgba(255,255,255,0.58)",
+              fontWeight: 700,
+            }}
+          >
             {displayedLockPct}%
           </span>
         </div>
@@ -2390,11 +2415,17 @@ function Stage9_FaceCalibration({
         style={{
           fontSize: "12px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: qualityOk ? "#FFF" : lostTracking ? "#ef4444" : facePresent ? "#FFF" : "#A8A8A8",
+          color: qualityOk
+            ? "#FFF"
+            : lostTracking
+              ? "#ef4444"
+              : facePresent
+                ? "#FFF"
+                : "rgba(255,255,255,0.58)",
           marginBottom: "16px",
           textAlign: "center",
           minHeight: "18px",
-          transition: "color 350ms",
+          transition: "color var(--transition-standard)",
           lineHeight: 1.5,
         }}
       >
@@ -2433,7 +2464,7 @@ function Stage9_FaceCalibration({
           <p
             style={{
               fontSize: "12px",
-              color: "#A8A8A8",
+              color: "rgba(255,255,255,0.58)",
               lineHeight: 1.6,
               fontFamily: "'JetBrains Mono', monospace",
             }}
@@ -2443,17 +2474,8 @@ function Stage9_FaceCalibration({
           </p>
           <button
             type="button"
+            className="onb-btn onb-btn--secondary"
             onClick={() => onFaceFallback()}
-            style={{
-              padding: "10px 18px",
-              borderRadius: "8px",
-              border: "1px solid rgb(var(--accent-rgb) / 0.5)",
-              background: "rgb(var(--accent-rgb) / 0.12)",
-              color: "#e2e8f0",
-              fontSize: "13px",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
           >
             Continue — request a proctor review
           </button>
@@ -2520,11 +2542,11 @@ function Stage10_PresenceVerification({
       <div
         className="relative mb-6 overflow-hidden"
         style={{
-          width: 220,
-          height: 165,
-          borderRadius: "2px",
+          width: 240,
+          height: 160,
+          borderRadius: "var(--radius-sm)",
           border: `1px solid ${confirmed ? "rgba(34,197,94,0.4)" : "rgba(255,255,255,0.06)"}`,
-          transition: "border-color 600ms",
+          transition: "border-color var(--transition-slow)",
         }}
       >
         <video
@@ -2539,9 +2561,9 @@ function Stage10_PresenceVerification({
         style={{
           fontSize: "12px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: confirmed ? "#22c55e" : "#A8A8A8",
+          color: confirmed ? "#22c55e" : "rgba(255,255,255,0.58)",
           fontWeight: 400,
-          transition: "color 400ms",
+          transition: "color var(--transition-standard)",
           marginBottom: "18px",
         }}
       >
@@ -2656,9 +2678,9 @@ function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?
         >
           <span
             style={{
-              fontSize: "8px",
+              fontSize: "11px",
               fontFamily: "'JetBrains Mono', monospace",
-              color: "#A8A8A8",
+              color: "rgba(255,255,255,0.58)",
               background: "#0F0F0F",
               padding: "0 4px",
               transform: "translateY(5px)",
@@ -2688,7 +2710,7 @@ function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?
                       ? "#FFF"
                       : "rgba(255,255,255,0.18)"
                     : "rgba(255,255,255,0.06)",
-                transition: "height 120ms ease, background 200ms",
+                transition: "height var(--transition-fast), background var(--transition-standard)",
                 maxHeight: 56,
                 zIndex: 2,
               }}
@@ -2835,23 +2857,23 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
         style={{
           width: 180,
           height: 80,
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           background: "#0F0F0F",
           border: `1px solid ${phase === "checking" ? "rgba(255,255,255,0.06)" : phase === "pass" ? "rgba(34,197,94,0.4)" : "#ef4444"}`,
-          transition: "border-color 500ms",
+          transition: "border-color var(--transition-slow)",
         }}
       >
         {phase === "checking" ? (
           <Spinner size={24} />
         ) : (
           <div className="text-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-            <p style={{ fontSize: "20px", fontWeight: 700, color: qualityColor, lineHeight: 1 }}>
+            <p style={{ fontSize: "19px", fontWeight: 700, color: qualityColor, lineHeight: 1 }}>
               {latency} MS
             </p>
             <p
               style={{
-                fontSize: "10px",
-                color: "#A8A8A8",
+                fontSize: "11px",
+                color: "rgba(255,255,255,0.58)",
                 marginTop: "6px",
                 letterSpacing: "0.1em",
               }}
@@ -2938,7 +2960,7 @@ function Stage13_IntegrityConfirmation({
 
       <div
         style={{
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           padding: "12px 24px",
           background: hasWarns ? "rgba(245,158,11,0.05)" : "rgba(34,197,94,0.05)",
           border: `1px solid ${hasWarns ? "rgba(245,158,11,0.22)" : "rgba(34,197,94,0.18)"}`,
@@ -2992,13 +3014,13 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
           height: 100,
           background: "#0F0F0F",
           border: "1px solid rgba(255,255,255,0.06)",
-          borderRadius: "2px",
+          borderRadius: "var(--radius-sm)",
           fontFamily: "'JetBrains Mono', monospace",
         }}
       >
         <span
           style={{
-            fontSize: "44px",
+            fontSize: "var(--text-3xl)",
             fontWeight: 700,
             color: "#FFF",
             letterSpacing: "-0.04em",
@@ -3015,7 +3037,7 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
                 width: "20px",
                 height: "6px",
                 background: idx < count ? "#FFF" : "rgba(255,255,255,0.08)",
-                transition: "background 300ms",
+                transition: "background var(--transition-standard)",
               }}
             />
           ))}
@@ -3108,10 +3130,10 @@ function ProgressBar({
         </span>
         <span
           style={{
-            fontSize: "10px",
+            fontSize: "11px",
             fontFamily: "'JetBrains Mono', monospace",
             fontWeight: 500,
-            color: "#A8A8A8",
+            color: "rgba(255,255,255,0.58)",
           }}
         >
           Step {currentPhase} of {phases.length} · {timeLabel}
@@ -3138,7 +3160,8 @@ function ProgressBar({
                 height: 4,
                 borderRadius: "0px",
                 background: color,
-                transition: "background 300ms ease, transform 300ms ease",
+                transition:
+                  "background var(--transition-standard), transform var(--transition-standard)",
                 transform: status === "checking" ? "scaleY(1.2)" : "none",
               }}
             />
@@ -3185,7 +3208,7 @@ function DryRunSummary({
           ? "#f59e0b"
           : status === "fail"
             ? "#ef4444"
-            : "#475569";
+            : "rgba(255,255,255,0.58)";
     const label =
       status === "pass"
         ? "Ready"
@@ -3216,23 +3239,30 @@ function DryRunSummary({
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: "11px",
           letterSpacing: "0.14em",
-          color: "#71717a",
+          color: "rgba(255,255,255,0.45)",
           textTransform: "uppercase",
           marginBottom: 8,
         }}
       >
         Practice run complete
       </div>
-      <h2 style={{ fontSize: 22, fontWeight: 700, color: "#f8fafc", margin: "0 0 6px" }}>
+      <h2 style={{ fontSize: 24, fontWeight: 700, color: "#f8fafc", margin: "0 0 6px" }}>
         {anyFail
           ? "Fix these before your exam"
           : anyWarn
             ? "You're almost ready"
             : "You're ready for exam day"}
       </h2>
-      <p style={{ fontSize: 13, color: "#A8A8A8", margin: "0 0 24px", lineHeight: 1.6 }}>
+      <p
+        style={{
+          fontSize: 13,
+          color: "rgba(255,255,255,0.58)",
+          margin: "0 0 24px",
+          lineHeight: 1.6,
+        }}
+      >
         {anyFail
           ? "Some checks failed. Resolve them now — on exam day a failed check can keep you out of the contest."
           : "Your device passed the full setup rehearsal. Nothing was submitted and your machine is fully unlocked."}
@@ -3247,7 +3277,7 @@ function DryRunSummary({
               alignItems: "center",
               justifyContent: "space-between",
               fontSize: 13,
-              color: "#e2e8f0",
+              color: "#ffffff",
               paddingBottom: 8,
               borderBottom: "1px solid rgba(255,255,255,0.05)",
             }}
@@ -3262,36 +3292,18 @@ function DryRunSummary({
         {(anyFail || anyWarn) && (
           <button
             type="button"
+            className="onb-btn onb-btn--secondary"
+            style={{ flex: 1 }}
             onClick={() => setHelpOpen(true)}
-            style={{
-              flex: 1,
-              padding: "12px 18px",
-              borderRadius: 8,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "transparent",
-              color: "#e2e8f0",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
           >
             Get help
           </button>
         )}
         <button
           type="button"
+          className="onb-btn onb-btn--primary"
+          style={{ flex: 1 }}
           onClick={onDone}
-          style={{
-            flex: 1,
-            padding: "12px 18px",
-            borderRadius: 8,
-            border: "1px solid var(--color-accent-base)",
-            background: "var(--color-accent-base)",
-            color: "#fff",
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
         >
           Back to home
         </button>
@@ -4007,7 +4019,7 @@ export default function OnboardingPage() {
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         userSelect: "none",
         color: "#FFF",
-        transition: "background 500ms ease, color 500ms ease",
+        transition: "background var(--transition-slow), color var(--transition-slow)",
       }}
     >
       <div
@@ -4024,31 +4036,21 @@ export default function OnboardingPage() {
       >
         <button
           type="button"
+          className="onb-btn onb-btn--danger"
           onClick={() => void emergencyExit()}
           aria-label="Exit setup. Shortcut: Control Shift Q."
           title="Shortcut: Ctrl + Shift + Q"
-          style={{
-            padding: "6px 12px",
-            borderRadius: "4px",
-            border: "1px solid #ef4444",
-            background: "#0F0F0F",
-            color: "#ef4444",
-            fontSize: "11px",
-            fontWeight: 700,
-            fontFamily: "'JetBrains Mono', monospace",
-            cursor: "pointer",
-          }}
         >
           Exit setup
         </button>
         <span
           style={{
             color: "#a1a1aa",
-            fontSize: "10px",
+            fontSize: "11px",
             fontFamily: "'JetBrains Mono', monospace",
             background: "rgba(15, 15, 15, 0.82)",
             border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: "4px",
+            borderRadius: "var(--radius-sm)",
             padding: "4px 7px",
           }}
         >
@@ -4064,9 +4066,9 @@ export default function OnboardingPage() {
             border: "1px solid rgba(239,68,68,0.28)",
             background: "rgba(239,68,68,0.08)",
             color: "#fca5a5",
-            borderRadius: 8,
+            borderRadius: "var(--radius-md)",
             padding: "12px 16px",
-            fontSize: 11,
+            fontSize: "11px",
             fontFamily: "'JetBrains Mono', monospace",
             whiteSpace: "pre-line",
           }}
@@ -4086,7 +4088,7 @@ export default function OnboardingPage() {
           padding: "48px 32px",
           opacity: transitioning ? 0 : 1,
           transform: transitioning ? "translateY(6px) scale(0.99)" : "translateY(0) scale(1)",
-          transition: "opacity 300ms ease, transform 300ms cubic-bezier(0.22,1,0.36,1)",
+          transition: "opacity var(--transition-standard), transform var(--transition-standard)",
         }}
       >
         {/* Dry-run rehearsal summary replaces the stage flow once complete. */}
@@ -4103,7 +4105,7 @@ export default function OnboardingPage() {
           <div style={{ marginBottom: "4px", textAlign: "center" }}>
             <p
               style={{
-                fontSize: "10px",
+                fontSize: "11px",
                 letterSpacing: "0.12em",
                 color: "#3F3F46",
                 textTransform: "uppercase",
@@ -4131,7 +4133,7 @@ export default function OnboardingPage() {
           >
             <h2
               style={{
-                fontSize: "20px",
+                fontSize: "19px",
                 fontWeight: 700,
                 color: "#f8fafc",
                 letterSpacing: "-0.02em",
@@ -4141,7 +4143,12 @@ export default function OnboardingPage() {
               {dryRun ? "Practice run" : "Before you begin"}
             </h2>
             <p
-              style={{ fontSize: "13px", color: "#A8A8A8", marginBottom: "28px", lineHeight: 1.6 }}
+              style={{
+                fontSize: "13px",
+                color: "rgba(255,255,255,0.58)",
+                marginBottom: "28px",
+                lineHeight: 1.6,
+              }}
             >
               {dryRun
                 ? "Rehearse your exam-day setup now. Nothing is submitted, you won't enter a contest, and your machine is unlocked at the end. Takes about 2 minutes."
@@ -4171,40 +4178,26 @@ export default function OnboardingPage() {
                       flexShrink: 0,
                     }}
                   />
-                  <span style={{ fontSize: "13px", color: "#e2e8f0" }}>{item}</span>
+                  <span style={{ fontSize: "13px", color: "#ffffff" }}>{item}</span>
                 </div>
               ))}
             </div>
             <p
-              style={{ fontSize: "12px", color: "#71717a", marginBottom: "32px", lineHeight: 1.6 }}
+              style={{
+                fontSize: "12px",
+                color: "rgba(255,255,255,0.45)",
+                marginBottom: "32px",
+                lineHeight: 1.6,
+              }}
             >
               Do not close the app during setup. Your session will be interrupted if the window
               loses focus.
             </p>
             <button
               type="button"
+              className="onb-btn onb-btn--primary"
+              style={{ width: "100%" }}
               onClick={() => setCurrentStage(1)}
-              style={{
-                width: "100%",
-                padding: "13px 24px",
-                borderRadius: "8px",
-                border: "1px solid var(--color-accent-base)",
-                background: "var(--color-accent-base)",
-                color: "#ffffff",
-                fontSize: "14px",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                transition: "all 150ms ease",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "#9333ea";
-                e.currentTarget.style.borderColor = "var(--color-accent-light)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--color-accent-base)";
-                e.currentTarget.style.borderColor = "var(--color-accent-base)";
-              }}
             >
               Begin setup
             </button>
@@ -4218,13 +4211,13 @@ export default function OnboardingPage() {
               maxWidth: "480px",
               width: "100%",
               background: "#0F0F0F",
-              border: "1px solid rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.12)",
               borderRadius: "var(--radius-lg)",
-              boxShadow: "0 24px 60px rgba(0, 0, 0, 0.48)",
+              boxShadow: "var(--elevation-3)",
               padding: "36px 40px",
               position: "relative",
               overflow: "hidden",
-              transition: "all 300ms ease",
+              transition: "var(--transition-standard)",
             }}
           >
             {/* Per-stage context strip */}
@@ -4239,7 +4232,14 @@ export default function OnboardingPage() {
                   gap: "6px",
                 }}
               >
-                <p style={{ fontSize: "12px", color: "#71717a", lineHeight: 1.5, margin: 0 }}>
+                <p
+                  style={{
+                    fontSize: "12px",
+                    color: "rgba(255,255,255,0.45)",
+                    lineHeight: 1.5,
+                    margin: 0,
+                  }}
+                >
                   {STAGE_META[currentStage].checking}
                 </p>
                 {STAGE_META[currentStage].todo && (
@@ -4262,14 +4262,14 @@ export default function OnboardingPage() {
                 style={{
                   border: "1px solid rgba(245,158,11,0.35)",
                   background: "rgba(245,158,11,0.08)",
-                  borderRadius: 12,
+                  borderRadius: "var(--radius-lg)",
                   padding: "18px 16px",
                   color: "#fcd34d",
                   textAlign: "center",
                   marginBottom: 16,
                 }}
               >
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 8 }}>
                   Verification not open yet
                 </div>
                 <div style={{ fontSize: 13, color: "#fef3c7", marginBottom: 8 }}>
@@ -4286,7 +4286,7 @@ export default function OnboardingPage() {
                 style={{
                   border: "1px solid rgba(239,68,68,0.35)",
                   background: "rgba(239,68,68,0.08)",
-                  borderRadius: 12,
+                  borderRadius: "var(--radius-lg)",
                   padding: "18px 16px",
                   color: "#fca5a5",
                   textAlign: "center",
@@ -4301,7 +4301,7 @@ export default function OnboardingPage() {
                 style={{
                   border: "1px solid rgba(239,68,68,0.35)",
                   background: "rgba(239,68,68,0.08)",
-                  borderRadius: 12,
+                  borderRadius: "var(--radius-lg)",
                   padding: "18px 16px",
                   color: "#fca5a5",
                   textAlign: "center",
@@ -4334,16 +4334,16 @@ export default function OnboardingPage() {
                         alignItems: "center",
                       }}
                     >
-                      <div style={{ color: "#A8A8A8" }}>Status</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Status</div>
                       <div style={{ color: "#22c55e" }}>Verification complete</div>
 
-                      <div style={{ color: "#A8A8A8" }}>Next step</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Next step</div>
                       <div style={{ color: "#FFF" }}>Contest workspace</div>
 
-                      <div style={{ color: "#A8A8A8" }}>Contest controls</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Contest controls</div>
                       <div style={{ color: "#FFF" }}>Ready</div>
 
-                      <div style={{ color: "#A8A8A8" }}>Action</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Action</div>
                       <div style={{ color: "var(--color-accent-base)" }}>
                         Waiting to enter contest...
                       </div>
@@ -4357,11 +4357,11 @@ export default function OnboardingPage() {
                         }}
                       />
 
-                      <div style={{ color: "#A8A8A8" }}>Starts in</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Starts in</div>
                       <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
                         <span
                           style={{
-                            fontSize: "42px",
+                            fontSize: "var(--text-2xl)",
                             fontWeight: 700,
                             color: "#FFFFFF",
                             lineHeight: 1,
@@ -4370,7 +4370,7 @@ export default function OnboardingPage() {
                         >
                           {formatCountdown(waitMs)}
                         </span>
-                        <span style={{ fontSize: "13px", color: "#A8A8A8" }}>
+                        <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.58)" }}>
                           ({contestWindow.timezone || "UTC"})
                         </span>
                       </div>
@@ -4398,16 +4398,16 @@ export default function OnboardingPage() {
                         alignItems: "center",
                       }}
                     >
-                      <div style={{ color: "#A8A8A8" }}>Status</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Status</div>
                       <div style={{ color: "#22c55e" }}>Verification complete</div>
 
-                      <div style={{ color: "#A8A8A8" }}>Next step</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Next step</div>
                       <div style={{ color: "#FFF" }}>Contest workspace</div>
 
-                      <div style={{ color: "#A8A8A8" }}>Contest controls</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Contest controls</div>
                       <div style={{ color: "#FFF" }}>Ready</div>
 
-                      <div style={{ color: "#A8A8A8" }}>Action</div>
+                      <div style={{ color: "rgba(255,255,255,0.58)" }}>Action</div>
                       <div
                         style={{
                           color: "var(--color-accent-base)",
