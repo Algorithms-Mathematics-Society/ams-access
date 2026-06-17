@@ -2201,6 +2201,35 @@ function Stage9_FaceCalibration({
             }}
           />
         )}
+
+        {/* Crosshair pulse overlay when face tracked and quality ok */}
+        {facePresent && !done && qualityOk && (
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+              width: 30,
+              height: 30,
+              zIndex: 15,
+              pointerEvents: "none",
+              animation: "countdown-pulse 1.2s ease-in-out infinite",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                border: "1.5px solid rgba(34,197,94,0.7)",
+                borderRadius: "50%",
+              }}
+            />
+          </div>
+        )}
         <video
           ref={videoRef}
           muted
@@ -2237,6 +2266,7 @@ function Stage9_FaceCalibration({
             border: `1px solid ${done ? "rgba(34,197,94,0.4)" : qualityOk ? "rgba(34,197,94,0.3)" : lostTracking ? "rgba(239,68,68,0.5)" : facePresent ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.06)"}`,
             pointerEvents: "none",
             transition: "border-color var(--transition-standard)",
+            ...(done ? { animation: "capture-border-pulse 0.6s ease forwards" } : {}),
           }}
         />
 
@@ -2311,103 +2341,51 @@ function Stage9_FaceCalibration({
         )}
       </div>
 
-      {/* Monochrome industrial state metrics */}
+      {/* Two-up tracking/progress grid */}
       <div
         style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "8px",
-          width: "320px",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "12px 16px",
+          width: 320,
+          marginBottom: 16,
           fontFamily: "'JetBrains Mono', monospace",
-          fontSize: "11px",
-          color: "rgba(255,255,255,0.58)",
-          marginBottom: "16px",
         }}
       >
-        <div
+        <span style={{ fontSize: "var(--text-base)", color: "rgba(255,255,255,0.58)" }}>
+          Tracking
+        </span>
+        <span
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-            paddingBottom: "4px",
-          }}
-        >
-          <span>Target:</span>
-          <span style={{ color: "#FFF", fontWeight: 700 }}>
-            {done ? "Calibration complete" : phase.instruction}
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-            paddingBottom: "4px",
-          }}
-        >
-          <span>Camera check:</span>
-          <span
-            style={{
-              color:
-                scanState === "complete"
-                  ? "#22c55e"
-                  : scanState === "blocked"
-                    ? "#ef4444"
-                    : scanState === "validating"
-                      ? "#f59e0b"
-                      : "rgba(255,255,255,0.58)",
-              fontWeight: 700,
-            }}
-          >
-            {scanStateLabel[scanState]}
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-            paddingBottom: "4px",
-          }}
-        >
-          <span>Tracking:</span>
-          <span
-            style={{
-              color: qualityOk
-                ? "#22c55e"
-                : lostTracking
-                  ? "#ef4444"
-                  : facePresent
-                    ? "var(--color-indicator-warn)"
-                    : "rgba(255,255,255,0.58)",
-              fontWeight: 700,
-            }}
-          >
-            {scanState === "validating"
-              ? "Capture ready"
+            fontSize: "18px",
+            fontWeight: 700,
+            color: qualityOk
+              ? "#22c55e"
               : lostTracking
-                ? "Face not centered"
-                : poseLabel}
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-            paddingBottom: "4px",
+                ? "#ef4444"
+                : facePresent
+                  ? "var(--color-indicator-warn)"
+                  : "rgba(255,255,255,0.58)",
           }}
         >
-          <span>Capture progress:</span>
-          <span
-            style={{
-              color: displayedLockPct >= 100 ? "#22c55e" : "rgba(255,255,255,0.58)",
-              fontWeight: 700,
-            }}
-          >
-            {displayedLockPct}%
-          </span>
-        </div>
+          {scanState === "validating"
+            ? "Capture ready"
+            : lostTracking
+              ? "Face not centered"
+              : poseLabel}
+        </span>
+        <span style={{ fontSize: "var(--text-base)", color: "rgba(255,255,255,0.58)" }}>
+          Progress
+        </span>
+        <span
+          style={{
+            fontSize: "18px",
+            fontWeight: 700,
+            color: displayedLockPct >= 100 ? "#22c55e" : "rgba(255,255,255,0.58)",
+          }}
+        >
+          {displayedLockPct}%
+        </span>
       </div>
 
       {/* Guidance text */}
@@ -2487,10 +2465,11 @@ function Stage9_FaceCalibration({
         <div
           style={{
             width: 320,
-            height: 3,
+            height: 6,
             background: "rgba(255,255,255,0.06)",
             marginBottom: "18px",
             overflow: "hidden",
+            borderRadius: "var(--radius-sm)",
           }}
         >
           <div
@@ -2498,13 +2477,16 @@ function Stage9_FaceCalibration({
               height: "100%",
               width: `${displayedLockPct}%`,
               background: qualityOk ? "#22c55e" : "#FFF",
-              transition: "width 80ms linear",
+              transition: "width 200ms cubic-bezier(0.22,1,0.36,1)",
+              borderRadius: "var(--radius-sm)",
             }}
           />
         </div>
       )}
       <style>{`
         @keyframes face-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes capture-border-pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); } 60% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } 100% { box-shadow: none; } }
+        @keyframes onb-tick-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
     </div>
   );
@@ -2669,7 +2651,7 @@ function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?
             bottom: "20px",
             left: "-20px",
             right: "-20px",
-            borderBottom: "1px dashed rgba(255,255,255,0.15)",
+            borderBottom: "1px dashed rgba(255,255,255,0.25)",
             zIndex: 1,
             pointerEvents: "none",
             display: "flex",
@@ -2681,8 +2663,9 @@ function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?
               fontSize: "11px",
               fontFamily: "'JetBrains Mono', monospace",
               color: "rgba(255,255,255,0.58)",
-              background: "#0F0F0F",
-              padding: "0 4px",
+              background: "rgba(255,255,255,0.08)",
+              padding: "2px 6px",
+              borderRadius: "var(--radius-sm)",
               transform: "translateY(5px)",
               letterSpacing: "0.05em",
               fontWeight: 600,
@@ -2845,8 +2828,8 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
     quality === "excellent" || quality === "good"
       ? "#22c55e"
       : quality === "fair"
-        ? "#f59e0b"
-        : "#ef4444";
+        ? "var(--color-indicator-warn)"
+        : "var(--color-error)";
 
   return (
     <div className="flex flex-col items-center">
@@ -2867,7 +2850,14 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
           <Spinner size={24} />
         ) : (
           <div className="text-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-            <p style={{ fontSize: "19px", fontWeight: 700, color: qualityColor, lineHeight: 1 }}>
+            <p
+              style={{
+                fontSize: "var(--text-lg)",
+                fontWeight: 700,
+                color: qualityColor,
+                lineHeight: 1,
+              }}
+            >
               {latency} MS
             </p>
             <p
@@ -2942,7 +2932,7 @@ function Stage13_IntegrityConfirmation({
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           columnGap: "40px",
-          rowGap: "10px",
+          rowGap: "14px",
           width: "100%",
           maxWidth: "380px",
           marginBottom: "28px",
@@ -2986,6 +2976,7 @@ function Stage13_IntegrityConfirmation({
 
 function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
   const [count, setCount] = useState(5);
+  const [tickKey, setTickKey] = useState(0); // force re-mount to re-trigger animation
 
   useEffect(() => {
     const t = setInterval(
@@ -2996,6 +2987,7 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
             setTimeout(onPass, 400);
             return 0;
           }
+          setTickKey((k) => k + 1);
           return c - 1;
         }),
       1000
@@ -3003,44 +2995,94 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
     return () => clearInterval(t);
   }, [onPass]);
 
+  const isUrgent = count <= 2;
+  const numColor = isUrgent ? "var(--color-error)" : "#FFFFFF";
+  const glowColor = isUrgent ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.2)";
+  const borderColor = isUrgent ? "rgba(239,68,68,0.4)" : "rgba(255,255,255,0.12)";
+
   return (
     <div className="flex flex-col items-center">
       <StageHeader id={14} label="Starting Your Session" />
 
       <div
-        className="relative mb-10 flex flex-col items-center justify-center"
         style={{
-          width: 240,
-          height: 100,
+          position: "relative",
+          width: 320,
+          height: 140,
           background: "#0F0F0F",
-          border: "1px solid rgba(255,255,255,0.06)",
-          borderRadius: "var(--radius-sm)",
+          border: `2px solid ${borderColor}`,
+          borderRadius: "var(--radius-lg)",
           fontFamily: "'JetBrains Mono', monospace",
+          marginBottom: "24px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "border-color var(--transition-standard)",
+          overflow: "hidden",
         }}
       >
+        {/* Radial glow behind number */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: `radial-gradient(ellipse 60% 60% at 50% 50%, ${glowColor}, transparent)`,
+            pointerEvents: "none",
+            transition: "background var(--transition-standard)",
+          }}
+        />
+
+        {/* Number with per-tick scale pulse */}
         <span
+          key={tickKey}
           style={{
             fontSize: "var(--text-3xl)",
             fontWeight: 700,
-            color: "#FFF",
+            color: numColor,
             letterSpacing: "-0.04em",
             lineHeight: 1,
+            textShadow: `0 0 32px ${glowColor}, 0 0 8px ${glowColor}`,
+            animation: "countdown-tick 0.4s cubic-bezier(0.22,1,0.36,1) forwards",
+            transition: "color var(--transition-standard), text-shadow var(--transition-standard)",
+            position: "relative",
+            zIndex: 1,
           }}
         >
           {String(count).padStart(2, "0")}
         </span>
-        <div style={{ display: "flex", gap: "3px", marginTop: "12px" }}>
-          {Array.from({ length: 5 }).map((_, idx) => (
-            <div
-              key={idx}
-              style={{
-                width: "20px",
-                height: "6px",
-                background: idx < count ? "#FFF" : "rgba(255,255,255,0.08)",
-                transition: "background var(--transition-standard)",
-              }}
-            />
-          ))}
+
+        {/* Fill bars */}
+        <div
+          style={{
+            display: "flex",
+            gap: "4px",
+            marginTop: "16px",
+            position: "relative",
+            zIndex: 1,
+          }}
+        >
+          {Array.from({ length: 5 }).map((_, idx) => {
+            const isLit = idx < count;
+            return (
+              <div
+                key={idx}
+                style={{
+                  width: "24px",
+                  height: "6px",
+                  borderRadius: "var(--radius-sm)",
+                  background: isLit
+                    ? isUrgent
+                      ? "var(--color-error)"
+                      : "#FFFFFF"
+                    : "rgba(255,255,255,0.08)",
+                  boxShadow: isLit ? `0 0 8px ${glowColor}` : "none",
+                  transition:
+                    "background var(--transition-standard), box-shadow var(--transition-standard)",
+                }}
+              />
+            );
+          })}
         </div>
       </div>
 
@@ -3054,6 +3096,14 @@ function Stage14_LockInCountdown({ onPass }: { onPass(): void }) {
           <CheckLine key={label} label={label} status="pass" delay={i * 120} />
         ))}
       </div>
+
+      <style>{`
+        @keyframes countdown-tick {
+          0%   { transform: scale(1); }
+          40%  { transform: scale(1.12); }
+          100% { transform: scale(1); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -3099,6 +3149,15 @@ function ProgressBar({
   const phaseIndex = phases.findIndex((p) => current >= p.start && current <= p.end);
   const currentPhase = phaseIndex < 0 ? phases.length : phaseIndex + 1;
 
+  // Short abbreviation labels for phase groups in the stepper
+  const PHASE_SHORT: Record<string, string> = {
+    "Workspace Lockdown": "WORKSPACE",
+    "System Checks": "SYSTEM",
+    "Media Setup": "MEDIA",
+    "Identity Scan": "IDENTITY",
+    Finalizing: "FINALIZING",
+  };
+
   // Rough, reassuring time estimate (~8s/stage). Shown as "about …", never exact.
   const remainingStages = Math.max(0, STAGES.length - current);
   const estMinutes = Math.max(1, Math.ceil((remainingStages * 8) / 60));
@@ -3140,31 +3199,104 @@ function ProgressBar({
         </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-        {STAGES.map((s) => {
-          const status =
-            s.id < current ? (results[s.id] ?? "pass") : s.id === current ? "checking" : "pending";
-          const color =
-            status === "pass"
-              ? "#22c55e"
-              : status === "warn"
-                ? "#f59e0b"
-                : status === "checking"
-                  ? "#FFF"
-                  : "rgba(255,255,255,0.06)";
+      {/* Phase-grouped stepper */}
+      <div style={{ display: "flex", alignItems: "center" }}>
+        {phases.map((phase, pi) => {
+          // Gather stage ids in this phase
+          const stageIds: number[] = [];
+          for (let id = phase.start; id <= phase.end; id++) stageIds.push(id);
+
           return (
             <div
-              key={s.id}
+              key={phase.group}
               style={{
-                flex: 1,
-                height: 4,
-                borderRadius: "0px",
-                background: color,
-                transition:
-                  "background var(--transition-standard), transform var(--transition-standard)",
-                transform: status === "checking" ? "scaleY(1.2)" : "none",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+                marginRight: pi < phases.length - 1 ? 8 : 0,
               }}
-            />
+            >
+              {/* Phase label */}
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  color: "rgba(255,255,255,0.45)",
+                  fontFamily: "Inter, system-ui, sans-serif",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {PHASE_SHORT[phase.group] ?? phase.group.toUpperCase()}
+              </span>
+
+              {/* Stage ticks row */}
+              <div style={{ display: "flex", gap: "4px" }}>
+                {stageIds.map((id) => {
+                  const stageResult = results[id];
+                  const status: "pass" | "checking" | "warn" | "pending" =
+                    id < current
+                      ? ((stageResult ?? "pass") as "pass" | "warn")
+                      : id === current
+                        ? "checking"
+                        : "pending";
+
+                  let bg: string;
+                  let border: string;
+                  let textColor: string;
+                  let content: React.ReactNode;
+                  let extraStyle: React.CSSProperties = {};
+
+                  if (status === "pass") {
+                    bg = "rgba(34,197,94,0.2)";
+                    border = "1px solid rgba(34,197,94,0.6)";
+                    textColor = "#22c55e";
+                    content = "✓";
+                  } else if (status === "checking") {
+                    bg = "rgba(255,255,255,0.04)";
+                    border = "2px solid rgba(255,255,255,0.7)";
+                    textColor = "#FFFFFF";
+                    content = String(id);
+                    extraStyle = { animation: "countdown-pulse 1.5s ease-in-out infinite" };
+                  } else if (status === "warn") {
+                    bg = "rgba(245,158,11,0.15)";
+                    border = "1px solid rgba(245,158,11,0.6)";
+                    textColor = "#f59e0b";
+                    content = "!";
+                  } else {
+                    bg = "rgba(255,255,255,0.04)";
+                    border = "1px solid rgba(255,255,255,0.15)";
+                    textColor = "rgba(255,255,255,0.25)";
+                    content = String(id);
+                  }
+
+                  return (
+                    <div
+                      key={id}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: "var(--radius-sm)",
+                        background: bg,
+                        border,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        color: textColor,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        transition:
+                          "background var(--transition-standard), border-color var(--transition-standard)",
+                        ...extraStyle,
+                      }}
+                    >
+                      {content}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </div>
@@ -4483,6 +4615,7 @@ export default function OnboardingPage() {
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
         @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.06); } 50% { box-shadow: 0 0 0 14px transparent; } }
         @keyframes scaleYBar { from { transform: scaleY(0.4); } to { transform: scaleY(1); } }
+        @keyframes countdown-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
     </main>
   );
