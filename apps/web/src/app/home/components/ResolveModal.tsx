@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { invoke } from "@ams/api-client";
-import { getNetworkProbeHost, getThemeColors } from "./utils";
+import { getThemeColors } from "./utils";
 import { useFocusTrap } from "./hooks";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { TelemetryQueryState } from "./types";
@@ -140,7 +140,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         primaryLabel: "Run network check again",
         primaryAction: "retry",
         details: [
-          { label: "Probe host", value: getNetworkProbeHost() },
+          { label: "Connectivity", value: "Disabled for now" },
           { label: "Reachable", value: formatValue(network?.reachable, "Unknown") },
           {
             label: "Latency",

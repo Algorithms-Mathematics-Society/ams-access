@@ -1,4 +1,4 @@
-const PROD_API_URL = "https://ams-api-test-pdtqgdjqia-uc.a.run.app";
+const PROD_API_URL = "https://ams-api-test-758052243069.us-central1.run.app";
 
 function normalize(url: string): string {
   return url.replace(/\/+$/, "");

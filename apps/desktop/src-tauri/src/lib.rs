@@ -574,7 +574,7 @@ async fn collect_device_state_inner(
     };
 
     if let Some(host) = network_host.filter(|host| !host.trim().is_empty()) {
-        state.network = Some(check_network_stability(host, api_url).await);
+        state.network = Some(check_network_stability_with_fallback(host, api_url).await);
     }
 
     // Linux egress lockdown runs through the privileged helper; surface whether
@@ -1125,10 +1125,14 @@ async fn check_network_stability(host: String, api_url: Option<String>) -> Netwo
         }
     };
 
+    // The previous cutoff marked anything above 500ms as "poor", which caused
+    // normal-but-slow home networks to fail readiness too aggressively inside
+    // Proctor. Widen the acceptable band so only very sluggish links are
+    // flagged as poor.
     let quality = match latency_ms {
         0..=80 => "excellent",
         81..=200 => "good",
-        201..=500 => "fair",
+        201..=1000 => "fair",
         _ => "poor",
     };
 
@@ -1149,6 +1153,25 @@ async fn check_network_stability(host: String, api_url: Option<String>) -> Netwo
         quality: quality.to_string(),
         clock_skew_ms,
     }
+}
+
+async fn check_network_stability_with_fallback(
+    host: String,
+    api_url: Option<String>,
+) -> NetworkCheckResult {
+    let primary = check_network_stability(host, api_url.clone()).await;
+    if primary.reachable {
+        return primary;
+    }
+
+    // If the AMS API host is unavailable, verify that the client can still
+    // reach the public internet before reporting a hard network failure.
+    let fallback = check_network_stability("www.google.com".to_string(), None).await;
+    if fallback.reachable {
+        return fallback;
+    }
+
+    primary
 }
 
 /// Measure device-clock skew (server − local, ms) from the HTTP `Date` header
@@ -1247,7 +1270,7 @@ async fn get_full_telemetry(network_host: Option<String>) -> FullTelemetry {
     let processes = scan_processes();
     let virt = detect_virtualization();
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
-        Some(host) => Some(check_network_stability(host, None).await),
+        Some(host) => Some(check_network_stability_with_fallback(host, None).await),
         None => None,
     };
 

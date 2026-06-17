@@ -84,6 +84,12 @@ export function getOrCreateDeviceId() {
 }
 
 export function getNetworkProbeHost() {
+  // Readiness uses a neutral connectivity canary so AMS service outages do not
+  // look like local network failures.
+  return "www.google.com";
+}
+
+export function getNetworkLockdownAllowlistHost() {
   try {
     return new URL(API_URL).hostname;
   } catch {}

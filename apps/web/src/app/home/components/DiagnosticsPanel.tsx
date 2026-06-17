@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, memo, useMemo, useState, useCallback } from "react";
-import { getThemeColors, getNetworkProbeHost } from "./utils";
+import { getThemeColors } from "./utils";
 import type { ReadinessState, TelemetryQueryState } from "./types";
 
 function TelemetryStat({
@@ -194,7 +194,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                     ? "Unavailable"
                     : networkQuality
             }
-            sub={`Probe host: ${getNetworkProbeHost()} / last ${lastScannedLabel}`}
+            sub={`Connectivity checks disabled / last ${lastScannedLabel}`}
             status={
               checkingNetwork || networkQuality === "unchecked"
                 ? "unknown"
@@ -320,9 +320,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             marginBottom: "8px",
           }}
         >
-          <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
-            Diagnostic Report
-          </h4>
+          <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>Diagnostic Report</h4>
           <span
             style={{
               fontSize: "11px",
@@ -409,8 +407,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               fontWeight: 500,
               fontFamily: "inherit",
               cursor: "pointer",
-              transition:
-                "background 150ms ease, border-color 150ms ease, color 150ms ease",
+              transition: "background 150ms ease, border-color 150ms ease, color 150ms ease",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background =
