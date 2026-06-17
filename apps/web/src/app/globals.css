@@ -207,6 +207,8 @@ summary:focus-visible,
   --text-base: 14px;
   --text-lg:  19px;
   --text-xl:  24px;
+  --text-2xl: 30px;   /* contest hero timer, results rank */
+  --text-3xl: 44px;   /* lock-in countdown — the one true display size */
 
   /* ── Muted text tiers (AA-legible on near-black) ── */
   --text-soft:  rgba(255,255,255,0.72);
@@ -261,10 +263,10 @@ summary:focus-visible,
 }
 
 .text-display-title   { font-size: 24px !important; font-weight: 600 !important; letter-spacing: -0.02em !important; line-height: 32px !important; }
-.text-subsection-title{ font-size: 16px !important; font-weight: 500 !important; letter-spacing:  0.02em !important; line-height: 24px !important; }
+.text-subsection-title{ font-size: 19px !important; font-weight: 500 !important; letter-spacing:  0.02em !important; line-height: 24px !important; }
 .text-body-copy        { font-size: 13px !important; font-weight: 400 !important; letter-spacing:  0px   !important; line-height: 20px !important; }
 .text-mono-console     { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 12px !important; font-weight: 400 !important; letter-spacing: 0.04em !important; line-height: 18px !important; }
-.text-micro-label      { font-size: 10px !important; font-weight: 600 !important; letter-spacing: 0.12em !important; line-height: 14px !important; text-transform: uppercase !important; }
+.text-micro-label      { font-size: 11px !important; font-weight: 600 !important; letter-spacing: 0.12em !important; line-height: 14px !important; text-transform: uppercase !important; }
 
 /* ─────────────────────────────────────────────────────────────
    LOGIN PAGE — two-pane split layout
@@ -332,7 +334,7 @@ summary:focus-visible,
 .login-brand-mark { margin-bottom: 28px; opacity: 0.92; }
 
 .login-brand-headline {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--color-text-dim);
@@ -401,7 +403,7 @@ summary:focus-visible,
 .login-brand-footer {
   margin-top: 48px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.1em;
   color: rgba(255,255,255,0.12);
   text-transform: uppercase;
@@ -596,7 +598,7 @@ summary:focus-visible,
 }
 
 .login-modal-tag {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   color: #fbbf24;
@@ -620,7 +622,7 @@ summary:focus-visible,
   border-radius: var(--radius-md);
   color: #d8b4fe;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   padding: 0 18px;
   min-height: 38px;
@@ -651,7 +653,7 @@ summary:focus-visible,
   border-top: 1px solid rgba(255,255,255,0.06);
   padding: 6px 16px 8px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 10px;
+  font-size: 11px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -993,7 +995,7 @@ summary:focus-visible,
 
 .welcome-wordmark {
   font-family: var(--font-sans, 'Inter', sans-serif);
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 200;
   letter-spacing: 0.60em;
   /* compensate so the word is truly centred despite trailing tracking */
