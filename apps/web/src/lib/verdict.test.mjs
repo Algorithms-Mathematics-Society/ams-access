@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verdictLabel, verdictShort, verdictColor } from "./verdict.ts";
+import { verdictLabel, verdictShort, verdictColor, isTerminalVerdict } from "./verdict.ts";
 
 test("verdictLabel returns standard CP names", () => {
   assert.equal(verdictLabel("AC"), "Accepted");
@@ -29,4 +29,12 @@ test("verdictColor maps to --verdict-* tokens", () => {
   assert.ok(verdictColor("AC").includes("--verdict-ac"));
   assert.ok(verdictColor("WA").includes("--verdict-wa"));
   assert.ok(verdictColor("ZZ").includes("--verdict-none"));
+});
+test("isTerminalVerdict is true only for resolved judge verdicts", () => {
+  for (const v of ["AC", "WA", "TLE", "MLE", "RE", "CE", "OLE", "IE"]) {
+    assert.equal(isTerminalVerdict(v), true, `${v} should be terminal`);
+  }
+  for (const v of ["RUNNING", "QUEUED", "UNATTEMPTED", "ZZ", null, undefined]) {
+    assert.equal(isTerminalVerdict(v), false, `${String(v)} should not be terminal`);
+  }
 });

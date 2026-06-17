@@ -62,6 +62,11 @@ import {
   X,
   Settings2,
   Lock,
+  ShieldCheck,
+  Shield,
+  Wifi,
+  WifiOff,
+  Save,
 } from "lucide-react";
 
 const API_URL = resolveApiBase();
@@ -5247,10 +5252,19 @@ export default function ContestPageClient() {
                       }}
                     >
                       Latest
-                      <VerdictBadge
-                        variant="chip"
-                        code={(latestAttempt.final_verdict ?? latestAttempt.status) as VerdictCode}
-                      />
+                      {(() => {
+                        const latestCode = (latestAttempt.final_verdict ??
+                          latestAttempt.status) as VerdictCode;
+                        // key by code so the reveal re-fires each time the verdict resolves anew.
+                        return (
+                          <VerdictBadge
+                            key={String(latestCode)}
+                            variant="chip"
+                            code={latestCode}
+                            reveal
+                          />
+                        );
+                      })()}
                     </div>
                   )}
                   {runStatus && (
@@ -5799,48 +5813,9 @@ export default function ContestPageClient() {
                                   <div
                                     style={{ display: "flex", alignItems: "center", gap: "12px" }}
                                   >
-                                    <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                      Attempt #{sub.attempt_no}
-                                    </span>
-                                    {/* Only show an "Evaluated" badge once judging is
-                                        actually done — never alongside a live QUEUED /
-                                        RUNNING status (the right-side status is the
-                                        source of truth). */}
-                                    {!isPending && (
-                                      <span
-                                        style={{
-                                          fontSize: "10px",
-                                          padding: "1px 6px",
-                                          border: "1px solid rgba(148,163,184,0.14)",
-                                          background: "rgba(148,163,184,0.06)",
-                                          borderRadius: "999px",
-                                          color: "#94a3b8",
-                                          fontFamily: "Inter, system-ui, sans-serif",
-                                          fontWeight: 600,
-                                        }}
-                                      >
-                                        Evaluated
-                                      </span>
-                                    )}
-                                    <span
-                                      style={{
-                                        fontSize: "10px",
-                                        padding: "1px 5px",
-                                        background: "#1F1F1F",
-                                        borderRadius: "3px",
-                                        color: "#94a3b8",
-                                      }}
-                                    >
-                                      {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]
-                                        ?.name || sub.language}
-                                    </span>
-                                    <span style={{ fontSize: "11px", color: "#64748b" }}>
-                                      {new Date(sub.created_at).toLocaleTimeString()}
-                                    </span>
-                                  </div>
-                                  <div
-                                    style={{ display: "flex", alignItems: "center", gap: "12px" }}
-                                  >
+                                    {/* Verdict first: it's the most important fact about the
+                                        row and anchors the eye. The "Evaluated" badge is gone —
+                                        a terminal verdict already implies it. */}
                                     <VerdictBadge
                                       variant="chip"
                                       code={
@@ -5849,14 +5824,39 @@ export default function ContestPageClient() {
                                           : (sub.final_verdict ?? sub.status)) as VerdictCode
                                       }
                                     />
-                                    <span style={{ fontSize: "10px", color: "#64748b" }}>
-                                      {isExpanded ? (
-                                        <ChevronUp size={14} />
-                                      ) : (
-                                        <ChevronDown size={14} />
-                                      )}
+                                    <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+                                      Attempt #{sub.attempt_no}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: "10px",
+                                        padding: "1px 5px",
+                                        background: "#1F1F1F",
+                                        borderRadius: "var(--radius-sm)",
+                                        color: "var(--text-soft)",
+                                        fontFamily: "'JetBrains Mono', monospace",
+                                      }}
+                                    >
+                                      {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]
+                                        ?.name || sub.language}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: "11px",
+                                        color: "var(--text-dim)",
+                                        fontVariantNumeric: "tabular-nums",
+                                      }}
+                                    >
+                                      {new Date(sub.created_at).toLocaleTimeString()}
                                     </span>
                                   </div>
+                                  <span style={{ fontSize: "10px", color: "var(--text-dim)" }}>
+                                    {isExpanded ? (
+                                      <ChevronUp size={14} />
+                                    ) : (
+                                      <ChevronDown size={14} />
+                                    )}
+                                  </span>
                                 </div>
 
                                 {isExpanded && (
@@ -5864,13 +5864,14 @@ export default function ContestPageClient() {
                                     style={{
                                       marginTop: "6px",
                                       padding: "8px",
-                                      background: "#0a0a0a",
+                                      background: "#111",
                                       border: "1px solid #1F1F1F",
-                                      borderRadius: "4px",
+                                      borderLeft: "2px solid rgb(var(--accent-rgb) / 0.4)",
+                                      borderRadius: "var(--radius-sm)",
                                     }}
                                   >
                                     {isPending ? (
-                                      <div style={{ fontSize: "11px", color: "#64748b" }}>
+                                      <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
                                         Grading in progress... Live results will update
                                         automatically.
                                       </div>
@@ -5882,7 +5883,8 @@ export default function ContestPageClient() {
                                             gap: "16px",
                                             marginBottom: "8px",
                                             fontSize: "10px",
-                                            color: "#64748b",
+                                            color: "var(--text-dim)",
+                                            fontVariantNumeric: "tabular-nums",
                                           }}
                                         >
                                           <span>
@@ -5953,6 +5955,8 @@ export default function ContestPageClient() {
                                                         ) => {
                                                           const testNumber =
                                                             tr.test_number ?? originalIndex + 1;
+                                                          const isPass =
+                                                            (tr.verdict ?? tr.status) === "AC";
                                                           return (
                                                             <div
                                                               key={`${sub.id}-${testNumber}-${idx}`}
@@ -5961,7 +5965,14 @@ export default function ContestPageClient() {
                                                                 alignItems: "center",
                                                                 gap: "5px",
                                                                 fontSize: "10px",
-                                                                color: "#94a3b8",
+                                                                color: "var(--text-soft)",
+                                                                paddingLeft: "6px",
+                                                                borderLeft: `2px solid ${
+                                                                  isPass
+                                                                    ? "var(--verdict-ac)"
+                                                                    : "var(--verdict-wa)"
+                                                                }`,
+                                                                fontVariantNumeric: "tabular-nums",
                                                               }}
                                                             >
                                                               <span>Test {testNumber}</span>
@@ -5973,12 +5984,20 @@ export default function ContestPageClient() {
                                                                 }
                                                               />
                                                               {tr.runtime_ms != null && (
-                                                                <span style={{ color: "#475569" }}>
+                                                                <span
+                                                                  style={{
+                                                                    color: "var(--text-faint)",
+                                                                  }}
+                                                                >
                                                                   {tr.runtime_ms}ms
                                                                 </span>
                                                               )}
                                                               {tr.memory_kb != null && (
-                                                                <span style={{ color: "#475569" }}>
+                                                                <span
+                                                                  style={{
+                                                                    color: "var(--text-faint)",
+                                                                  }}
+                                                                >
                                                                   {Math.round(tr.memory_kb / 1024)}
                                                                   MB
                                                                 </span>
@@ -6042,21 +6061,36 @@ export default function ContestPageClient() {
         }}
       >
         {/* Secure session indicator */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <div
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: proctoringOk ? "var(--verdict-ac)" : "var(--verdict-wa)",
+          }}
+        >
+          {proctoringOk ? (
+            <ShieldCheck size={13} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <Shield size={13} strokeWidth={2} aria-hidden="true" />
+          )}
+          <span
             style={{
-              width: "6px",
-              height: "6px",
+              width: "8px",
+              height: "8px",
               borderRadius: "var(--radius-pill)",
-              background: proctoringOk ? "var(--verdict-ac)" : "var(--verdict-wa)",
+              background: "currentColor",
+              boxShadow: proctoringOk ? "none" : "0 0 6px currentColor",
+              flexShrink: 0,
+              transition: "background-color var(--transition-fast)",
             }}
           />
           <span
             role="status"
             aria-live="polite"
             style={{
-              fontSize: "10px",
-              color: proctoringOk ? "#22c55e" : "#ef4444",
+              fontSize: "11px",
+              color: "currentColor",
               fontWeight: 500,
               letterSpacing: "0.06em",
             }}
@@ -6075,14 +6109,22 @@ export default function ContestPageClient() {
               cy="4.5"
               r="2"
               stroke={
-                faceStatus === "ok" ? "#22c55e" : faceStatus === "away" ? "#f59e0b" : "#475569"
+                faceStatus === "ok"
+                  ? "var(--verdict-ac)"
+                  : faceStatus === "away"
+                    ? "var(--verdict-tle)"
+                    : "var(--text-dim)"
               }
               strokeWidth="1.1"
             />
             <path
               d="M1.5 11c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"
               stroke={
-                faceStatus === "ok" ? "#22c55e" : faceStatus === "away" ? "#f59e0b" : "#475569"
+                faceStatus === "ok"
+                  ? "var(--verdict-ac)"
+                  : faceStatus === "away"
+                    ? "var(--verdict-tle)"
+                    : "var(--text-dim)"
               }
               strokeWidth="1.1"
               strokeLinecap="round"
@@ -6090,9 +6132,13 @@ export default function ContestPageClient() {
           </svg>
           <span
             style={{
-              fontSize: "10px",
+              fontSize: "11px",
               color:
-                faceStatus === "ok" ? "#22c55e" : faceStatus === "away" ? "#f59e0b" : "#475569",
+                faceStatus === "ok"
+                  ? "var(--verdict-ac)"
+                  : faceStatus === "away"
+                    ? "var(--verdict-tle)"
+                    : "var(--text-dim)",
               letterSpacing: "0.06em",
             }}
           >
@@ -6107,23 +6153,42 @@ export default function ContestPageClient() {
         <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
 
         {/* Connection */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <div
-            style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "var(--radius-pill)",
-              background: online ? "var(--verdict-ac)" : "var(--verdict-tle)",
-            }}
-          />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: online ? "var(--verdict-ac)" : "var(--verdict-tle)",
+          }}
+        >
+          {online ? (
+            <Wifi size={13} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <WifiOff size={13} strokeWidth={2} aria-hidden="true" />
+          )}
+          {online ? (
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "var(--radius-pill)",
+                background: "currentColor",
+                flexShrink: 0,
+                transition: "background-color var(--transition-fast)",
+              }}
+            />
+          ) : (
+            <Loader2
+              size={11}
+              strokeWidth={2.5}
+              aria-hidden="true"
+              style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }}
+            />
+          )}
           <span
             role="status"
             aria-live="polite"
-            style={{
-              fontSize: "10px",
-              color: online ? "#22c55e" : "#f59e0b",
-              letterSpacing: "0.06em",
-            }}
+            style={{ fontSize: "11px", color: "currentColor", letterSpacing: "0.06em" }}
           >
             {online ? "Connected" : "Reconnecting…"}
           </span>
@@ -6133,19 +6198,30 @@ export default function ContestPageClient() {
 
         {/* Saved — mirrors the editor save indicator so candidates always know
             their work is safe without hunting for it. */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <div
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: saveIndicator.color,
+          }}
+        >
+          <Save size={13} strokeWidth={2} aria-hidden="true" />
+          <span
             style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: saveIndicator.color,
+              width: "8px",
+              height: "8px",
+              borderRadius: "var(--radius-pill)",
+              background: "currentColor",
+              boxShadow: saveError ? "0 0 6px currentColor" : "none",
+              flexShrink: 0,
+              transition: "background-color var(--transition-fast)",
             }}
           />
           <span
             role="status"
             aria-live="polite"
-            style={{ fontSize: "10px", color: saveIndicator.color, letterSpacing: "0.06em" }}
+            style={{ fontSize: "11px", color: "currentColor", letterSpacing: "0.06em" }}
           >
             {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           </span>
@@ -6156,15 +6232,23 @@ export default function ContestPageClient() {
         {/* Keyboard intercept */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-            <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#22c55e" strokeWidth="1.1" />
+            <rect
+              x="1"
+              y="2.5"
+              width="10"
+              height="7"
+              rx="1.5"
+              stroke="var(--verdict-ac)"
+              strokeWidth="1.1"
+            />
             <path
               d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
-              stroke="#22c55e"
+              stroke="var(--verdict-ac)"
               strokeWidth="0.9"
               strokeLinecap="round"
             />
           </svg>
-          <span style={{ fontSize: "10px", color: "#22c55e", letterSpacing: "0.06em" }}>
+          <span style={{ fontSize: "11px", color: "var(--verdict-ac)", letterSpacing: "0.06em" }}>
             Keyboard locked
           </span>
         </div>
@@ -6172,7 +6256,13 @@ export default function ContestPageClient() {
         <div style={{ flex: 1 }} />
 
         {/* Contest + question info */}
-        <span style={{ fontSize: "10px", color: "#475569" }}>
+        <span
+          style={{
+            fontSize: "11px",
+            color: "var(--text-dim)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           Q{activeQ + 1}/{questions.length} · {attemptedQuestionCount} attempted ·{" "}
           {acceptedQuestionCount} accepted · {remainingQuestionCount} remaining ·{" "}
           {contest?.title ?? "—"}
@@ -6181,7 +6271,7 @@ export default function ContestPageClient() {
         <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
 
         {/* AMS badge */}
-        <span style={{ fontSize: "10px", color: "#64748b", letterSpacing: "0.08em" }}>
+        <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.08em" }}>
           AMS Access · Proctored
         </span>
       </footer>

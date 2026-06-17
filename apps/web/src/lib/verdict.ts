@@ -82,3 +82,21 @@ export function verdictShort(v: VerdictCode): string {
   if (v == null || v === "") return "—";
   return v as string;
 }
+
+// A verdict is terminal once the judge has finished — RUNNING/QUEUED/pending are
+// not. Drives the one-shot verdict-reveal animation (only fire when resolved).
+export function isTerminalVerdict(v: VerdictCode): boolean {
+  switch (v) {
+    case "AC":
+    case "WA":
+    case "TLE":
+    case "MLE":
+    case "RE":
+    case "CE":
+    case "OLE":
+    case "IE":
+      return true;
+    default:
+      return false;
+  }
+}

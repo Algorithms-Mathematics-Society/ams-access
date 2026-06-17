@@ -226,10 +226,10 @@ summary:focus-visible,
   --verdict-tle:     #f59e0b;
   --verdict-mle:     #fb923c;
   --verdict-re:      #f97316;
-  --verdict-ce:      #a78bfa;
-  --verdict-ie:      #94a3b8;
+  --verdict-ce:      #c4b5fd;
+  --verdict-ie:      #cbd5e1;
   --verdict-running: #60a5fa;
-  --verdict-none:    rgba(255,255,255,0.18);
+  --verdict-none:    #64748b;
 
   /* ── Accessible focus ring (used everywhere) ── */
   --focus-ring: 0 0 0 2px rgb(var(--accent-rgb) / 0.7);
@@ -1340,6 +1340,18 @@ summary:focus-visible,
 @keyframes countdown-pulse {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(0.98); }
+}
+
+/* The verdict moment: a one-shot reveal when a submission resolves. currentColor
+   resolves to the verdict colour, so the glow is verdict-tinted for free. */
+@keyframes verdict-reveal {
+  0%   { transform: scale(1);   box-shadow: 0 0 0 0 transparent; }
+  50%  { transform: scale(1.1); box-shadow: 0 0 12px 0 currentColor; }
+  100% { transform: scale(1);   box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes verdict-reveal-ac {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 transparent; }
+  40%      { transform: scale(1.05); box-shadow: 0 0 12px 0 currentColor; }
 }
 
 /* ─────────────────────────────────────────────────────────────
