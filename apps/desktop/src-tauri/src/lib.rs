@@ -2041,26 +2041,11 @@ pub fn run() {
         }
     }
 
-    // Restore any OS state left behind by a previous crashed session — runs BEFORE
-    // Tauri initialises so it can't race with the first enable_keyboard_intercept call.
+    // Keyboard recovery only. Firewall recovery is owned by the network helper,
+    // which reconciles the AMS_PROCTOR chain against its /run marker on its own
+    // startup; a tokenless disable from here would be rejected anyway.
     #[cfg(target_os = "linux")]
-    {
-        // recover_keyboard_if_crashed() also restores the GNOME touchpad
-        // send-events value from the backup (LX-2a backs it up under the same
-        // `gnome/` prefix those restore loops already iterate), so a crashed
-        // GNOME session no longer leaves the touchpad disabled. The X11 `xinput`
-        // path is runtime-only and cannot be persisted cleanly; it is left as
-        // best-effort (GNOME gsettings is the dominant target).
-        platform_rs::linux::recover_keyboard_if_crashed();
-        // iptables AMS_PROCTOR rules survive crashes BY DESIGN (a crash must not
-        // restore internet mid-exam), but at process start no exam can be active,
-        // so any still-present chain is a leftover from a crashed session. Flush
-        // in the background so a candidate is never stranded offline. No-op if no
-        // chain exists / iptables is unavailable.
-        std::thread::spawn(|| {
-            let _ = platform_rs::linux::disable_network_lockdown();
-        });
-    }
+    platform_rs::linux::recover_keyboard_if_crashed();
     #[cfg(target_os = "windows")]
     {
         platform_rs::windows::recover_registry_if_crashed();
