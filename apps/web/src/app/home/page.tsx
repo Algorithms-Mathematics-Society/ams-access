@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import { Activity, LayoutGrid, Settings as SettingsIcon } from "lucide-react";
 import {
   applyOrganizerOverrides,
+  collectDeviceState,
+  evaluateSessionReadiness,
   fetchOrganizerOverrides,
   invoke,
   runSessionReadiness,
   sessionPolicy,
 } from "@ams/api-client";
 import { fetchJson, useApiQuery } from "@/lib/api-client";
+import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ import {
   loadUnlockedContests,
   saveUnlockedContests,
   getOrCreateDeviceId,
+  getNetworkProbeHost,
   withUiTimeout,
   getBrowserMediaAvailability,
   fetchWithTimeout,
@@ -373,17 +377,45 @@ export default function HomePage() {
         }).catch(() => {});
       }
 
-      const report = await runSessionReadiness({
-        // Network readiness is bypassed for now so submission testing is unblocked.
-        networkHost: undefined,
-        apiUrl: API_URL,
-        contestId: contestId ?? null,
-        deviceId,
-        cameraAvailable: media.cameraAvailable,
-        microphoneAvailable: media.microphoneAvailable,
-        activateKeyboard: true,
-        policy,
-      });
+      let report: Awaited<ReturnType<typeof runSessionReadiness>>;
+      if (isGatingRelaxed()) {
+        // TEST-ONLY (build-time flag): skip the real probe and feed a healthy
+        // network + installed helper so the pre-flight gate doesn't block testing.
+        // A normal build runs the real probe below.
+        warnGatingRelaxed("home pre-flight network forced healthy");
+        const deviceState = await collectDeviceState({
+          networkHost: undefined,
+          apiUrl: API_URL,
+          cameraAvailable: media.cameraAvailable,
+          microphoneAvailable: media.microphoneAvailable,
+          activateKeyboard: true,
+        });
+        deviceState.network = {
+          reachable: true,
+          latency_ms: 1,
+          jitter_ms: 0,
+          quality: "excellent",
+        };
+        deviceState.network_helper_ready = true;
+        report = await evaluateSessionReadiness({
+          policy,
+          contestId: contestId ?? null,
+          deviceId,
+          deviceState,
+        });
+      } else {
+        report = await runSessionReadiness({
+          // Real connectivity probe (neutral canary) feeds the network check.
+          networkHost: getNetworkProbeHost(),
+          apiUrl: API_URL,
+          contestId: contestId ?? null,
+          deviceId,
+          cameraAvailable: media.cameraAvailable,
+          microphoneAvailable: media.microphoneAvailable,
+          activateKeyboard: true,
+          policy,
+        });
+      }
       if (isCancelled()) return;
       setReadinessReport(report);
       setReadiness({
