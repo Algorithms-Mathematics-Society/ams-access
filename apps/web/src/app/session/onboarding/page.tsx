@@ -3764,6 +3764,8 @@ export default function OnboardingPage() {
 
         if (!lockdownEngaged) {
           const detail = lockdownError ?? "enable_network_lockdown returned false";
+          // Always record the failure server-side first, so the proctor sees the
+          // attempt regardless of which path we take below.
           await invoke("log_violation", { kind: "network_lockdown_failed", detail }).catch(
             () => {}
           );
@@ -3772,12 +3774,28 @@ export default function OnboardingPage() {
             detail,
             payload: { allowed_domains: [getNetworkLockdownAllowlistHost()] },
           }).catch(() => {});
-          setReadyForStart(false);
-          setTransitioning(false);
-          setPolicyBlock(
-            "We couldn't secure your network for the exam — the proctoring network component may not be installed or still needs your permission. Re-run device setup, then try again. Starting now would leave your internet open, which a secured contest does not allow."
-          );
-          return;
+
+          if (isGatingRelaxed()) {
+            // TEST MODE ONLY — gated on the build-time NEXT_PUBLIC_AMS_RELAX_GATING
+            // flag, which a candidate cannot set. Relaxed builds proceed into the
+            // contest even though the privileged network helper never engaged, so
+            // the full contest flow can be exercised on machines without the helper
+            // (e.g. dev Linux boxes). The failure is still logged above as a
+            // server-visible violation, and the "relaxed mode" badge is shown. This
+            // branch must NEVER be reachable in a shipping build — strict builds
+            // fall through to the hard stop below.
+            warnGatingRelaxed(
+              `network lockdown NOT engaged at launch (${detail}) — entering contest with OPEN internet`
+            );
+            // fall through to launch
+          } else {
+            setReadyForStart(false);
+            setTransitioning(false);
+            setPolicyBlock(
+              "We couldn't secure your network for the exam — the proctoring network component may not be installed or still needs your permission. Re-run device setup, then try again. Starting now would leave your internet open, which a secured contest does not allow."
+            );
+            return;
+          }
         }
 
         await invoke("log_proctoring_event", {
