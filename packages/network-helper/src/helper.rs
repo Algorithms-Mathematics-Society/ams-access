@@ -68,6 +68,74 @@ const IP6TABLES: &str = "ip6tables";
 #[cfg(target_os = "linux")]
 const CHAIN: &str = "AMS_PROCTOR";
 
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+const MARKER_PATH: &str = "/run/ams-proctor.lock";
+
+/// Persisted lockdown state. Lives in /run (tmpfs) so it shares the iptables
+/// rules' boot-scoped lifetime: a reboot clears both; a same-boot helper
+/// restart preserves both.
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Marker {
+    token: String,
+    ips: Vec<String>,
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+#[derive(Debug, PartialEq)]
+enum MarkerState {
+    Absent,
+    Present(Marker),
+    Corrupt,
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+#[derive(Debug, PartialEq)]
+enum StartupAction {
+    ReApply(Vec<String>),
+    Flush,
+    LeaveAsIs,
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+#[derive(Debug, PartialEq)]
+enum DisableDecision {
+    Proceed,
+    Reject,
+    NoOp,
+}
+
+/// Decide what a starting daemon should do with the firewall. Fail-closed:
+/// only a confidently-absent marker permits a flush.
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+fn startup_action(state: MarkerState) -> StartupAction {
+    match state {
+        MarkerState::Present(m) => StartupAction::ReApply(m.ips),
+        MarkerState::Absent => StartupAction::Flush,
+        MarkerState::Corrupt => StartupAction::LeaveAsIs,
+    }
+}
+
+/// Authorize a disable request against the stored marker. Only the owning
+/// session's exact, non-empty token may lift an active lockdown.
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // consumed in Task 2/3
+fn authorize_disable(stored: Option<&Marker>, presented_token: &str) -> DisableDecision {
+    match stored {
+        None => DisableDecision::NoOp,
+        Some(m) if !presented_token.is_empty() && m.token == presented_token => {
+            DisableDecision::Proceed
+        }
+        Some(_) => DisableDecision::Reject,
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
@@ -716,7 +784,10 @@ fn iptables_disable() -> Result<(), String> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{should_build_v6_chain, split_ip_families};
+    use super::{
+        authorize_disable, should_build_v6_chain, split_ip_families, startup_action,
+        DisableDecision, Marker, MarkerState, StartupAction,
+    };
 
     #[test]
     fn builds_v6_chain_only_when_stack_present() {
@@ -755,5 +826,62 @@ mod tests {
         let (v4, v6) = split_ip_families(&ips).expect("valid IP");
         assert!(v4.is_empty());
         assert_eq!(v6, vec!["::1".to_string()]);
+    }
+
+    #[test]
+    fn startup_reapplies_when_marker_present() {
+        let m = Marker {
+            token: "t".into(),
+            ips: vec!["1.2.3.4".into()],
+        };
+        assert_eq!(
+            startup_action(MarkerState::Present(m)),
+            StartupAction::ReApply(vec!["1.2.3.4".into()])
+        );
+    }
+
+    #[test]
+    fn startup_flushes_when_marker_absent() {
+        assert_eq!(startup_action(MarkerState::Absent), StartupAction::Flush);
+    }
+
+    #[test]
+    fn startup_leaves_rules_when_marker_corrupt() {
+        // Fail-closed: an unreadable lock must NOT flush a possibly-live firewall.
+        assert_eq!(
+            startup_action(MarkerState::Corrupt),
+            StartupAction::LeaveAsIs
+        );
+    }
+
+    #[test]
+    fn disable_proceeds_only_on_exact_token_match() {
+        let m = Marker {
+            token: "secret".into(),
+            ips: vec![],
+        };
+        assert_eq!(
+            authorize_disable(Some(&m), "secret"),
+            DisableDecision::Proceed
+        );
+        assert_eq!(
+            authorize_disable(Some(&m), "wrong"),
+            DisableDecision::Reject
+        );
+        // An empty presented token never matches an active lockdown.
+        assert_eq!(authorize_disable(Some(&m), ""), DisableDecision::Reject);
+        // No active lockdown → nothing to do.
+        assert_eq!(authorize_disable(None, "secret"), DisableDecision::NoOp);
+    }
+
+    #[test]
+    fn marker_json_round_trips() {
+        let m = Marker {
+            token: "abc".into(),
+            ips: vec!["10.0.0.1".into(), "::1".into()],
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Marker = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
     }
 }
