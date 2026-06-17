@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
 import { verdictColor, verdictLabel, verdictShort, type VerdictCode } from "./verdict";
 
+// NOTE: `color` here must be a full CSS color (e.g. `var(--verdict-ac)`), NOT a bare token name
+// like `"--verdict-ac"` — do not copy-paste with the tint() helper in client.tsx which takes the token alone.
 const tint = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 
 type Props = { code: VerdictCode; variant?: "full" | "chip"; style?: CSSProperties };

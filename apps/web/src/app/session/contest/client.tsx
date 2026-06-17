@@ -3305,19 +3305,11 @@ export default function ContestPageClient() {
   const latestAttemptPending = latestAttempt
     ? latestAttempt.status === "QUEUED" || latestAttempt.status === "RUNNING"
     : false;
-  const latestAttemptVerdict = latestAttempt
-    ? latestAttemptPending
-      ? latestAttempt.status
-      : latestAttempt.final_verdict || latestAttempt.status || "Pending"
-    : "Pending";
   const latestAttemptPassed = latestAttemptTests
     ? latestAttemptTests.filter((tr: any) => tr.verdict === "AC").length
     : 0;
   const latestAttemptFirstFailed =
     latestAttemptTests?.find((tr: any) => tr.verdict !== "AC") ?? null;
-  const latestAttemptVerdictColor =
-    VERDICT_COLORS[latestAttemptVerdict] ??
-    (latestAttemptVerdict === "Pending" ? "#94a3b8" : "#ef4444");
   const submissionsByQuestion = useMemo(() => {
     const grouped: Record<string, any[]> = {};
     for (const sub of allSubmissionsList) {
@@ -5191,9 +5183,10 @@ export default function ContestPageClient() {
                       }}
                     >
                       Latest
-                      <span style={{ color: latestAttemptVerdictColor, fontWeight: 750 }}>
-                        {latestAttemptPending ? latestAttempt.status : latestAttemptVerdict}
-                      </span>
+                      <VerdictBadge
+                        variant="chip"
+                        code={(latestAttempt.final_verdict ?? latestAttempt.status) as VerdictCode}
+                      />
                     </div>
                   )}
                   {runStatus && (
@@ -5722,19 +5715,8 @@ export default function ContestPageClient() {
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                           {submissionsList.map((sub) => {
                             const isExpanded = expandedAttemptId === sub.id;
-                            const finalVerdict = sub.final_verdict || "Pending";
                             const status = sub.status;
                             const isPending = status === "QUEUED" || status === "RUNNING";
-
-                            let verdictColor = "#94a3b8";
-                            if (finalVerdict === "AC") verdictColor = "#22c55e";
-                            else if (finalVerdict === "WA") verdictColor = "#ef4444";
-                            else if (finalVerdict === "TLE") verdictColor = "#f59e0b";
-                            else if (finalVerdict === "MLE") verdictColor = "#3b82f6";
-                            else if (finalVerdict === "CE")
-                              verdictColor = "var(--color-accent-base)";
-                            else if (finalVerdict === "RE") verdictColor = "#ec4899";
-                            else if (isPending) verdictColor = "#06b6d4";
 
                             return (
                               <div
@@ -5795,15 +5777,14 @@ export default function ContestPageClient() {
                                   <div
                                     style={{ display: "flex", alignItems: "center", gap: "12px" }}
                                   >
-                                    <span
-                                      style={{
-                                        fontSize: "11px",
-                                        fontWeight: "bold",
-                                        color: verdictColor,
-                                      }}
-                                    >
-                                      {isPending ? `${status}...` : finalVerdict}
-                                    </span>
+                                    <VerdictBadge
+                                      variant="chip"
+                                      code={
+                                        (isPending
+                                          ? sub.status
+                                          : (sub.final_verdict ?? sub.status)) as VerdictCode
+                                      }
+                                    />
                                     <span style={{ fontSize: "10px", color: "#64748b" }}>
                                       {isExpanded ? (
                                         <ChevronUp size={14} />

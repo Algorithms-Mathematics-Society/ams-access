@@ -39,6 +39,8 @@ export function verdictColor(v: VerdictCode): string {
     case "RUNNING":
     case "QUEUED":
       return "var(--verdict-running)";
+    case "UNATTEMPTED":
+      return "var(--verdict-none)";
     default:
       return "var(--verdict-none)";
   }
@@ -46,6 +48,7 @@ export function verdictColor(v: VerdictCode): string {
 
 // Standard CP verdict names — used by VerdictBadge and any text that names a verdict.
 export function verdictLabel(v: VerdictCode): string {
+  if (v == null || v === "") return "—";
   switch (v) {
     case "AC":
       return "Accepted";
