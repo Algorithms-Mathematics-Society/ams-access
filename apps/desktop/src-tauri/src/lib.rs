@@ -544,6 +544,9 @@ fn collect_fast_device_state() -> DeviceState {
         virtualization,
         external_displays,
         rdp_server,
+        // Populated for real in collect_device_state_inner (Linux only); the fast
+        // path leaves it unknown so it never blocks on its own.
+        network_helper_ready: None,
     }
 }
 
@@ -572,6 +575,15 @@ async fn collect_device_state_inner(
 
     if let Some(host) = network_host.filter(|host| !host.trim().is_empty()) {
         state.network = Some(check_network_stability(host, api_url).await);
+    }
+
+    // Linux egress lockdown runs through the privileged helper; surface whether
+    // it is installed/reachable so the readiness policy can hard-block a strict
+    // contest that would otherwise run with unrestricted egress (core-rs
+    // CheckKind::Network gate). Other platforms leave this None (inert).
+    #[cfg(target_os = "linux")]
+    {
+        state.network_helper_ready = Some(platform_rs::linux::network_helper_running());
     }
 
     state
@@ -847,12 +859,19 @@ fn set_escape_blocked(blocked: bool) {
     let _ = blocked;
 }
 
-/// Check whether the privileged network helper daemon is reachable (macOS only).
+/// Check whether the privileged network helper daemon is reachable.
+///
+/// macOS: LaunchDaemon over /private/var/run/ams-proctor.sock.
+/// Linux: systemd unit over /run/ams-proctor.sock.
+/// Other platforms have no helper and report `true` (lockdown is enforced
+/// in-process there, e.g. Windows WFP).
 #[tauri::command]
 fn network_helper_running() -> bool {
     #[cfg(target_os = "macos")]
     return platform_rs::macos::network_helper_running();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    return platform_rs::linux::network_helper_running();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     true
 }
 
@@ -861,8 +880,44 @@ fn network_helper_running() -> bool {
 /// renderer cannot choose an arbitrary root-installed binary.
 #[tauri::command]
 fn install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = app;
+    #[cfg(target_os = "linux")]
+    {
+        // Resolve the bundled helper binary + systemd unit from the Tauri
+        // resource dir so the renderer cannot point us at an arbitrary
+        // root-installed binary. Install elevates via pkexec (one polkit prompt).
+        let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+        let helper_binary = resource_dir
+            .join("helpers")
+            .join("ams-access-networkhelper");
+        let unit_source = resource_dir
+            .join("helpers")
+            .join("ams-proctor-helper.service");
+        // The app's own absolute path is pinned into the helper's root-owned
+        // client config so the daemon can full-path-authorize the peer.
+        let client_binary = std::env::current_exe().map_err(|e| e.to_string())?;
+
+        if !helper_binary.exists() {
+            return Err(format!(
+                "helper_binary_missing:{}",
+                helper_binary.to_string_lossy()
+            ));
+        }
+        if !unit_source.exists() {
+            return Err(format!(
+                "helper_unit_missing:{}",
+                unit_source.to_string_lossy()
+            ));
+        }
+
+        #[allow(clippy::needless_return)]
+        return platform_rs::linux::install_network_helper(
+            &helper_binary.to_string_lossy(),
+            &unit_source.to_string_lossy(),
+            &client_binary.to_string_lossy(),
+        );
+    }
     #[cfg(target_os = "macos")]
     {
         let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
@@ -893,7 +948,7 @@ fn install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
             &client_binary.to_string_lossy(),
         );
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     Ok(())
 }
 
@@ -1421,15 +1476,57 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
         }
     }
 
+    // LX-3/LX-4: under the default-DROP firewall the system DNS resolver must
+    // stay reachable or every subsequent name lookup (incl. re-resolution of the
+    // allowed API/judge hosts) fails. Add each /etc/resolv.conf nameserver to the
+    // allowlist. We add the resolver *host* (covers both UDP and TCP 53 in the
+    // helper's address-based rules) rather than port-scoping, mirroring how the
+    // allowed API hosts are permitted wholesale. Both v4 and v6 nameservers are
+    // included; the helper family-splits them.
+    #[cfg(target_os = "linux")]
+    for ns in resolv_conf_nameservers() {
+        if !ips.contains(&ns) {
+            ips.push(ns);
+        }
+    }
+
     if ips.is_empty() {
         return Err("Could not resolve any allowed domains to IPs".to_string());
     }
 
+    // The Linux/macOS client returns Err when the privileged helper is not
+    // installed/running. We propagate that verbatim instead of swallowing it:
+    // an exam must NOT proceed with unrestricted egress. This is the last-line
+    // enforcement at ContestLaunch; the readiness policy already hard-blocks a
+    // strict Linux contest earlier via the CheckKind::Network helper gate in
+    // `packages/core-rs/src/exam/mod.rs` (fed by `network_helper_ready`).
     platform_dispatch!(
         enable_network_lockdown(&ips),
         else Err("Network lockdown not supported on this platform".to_string())
     )
     .map(|_| true)
+}
+
+/// Parse `nameserver` lines out of /etc/resolv.conf so the resolver stays
+/// reachable under the default-DROP firewall. Returns valid IP literals only.
+#[cfg(target_os = "linux")]
+fn resolv_conf_nameservers() -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string("/etc/resolv.conf") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("nameserver") {
+            let candidate = rest.trim();
+            if candidate.parse::<std::net::IpAddr>().is_ok()
+                && !out.contains(&candidate.to_string())
+            {
+                out.push(candidate.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// Remove all AMS firewall rules and restore normal internet access.
@@ -1894,7 +1991,13 @@ mod unix_signal {
 extern "C" fn handle_sigterm(_sig: std::os::raw::c_int) {
     eprintln!("AMS Access intercepted termination signal; restoring keyboard shortcuts...");
     #[cfg(target_os = "linux")]
-    platform_rs::linux::disable_keyboard_intercept();
+    {
+        // Full unlock: keyboard intercept, the kill-shield / workspace-watchdog
+        // threads (via SHIELD_ACTIVE=false), and the disabled touchpad — matching
+        // the macOS arm in this same handler rather than restoring only the keyboard.
+        platform_rs::linux::unlock_desktop();
+        let _ = platform_rs::linux::disable_network_lockdown();
+    }
     #[cfg(target_os = "macos")]
     {
         // Full unlock: keyboard intercept, trackpad gesture prefs (persisted via
@@ -1941,9 +2044,36 @@ pub fn run() {
     // Restore any OS state left behind by a previous crashed session — runs BEFORE
     // Tauri initialises so it can't race with the first enable_keyboard_intercept call.
     #[cfg(target_os = "linux")]
-    platform_rs::linux::recover_keyboard_if_crashed();
+    {
+        // recover_keyboard_if_crashed() also restores the GNOME touchpad
+        // send-events value from the backup (LX-2a backs it up under the same
+        // `gnome/` prefix those restore loops already iterate), so a crashed
+        // GNOME session no longer leaves the touchpad disabled. The X11 `xinput`
+        // path is runtime-only and cannot be persisted cleanly; it is left as
+        // best-effort (GNOME gsettings is the dominant target).
+        platform_rs::linux::recover_keyboard_if_crashed();
+        // iptables AMS_PROCTOR rules survive crashes BY DESIGN (a crash must not
+        // restore internet mid-exam), but at process start no exam can be active,
+        // so any still-present chain is a leftover from a crashed session. Flush
+        // in the background so a candidate is never stranded offline. No-op if no
+        // chain exists / iptables is unavailable.
+        std::thread::spawn(|| {
+            let _ = platform_rs::linux::disable_network_lockdown();
+        });
+    }
     #[cfg(target_os = "windows")]
-    platform_rs::windows::recover_registry_if_crashed();
+    {
+        platform_rs::windows::recover_registry_if_crashed();
+        // AMS_PROCTOR firewall rules persist across a crash BY DESIGN (a crash
+        // must not restore internet mid-exam), but at process start no exam can
+        // be active, so any still-present rule is a leftover that would strand the
+        // candidate offline. Flush in the background; idempotent / no-op if no
+        // rules exist. Mirrors the Linux path above. lock_desktop re-applies the
+        // firewall when a real exam starts.
+        std::thread::spawn(|| {
+            let _ = platform_rs::windows::disable_network_lockdown();
+        });
+    }
 
     // Auto-elevate on Windows: full exam lockdown (firewall, registry, taskkill)
     // requires Administrator. Rather than make the candidate discover the Resolve
@@ -2120,7 +2250,14 @@ pub fn run() {
         .on_window_event(|_win, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 #[cfg(target_os = "linux")]
-                platform_rs::linux::disable_keyboard_intercept();
+                {
+                    // unlock_desktop covers keyboard intercept, the kill-shield /
+                    // workspace-watchdog threads (via SHIELD_ACTIVE=false), and the
+                    // disabled touchpad — not just the keyboard.
+                    platform_rs::linux::unlock_desktop();
+                    // Firewall rules must be cleared even on crash — intentional persistence
+                    let _ = platform_rs::linux::disable_network_lockdown();
+                }
                 #[cfg(target_os = "windows")]
                 {
                     // unlock_desktop covers keyboard, sleep prevention, registry, shield, game bar

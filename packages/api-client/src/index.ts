@@ -40,6 +40,7 @@ export type FailureReasonCode =
   | "camera_unavailable"
   | "microphone_unavailable"
   | "network_unreachable"
+  | "network_helper_unavailable"
   | "keyboard_lockdown_unavailable"
   | "restricted_application_detected"
   | "virtualization_detected"
@@ -54,6 +55,7 @@ export type RecoveryAction =
   | "register_device"
   | "grant_media_permission"
   | "connect_network"
+  | "install_network_helper"
   | "close_restricted_applications"
   | "use_physical_machine"
   | "use_supported_platform"
@@ -107,6 +109,10 @@ export type DeviceState = {
   keyboard: KeyboardInterceptResult | null;
   restricted_processes: ProcessScanResult | null;
   virtualization: VirtDetectionResult | null;
+  /** Linux only: whether the privileged egress-lockdown helper is installed and
+   *  reachable. Flows opaquely back into evaluate_session_readiness; `Some(false)`
+   *  hard-blocks a strict contest. `null`/absent on other platforms (inert). */
+  network_helper_ready?: boolean | null;
 };
 
 export type ReadinessCheck = {

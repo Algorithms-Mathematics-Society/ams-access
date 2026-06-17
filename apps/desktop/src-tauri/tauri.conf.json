@@ -63,7 +63,10 @@
     "resources": {
       "../../web/public/models/blazeface/*": "models/blazeface/",
       "helpers/com.ams.access.networkhelper": "helpers/com.ams.access.networkhelper",
-      "helpers/com.ams.access.networkhelper.plist": "helpers/com.ams.access.networkhelper.plist"
+      "helpers/com.ams.access.networkhelper.plist": "helpers/com.ams.access.networkhelper.plist",
+      "helpers/ams-access-networkhelper": "helpers/ams-access-networkhelper",
+      "helpers/ams-proctor-helper.service": "helpers/ams-proctor-helper.service",
+      "helpers/com.ams.access.networkhelper.policy": "helpers/com.ams.access.networkhelper.policy"
     }
   }
 }

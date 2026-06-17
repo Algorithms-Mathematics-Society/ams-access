@@ -2706,11 +2706,14 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
   const [helperMessage, setHelperMessage] = useState("Network lockdown helper ready");
 
   useEffect(() => {
-    async function ensureMacNetworkHelper() {
+    async function ensureNetworkHelper() {
       if (!window.__TAURI__) return true;
 
+      // macOS (LaunchDaemon) and Linux (systemd + polkit) both apply egress
+      // lockdown through a privileged out-of-process helper that must be
+      // installed before the contest. Windows locks in-process and needs none.
       const platform = await invoke<{ os: string }>("get_platform");
-      if (platform?.os !== "macos") return true;
+      if (platform?.os !== "macos" && platform?.os !== "linux") return true;
 
       setHelperPhase("checking");
       const running = await invoke<boolean>("network_helper_running");
@@ -2737,7 +2740,9 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
         setHelperMessage(
           msg.includes("admin_auth_cancelled")
             ? "Administrator approval was cancelled"
-            : "Network lockdown helper unavailable"
+            : msg.includes("pkexec_not_available")
+              ? "Admin authorization tool (pkexec) is unavailable — ask your organizer to pre-install the helper"
+              : "Network lockdown helper unavailable"
         );
         return false;
       }
@@ -2753,7 +2758,7 @@ function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?
           }>("check_network_stability", { host: getNetworkProbeHost() }),
           3000
         ),
-        ensureMacNetworkHelper(),
+        ensureNetworkHelper(),
       ]);
 
       let nextPhase: "pass" | "warn";

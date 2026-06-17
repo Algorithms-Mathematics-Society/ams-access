@@ -133,6 +133,7 @@ pub enum FailureReasonCode {
     CameraUnavailable,
     MicrophoneUnavailable,
     NetworkUnreachable,
+    NetworkHelperUnavailable,
     KeyboardLockdownUnavailable,
     RestrictedApplicationDetected,
     VirtualizationDetected,
@@ -152,6 +153,7 @@ pub enum RecoveryAction {
     RegisterDevice,
     GrantMediaPermission,
     ConnectNetwork,
+    InstallNetworkHelper,
     CloseRestrictedApplications,
     UsePhysicalMachine,
     UseSupportedPlatform,
@@ -267,6 +269,13 @@ pub struct DeviceState {
     pub virtualization: Option<VirtDetectionResult>,
     pub external_displays: Option<DisplayScan>,
     pub rdp_server: Option<bool>,
+    /// Whether the privileged network-lockdown helper is installed and reachable.
+    /// Populated only where egress control depends on an out-of-process root
+    /// helper (Linux). `None` elsewhere (Windows locks in-process; macOS readiness
+    /// is intentionally left advisory), and `None` never blocks — only an explicit
+    /// `Some(false)` does. `#[serde(default)]` keeps older payloads deserializing.
+    #[serde(default)]
+    pub network_helper_ready: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -501,6 +510,27 @@ fn evaluate_requirement(
             ),
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
+        CheckKind::Network if device_state.network_helper_ready == Some(false) => {
+            // Hard gate: where egress control depends on a privileged out-of-process
+            // helper (Linux), a helper that is not installed/running means the
+            // "lockdown" is silently a no-op — the exam must not proceed. Only an
+            // explicit Some(false) blocks; None (Windows in-process / macOS
+            // advisory) is inert. Under StrictContest the Network requirement is
+            // required+Block, so this surfaces as a blocking fail; under softer
+            // profiles it degrades to an advisory warning.
+            (
+                false,
+                Some(FailureReasonCode::NetworkHelperUnavailable),
+                Some(
+                    "network lockdown helper is not installed or not running — egress cannot be restricted"
+                        .to_string(),
+                ),
+                vec![
+                    RecoveryAction::InstallNetworkHelper,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            )
+        }
         CheckKind::Network => match &device_state.network {
             // Clock integrity rides on the network check: the device clock
             // drives report and submission timestamps, so a drift beyond the
@@ -803,6 +833,7 @@ mod tests {
             }),
             external_displays: None,
             rdp_server: None,
+            network_helper_ready: Some(true),
         }
     }
 
@@ -855,6 +886,42 @@ mod tests {
             .checks
             .iter()
             .all(|check| check.outcome == CheckOutcome::Pass && !check.blocking));
+    }
+
+    #[test]
+    fn missing_network_helper_blocks_strict_and_is_inert_when_unknown() {
+        // Explicit Some(false): the privileged egress helper is down → strict
+        // contest must be Blocked on the Network check.
+        let mut down = passing_state();
+        down.network_helper_ready = Some(false);
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("contest-1".into()),
+            Some("device-1".into()),
+            &down,
+        );
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::NetworkHelperUnavailable));
+        let net = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::Network)
+            .expect("network check present");
+        assert!(net.blocking && net.outcome == CheckOutcome::Fail);
+
+        // None (Windows in-process / macOS advisory) must NOT block: the same
+        // otherwise-passing state with an unknown helper signal still passes.
+        let mut unknown = passing_state();
+        unknown.network_helper_ready = None;
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("contest-1".into()),
+            Some("device-1".into()),
+            &unknown,
+        );
+        assert_eq!(report.decision, EnforcementDecision::Allowed);
     }
 
     #[test]
@@ -1000,6 +1067,9 @@ mod tests {
                 has_wireless: false,
             }),
             rdp_server: Some(false),
+            // Windows locks egress in-process; the out-of-process helper signal
+            // does not apply, so the gate stays inert (None).
+            network_helper_ready: None,
         }
     }
 

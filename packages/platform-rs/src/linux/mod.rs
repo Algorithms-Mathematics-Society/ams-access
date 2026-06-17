@@ -582,6 +582,11 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 /// GNOME (X11 + Wayland): flips `org.gnome.desktop.peripherals.touchpad send-events`.
 /// X11 non-GNOME fallback: disables every device whose name contains "touchpad"
 /// via `xinput`. Silently no-ops on Wayland when neither path applies.
+// `#[allow(clippy::map_entry)]` mirrors enable_keyboard_intercept: the
+// contains_key/insert split is kept intentionally so the backup is only written
+// when a value is actually captured (and the borrow of `saved` is released
+// before write_backup), matching the existing `gnome/` backup idiom.
+#[allow(clippy::map_entry)]
 fn set_touchpad_enabled(enabled: bool) {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP")
         .unwrap_or_default()
@@ -589,6 +594,27 @@ fn set_touchpad_enabled(enabled: bool) {
     let is_gnome = desktop.contains("gnome") || desktop.contains("ubuntu");
 
     if is_gnome {
+        // LX-2a: when DISABLING, back up the current send-events value under the
+        // same `gnome/<schema>/<key>` map-key convention used by the keyboard
+        // intercept. recover_keyboard_if_crashed()/disable_keyboard_intercept()
+        // already iterate every `gnome/`-prefixed key and restore it via
+        // gsettings_set, so this value is restored automatically on crash recovery
+        // and normal teardown with NO change to those functions. Only back up on
+        // the disable path (enable is the restore direction) and only if not
+        // already captured, mirroring enable_keyboard_intercept().
+        if !enabled {
+            let map_key = "gnome/org.gnome.desktop.peripherals.touchpad/send-events".to_string();
+            let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
+            if !saved.contains_key(&map_key) {
+                if let Some(current) =
+                    gsettings_get("org.gnome.desktop.peripherals.touchpad", "send-events")
+                {
+                    saved.insert(map_key, current);
+                    write_backup(&saved);
+                }
+            }
+        }
+
         let value = if enabled { "'enabled'" } else { "'disabled'" };
         gsettings_set(
             "org.gnome.desktop.peripherals.touchpad",
@@ -887,100 +913,222 @@ pub fn check_ptrace_scope() -> u8 {
         .unwrap_or(0)
 }
 
-// ── Network lockdown (iptables) ───────────────────────────────────────────────
+// ── Network lockdown (privileged helper client) ───────────────────────────────
+//
+// LX-3: the app intentionally runs in the user session (so the webview can reach
+// the camera/mic/DBus/portals), which means it has neither root nor
+// CAP_NET_ADMIN. Shelling iptables in-process therefore failed on a normal
+// launch and the network was NOT locked. We now mirror the macOS design: all
+// iptables/ip6tables work happens in the root `network-helper` daemon and this
+// module is only a thin Unix-domain-socket CLIENT. The JSON protocol and socket
+// path are shared verbatim with the helper (see packages/network-helper).
+//
+// LX-4: family-splitting (v4 → iptables, v6 → ip6tables) is done inside the
+// helper; this client passes BOTH families through untouched.
 
-const IPTABLES_CHAIN: &str = "AMS_PROCTOR";
+use std::io::{BufRead as _, BufReader, Write as _};
+use std::os::unix::net::UnixStream;
 
-fn iptables(args: &[&str]) -> Result<std::process::Output, String> {
-    std::process::Command::new("iptables")
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())
+/// Same socket the helper binds. /run is the canonical runtime tmpfs; /var/run
+/// is a compatibility symlink on modern distros, tried as a fallback.
+const HELPER_SOCKET: &str = "/run/ams-proctor.sock";
+const HELPER_SOCKET_FALLBACK: &str = "/var/run/ams-proctor.sock";
+
+/// Where `install_network_helper` lands the systemd unit files. The packaged
+/// copies live in the repo under packaging/linux/ and are bundled as Tauri
+/// resources; install copies them here with pkexec.
+const SYSTEMD_UNIT_DEST: &str = "/etc/systemd/system/ams-proctor-helper.service";
+const HELPER_BINARY_DEST: &str = "/usr/local/lib/ams-access/ams-access-networkhelper";
+/// Root-written file pinning the authorized client binary's absolute path. The
+/// helper's `authorize_client` reads it (must match `helper.rs::CLIENT_CONFIG_PATH`).
+const CLIENT_CONFIG_DEST: &str = "/etc/ams-access/network-helper-client.conf";
+
+/// True for install paths that change every launch (AppImage's `/.mount_*`, or a
+/// `/tmp` extraction). Pinning such a path would lock out the next run, so we
+/// skip the pin and let the helper fall back to its exe-basename check.
+fn is_ephemeral_client_path(path: &str) -> bool {
+    path.contains("/.mount_") || path.starts_with("/tmp/")
 }
 
-/// Apply outbound firewall: allow only `allowed_ips`, block everything else.
-/// Rules persist until `disable_network_lockdown` is called — intentional.
+/// Prefix of the error `helper_connect` returns when the socket is unreachable.
+/// Callers match on it to tell "helper not running" apart from a command error,
+/// so the two must stay in sync (kept here as one source of truth).
+const HELPER_CONNECT_ERR_PREFIX: &str = "connect to helper";
+
+/// Connect to the helper socket, preferring /run then /var/run.
+fn helper_connect() -> Result<UnixStream, String> {
+    match UnixStream::connect(HELPER_SOCKET) {
+        Ok(s) => Ok(s),
+        Err(primary) => UnixStream::connect(HELPER_SOCKET_FALLBACK)
+            .map_err(|fallback| format!("{HELPER_CONNECT_ERR_PREFIX} ({HELPER_SOCKET}: {primary}; {HELPER_SOCKET_FALLBACK}: {fallback})")),
+    }
+}
+
+/// Send a single newline-delimited JSON command and parse the `{"ok":...}` reply.
+fn helper_send(json: &str) -> Result<(), String> {
+    let stream = helper_connect()?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .ok();
+
+    let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
+    writeln!(writer, "{json}").map_err(|e| format!("send: {e}"))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader
+        .read_line(&mut response)
+        .map_err(|e| format!("read response: {e}"))?;
+
+    let parsed: serde_json::Value = serde_json::from_str(response.trim())
+        .map_err(|e| format!("invalid helper response: {e}"))?;
+
+    if parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(parsed
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("helper command failed")
+            .to_string())
+    }
+}
+
+/// True when the helper daemon socket is reachable and answers a ping.
+pub fn network_helper_running() -> bool {
+    helper_send(r#"{"cmd":"ping"}"#).is_ok()
+}
+
+/// Apply the outbound firewall via the privileged helper.
+///
+/// `allowed_ips` may contain BOTH IPv4 and IPv6 literals; the helper splits them
+/// by family. If the helper is not installed/reachable, returns a clear `Err`
+/// so the launch gate can refuse to start the exam (egress would be unrestricted
+/// otherwise — see the Tauri `enable_network_lockdown` command in lib.rs).
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
-    // Tear down any leftover chain from a previous session (idempotent)
-    let _ = iptables(&["-D", "OUTPUT", "-j", IPTABLES_CHAIN]);
-    let _ = iptables(&["-F", IPTABLES_CHAIN]);
-    let _ = iptables(&["-X", IPTABLES_CHAIN]);
-
-    // Create fresh chain
-    let out = iptables(&["-N", IPTABLES_CHAIN])?;
-    if !out.status.success() {
-        let msg = String::from_utf8_lossy(&out.stderr);
-        if !msg.contains("Chain already exists") {
-            return Err(format!("iptables -N failed: {}", msg));
+    // Single round-trip: send the command directly and translate a connection
+    // failure into the actionable "helper not installed" message, rather than
+    // pinging first and then connecting again.
+    let request = serde_json::json!({ "cmd": "enable", "ips": allowed_ips }).to_string();
+    helper_send(&request).map_err(|e| {
+        if e.starts_with(HELPER_CONNECT_ERR_PREFIX) {
+            "network helper not installed/running: cannot lock egress. \
+             Install it via install_network_helper (pkexec/systemd)."
+                .to_string()
+        } else {
+            e
         }
-    }
-
-    // Loopback always passes
-    let out = iptables(&["-A", IPTABLES_CHAIN, "-o", "lo", "-j", "ACCEPT"])?;
-    if !out.status.success() {
-        return Err(format!(
-            "iptables loopback rule failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    // Keep already-established connections alive (prevents exam session from dropping)
-    let out = iptables(&[
-        "-A",
-        IPTABLES_CHAIN,
-        "-m",
-        "state",
-        "--state",
-        "ESTABLISHED,RELATED",
-        "-j",
-        "ACCEPT",
-    ])?;
-    if !out.status.success() {
-        return Err(format!(
-            "iptables established rule failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    // Allow each whitelisted IP
-    for ip in allowed_ips {
-        let out = iptables(&["-A", IPTABLES_CHAIN, "-d", ip.as_str(), "-j", "ACCEPT"])?;
-        if !out.status.success() {
-            return Err(format!(
-                "iptables allow {} failed: {}",
-                ip,
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        }
-    }
-
-    // Drop everything else
-    let out = iptables(&["-A", IPTABLES_CHAIN, "-j", "DROP"])?;
-    if !out.status.success() {
-        return Err(format!(
-            "iptables DROP rule failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    // Hook chain into OUTPUT (position 1 = evaluated first)
-    let out = iptables(&["-I", "OUTPUT", "1", "-j", IPTABLES_CHAIN])?;
-    if !out.status.success() {
-        return Err(format!(
-            "iptables OUTPUT hook failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    Ok(())
+    })
 }
 
-/// Remove the AMS_PROCTOR iptables chain and all its rules.
+/// Lift the network lockdown via the privileged helper.
 pub fn disable_network_lockdown() -> Result<(), String> {
-    let _ = iptables(&["-D", "OUTPUT", "-j", IPTABLES_CHAIN]);
-    let _ = iptables(&["-F", IPTABLES_CHAIN]);
-    let _ = iptables(&["-X", IPTABLES_CHAIN]);
-    Ok(())
+    // A connection failure means the helper isn't running, so no rules can be
+    // live and there is nothing to flush — treat that as success. Any other
+    // error (a real disable failure) is surfaced. Single connect, no pre-ping.
+    match helper_send(r#"{"cmd":"disable"}"#) {
+        Ok(()) => Ok(()),
+        Err(e) if e.starts_with(HELPER_CONNECT_ERR_PREFIX) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Install the helper binary + systemd unit and start it as root.
+///
+/// Best-effort: this shells `pkexec` (one polkit auth prompt) to run a small
+/// install script as root that (1) copies the helper binary to
+/// `HELPER_BINARY_DEST`, (2) installs the systemd `.service` to
+/// `SYSTEMD_UNIT_DEST`, (3) `systemctl daemon-reload && enable --now`s it.
+///
+/// Assumptions / caveats (documented honestly):
+///   * systemd is the init system (true for ~all desktop distros AMS targets).
+///   * `pkexec` (polkit) is present; if not, this returns an error and the
+///     organizer must pre-install the unit out of band.
+///   * `helper_binary` is the path to the compiled `ams-access-networkhelper`
+///     (resolved by the caller from the Tauri resource dir).
+///   * `unit_source` is the bundled `ams-proctor-helper.service` file.
+///   * `client_binary` is the calling app's own absolute path (`current_exe`),
+///     pinned into `CLIENT_CONFIG_DEST` so the helper can full-path-authorize
+///     the client (macOS parity). For an ephemeral install path (AppImage) we
+///     pass an empty pin so the helper falls back to its basename check and a
+///     stale pin is removed.
+pub fn install_network_helper(
+    helper_binary: &str,
+    unit_source: &str,
+    client_binary: &str,
+) -> Result<(), String> {
+    // Only pin a stable path; an AppImage mount path would lock out the next run.
+    let client_pin = if is_ephemeral_client_path(client_binary) {
+        ""
+    } else {
+        client_binary
+    };
+
+    // Build a single root shell script so there is exactly one pkexec prompt.
+    // Paths are passed as positional args and quoted to avoid injection.
+    let script = r#"
+set -e
+HELPER_SRC="$1"
+UNIT_SRC="$2"
+HELPER_DEST="$3"
+UNIT_DEST="$4"
+CLIENT_PIN="$5"
+CONFIG_DEST="$6"
+install -d "$(dirname "$HELPER_DEST")"
+install -o root -g root -m 755 "$HELPER_SRC" "$HELPER_DEST"
+install -o root -g root -m 644 "$UNIT_SRC" "$UNIT_DEST"
+if [ -n "$CLIENT_PIN" ]; then
+  install -d "$(dirname "$CONFIG_DEST")"
+  printf '%s\n' "$CLIENT_PIN" > "$CONFIG_DEST"
+  chown root:root "$CONFIG_DEST"
+  chmod 644 "$CONFIG_DEST"
+else
+  rm -f "$CONFIG_DEST"
+fi
+systemctl daemon-reload
+systemctl enable --now ams-proctor-helper.service
+"#;
+
+    let out = std::process::Command::new("pkexec")
+        .args([
+            "/bin/sh",
+            "-c",
+            script,
+            "sh", // $0
+            helper_binary,
+            unit_source,
+            HELPER_BINARY_DEST,
+            SYSTEMD_UNIT_DEST,
+            client_pin,
+            CLIENT_CONFIG_DEST,
+        ])
+        .output()
+        .map_err(|e| format!("pkexec: {e}"))?;
+
+    if !out.status.success() {
+        // pkexec exit 126 = user dismissed/failed auth; 127 = pkexec missing.
+        let code = out.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if code == 126 {
+            return Err("admin_auth_cancelled".to_string());
+        }
+        if code == 127 {
+            return Err("pkexec_not_available".to_string());
+        }
+        return Err(format!(
+            "helper install failed (exit {code}): {}",
+            stderr.trim()
+        ));
+    }
+
+    // Give the daemon up to 3 s to create its socket before returning.
+    for _ in 0..30 {
+        if network_helper_running() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err("helper installed but socket not ready within 3 s".to_string())
 }
 
 /// Returns true if `name` is in the Linux RESTRICTED process list.

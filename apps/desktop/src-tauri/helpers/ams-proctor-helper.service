@@ -1,0 +1,29 @@
+[Unit]
+# AMS Access privileged network helper (Linux equivalent of the macOS
+# LaunchDaemon). Runs as root so it can drive iptables/ip6tables on behalf of
+# the unprivileged, user-session exam app, which talks to it over the Unix
+# socket /run/ams-proctor.sock. Installed by install_network_helper via pkexec.
+Description=AMS Access privileged network lockdown helper
+Documentation=https://ams.dev/access
+After=network.target nss-lookup.target
+
+[Service]
+Type=simple
+# The helper binary is installed here by install_network_helper.
+ExecStart=/usr/local/lib/ams-access/ams-access-networkhelper
+User=root
+# Restart if it dies mid-exam; the app re-pings the socket before relying on it.
+Restart=on-failure
+RestartSec=1
+# Hardening: the helper only needs to run iptables/ip6tables and bind one
+# socket. It does NOT need to write the rest of the filesystem.
+NoNewPrivileges=false
+ProtectHome=true
+ProtectSystem=full
+# CAP_NET_ADMIN is what iptables actually requires; the rest are dropped.
+# (Kept as root User above for /run socket ownership + chown; the capability
+# bounding set still narrows the attack surface of the process.)
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_CHOWN CAP_DAC_OVERRIDE
+
+[Install]
+WantedBy=multi-user.target

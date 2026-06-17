@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Polkit policy for AMS Access network-helper installation.
+
+  install_network_helper() currently elevates with a plain
+  `pkexec /bin/sh -c <install-script>`, which uses the built-in
+  org.freedesktop.policykit.exec action (always prompts for admin auth). This
+  file is provided so a packaged build can optionally register a *dedicated*
+  action — narrower than blanket pkexec — that authorizes only the helper
+  install. To use it, install this file to
+  /usr/share/polkit-1/actions/com.ams.access.networkhelper.policy and invoke
+  pkexec against an install wrapper guarded by this action id.
+-->
+<policyconfig>
+  <vendor>AMS Access</vendor>
+  <vendor_url>https://ams.dev/access</vendor_url>
+
+  <action id="com.ams.access.networkhelper.install">
+    <description>Install the AMS Access network lockdown helper</description>
+    <message>AMS Access needs to install a network component to restrict internet access during the exam.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/ams-access/ams-access-networkhelper-install</annotate>
+  </action>
+</policyconfig>
