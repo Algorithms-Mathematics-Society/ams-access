@@ -4731,7 +4731,7 @@ export default function ContestPageClient() {
                       alignItems: "center",
                       gap: "8px",
                       marginLeft: "10px",
-                      color: "#64748b",
+                      color: "var(--text-dim)",
                       fontSize: "12px",
                       fontWeight: 600,
                       fontFamily: "Inter, system-ui, sans-serif",
@@ -4744,13 +4744,14 @@ export default function ContestPageClient() {
                       value={selectedLanguage}
                       onChange={(e) => handleLanguageChange(e.target.value)}
                       style={{
-                        height: "30px",
+                        height: "32px",
                         border: "1px solid #1F1F1F",
-                        borderRadius: "6px",
+                        borderRadius: "var(--radius-sm)",
                         background: "#0F0F0F",
-                        color: "#cbd5e1",
+                        color: "var(--text-soft)",
                         fontSize: "12px",
-                        fontFamily: "Inter, system-ui, sans-serif",
+                        // The current language reads as instrument/system text.
+                        fontFamily: "'JetBrains Mono', monospace",
                         padding: "0 9px",
                         cursor: "pointer",
                       }}
@@ -4922,7 +4923,7 @@ export default function ContestPageClient() {
                     }}
                   />
                   {/* Primary actions group: Run + Submit */}
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                     <button
                       type="button"
                       onClick={() => void triggerRun()}
@@ -4982,13 +4983,20 @@ export default function ContestPageClient() {
                       type="button"
                       onClick={handleSubmitSolution}
                       disabled={saving || isSubmitting}
+                      title={
+                        isSubmitting
+                          ? "Submitting…"
+                          : saving
+                            ? "Saving your code — submit will be ready in a moment"
+                            : "Submit your solution for scoring"
+                      }
                       style={{
                         height: "40px",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
                         gap: "8px",
-                        padding: "0 18px",
+                        padding: "0 22px",
                         border: `1px solid ${saving || isSubmitting ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
                         borderRadius: "var(--radius-sm)",
                         background:
@@ -5001,26 +5009,35 @@ export default function ContestPageClient() {
                         fontFamily: "Inter, system-ui, sans-serif",
                         cursor: saving || isSubmitting ? "not-allowed" : "pointer",
                         opacity: saving || isSubmitting ? 0.82 : 1,
+                        boxShadow: "none",
                         transition:
-                          "background 150ms ease, border-color 150ms ease, transform 120ms ease",
+                          "background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast)",
                       }}
                       onMouseEnter={(e) => {
                         if (saving || isSubmitting) return;
-                        e.currentTarget.style.background = "#9333ea";
+                        // Dominant: lighten + lift + accent glow so Submit never reads
+                        // as a peer of the quiet outline Run button.
+                        e.currentTarget.style.background =
+                          "color-mix(in srgb, var(--color-accent-base), #fff 12%)";
                         e.currentTarget.style.borderColor = "var(--color-accent-light)";
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                        e.currentTarget.style.boxShadow =
+                          "0 4px 14px rgb(var(--accent-rgb) / 0.35)";
                       }}
                       onMouseLeave={(e) => {
                         if (saving || isSubmitting) return;
                         e.currentTarget.style.background = "var(--color-accent-base)";
                         e.currentTarget.style.borderColor = "var(--color-accent-base)";
-                        e.currentTarget.style.transform = "scale(1)";
+                        e.currentTarget.style.transform = "translateY(0)";
+                        e.currentTarget.style.boxShadow = "none";
                       }}
                       onMouseDown={(e) => {
                         if (!saving && !isSubmitting)
-                          e.currentTarget.style.transform = "scale(0.98)";
+                          e.currentTarget.style.transform = "translateY(0) scale(0.98)";
                       }}
                       onMouseUp={(e) => {
-                        e.currentTarget.style.transform = "scale(1)";
+                        if (!saving && !isSubmitting)
+                          e.currentTarget.style.transform = "translateY(-1px)";
                       }}
                     >
                       {isSubmitting || saving ? (
@@ -6782,7 +6799,7 @@ export default function ContestPageClient() {
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
-        button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid rgb(var(--accent-rgb) / 0.3); outline-offset: 0; }
+        button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible { outline: 1px solid rgb(var(--accent-rgb) / 0.3); outline-offset: 0; }
         textarea::-webkit-scrollbar { width: 6px; }
         textarea::-webkit-scrollbar-track { background: transparent; }
         textarea::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.2); border-radius: 3px; }
