@@ -38,6 +38,8 @@ import {
   type RunVerdict,
   type SubmissionAttemptRecord,
 } from "./submission-state";
+import { VerdictBadge } from "@/lib/VerdictBadge";
+import type { VerdictCode } from "@/lib/verdict";
 import {
   Play,
   Loader2,
@@ -5575,18 +5577,13 @@ export default function ContestPageClient() {
                                 minWidth: 0,
                               }}
                             >
-                              <span
-                                style={{
-                                  color: latestAttemptVerdictColor,
-                                  fontSize: "13px",
-                                  fontWeight: 700,
-                                  fontFamily: "Inter, system-ui, sans-serif",
-                                }}
-                              >
-                                {latestAttemptPending
-                                  ? `${latestAttempt.status}...`
-                                  : latestAttemptVerdict}
-                              </span>
+                              <VerdictBadge
+                                variant="full"
+                                code={
+                                  (latestAttempt.final_verdict ??
+                                    latestAttempt.status) as VerdictCode
+                                }
+                              />
                               <span style={{ color: "#64748b", fontSize: "11px" }}>
                                 Attempt #{latestAttempt.attempt_no}
                               </span>
@@ -5888,8 +5885,8 @@ export default function ContestPageClient() {
                                                   <div
                                                     style={{
                                                       display: "flex",
-                                                      flexWrap: "wrap",
-                                                      gap: "6px",
+                                                      flexDirection: "column",
+                                                      gap: "4px",
                                                     }}
                                                   >
                                                     {trs
@@ -5909,55 +5906,38 @@ export default function ContestPageClient() {
                                                           { tr, originalIndex }: any,
                                                           idx: number
                                                         ) => {
-                                                          const isAC = tr.verdict === "AC";
-                                                          const isWarn =
-                                                            tr.verdict === "TLE" ||
-                                                            tr.verdict === "MLE" ||
-                                                            tr.verdict === "OLE";
-                                                          const trColor = isAC
-                                                            ? "rgba(34,197,94,0.1)"
-                                                            : isWarn
-                                                              ? "rgba(245,158,11,0.08)"
-                                                              : "rgba(239,68,68,0.1)";
-                                                          const trBorder = isAC
-                                                            ? "rgba(34,197,94,0.3)"
-                                                            : isWarn
-                                                              ? "rgba(245,158,11,0.3)"
-                                                              : "rgba(239,68,68,0.3)";
-                                                          const trTextColor = isAC
-                                                            ? "#22c55e"
-                                                            : isWarn
-                                                              ? "#f59e0b"
-                                                              : "#ef4444";
                                                           const testNumber =
                                                             tr.test_number ?? originalIndex + 1;
                                                           return (
                                                             <div
                                                               key={`${sub.id}-${testNumber}-${idx}`}
-                                                              title={
-                                                                isAC
-                                                                  ? `Test #${testNumber}: Accepted${tr.runtime_ms != null ? ` (${tr.runtime_ms}ms)` : ""}`
-                                                                  : tr.hidden || tr.is_hidden
-                                                                    ? `Hidden test ${testNumber}: ${tr.verdict}`
-                                                                    : `Test #${testNumber}: ${tr.verdict}${tr.runtime_ms != null ? ` (${tr.runtime_ms}ms)` : ""}`
-                                                              }
                                                               style={{
-                                                                minWidth: "30px",
-                                                                height: "24px",
-                                                                padding: "0 7px",
                                                                 display: "flex",
                                                                 alignItems: "center",
-                                                                justifyContent: "center",
-                                                                background: trColor,
-                                                                border: `1px solid ${trBorder}`,
-                                                                borderRadius: "999px",
+                                                                gap: "5px",
                                                                 fontSize: "10px",
-                                                                fontWeight: 700,
-                                                                color: trTextColor,
-                                                                cursor: "default",
+                                                                color: "#94a3b8",
                                                               }}
                                                             >
-                                                              {testNumber}
+                                                              <span>Test {testNumber}</span>
+                                                              <VerdictBadge
+                                                                variant="chip"
+                                                                code={
+                                                                  (tr.verdict ??
+                                                                    tr.status) as VerdictCode
+                                                                }
+                                                              />
+                                                              {tr.runtime_ms != null && (
+                                                                <span style={{ color: "#475569" }}>
+                                                                  {tr.runtime_ms}ms
+                                                                </span>
+                                                              )}
+                                                              {tr.memory_kb != null && (
+                                                                <span style={{ color: "#475569" }}>
+                                                                  {Math.round(tr.memory_kb / 1024)}
+                                                                  MB
+                                                                </span>
+                                                              )}
                                                             </div>
                                                           );
                                                         }
