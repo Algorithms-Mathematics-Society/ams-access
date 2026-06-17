@@ -31,7 +31,7 @@ function PermissionLine({
       style={{
         background: c.cardBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         padding: "18px 22px",
         display: "flex",
         alignItems: "center",
@@ -57,7 +57,7 @@ function PermissionLine({
             : "rgba(245,158,11,0.08)",
           border: `1px solid ${enabled ? (theme === "light" ? "rgba(16,185,129,0.2)" : "rgba(34,197,94,0.2)") : "rgba(245,158,11,0.2)"}`,
           padding: "4px 10px",
-          borderRadius: "4px",
+          borderRadius: "var(--radius-sm)",
           letterSpacing: "0.04em",
         }}
       >
@@ -87,7 +87,7 @@ function SecurityInfoRow({
         padding: "8px 12px",
         background: c.innerBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "4px",
+        borderRadius: "var(--radius-sm)",
         alignItems: "center",
       }}
     >
@@ -124,13 +124,13 @@ function ProcessListItem({
         padding: "8px 14px",
         background: c.innerBg,
         border: `1px solid ${c.border}`,
-        borderRadius: "6px",
+        borderRadius: "var(--radius-sm)",
       }}
     >
       <span style={{ fontSize: "12px", color: c.text }}>{name}</span>
       <span
         style={{
-          fontSize: "10px",
+          fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
           color: restricted ? "#ef4444" : theme === "light" ? "#10b981" : "#22c55e",
           background: restricted
@@ -139,7 +139,7 @@ function ProcessListItem({
               ? "rgba(16,185,129,0.08)"
               : "rgba(34,197,94,0.08)",
           padding: "2px 6px",
-          borderRadius: "3px",
+          borderRadius: "var(--radius-sm)",
         }}
       >
         {restricted ? "FLAGGED" : "CLEARED"}
@@ -220,7 +220,7 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
       style={{
         background: c.cardBg,
         border: `1px solid ${accentBorder}`,
-        borderRadius: "8px",
+        borderRadius: "var(--radius-md)",
         padding: "20px 22px",
         display: "flex",
         flexDirection: "column",
@@ -250,16 +250,18 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
           disabled={working}
           style={{
             flexShrink: 0,
-            padding: "10px 18px",
+            width: "auto",
+            padding: "0 16px",
+            minHeight: 40,
             background: c.accentLight,
             border: `1px solid ${c.accentBorder}`,
-            borderRadius: "6px",
+            borderRadius: "var(--radius-sm)",
             color: c.accentText,
             fontSize: "13px",
             fontWeight: 600,
             cursor: working ? "not-allowed" : "pointer",
             opacity: working ? 0.7 : 1,
-            transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
+            transition: "background var(--transition-fast), border-color var(--transition-fast)",
           }}
         >
           {working ? "Restoring..." : "Restore System Settings"}
@@ -606,18 +608,18 @@ export const SettingsPanel = memo(function SettingsPanel({
               onClick={() => setActiveTab(tab)}
               style={{
                 padding: "12px 16px",
-                borderRadius: "6px",
+                borderRadius: "var(--radius-sm)",
                 borderTop: "none",
                 borderRight: "none",
                 borderBottom: "none",
-                borderLeft: activeTab === tab ? `3px solid ${c.accent}` : "3px solid transparent",
-                background: activeTab === tab ? c.accentLight : "transparent",
+                borderLeft: activeTab === tab ? `2px solid ${c.accent}` : "2px solid transparent",
+                background: activeTab === tab ? "rgb(var(--accent-rgb) / 0.08)" : "transparent",
                 color: activeTab === tab ? c.accentText : c.textMuted,
                 fontSize: "13px",
-                fontWeight: activeTab === tab ? 700 : 500,
+                fontWeight: 500,
                 cursor: "pointer",
                 textAlign: "left",
-                transition: "all 200ms cubic-bezier(0.22,1,0.36,1)",
+                transition: "background var(--transition-fast), color var(--transition-fast)",
               }}
             >
               {labels[tab]}
@@ -631,7 +633,7 @@ export const SettingsPanel = memo(function SettingsPanel({
             marginTop: "auto",
             background: "rgba(255,255,255,0.01)",
             border: `1px solid ${c.border}`,
-            borderRadius: "6px",
+            borderRadius: "var(--radius-sm)",
             padding: "14px 16px",
             display: "flex",
             flexDirection: "column",
@@ -641,9 +643,9 @@ export const SettingsPanel = memo(function SettingsPanel({
           <span
             style={{
               fontSize: "11px",
-              fontWeight: 700,
-              color: c.textMuted,
-              letterSpacing: "0.08em",
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.45)",
+              letterSpacing: "0.1em",
               textTransform: "uppercase",
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             }}
@@ -655,7 +657,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               padding: "10px 12px",
               background: "rgb(var(--accent-rgb) / 0.08)",
               border: "1px solid rgb(var(--accent-rgb) / 0.2)",
-              borderRadius: "6px",
+              borderRadius: "var(--radius-sm)",
               display: "flex",
               alignItems: "center",
               gap: "8px",
@@ -672,7 +674,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               OBSIDIAN_DARK
             </span>
           </div>
-          <p style={{ fontSize: "10px", color: c.textMuted, margin: 0, lineHeight: 1.4 }}>
+          <p style={{ fontSize: "11px", color: c.textMuted, margin: 0, lineHeight: 1.4 }}>
             Locked by workstation environment policy.
           </p>
         </div>
@@ -694,7 +696,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               style={{
                 background: c.cardBg,
                 border: `1px solid ${c.border}`,
-                borderRadius: "8px",
+                borderRadius: "var(--radius-md)",
                 padding: "24px",
                 display: "flex",
                 flexDirection: "column",
@@ -710,13 +712,13 @@ export const SettingsPanel = memo(function SettingsPanel({
                 {camStream && (
                   <span
                     style={{
-                      fontSize: "10px",
+                      fontSize: "11px",
                       color: theme === "light" ? "#10b981" : "#22c55e",
                       fontFamily: "'JetBrains Mono', monospace",
                       background:
                         theme === "light" ? "rgba(16,185,129,0.08)" : "rgba(34,197,94,0.08)",
                       padding: "2px 8px",
-                      borderRadius: "4px",
+                      borderRadius: "var(--radius-sm)",
                     }}
                   >
                     STREAMING ACTIVE
@@ -728,8 +730,8 @@ export const SettingsPanel = memo(function SettingsPanel({
                 style={{
                   position: "relative",
                   width: "100%",
-                  aspectRatio: "1.6",
-                  borderRadius: "8px",
+                  aspectRatio: "16 / 9",
+                  borderRadius: "var(--radius-md)",
                   background: c.innerBg,
                   overflow: "hidden",
                   border: `1px solid ${c.border}`,
@@ -836,16 +838,19 @@ export const SettingsPanel = memo(function SettingsPanel({
                     onClick={() => startCameraTest()}
                     disabled={cameraBusy}
                     style={{
-                      padding: "10px 18px",
+                      width: "auto",
+                      padding: "0 16px",
+                      minHeight: 40,
                       background: c.accentLight,
                       border: `1px solid ${c.accentBorder}`,
-                      borderRadius: "6px",
+                      borderRadius: "var(--radius-sm)",
                       color: c.accentText,
                       fontSize: "13px",
                       fontWeight: 500,
                       cursor: cameraBusy ? "not-allowed" : "pointer",
                       opacity: cameraBusy ? 0.72 : 1,
-                      transition: "all 200ms",
+                      transition:
+                        "background var(--transition-fast), border-color var(--transition-fast)",
                     }}
                   >
                     {cameraBusy
@@ -865,7 +870,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                         padding: "10px 14px",
                         background: c.innerBg,
                         border: `1px solid ${c.border}`,
-                        borderRadius: "6px",
+                        borderRadius: "var(--radius-sm)",
                         color: c.text,
                         fontSize: "13px",
                         outline: "2px solid transparent",
@@ -897,12 +902,12 @@ export const SettingsPanel = memo(function SettingsPanel({
                       gap: "10px",
                       background: c.innerBg,
                       padding: "12px 16px",
-                      borderRadius: "6px",
+                      borderRadius: "var(--radius-sm)",
                       border: `1px solid ${c.border}`,
                     }}
                   >
                     <div>
-                      <p style={{ fontSize: "10px", color: c.textMuted, marginBottom: "2px" }}>
+                      <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
                         RESOLVING RES
                       </p>
                       <p
@@ -917,7 +922,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       </p>
                     </div>
                     <div>
-                      <p style={{ fontSize: "10px", color: c.textMuted, marginBottom: "2px" }}>
+                      <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
                         ACQUISITION RATE
                       </p>
                       <p
@@ -932,7 +937,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       </p>
                     </div>
                     <div>
-                      <p style={{ fontSize: "10px", color: c.textMuted, marginBottom: "2px" }}>
+                      <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
                         ASPECT RATIO
                       </p>
                       <p
@@ -962,7 +967,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                 style={{
                   background: c.cardBg,
                   border: `1px solid ${c.border}`,
-                  borderRadius: "8px",
+                  borderRadius: "var(--radius-md)",
                   padding: "24px",
                   display: "flex",
                   flexDirection: "column",
@@ -983,20 +988,23 @@ export const SettingsPanel = memo(function SettingsPanel({
                   <button
                     onClick={toggleMicMonitor}
                     style={{
-                      padding: "10px 18px",
+                      width: "auto",
+                      padding: "0 16px",
+                      minHeight: 40,
+                      minWidth: "180px",
                       background: micActive
                         ? "rgba(239,68,68,0.08)"
                         : theme === "light"
                           ? "rgba(16,185,129,0.08)"
                           : "rgba(34,197,94,0.08)",
                       border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : theme === "light" ? "rgba(16,185,129,0.25)" : "rgba(34,197,94,0.3)"}`,
-                      borderRadius: "6px",
+                      borderRadius: "var(--radius-sm)",
                       color: micActive ? "#ef4444" : theme === "light" ? "#10b981" : "#86efac",
                       fontSize: "13px",
                       fontWeight: 500,
                       cursor: "pointer",
-                      transition: "all 200ms",
-                      width: "180px",
+                      transition:
+                        "background var(--transition-fast), border-color var(--transition-fast)",
                     }}
                   >
                     {micActive ? "Stop Decibel Monitor" : "Monitor Audio Feed"}
@@ -1005,9 +1013,9 @@ export const SettingsPanel = memo(function SettingsPanel({
                   <div style={{ flex: 1 }}>
                     <div
                       style={{
-                        height: "8px",
+                        height: "12px",
                         background: c.innerBg,
-                        borderRadius: "4px",
+                        borderRadius: "var(--radius-sm)",
                         overflow: "hidden",
                         border: `1px solid ${c.border}`,
                         position: "relative",
@@ -1019,7 +1027,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                           width: `${micLevel}%`,
                           height: "100%",
                           background: "linear-gradient(90deg, #22c55e, var(--color-accent-base))",
-                          transition: "width 60ms cubic-bezier(0.1, 0.8, 0.2, 1)",
+                          transition: "width 100ms linear",
                         }}
                       />
                     </div>
@@ -1052,7 +1060,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                 style={{
                   background: c.cardBg,
                   border: `1px solid ${c.border}`,
-                  borderRadius: "8px",
+                  borderRadius: "var(--radius-md)",
                   padding: "24px",
                   display: "flex",
                   flexDirection: "column",
@@ -1087,10 +1095,10 @@ export const SettingsPanel = memo(function SettingsPanel({
                     onChange={(e) => setSpeakerVolume(Number(e.target.value))}
                     style={{
                       width: "100%",
-                      accentColor: c.accent,
+                      accentColor: "var(--color-accent-base)",
                       background: theme === "light" ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)",
                       height: "4px",
-                      borderRadius: "2px",
+                      borderRadius: "var(--radius-sm)",
                       cursor: "pointer",
                       outline: "2px solid transparent",
                     }}
@@ -1102,18 +1110,21 @@ export const SettingsPanel = memo(function SettingsPanel({
                     onClick={testSpeakers}
                     disabled={speakerActive}
                     style={{
-                      padding: "10px 18px",
+                      width: "auto",
+                      padding: "0 16px",
+                      minHeight: 40,
                       background: speakerActive
                         ? c.accentLight
                         : theme === "light"
                           ? "rgba(0,0,0,0.03)"
                           : "rgba(255,255,255,0.04)",
                       border: `1px solid ${c.border}`,
-                      borderRadius: "6px",
+                      borderRadius: "var(--radius-sm)",
                       color: c.text,
                       fontSize: "13px",
                       cursor: speakerActive ? "not-allowed" : "pointer",
-                      transition: "all 200ms",
+                      transition:
+                        "background var(--transition-fast), border-color var(--transition-fast)",
                     }}
                   >
                     {speakerActive ? "Playing Sine Wave..." : "Play Test Tone (440Hz)"}
@@ -1127,7 +1138,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                         background:
                           speakerSuccess === true ? "rgba(34,197,94,0.08)" : "transparent",
                         border: `1px solid ${speakerSuccess === true ? "rgba(34,197,94,0.3)" : theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(34,197,94,0.15)"}`,
-                        borderRadius: "4px",
+                        borderRadius: "var(--radius-sm)",
                         color: theme === "light" ? "#10b981" : "#86efac",
                         fontSize: "12px",
                         cursor: "pointer",
@@ -1142,7 +1153,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                         background:
                           speakerSuccess === false ? "rgba(239,68,68,0.08)" : "transparent",
                         border: `1px solid ${speakerSuccess === false ? "rgba(239,68,68,0.3)" : theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(239,68,68,0.15)"}`,
-                        borderRadius: "4px",
+                        borderRadius: "var(--radius-sm)",
                         color: "#ef4444",
                         fontSize: "12px",
                         cursor: "pointer",
@@ -1194,7 +1205,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               style={{
                 background: c.cardBg,
                 border: `1px solid ${c.border}`,
-                borderRadius: "8px",
+                borderRadius: "var(--radius-md)",
                 padding: "24px",
                 display: "flex",
                 flexDirection: "column",
@@ -1213,7 +1224,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                   <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
                     Security Environment Checks
                   </h4>
-                  <p style={{ fontSize: "10px", color: c.textMuted, marginTop: "4px" }}>
+                  <p style={{ fontSize: "11px", color: c.textMuted, marginTop: "4px" }}>
                     Last scanned: {lastScannedLabel}
                   </p>
                 </div>
@@ -1221,13 +1232,17 @@ export const SettingsPanel = memo(function SettingsPanel({
                   onClick={() => void runSecurityScan(true)}
                   disabled={securityBusy}
                   style={{
-                    padding: "7px 12px",
+                    width: "auto",
+                    padding: "0 16px",
+                    minHeight: 40,
                     background: c.accentLight,
                     border: `1px solid ${c.accentBorder}`,
-                    borderRadius: "6px",
+                    borderRadius: "var(--radius-sm)",
                     color: c.accentText,
                     fontSize: "12px",
                     cursor: securityBusy ? "not-allowed" : "pointer",
+                    transition:
+                      "background var(--transition-fast), border-color var(--transition-fast)",
                   }}
                 >
                   {securityBusy ? "Scanning..." : "Run Native Scan"}
@@ -1320,7 +1335,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               style={{
                 background: c.cardBg,
                 border: `1px solid ${c.border}`,
-                borderRadius: "8px",
+                borderRadius: "var(--radius-md)",
                 padding: "24px",
                 display: "flex",
                 flexDirection: "column",
@@ -1400,7 +1415,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               style={{
                 background: c.cardBg,
                 border: `1px solid ${c.border}`,
-                borderRadius: "8px",
+                borderRadius: "var(--radius-md)",
                 padding: "28px",
                 position: "relative",
                 overflow: "hidden",
@@ -1419,7 +1434,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: "10px",
+                  fontSize: "11px",
                   color: c.accentText,
                   fontFamily: "'JetBrains Mono', monospace",
                   fontWeight: 600,
@@ -1428,7 +1443,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                 ℹ
               </div>
 
-              <h4 style={{ fontSize: "16px", fontWeight: 700, color: c.text, marginBottom: "8px" }}>
+              <h4 style={{ fontSize: "19px", fontWeight: 700, color: c.text, marginBottom: "8px" }}>
                 About AMS Access
               </h4>
               <p
@@ -1465,7 +1480,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       alignItems: "center",
                       justifyContent: "space-between",
                       padding: "10px 14px",
-                      borderRadius: "6px",
+                      borderRadius: "var(--radius-sm)",
                       background: theme === "light" ? "rgba(0,0,0,0.01)" : "rgba(255,255,255,0.01)",
                       border: `1px solid ${c.border}`,
                     }}
@@ -1487,7 +1502,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                           textDecoration: "none",
                           fontWeight: 500,
                           cursor: "pointer",
-                          transition: "opacity 150ms ease",
+                          transition: "opacity var(--transition-fast)",
                         }}
                       >
                         Launch Document
