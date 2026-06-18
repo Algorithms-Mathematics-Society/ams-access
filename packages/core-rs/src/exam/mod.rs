@@ -552,8 +552,8 @@ fn evaluate_requirement(
         CheckKind::Network if device_state.network_helper_ready == Some(false) => {
             // Network is advisory on every profile (see SessionPolicy), so a
             // down helper surfaces here as a non-blocking warning — it never
-            // blocks contest entry. The check still reports Fail so the cause is
-            // visible under "Optional warnings".
+            // blocks contest entry. The check reports Warn (non-required/Warning
+            // checks map to Warn, not Fail), so the cause is visible under "Optional warnings".
             (
                 false,
                 Some(FailureReasonCode::NetworkHelperUnavailable),
