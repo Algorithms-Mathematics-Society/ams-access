@@ -1539,14 +1539,11 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
     .map(|_| true)
 }
 
-/// Parse `nameserver` lines out of /etc/resolv.conf so the resolver stays
-/// reachable under the default-DROP firewall. Returns valid IP literals only.
+/// Parse `nameserver <ip>` lines out of a resolv.conf-format string.
+/// Returns valid IP literals only, in order, deduped.
 #[cfg(target_os = "linux")]
-fn resolv_conf_nameservers() -> Vec<String> {
-    let Ok(contents) = std::fs::read_to_string("/etc/resolv.conf") else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
+fn parse_resolv_nameservers(contents: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     for line in contents.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("nameserver") {
@@ -1559,6 +1556,55 @@ fn resolv_conf_nameservers() -> Vec<String> {
         }
     }
     out
+}
+
+/// Nameservers the default-DROP firewall must keep reachable so name
+/// resolution survives the lockdown. Unions /etc/resolv.conf with
+/// /run/systemd/resolve/resolv.conf: on systemd-resolved hosts /etc only holds
+/// the 127.0.0.53 stub, while the REAL upstream servers (which the stub must
+/// reach) live in the /run file. Missing files are skipped.
+#[cfg(target_os = "linux")]
+fn resolv_conf_nameservers() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for path in ["/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"] {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            for ns in parse_resolv_nameservers(&contents) {
+                if !out.contains(&ns) {
+                    out.push(ns);
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod resolv_tests {
+    use super::parse_resolv_nameservers;
+
+    #[test]
+    fn parses_nameservers_skips_comments_and_dupes() {
+        let etc = "# stub\nnameserver 127.0.0.53\noptions edns0 trust-ad\nsearch .\n";
+        let run = "# real upstream\nnameserver 192.168.0.1\nnameserver 192.168.0.1\nnameserver not-an-ip\n";
+        let mut all = parse_resolv_nameservers(etc);
+        for ns in parse_resolv_nameservers(run) {
+            if !all.contains(&ns) {
+                all.push(ns);
+            }
+        }
+        // The real upstream MUST be present (this is the bug fix), the stub too,
+        // duplicates collapsed, and the malformed line dropped.
+        assert!(
+            all.contains(&"192.168.0.1".to_string()),
+            "real upstream must be allowlisted"
+        );
+        assert!(all.contains(&"127.0.0.53".to_string()));
+        assert_eq!(
+            all.iter().filter(|x| x.as_str() == "192.168.0.1").count(),
+            1
+        );
+        assert!(!all.iter().any(|x| x == "not-an-ip"));
+    }
 }
 
 /// Remove all AMS firewall rules and restore normal internet access.
