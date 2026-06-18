@@ -583,7 +583,16 @@ async fn collect_device_state_inner(
     // CheckKind::Network gate). Other platforms leave this None (inert).
     #[cfg(target_os = "linux")]
     {
-        state.network_helper_ready = Some(platform_rs::linux::network_helper_running());
+        match platform_rs::linux::network_helper_status() {
+            Ok(()) => state.network_helper_ready = Some(true),
+            Err(reason) => {
+                // Log the precise reason (socket down, auth rejected, etc.) — without
+                // this the readiness gate only ever shows a bool, which hid a daemon
+                // capability bug behind a generic "not running" for a long time.
+                eprintln!("[ams][network-helper] readiness ping failed: {reason}");
+                state.network_helper_ready = Some(false);
+            }
+        }
     }
 
     state

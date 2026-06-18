@@ -1226,9 +1226,17 @@ fn helper_send(json: &str) -> Result<(), String> {
     }
 }
 
+/// Ping the helper, returning the precise failure reason on `Err` (socket
+/// unreachable, authorization rejected, malformed reply, …). `network_helper_running`
+/// discards this detail down to a bool for the readiness policy; callers that need
+/// to diagnose *why* the helper looks down should use this and log the message.
+pub fn network_helper_status() -> Result<(), String> {
+    helper_send(r#"{"cmd":"ping"}"#)
+}
+
 /// True when the helper daemon socket is reachable and answers a ping.
 pub fn network_helper_running() -> bool {
-    helper_send(r#"{"cmd":"ping"}"#).is_ok()
+    network_helper_status().is_ok()
 }
 
 /// Apply the outbound firewall via the privileged helper.
