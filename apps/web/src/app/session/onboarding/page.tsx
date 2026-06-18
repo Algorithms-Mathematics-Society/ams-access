@@ -3620,25 +3620,6 @@ export default function OnboardingPage() {
     return () => clearInterval(id);
   }, [contestWindow]);
 
-  function evaluateEntryGate() {
-    if (isTestAccount) return { ok: true, reason: null as string | null };
-    if (!contestWindow) return { ok: true, reason: null as string | null };
-    const now = Date.now();
-    const start = new Date(contestWindow.startAt).getTime();
-    const end = new Date(contestWindow.endAt).getTime();
-    const open = getVerificationOpenMs(contestWindow);
-    if (now >= end) return { ok: false, reason: "Contest has ended." };
-    if (open !== null && now < open)
-      return {
-        ok: false,
-        reason: `Verification opens in the ${verificationWindowLabel(
-          contestWindow.verificationWindowMinutes
-        )} window before contest start.`,
-      };
-    if (now >= start) return { ok: false, reason: "Join window is closed once contest starts." };
-    return { ok: true, reason: null as string | null };
-  }
-
   async function evaluateEntryGateFromServer() {
     if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
     if (isTestAccount) return { ok: true, reason: null as string | null, state: "LIVE" };
@@ -3664,7 +3645,7 @@ export default function OnboardingPage() {
           }>(
             `${API_URL}/contests/${contestId}/session-window`,
             {},
-            { dedupeKey: `contest-window:${contestId}:${attempt}`, retries: 2 }
+            { dedupeKey: `contest-window:${contestId}:${attempt}`, retries: 0 }
           );
           break;
         } catch (err) {
