@@ -17,12 +17,7 @@ import katex from "katex";
 import DOMPurify from "dompurify";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import {
-  fetchJson,
-  postJsonKeepalive,
-  sendJsonBeacon,
-  SessionBindingError,
-} from "@/lib/api-client";
+import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
 import { authHeaders } from "@/lib/candidate-auth";
 import {
   loadPresenceDetector,
@@ -2109,7 +2104,12 @@ export default function ContestPageClient() {
 
     const contestRequest = fetchJsonOrNull(`${API_URL}/contests/${contestId}`);
     const questionsRequest = fetchContestQuestions(contestId);
-    const sessionRequest = createContestSession(contestId).catch(() => null);
+    const sessionRequest = createContestSession(contestId).catch((err) => {
+      if (err instanceof SessionBindingError) {
+        router.push("/home");
+      }
+      return null;
+    });
 
     Promise.all([contestRequest, questionsRequest, sessionRequest])
       .then(async ([c, questions, session]) => {

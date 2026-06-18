@@ -142,6 +142,7 @@ export async function fetchJson<T>(
         }
         return (await response.json()) as T;
       } catch (error) {
+        if (error instanceof SessionBindingError) throw error;
         lastError = error instanceof Error ? error : new Error(String(error));
         if (attempt < retries) {
           await delay(retryDelayMs * (attempt + 1));
