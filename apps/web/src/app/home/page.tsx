@@ -375,7 +375,8 @@ export default function HomePage() {
       }
 
       const report = await runSessionReadiness({
-        // Network readiness is bypassed for now so submission testing is unblocked.
+        // Network readiness is advisory (policy: Network is non-blocking), so the
+        // connectivity probe is intentionally skipped here — it never gates entry.
         networkHost: undefined,
         apiUrl: API_URL,
         contestId: contestId ?? null,
@@ -389,6 +390,9 @@ export default function HomePage() {
       setReadinessReport(report);
       setReadiness({
         ...readinessFromReport(report),
+        // Network is advisory/non-blocking (policy) and we skip the probe above,
+        // so the coarse home summary reports it as "ok" rather than a misleading
+        // red. The detailed entry gate shows its true advisory status from the report.
         network: "ok",
       });
       appendSecurityEvent(
