@@ -3668,6 +3668,8 @@ export default function OnboardingPage() {
           );
           break;
         } catch (err) {
+          // Re-throw server errors (HTTP 4xx/5xx) — only retry network/timeout failures.
+          if (err instanceof Error && /^HTTP \d/.test(err.message)) throw err;
           lastErr = err;
           await new Promise((r) => setTimeout(r, 600));
         }
