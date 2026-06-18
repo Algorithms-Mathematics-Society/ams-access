@@ -222,6 +222,12 @@ impl SessionPolicy {
             // continuity does not depend on it.
             let (kind_required, kind_severity) = match kind {
                 CheckKind::Microphone => (false, BlockingSeverity::Warning),
+                // Network readiness is advisory on all profiles: egress lockdown is
+                // applied best-effort during the contest and is NOT a hard entry
+                // gate. A failing or uncollected network surfaces as a warning,
+                // never a block, so contest entry is never gated on it. (Mirrors
+                // the Microphone precedent above.)
+                CheckKind::Network => (false, BlockingSeverity::Warning),
                 // Camera and the two Windows-only entry checks are hard
                 // requirements only under a strict Windows session; everywhere
                 // else (non-strict, or non-Windows) they remain advisory so
@@ -511,13 +517,10 @@ fn evaluate_requirement(
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
         CheckKind::Network if device_state.network_helper_ready == Some(false) => {
-            // Hard gate: where egress control depends on a privileged out-of-process
-            // helper (Linux), a helper that is not installed/running means the
-            // "lockdown" is silently a no-op — the exam must not proceed. Only an
-            // explicit Some(false) blocks; None (Windows in-process / macOS
-            // advisory) is inert. Under StrictContest the Network requirement is
-            // required+Block, so this surfaces as a blocking fail; under softer
-            // profiles it degrades to an advisory warning.
+            // Network is advisory on every profile (see SessionPolicy), so a
+            // down helper surfaces here as a non-blocking warning — it never
+            // blocks contest entry. The check still reports Fail so the cause is
+            // visible under "Optional warnings".
             (
                 false,
                 Some(FailureReasonCode::NetworkHelperUnavailable),
@@ -889,9 +892,10 @@ mod tests {
     }
 
     #[test]
-    fn missing_network_helper_blocks_strict_and_is_inert_when_unknown() {
-        // Explicit Some(false): the privileged egress helper is down → strict
-        // contest must be Blocked on the Network check.
+    fn network_helper_down_warns_not_blocks_strict_and_is_inert_when_unknown() {
+        // Network is advisory: even with the egress helper explicitly down,
+        // strict contest must NOT block on it — it surfaces as a non-blocking
+        // warning so contest entry is never gated on network readiness.
         let mut down = passing_state();
         down.network_helper_ready = Some(false);
         let report = evaluate_readiness(
@@ -900,19 +904,21 @@ mod tests {
             Some("device-1".into()),
             &down,
         );
-        assert_eq!(report.decision, EnforcementDecision::Blocked);
-        assert!(report
-            .blocking_reasons
-            .contains(&FailureReasonCode::NetworkHelperUnavailable));
+        assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
+        // The helper-down reason rides on the (non-blocking) network check, so it
+        // must NOT appear in blocking_reasons.
+        assert!(report.blocking_reasons.is_empty());
         let net = report
             .checks
             .iter()
             .find(|c| c.kind == CheckKind::Network)
             .expect("network check present");
-        assert!(net.blocking && net.outcome == CheckOutcome::Fail);
+        assert!(!net.blocking);
+        // Advisory (non-required/Warning) checks surface as Warn, not Fail.
+        assert_eq!(net.outcome, CheckOutcome::Warn);
+        assert!(net.reason == Some(FailureReasonCode::NetworkHelperUnavailable));
 
-        // None (Windows in-process / macOS advisory) must NOT block: the same
-        // otherwise-passing state with an unknown helper signal still passes.
+        // Unknown helper signal + an otherwise-good network still passes cleanly.
         let mut unknown = passing_state();
         unknown.network_helper_ready = None;
         let report = evaluate_readiness(
@@ -922,6 +928,23 @@ mod tests {
             &unknown,
         );
         assert_eq!(report.decision, EnforcementDecision::Allowed);
+    }
+
+    #[test]
+    fn network_requirement_is_advisory_under_strict_contest() {
+        // Even on a strict Windows session (where camera/display become strict),
+        // Network stays advisory.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let net = policy
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::Network)
+            .expect("network requirement present");
+        assert!(!net.required, "network must be advisory (not required)");
+        assert!(matches!(net.severity, BlockingSeverity::Warning));
     }
 
     #[test]
@@ -964,7 +987,11 @@ mod tests {
     }
 
     #[test]
-    fn clock_skew_beyond_bound_blocks_strict_policy() {
+    fn clock_skew_beyond_bound_warns_not_blocks_strict_policy() {
+        // Clock skew rides on the Network check, which is advisory. A detected
+        // skew surfaces as AllowedWithWarnings (not Blocked) and does NOT appear
+        // in blocking_reasons — the reason code is still surfaced via the optional
+        // network check so the UI can show a warning to the candidate.
         let mut state = passing_state();
         if let Some(network) = state.network.as_mut() {
             network.clock_skew_ms = Some(MAX_CLOCK_SKEW_MS + 1);
@@ -977,10 +1004,19 @@ mod tests {
             &state,
         );
 
-        assert_eq!(report.decision, EnforcementDecision::Blocked);
-        assert!(report
+        assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
+        assert!(!report
             .blocking_reasons
             .contains(&FailureReasonCode::ClockSkewDetected));
+        // The reason still appears on the non-blocking network check itself.
+        let net = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::Network)
+            .expect("network check present");
+        assert!(!net.blocking);
+        assert_eq!(net.outcome, CheckOutcome::Warn);
+        assert_eq!(net.reason, Some(FailureReasonCode::ClockSkewDetected));
     }
 
     #[test]
@@ -1010,9 +1046,9 @@ mod tests {
             .blocking_reasons
             .contains(&FailureReasonCode::ContestIdMissing));
         // With no platform supplied (legacy `strict_contest()` / `None`
-        // platform), camera/microphone and the two Windows-only entry checks are
-        // all advisory; the other seven checks stay required under the strict
-        // profile. `optional_kinds` is ordered by `CheckKind`'s derived `Ord`.
+        // platform), camera/microphone, network, and the two Windows-only entry
+        // checks are all advisory; the other six checks stay required under the
+        // strict profile. `optional_kinds` is ordered by `CheckKind`'s derived `Ord`.
         let optional_kinds = report
             .optional_checks
             .iter()
@@ -1023,11 +1059,12 @@ mod tests {
             vec![
                 CheckKind::Camera,
                 CheckKind::Microphone,
+                CheckKind::Network,
                 CheckKind::ExternalDisplay,
                 CheckKind::RemoteServer,
             ]
         );
-        assert_eq!(report.required_checks.len(), 7);
+        assert_eq!(report.required_checks.len(), 6);
         assert_eq!(
             report.required_checks.len() + report.optional_checks.len(),
             report.checks.len()
