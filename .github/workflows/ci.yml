@@ -83,6 +83,14 @@ jobs:
         shell: bash
         run: mkdir -p apps/web/out
 
+      - name: Build & stage network helper (required Tauri bundle resource)
+        shell: bash
+        run: |
+          cargo build --release -p network-helper
+          bin=target/release/ams-access-networkhelper
+          [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
+          cp "$bin" apps/desktop/src-tauri/helpers/ams-access-networkhelper
+
       - name: rustfmt
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo fmt --check
