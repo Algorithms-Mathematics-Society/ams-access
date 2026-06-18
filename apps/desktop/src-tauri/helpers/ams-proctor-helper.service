@@ -26,10 +26,19 @@ RestartSec=1
 NoNewPrivileges=false
 ProtectHome=true
 ProtectSystem=full
-# CAP_NET_ADMIN is what iptables actually requires; the rest are dropped.
-# (Kept as root User above for /run socket ownership + chown; the capability
-# bounding set still narrows the attack surface of the process.)
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_CHOWN CAP_DAC_OVERRIDE
+# Capability bounding set — every entry here is REQUIRED; do not trim:
+#   CAP_NET_ADMIN / CAP_NET_RAW  iptables/ip6tables firewall management.
+#   CAP_CHOWN / CAP_DAC_OVERRIDE chown + 0666 the /run socket node.
+#   CAP_SYS_PTRACE               REQUIRED to authenticate the client. The helper
+#       authorizes a connecting peer by resolving readlink(/proc/<pid>/exe) and
+#       matching it against the pinned client path. The peer is an UNPRIVILEGED
+#       (different-uid) process, so the kernel gates that readlink behind
+#       ptrace_may_access(PTRACE_MODE_READ_FSCREDS), which a root process can
+#       only pass with CAP_SYS_PTRACE — CAP_DAC_OVERRIDE does NOT cover it.
+#       Without this cap authorize_client fails with EACCES for every client,
+#       so every command (including the readiness `ping`) is refused and the
+#       network-lockdown readiness check is permanently FAIL → entry BLOCKED.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_CHOWN CAP_DAC_OVERRIDE CAP_SYS_PTRACE
 
 [Install]
 WantedBy=multi-user.target
