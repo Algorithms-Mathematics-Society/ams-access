@@ -847,7 +847,7 @@ fn apply_capture_protection(app: tauri::AppHandle) -> bool {
                 return platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
             }
         }
-        return false;
+        false
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -951,11 +951,11 @@ fn install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
             ));
         }
 
-        return platform_rs::macos::install_network_helper(
+        platform_rs::macos::install_network_helper(
             &helper_binary.to_string_lossy(),
             &plist_source.to_string_lossy(),
             &client_binary.to_string_lossy(),
-        );
+        )
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     Ok(())
