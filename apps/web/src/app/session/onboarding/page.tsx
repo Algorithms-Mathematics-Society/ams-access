@@ -3643,21 +3643,39 @@ export default function OnboardingPage() {
     if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
     if (isTestAccount) return { ok: true, reason: null as string | null, state: "LIVE" };
     try {
-      const body = await fetchJson<{
+      let body: {
         eligibility_status?: string;
         blocked_reason?: string;
         session_window_state?: string;
         start_at?: string;
         end_at?: string;
         verification_window_minutes?: number | null;
-      }>(
-        `${API_URL}/contests/${contestId}/session-window`,
-        {},
-        {
-          dedupeKey: `contest-window:${contestId}`,
-          retries: 2,
+      } | null = null;
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          body = await fetchJson<{
+            eligibility_status?: string;
+            blocked_reason?: string;
+            session_window_state?: string;
+            start_at?: string;
+            end_at?: string;
+            verification_window_minutes?: number | null;
+          }>(
+            `${API_URL}/contests/${contestId}/session-window`,
+            {},
+            { dedupeKey: `contest-window:${contestId}:${attempt}`, retries: 2 }
+          );
+          break;
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 600));
         }
-      );
+      }
+      if (!body) {
+        void lastErr;
+        return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
+      }
       if (body.start_at && body.end_at) {
         setContestWindow((prev) => ({
           startAt: body.start_at ?? prev?.startAt ?? "",
@@ -3682,9 +3700,13 @@ export default function OnboardingPage() {
           reason: body.blocked_reason || "Verification is not open for this contest yet.",
           state: body.session_window_state ?? "NOT_OPEN",
         };
-      // If candidate already finished verification and prepared a session, allow
-      // transition to contest even when server reports LIVE.
-      if ((body.session_window_state ?? "").toUpperCase() === "LIVE" && readyForStart) {
+      // A candidate only reaches launch AFTER completing onboarding verification,
+      // so verification is already enforced by stage progression. readyForStart
+      // only means "sat through the pre-start countdown" and must NOT gate entry
+      // to a live contest — otherwise one transient failure (which clears
+      // readyForStart) permanently locks out a verified candidate, and legitimate
+      // late entry is wrongly refused. Late entry is acceptable.
+      if ((body.session_window_state ?? "").toUpperCase() === "LIVE") {
         return { ok: true, reason: null as string | null, state: "LIVE" };
       }
       return {
@@ -3792,8 +3814,6 @@ export default function OnboardingPage() {
             windowMeta.verificationWindowMinutes
           )} window before contest start.`,
         };
-      if (now >= start && !readyForStart)
-        return { ok: false, reason: "Join window is closed once contest starts." };
       return { ok: true, reason: null as string | null };
     })();
     const effectiveGate = gate.state === "UNKNOWN" ? localGate : gate;
