@@ -267,6 +267,8 @@ export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
       return { label: "Contest link", success: "Contest linked", fail: "Contest not linked" };
     case "device_id":
       return { label: "Device ID", success: "Device registered", fail: "Device not registered" };
+    case "clock_integrity":
+      return { label: "Clock check", success: "Clock in sync", fail: "Clock out of sync" };
     default:
       return { label: String(kind), success: "Check passed", fail: "Check failed" };
   }

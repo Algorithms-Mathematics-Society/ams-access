@@ -22,6 +22,7 @@ export type CheckKind =
   | "camera"
   | "microphone"
   | "network"
+  | "clock_integrity"
   | "keyboard_lockdown"
   | "restricted_apps"
   | "virtualization"
@@ -147,6 +148,7 @@ const POLICY_CHECKS: CheckKind[] = [
   "virtualization",
   "keyboard_lockdown",
   "network",
+  "clock_integrity",
   "camera",
   "microphone",
   "external_display",
@@ -174,6 +176,18 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
       // Microphone is advisory-only on every profile — many contest machines
       // (lab desktops, headless setups) have no audio input.
       if (kind === "microphone") {
+        return {
+          kind,
+          required: false,
+          severity: "warning" as const,
+          organizer_override_allowed: !strict,
+        };
+      }
+      // Network is advisory on every profile: egress lockdown is applied
+      // best-effort during the contest and is NOT a hard entry gate. A failing/
+      // uncollected network surfaces as a warning, never a block. (Mirrors
+      // core-rs SessionPolicy + the Microphone precedent above.)
+      if (kind === "network") {
         return {
           kind,
           required: false,
