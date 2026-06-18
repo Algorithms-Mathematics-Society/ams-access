@@ -5,6 +5,7 @@ import { resolveApiBase } from "@/lib/api-base";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { setCandidateToken } from "@/lib/candidate-auth";
 
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
@@ -68,8 +69,9 @@ export default function LoginPage() {
         setError("That code didn't match — request a new one.");
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { email?: string };
+      const data = (await res.json().catch(() => ({}))) as { email?: string; token?: string };
       localStorage.setItem(STORAGE_KEYS.USER_EMAIL, data.email ?? email.trim());
+      if (data.token) setCandidateToken(data.token);
       setTimeout(() => router.push("/home"), 400);
     } catch {
       setOtpState("idle");
@@ -133,7 +135,9 @@ export default function LoginPage() {
         return;
       }
 
+      const loginData = (await res.json().catch(() => ({}))) as { token?: string };
       localStorage.setItem(STORAGE_KEYS.USER_EMAIL, email);
+      if (loginData.token) setCandidateToken(loginData.token);
       setTimeout(() => router.push("/home"), 850);
     } catch {
       setError("Cannot reach AMS Access. Check your internet connection and try again.");

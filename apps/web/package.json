@@ -8,7 +8,7 @@
     "prebuild": "node scripts/setup-tfjs-wasm.mjs && node scripts/setup-blazeface-model.mjs && node scripts/setup-mediapipe.mjs --if-used",
     "build": "next build && node scripts/check-size-budgets.mjs",
     "lint": "next typegen && tsc --noEmit",
-    "test": "node --test --experimental-strip-types src/app/session/contest/submission-state.test.mjs src/app/session/contest/countdown.test.mjs src/lib/verdict.test.mjs",
+    "test": "node --test --experimental-strip-types src/app/session/contest/submission-state.test.mjs src/app/session/contest/countdown.test.mjs src/lib/verdict.test.mjs src/lib/candidate-auth.test.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "clean": "rm -rf .next out",
     "mediapipe:setup": "node scripts/setup-mediapipe.mjs",

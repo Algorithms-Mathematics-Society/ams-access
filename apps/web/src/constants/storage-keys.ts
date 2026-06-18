@@ -4,4 +4,5 @@ export const STORAGE_KEYS = {
   DEVICE_ID: "ams_device_id",
   USER_EMAIL: "ams_user_email",
   THEME: "ams_theme",
+  CANDIDATE_TOKEN: "ams_candidate_token",
 } as const;
