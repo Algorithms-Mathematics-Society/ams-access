@@ -117,6 +117,14 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
           rm "$RUNNER_TEMP/cert.p12"
 
+      - name: Build & stage network helper (required Tauri bundle resource)
+        shell: bash
+        run: |
+          cargo build --release -p network-helper
+          bin=target/release/ams-access-networkhelper
+          [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
+          cp "$bin" apps/desktop/src-tauri/helpers/ams-access-networkhelper
+
       - name: Build Tauri app
         working-directory: apps/desktop
         env:
