@@ -101,6 +101,7 @@ pub enum CheckKind {
     Camera,
     Microphone,
     Network,
+    ClockIntegrity,
     KeyboardLockdown,
     RestrictedApps,
     Virtualization,
@@ -210,6 +211,7 @@ impl SessionPolicy {
             CheckKind::Virtualization,
             CheckKind::KeyboardLockdown,
             CheckKind::Network,
+            CheckKind::ClockIntegrity,
             CheckKind::Camera,
             CheckKind::Microphone,
             CheckKind::ExternalDisplay,
@@ -516,6 +518,37 @@ fn evaluate_requirement(
             ),
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
+        CheckKind::ClockIntegrity => match &device_state.network {
+            // Only a MEASURED skew beyond the bound fails (and thus blocks).
+            Some(network)
+                if network
+                    .clock_skew_ms
+                    .is_some_and(|skew| skew.abs() > MAX_CLOCK_SKEW_MS) =>
+            {
+                (
+                    false,
+                    Some(FailureReasonCode::ClockSkewDetected),
+                    Some(format!(
+                        "device clock differs from contest server by {} s — fix the system clock",
+                        network.clock_skew_ms.unwrap_or_default() / 1000
+                    )),
+                    vec![
+                        RecoveryAction::RetryReadinessScan,
+                        RecoveryAction::ContactOrganizer,
+                    ],
+                )
+            }
+            // Clock within tolerance, OR not measured at all (no network probe,
+            // e.g. the entry gate). We never block on an UNMEASURED clock, so the
+            // gate is not re-blocked; clock integrity is enforced wherever the
+            // network is actually probed (onboarding).
+            _ => (
+                true,
+                None,
+                Some("device clock within tolerance".to_string()),
+                vec![],
+            ),
+        },
         CheckKind::Network if device_state.network_helper_ready == Some(false) => {
             // Network is advisory on every profile (see SessionPolicy), so a
             // down helper surfaces here as a non-blocking warning — it never
@@ -535,29 +568,6 @@ fn evaluate_requirement(
             )
         }
         CheckKind::Network => match &device_state.network {
-            // Clock integrity rides on the network check: the device clock
-            // drives report and submission timestamps, so a drift beyond the
-            // bound is as disqualifying as an unreachable network. Checked
-            // first so a skewed-but-fast network cannot pass.
-            Some(network)
-                if network.reachable
-                    && network
-                        .clock_skew_ms
-                        .is_some_and(|skew| skew.abs() > MAX_CLOCK_SKEW_MS) =>
-            {
-                (
-                    false,
-                    Some(FailureReasonCode::ClockSkewDetected),
-                    Some(format!(
-                        "device clock differs from contest server by {} s — fix the system clock",
-                        network.clock_skew_ms.unwrap_or_default() / 1000
-                    )),
-                    vec![
-                        RecoveryAction::RetryReadinessScan,
-                        RecoveryAction::ContactOrganizer,
-                    ],
-                )
-            }
             Some(network) if network.reachable && network.quality != "poor" => (
                 true,
                 None,
@@ -987,11 +997,10 @@ mod tests {
     }
 
     #[test]
-    fn clock_skew_beyond_bound_warns_not_blocks_strict_policy() {
-        // Clock skew rides on the Network check, which is advisory. A detected
-        // skew surfaces as AllowedWithWarnings (not Blocked) and does NOT appear
-        // in blocking_reasons — the reason code is still surfaced via the optional
-        // network check so the UI can show a warning to the candidate.
+    fn clock_skew_beyond_bound_blocks_strict_via_clock_integrity() {
+        // Clock skew is now enforced via the dedicated ClockIntegrity check, which
+        // is required+Block under strict_contest. A detected skew BLOCKS entry and
+        // appears in blocking_reasons.
         let mut state = passing_state();
         if let Some(network) = state.network.as_mut() {
             network.clock_skew_ms = Some(MAX_CLOCK_SKEW_MS + 1);
@@ -1004,19 +1013,18 @@ mod tests {
             &state,
         );
 
-        assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
-        assert!(!report
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
             .blocking_reasons
             .contains(&FailureReasonCode::ClockSkewDetected));
-        // The reason still appears on the non-blocking network check itself.
-        let net = report
+        // The ClockIntegrity check itself must be blocking with Fail outcome.
+        let clock = report
             .checks
             .iter()
-            .find(|c| c.kind == CheckKind::Network)
-            .expect("network check present");
-        assert!(!net.blocking);
-        assert_eq!(net.outcome, CheckOutcome::Warn);
-        assert_eq!(net.reason, Some(FailureReasonCode::ClockSkewDetected));
+            .find(|c| c.kind == CheckKind::ClockIntegrity)
+            .expect("ClockIntegrity check present");
+        assert!(clock.blocking);
+        assert_eq!(clock.outcome, CheckOutcome::Fail);
     }
 
     #[test]
@@ -1047,8 +1055,9 @@ mod tests {
             .contains(&FailureReasonCode::ContestIdMissing));
         // With no platform supplied (legacy `strict_contest()` / `None`
         // platform), camera/microphone, network, and the two Windows-only entry
-        // checks are all advisory; the other six checks stay required under the
-        // strict profile. `optional_kinds` is ordered by `CheckKind`'s derived `Ord`.
+        // checks are all advisory; the other seven checks (including ClockIntegrity)
+        // stay required under the strict profile. `optional_kinds` is ordered by
+        // `CheckKind`'s derived `Ord`.
         let optional_kinds = report
             .optional_checks
             .iter()
@@ -1064,7 +1073,7 @@ mod tests {
                 CheckKind::RemoteServer,
             ]
         );
-        assert_eq!(report.required_checks.len(), 6);
+        assert_eq!(report.required_checks.len(), 7);
         assert_eq!(
             report.required_checks.len() + report.optional_checks.len(),
             report.checks.len()
@@ -1306,5 +1315,45 @@ mod tests {
         assert!(!report
             .blocking_reasons
             .contains(&FailureReasonCode::CameraUnavailable));
+    }
+
+    #[test]
+    fn clock_integrity_passes_when_network_unmeasured() {
+        // When there is no network probe (entry gate skips it), ClockIntegrity
+        // must not block. The decision will be AllowedWithWarnings (Network is
+        // advisory+unmeasured→Warn) but ClockIntegrity must be Pass and non-blocking.
+        let mut state = passing_state();
+        state.network = None;
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("c1".into()),
+            Some("d1".into()),
+            &state,
+        );
+
+        assert_ne!(report.decision, EnforcementDecision::Blocked);
+        let clock = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::ClockIntegrity)
+            .expect("ClockIntegrity check present");
+        assert!(!clock.blocking);
+        assert_eq!(clock.outcome, CheckOutcome::Pass);
+    }
+
+    #[test]
+    fn clock_integrity_is_required_block_under_strict() {
+        let p = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let c = p
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::ClockIntegrity)
+            .expect("ClockIntegrity requirement present");
+        assert!(c.required);
+        assert!(matches!(c.severity, BlockingSeverity::Block));
     }
 }
