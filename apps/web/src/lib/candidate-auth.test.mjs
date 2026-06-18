@@ -21,6 +21,10 @@ function makeLocalStorage() {
 beforeEach(() => {
   globalThis.window = {};
   globalThis.localStorage = makeLocalStorage();
+  // Stub crypto.randomUUID for device-id generation in Node test environment
+  if (typeof globalThis.crypto === "undefined") {
+    globalThis.crypto = { randomUUID: () => "test-device-uuid-1234" };
+  }
 });
 
 test("setCandidateToken / getCandidateToken round-trip", () => {
@@ -58,6 +62,22 @@ test("authHeaders with extra and no token returns only extra", () => {
   const h = authHeaders({ "X-Request-ID": "r1" });
   assert.equal(Object.prototype.hasOwnProperty.call(h, "Authorization"), false);
   assert.equal(h["X-Request-ID"], "r1");
+});
+
+test("authHeaders includes X-Device-Id when on the client", () => {
+  // Ensure a device id is generated and present in the header map.
+  const h = authHeaders();
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(h, "X-Device-Id"),
+    "X-Device-Id header must be present"
+  );
+  assert.ok(h["X-Device-Id"].length > 0, "X-Device-Id must be non-empty");
+});
+
+test("authHeaders X-Device-Id is stable across calls (same device)", () => {
+  const h1 = authHeaders();
+  const h2 = authHeaders();
+  assert.equal(h1["X-Device-Id"], h2["X-Device-Id"]);
 });
 
 test("getCandidateToken returns null on SSR (no window)", () => {

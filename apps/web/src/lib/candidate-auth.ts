@@ -13,6 +13,27 @@
  */
 
 const KEY = "ams_candidate_token";
+// Inline device-id key to avoid a cross-module import that breaks the Node
+// test runner (which strips @/ aliases).  Must stay in sync with
+// STORAGE_KEYS.DEVICE_ID ("ams_device_id").
+const DEVICE_ID_KEY = "ams_device_id";
+
+/**
+ * Returns the stored device ID, or generates and persists a new one.
+ * Inline copy of getOrCreateDeviceId() from utils.ts — kept here so
+ * authHeaders() has no cross-module import dependency.
+ */
+function getDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  const existing = localStorage.getItem(DEVICE_ID_KEY);
+  if (existing) return existing;
+  const generated =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? (crypto as { randomUUID(): string }).randomUUID()
+      : `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem(DEVICE_ID_KEY, generated);
+  return generated;
+}
 
 /** Returns the stored candidate JWT, or null if absent or running on the server. */
 export function getCandidateToken(): string | null {
@@ -35,16 +56,18 @@ export function clearCandidateToken(): void {
 /**
  * Builds a plain-object header map for authenticated fetch calls.
  *
- * - When a token is stored: `{ Authorization: "Bearer <token>", ...extra }`
- * - When no token is stored: `{ ...extra }` (no Authorization key)
+ * - Always includes `X-Device-Id: <deviceId>` (generated/retrieved from
+ *   localStorage) so the backend can bind and validate the device.
+ * - When a token is stored: also includes `Authorization: Bearer <token>`.
+ * - On the server (SSR) both values are omitted (empty string / no key).
  *
- * The caller merges this into their own `headers` object; T11 will wire it up
- * at each call site.
+ * The caller merges this into their own `headers` object.
  */
 export function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const token = getCandidateToken();
-  if (token) {
-    return { Authorization: `Bearer ${token}`, ...extra };
-  }
-  return { ...extra };
+  const deviceId = getDeviceId();
+  const base: Record<string, string> = {};
+  if (token) base["Authorization"] = `Bearer ${token}`;
+  if (deviceId) base["X-Device-Id"] = deviceId;
+  return { ...base, ...extra };
 }

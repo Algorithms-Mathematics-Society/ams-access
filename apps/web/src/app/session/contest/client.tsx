@@ -17,7 +17,13 @@ import katex from "katex";
 import DOMPurify from "dompurify";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import { fetchJson, postJsonKeepalive, sendJsonBeacon } from "@/lib/api-client";
+import {
+  fetchJson,
+  postJsonKeepalive,
+  sendJsonBeacon,
+  SessionBindingError,
+} from "@/lib/api-client";
+import { authHeaders } from "@/lib/candidate-auth";
 import {
   loadPresenceDetector,
   samplePresence,
@@ -697,7 +703,7 @@ async function createContestSession(contestId: string, contestTitle?: string) {
     `${API_URL}/sessions`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         contest_id: contestId,
         candidate_email: email,
@@ -1100,7 +1106,7 @@ function FollowUpPane({
     try {
       const res = await fetch(`${apiUrl}/sessions/${sessionId}/followup-answer`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ question_id: question.id, part_index: partIndex, answer }),
       });
       const data = await res.json();
@@ -1380,7 +1386,7 @@ function MarkovPane({
     try {
       const res = await fetch(`${apiUrl}/sessions/${sessionId}/markov-answer`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           question_id: question.id,
           submitted_json: JSON.stringify(normalizeChain(chain)),
@@ -1724,6 +1730,7 @@ export default function ContestPageClient() {
         `${API_URL}/sessions/${sessionId}/submissions?_t=${Date.now()}`,
         {
           cache: "no-store",
+          headers: authHeaders(),
         }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1771,7 +1778,7 @@ export default function ContestPageClient() {
     try {
       const response = await fetch(
         `${API_URL}/sessions/${sessionId}/submissions/${attemptId}/test-results?_t=${Date.now()}`,
-        { cache: "no-store" }
+        { cache: "no-store", headers: authHeaders() }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = (await response.json()) as any[];
@@ -1812,17 +1819,23 @@ export default function ContestPageClient() {
     const timestamp = new Date().toISOString();
     const detail = `${type === "camera" ? "Camera" : "Microphone"} turned ${enabled ? "on" : "off"} by contestant`;
     // Server-side incident record — organizers/admins see when and what changed.
-    sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-      category: enabled ? "media_toggle_on" : "media_toggle_off",
-      detail,
-      telemetry: {
-        timestamp,
-        contest_id: contestId,
-        session_id: sessionId ?? "unregistered",
-        media: type,
-        enabled,
+    // Use keepalive fetch (not beacon) so the Authorization + X-Device-Id headers
+    // are sent; media toggles are user-initiated so we're not on the unload path.
+    void postJsonKeepalive(
+      `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+      {
+        category: enabled ? "media_toggle_on" : "media_toggle_off",
+        detail,
+        telemetry: {
+          timestamp,
+          contest_id: contestId,
+          session_id: sessionId ?? "unregistered",
+          media: type,
+          enabled,
+        },
       },
-    });
+      { headers: authHeaders() }
+    ).catch(() => {});
     // Local persistent audit trail (proctoring-events.jsonl) — survives offline.
     void window.__TAURI__?.core
       .invoke("log_proctoring_event", {
@@ -2020,11 +2033,15 @@ export default function ContestPageClient() {
   async function handleSendSupportReport() {
     setIsSendingReport(true);
     try {
-      await postJsonKeepalive(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-        category: supportCategory,
-        detail: supportCategory === "other" ? customIssueDetail : "",
-        telemetry: supportTelemetry,
-      }).catch(() => {});
+      await postJsonKeepalive(
+        `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+        {
+          category: supportCategory,
+          detail: supportCategory === "other" ? customIssueDetail : "",
+          telemetry: supportTelemetry,
+        },
+        { headers: authHeaders() }
+      ).catch(() => {});
     } catch {}
 
     await new Promise((r) => setTimeout(r, 1200));
@@ -2121,7 +2138,12 @@ export default function ContestPageClient() {
           );
 
           try {
-            const answersData = await fetchJson<any[]>(`${API_URL}/sessions/${session.id}/answers`);
+            const answersData = await fetchJson<any[]>(
+              `${API_URL}/sessions/${session.id}/answers`,
+              {
+                headers: authHeaders(),
+              }
+            );
             if (answersData && Array.isArray(answersData)) {
               for (const ans of answersData) {
                 try {
@@ -2336,7 +2358,7 @@ export default function ContestPageClient() {
     try {
       const res = await fetch(`${API_URL}/sessions/${sessionId}/submissions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           problem_id: questions[activeQ].id,
           language: toLanguageId(selectedLanguage),
@@ -2397,6 +2419,7 @@ export default function ContestPageClient() {
           `${API_URL}/sessions/${sessionId}/submissions?_t=${Date.now()}`,
           {
             cache: "no-store",
+            headers: authHeaders(),
           }
         );
         if (!pollRes.ok) continue; // transient — keep polling
@@ -2491,14 +2514,18 @@ export default function ContestPageClient() {
     setSaving(true);
     setSaveError(null);
     try {
-      const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/answers`, {
-        question_id: qId,
-        answer_text: JSON.stringify({
-          language: toLanguageId(selectedLanguage),
-          files: editorFiles,
-          active_file_id: activeFileId,
-        }),
-      });
+      const response = await postJsonKeepalive(
+        `${API_URL}/sessions/${sessionId}/answers`,
+        {
+          question_id: qId,
+          answer_text: JSON.stringify({
+            language: toLanguageId(selectedLanguage),
+            files: editorFiles,
+            active_file_id: activeFileId,
+          }),
+        },
+        { headers: authHeaders() }
+      );
       if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
 
       setSavedAnswers((prev) => ({
@@ -2561,12 +2588,16 @@ export default function ContestPageClient() {
       // lets the backend dedupe retries of the same submission once it consumes it.
       const idempotencyKey =
         crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submissions`, {
-        problem_id: qId,
-        language: toLanguageId(selectedLanguage),
-        source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-        idempotency_key: idempotencyKey,
-      });
+      const response = await postJsonKeepalive(
+        `${API_URL}/sessions/${sessionId}/submissions`,
+        {
+          problem_id: qId,
+          language: toLanguageId(selectedLanguage),
+          source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+          idempotency_key: idempotencyKey,
+        },
+        { headers: authHeaders() }
+      );
 
       if (!response.ok) {
         const errData = (await response.json().catch(() => ({}))) as {
@@ -2634,7 +2665,11 @@ export default function ContestPageClient() {
       writeLocalAnswerBuffer();
       try {
         await handleSave();
-        const response = await postJsonKeepalive(`${API_URL}/sessions/${sessionId}/submit`);
+        const response = await postJsonKeepalive(
+          `${API_URL}/sessions/${sessionId}/submit`,
+          undefined,
+          { headers: authHeaders() }
+        );
         if (response.ok) return true;
         const errData = (await response.json().catch(() => ({}))) as { code?: string };
         // Backend already has/closed the session — treat as a confirmed submit.
@@ -2829,6 +2864,7 @@ export default function ContestPageClient() {
       fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, {
         method: "POST",
         keepalive: true,
+        headers: authHeaders(),
       }).catch(() => {});
     };
     sendHeartbeat();
@@ -3020,15 +3056,20 @@ export default function ContestPageClient() {
           if (detail !== activeViolationDetailRef.current) {
             const previousDetail = activeViolationDetailRef.current;
             if (previousDetail) {
-              sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-                category: "blocked_app_resolved",
-                detail: previousDetail,
-                telemetry: {
-                  timestamp: new Date().toISOString(),
-                  contest_id: contestId,
-                  session_id: sessionId ?? "unregistered",
+              // Use keepalive fetch (not beacon) so the auth header is sent.
+              void postJsonKeepalive(
+                `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+                {
+                  category: "blocked_app_resolved",
+                  detail: previousDetail,
+                  telemetry: {
+                    timestamp: new Date().toISOString(),
+                    contest_id: contestId,
+                    session_id: sessionId ?? "unregistered",
+                  },
                 },
-              });
+                { headers: authHeaders() }
+              ).catch(() => {});
               await invoke("log_violation", {
                 kind: "blocked_app_resolved",
                 detail: previousDetail,
@@ -3036,15 +3077,20 @@ export default function ContestPageClient() {
             }
 
             activeViolationDetailRef.current = detail;
-            sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-              category: "blocked_app_started",
-              detail: result.found.join(", "),
-              telemetry: {
-                timestamp: new Date().toISOString(),
-                contest_id: contestId,
-                session_id: sessionId ?? "unregistered",
+            // Use keepalive fetch (not beacon) so the auth header is sent.
+            void postJsonKeepalive(
+              `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+              {
+                category: "blocked_app_started",
+                detail: result.found.join(", "),
+                telemetry: {
+                  timestamp: new Date().toISOString(),
+                  contest_id: contestId,
+                  session_id: sessionId ?? "unregistered",
+                },
               },
-            });
+              { headers: authHeaders() }
+            ).catch(() => {});
             await invoke("log_violation", {
               kind: "blocked_app_started",
               detail: result.found.join(", "),
@@ -3054,15 +3100,20 @@ export default function ContestPageClient() {
           const previousDetail = activeViolationDetailRef.current;
           if (previousDetail) {
             activeViolationDetailRef.current = "";
-            sendJsonBeacon(`${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`, {
-              category: "blocked_app_resolved",
-              detail: previousDetail,
-              telemetry: {
-                timestamp: new Date().toISOString(),
-                contest_id: contestId,
-                session_id: sessionId ?? "unregistered",
+            // Use keepalive fetch (not beacon) so the auth header is sent.
+            void postJsonKeepalive(
+              `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+              {
+                category: "blocked_app_resolved",
+                detail: previousDetail,
+                telemetry: {
+                  timestamp: new Date().toISOString(),
+                  contest_id: contestId,
+                  session_id: sessionId ?? "unregistered",
+                },
               },
-            });
+              { headers: authHeaders() }
+            ).catch(() => {});
             await invoke("log_violation", {
               kind: "blocked_app_resolved",
               detail: previousDetail,

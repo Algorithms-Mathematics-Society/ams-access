@@ -12,7 +12,8 @@ import {
   type ReadinessCheck,
   type ReadinessReport,
 } from "@ams/api-client";
-import { fetchJson } from "@/lib/api-client";
+import { fetchJson, SessionBindingError } from "@/lib/api-client";
+import { authHeaders } from "@/lib/candidate-auth";
 import { isGatingRelaxed, warnGatingRelaxed, RELAXED_MODE_BADGE } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { Button } from "@/app/home/components/ui-primitives";
@@ -362,7 +363,7 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
             Device check:{" "}
           </span>
           {phase >= 2 ? (
-            <span style={{ color: "#22c55e", fontWeight: 700 }}>Checked</span>
+            <span style={{ color: "#22c55e", fontWeight: 700 }}>Bound to this device</span>
           ) : (
             <span style={{ color: "rgba(255,255,255,0.58)" }}>Pending</span>
           )}
@@ -381,7 +382,7 @@ function Stage1_SessionIsolation({ onPass }: { onPass(): void }) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
         {phase >= 1 && <CheckLine label="Session setup ready" status="pass" />}
-        {phase >= 2 && <CheckLine label="Device check complete" status="pass" />}
+        {phase >= 2 && <CheckLine label="Device bound to this session" status="pass" />}
         {phase >= 3 && <CheckLine label="Ready for contest controls" status="pass" />}
       </div>
     </div>
@@ -3208,7 +3209,9 @@ function ProgressBar({
 
           return (
             <div
-              key={phase.group}
+              // `group` repeats ("Media Setup" covers both the camera and the
+              // audio phases), so it is not a unique key; the stage range is.
+              key={`${phase.group}-${phase.start}`}
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -3842,7 +3845,7 @@ export default function OnboardingPage() {
           `${API_URL}/sessions`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: authHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
               contest_id: contestId,
               candidate_email: email,
@@ -4028,6 +4031,24 @@ export default function OnboardingPage() {
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
+      // SESSION_DEVICE_MISMATCH / SESSION_IDLE_TIMEOUT: the backend rejected this
+      // device binding.  Route the candidate to /home so they can use the existing
+      // resume-request flow (submitResumeRequest) to rejoin from their device.
+      if (error instanceof SessionBindingError) {
+        setTransitioning(false);
+        setReadyForStart(false);
+        setPolicyBlock(
+          error.code === "SESSION_DEVICE_MISMATCH"
+            ? "This session was started on a different device. Return to the home screen to request re-entry from your organizer."
+            : "Your session timed out due to inactivity. Return to the home screen to request re-entry."
+        );
+        // Give the candidate 3 s to read the message, then navigate home so they
+        // can use the organizer-approved resume flow.
+        setTimeout(() => {
+          router.push("/home");
+        }, 3000);
+        return;
+      }
       const rawMsg =
         error instanceof Error ? error.message : "Readiness policy blocked contest launch.";
       if (windowMeta && !isTestAccount) {

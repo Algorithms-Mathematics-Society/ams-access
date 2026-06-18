@@ -11,6 +11,7 @@ import {
   sessionPolicy,
 } from "@ams/api-client";
 import { fetchJson, useApiQuery } from "@/lib/api-client";
+import { authHeaders } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -483,6 +484,7 @@ export default function HomePage() {
         `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-consume`,
         {
           method: "POST",
+          headers: authHeaders(),
         }
       );
       if (!res.ok) {
@@ -514,7 +516,8 @@ export default function HomePage() {
     if (!session.id) return;
     try {
       const res = await fetchWithTimeout(
-        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`
+        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`,
+        { headers: authHeaders() }
       );
       if (!res.ok) return;
       const request = (await res.json()) as {
@@ -555,7 +558,7 @@ export default function HomePage() {
         `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             device_id: getOrCreateDeviceId(),
             reason: "app_rejoin",
@@ -599,7 +602,9 @@ export default function HomePage() {
     );
 
     try {
-      const res = await fetchWithTimeout(`${API_URL}/sessions/${encodeURIComponent(session.id)}`);
+      const res = await fetchWithTimeout(`${API_URL}/sessions/${encodeURIComponent(session.id)}`, {
+        headers: authHeaders(),
+      });
       if (!res.ok) {
         clearStoredActiveSession("Stored active session could not be verified.");
         appendSecurityEvent("SESSION: Active session validation failed", "error");
@@ -753,7 +758,7 @@ export default function HomePage() {
     try {
       const res = await fetchWithTimeout(`${API_URL}/session-codes/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ code, candidate_email: userEmail }),
       });
       let data: Partial<import("./components/types").InviteCodeResolveResponse> | null = null;

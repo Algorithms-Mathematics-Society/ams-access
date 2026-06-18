@@ -2,6 +2,46 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * Thrown by fetchJson (and surfaces from raw-fetch call sites that inspect the
+ * response) when the backend returns 403 with a session-binding error code —
+ * specifically SESSION_DEVICE_MISMATCH or SESSION_IDLE_TIMEOUT.  The candidate
+ * should be routed to the resume-request flow rather than shown a hard error.
+ *
+ * Usage:
+ *   catch (err) {
+ *     if (err instanceof SessionBindingError) { routeToResume(err.code); return; }
+ *   }
+ */
+export class SessionBindingError extends Error {
+  /** One of "SESSION_DEVICE_MISMATCH" | "SESSION_IDLE_TIMEOUT" */
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "SessionBindingError";
+    this.code = code;
+  }
+}
+
+/** Codes that map to SessionBindingError — backend returns these on 403. */
+const SESSION_BINDING_CODES = new Set(["SESSION_DEVICE_MISMATCH", "SESSION_IDLE_TIMEOUT"]);
+
+/**
+ * Helper: given a Response object and its parsed body (or null), check whether
+ * the backend is signalling a session-binding failure that should redirect the
+ * candidate to the resume flow.  Call sites that use raw `fetch` can use this
+ * instead of re-implementing the check.
+ */
+export function checkSessionBindingError(
+  res: Response,
+  body: { code?: string; error?: string } | null | undefined
+): SessionBindingError | null {
+  if (res.status === 403 && body?.code && SESSION_BINDING_CODES.has(body.code)) {
+    return new SessionBindingError(body.code, body.error ?? body.code);
+  }
+  return null;
+}
+
 type QueryCacheEntry<T> = {
   data?: T;
   error?: Error;
@@ -87,6 +127,17 @@ export async function fetchJson<T>(
       try {
         const response = await fetchWithTimeout(input, init, timeoutMs);
         if (!response.ok) {
+          // Detect session-binding 403s so callers can route to the resume flow.
+          if (response.status === 403) {
+            let body: { code?: string; error?: string } | null = null;
+            try {
+              body = (await response.json()) as { code?: string; error?: string };
+            } catch {
+              // ignore parse failure — fall through to generic error
+            }
+            const bindingErr = checkSessionBindingError(response, body);
+            if (bindingErr) throw bindingErr;
+          }
           throw new Error(`HTTP ${response.status}`);
         }
         return (await response.json()) as T;
