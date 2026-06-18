@@ -3839,7 +3839,18 @@ export default function OnboardingPage() {
     }
 
     try {
-      const email = isTestAccount ? "tester@ams.local" : "candidate@ams.local";
+      // The candidate's identity for this contest is the OTP login_email
+      // (the generated_username) stored at sign-in. Never fall back to a shared
+      // placeholder: that collapses every candidate onto one session. If it is
+      // missing, the sign-in did not complete — abort the launch and send them back.
+      const storedEmail = (localStorage.getItem("ams_user_email") ?? "").trim();
+      const email = isTestAccount ? "tester@ams.local" : storedEmail;
+      if (!isTestAccount && !email) {
+        setPolicyBlock(
+          "Your sign-in could not be confirmed. Please return to the sign-in screen and log in again before starting the contest."
+        );
+        return;
+      }
       if (!sessionPrepared) {
         const body = await fetchJson<{ id?: string }>(
           `${API_URL}/sessions`,
