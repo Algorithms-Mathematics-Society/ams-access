@@ -3208,7 +3208,9 @@ function ProgressBar({
 
           return (
             <div
-              key={phase.group}
+              // `group` repeats ("Media Setup" covers both the camera and the
+              // audio phases), so it is not a unique key; the stage range is.
+              key={`${phase.group}-${phase.start}`}
               style={{
                 display: "flex",
                 flexDirection: "column",

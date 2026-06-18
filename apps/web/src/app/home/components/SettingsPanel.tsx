@@ -1357,8 +1357,10 @@ export const SettingsPanel = memo(function SettingsPanel({
                 }}
               >
                 {processScan?.found.length ? (
-                  processScan.found.map((name) => (
-                    <ProcessListItem key={name} name={name} restricted={true} theme={theme} />
+                  // The same executable can appear multiple times in a scan, so
+                  // `name` is not a unique key — pair it with the index.
+                  processScan.found.map((name, i) => (
+                    <ProcessListItem key={`${name}-${i}`} name={name} restricted={true} theme={theme} />
                   ))
                 ) : (
                   <>
