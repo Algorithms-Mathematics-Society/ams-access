@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api-client";
+import { invoke } from "@ams/api-client";
 import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore, API_URL } from "./utils";
 import { deriveContestantReadiness } from "./readiness-context";
 import { useFocusTrap } from "./hooks";
@@ -237,6 +238,23 @@ export function SessionReadinessModal({
   const optionalWarningCount = activeReport
     ? activeReport.optional_checks.filter((check) => check.outcome !== "pass").length
     : 0;
+
+  // macOS accessibility-denied gate: keyboard_lockdown is failing because the
+  // user hasn't granted Accessibility permission. The detail string emitted by
+  // core-rs contains "accessibility_denied" — that substring is macOS-specific
+  // so no explicit platform check is required.
+  const showAccessibilityRecovery = useMemo(() => {
+    if (!activeReport) return false;
+    const kbCheck = activeReport.required_checks.find(
+      (check) => check.kind === "keyboard_lockdown"
+    );
+    return (
+      !!kbCheck &&
+      kbCheck.outcome !== "pass" &&
+      typeof kbCheck.detail === "string" &&
+      kbCheck.detail.includes("accessibility_denied")
+    );
+  }, [activeReport]);
 
   const consoleLogs = useMemo(() => {
     if (scanStatus === "scanning") {
@@ -546,6 +564,95 @@ export function SessionReadinessModal({
             )}
           </section>
         </div>
+
+        {showAccessibilityRecovery && (
+          <section
+            style={{
+              border: "1px solid rgba(239,68,68,0.36)",
+              background: "rgba(239,68,68,0.07)",
+              borderRadius: "var(--radius-md)",
+              padding: "16px 18px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  width: "7px",
+                  height: "7px",
+                  borderRadius: "50%",
+                  background: "#ef4444",
+                  flexShrink: 0,
+                  boxShadow: "0 0 6px #ef4444",
+                }}
+              />
+              <h4
+                style={{
+                  color: "#fca5a5",
+                  fontSize: "13px",
+                  fontWeight: 750,
+                  margin: 0,
+                  letterSpacing: "0.01em",
+                }}
+              >
+                Grant Accessibility permission
+              </h4>
+            </div>
+            <p
+              style={{
+                color: c.textMutedStrong,
+                fontSize: "12px",
+                lineHeight: 1.55,
+                margin: 0,
+              }}
+            >
+              AMS Access needs macOS Accessibility permission to lock the keyboard — open Settings,
+              enable AMS Access under Privacy &amp; Security → Accessibility, then re-run the
+              checks.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", paddingTop: "2px" }}>
+              <button
+                onClick={() => void invoke("open_accessibility_settings")}
+                style={{
+                  height: "36px",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid rgba(239,68,68,0.5)",
+                  background: "rgba(239,68,68,0.14)",
+                  color: "#fca5a5",
+                  padding: "0 14px",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                Open Accessibility Settings
+              </button>
+              <button
+                onClick={handleRescan}
+                disabled={isRescanning}
+                style={{
+                  height: "36px",
+                  borderRadius: "var(--radius-md)",
+                  border: `1px solid ${c.border}`,
+                  background: "transparent",
+                  color: c.textMutedStrong,
+                  padding: "0 14px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  fontFamily: "inherit",
+                  cursor: isRescanning ? "not-allowed" : "pointer",
+                  opacity: isRescanning ? 0.62 : 1,
+                }}
+              >
+                Run checks again
+              </button>
+            </div>
+          </section>
+        )}
 
         <details
           open={showTechnicalDetails}
