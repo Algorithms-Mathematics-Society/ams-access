@@ -6498,10 +6498,29 @@ export default function ContestPageClient() {
           {timeUpState === "submitting" && (
             <>
               <div style={{ fontSize: 22, fontWeight: 600, color: "#e2e8f0" }}>
-                Submitting your session…
+                Submitting your session...
               </div>
-              <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-                Please stay connected. Do not close the app.
+              <div
+                style={{
+                  fontFamily: "'JetBrains Mono', 'Fira Mono', 'Consolas', monospace",
+                  fontSize: 12,
+                  color: "#64748b",
+                  letterSpacing: "0.04em",
+                  marginTop: 2,
+                }}
+              >
+                <style>{`
+                  @keyframes ams-cursor-blink {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0; }
+                  }
+                  @media (prefers-reduced-motion: no-preference) {
+                    .ams-telemetry-cursor {
+                      animation: ams-cursor-blink 1s step-end infinite;
+                    }
+                  }
+                `}</style>
+                Status: Transmitting data<span className="ams-telemetry-cursor">_</span>
               </div>
               <div
                 style={{
@@ -6513,7 +6532,7 @@ export default function ContestPageClient() {
                   marginTop: 8,
                 }}
               >
-                Taking too long? Your work is autosaved — it&rsquo;s safe to leave.
+                Your work is autosaved. It&rsquo;s safe to leave.
               </div>
               {/*
                * Escape hatches while auto-submit is in-flight. Navigating away is
@@ -6522,26 +6541,25 @@ export default function ContestPageClient() {
                * unmount. A stuck network request must never trap the candidate on
                * this screen.
                */}
-              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 4 }}>
                 <button
                   onClick={() => router.push("/home")}
                   style={{
                     padding: "10px 24px",
-                    background: "rgba(255,255,255,0.08)",
-                    color: "var(--text-soft)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: "var(--radius-sm)",
+                    background: "var(--color-accent-base)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "var(--radius-md)",
                     fontSize: 14,
+                    fontWeight: 600,
                     cursor: "pointer",
-                    transition: "background var(--transition-fast), color var(--transition-fast)",
+                    transition: "opacity var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
-                    e.currentTarget.style.color = "#fff";
+                    e.currentTarget.style.opacity = "0.88";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "var(--text-soft)";
+                    e.currentTarget.style.opacity = "1";
                   }}
                 >
                   Back to home
@@ -6555,22 +6573,19 @@ export default function ContestPageClient() {
                     )
                   }
                   style={{
-                    padding: "10px 24px",
-                    background: "rgba(255,255,255,0.08)",
-                    color: "var(--text-soft)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: "var(--radius-sm)",
+                    padding: "10px 0",
+                    background: "none",
+                    color: "#a1a1aa",
+                    border: "none",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: "background var(--transition-fast), color var(--transition-fast)",
+                    transition: "color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
-                    e.currentTarget.style.color = "#fff";
+                    e.currentTarget.style.color = "#ffffff";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "var(--text-soft)";
+                    e.currentTarget.style.color = "#a1a1aa";
                   }}
                 >
                   Check results status
@@ -6636,25 +6651,25 @@ export default function ContestPageClient() {
                   <> — we&rsquo;ll email you when they&rsquo;re ready.</>
                 )}
               </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 12 }}>
                 <button
                   onClick={() => router.push("/home")}
                   style={{
                     padding: "10px 24px",
-                    background: "var(--color-accent-deep)",
+                    background: "var(--color-accent-base)",
                     color: "#fff",
                     border: "none",
-                    borderRadius: "var(--radius-sm)",
+                    borderRadius: "var(--radius-md)",
                     fontSize: 14,
                     fontWeight: 600,
                     cursor: "pointer",
+                    transition: "opacity var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background =
-                      "color-mix(in srgb, var(--color-accent-deep), #fff 12%)";
+                    e.currentTarget.style.opacity = "0.88";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "var(--color-accent-deep)";
+                    e.currentTarget.style.opacity = "1";
                   }}
                 >
                   Back to home
@@ -6668,22 +6683,19 @@ export default function ContestPageClient() {
                     )
                   }
                   style={{
-                    padding: "10px 24px",
-                    background: "rgba(255,255,255,0.08)",
-                    color: "#cbd5e1",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: "var(--radius-sm)",
+                    padding: "10px 0",
+                    background: "none",
+                    color: "#a1a1aa",
+                    border: "none",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: "background var(--transition-fast), color var(--transition-fast)",
+                    transition: "color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
-                    e.currentTarget.style.color = "#fff";
+                    e.currentTarget.style.color = "#ffffff";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "#cbd5e1";
+                    e.currentTarget.style.color = "#a1a1aa";
                   }}
                 >
                   Check results status
@@ -6725,26 +6737,25 @@ export default function ContestPageClient() {
               >
                 Retry Submit
               </button>
-              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 4 }}>
                 <button
                   onClick={() => router.push("/home")}
                   style={{
                     padding: "10px 24px",
-                    background: "rgba(255,255,255,0.08)",
-                    color: "#cbd5e1",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: "var(--radius-sm)",
+                    background: "var(--color-accent-base)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "var(--radius-md)",
                     fontSize: 14,
+                    fontWeight: 600,
                     cursor: "pointer",
-                    transition: "background var(--transition-fast), color var(--transition-fast)",
+                    transition: "opacity var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
-                    e.currentTarget.style.color = "#fff";
+                    e.currentTarget.style.opacity = "0.88";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "#cbd5e1";
+                    e.currentTarget.style.opacity = "1";
                   }}
                 >
                   Back to home
@@ -6758,22 +6769,19 @@ export default function ContestPageClient() {
                     )
                   }
                   style={{
-                    padding: "10px 24px",
-                    background: "rgba(255,255,255,0.08)",
-                    color: "#cbd5e1",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: "var(--radius-sm)",
+                    padding: "10px 0",
+                    background: "none",
+                    color: "#a1a1aa",
+                    border: "none",
                     fontSize: 14,
                     cursor: "pointer",
-                    transition: "background var(--transition-fast), color var(--transition-fast)",
+                    transition: "color var(--transition-fast)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.12)";
-                    e.currentTarget.style.color = "#fff";
+                    e.currentTarget.style.color = "#ffffff";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                    e.currentTarget.style.color = "#cbd5e1";
+                    e.currentTarget.style.color = "#a1a1aa";
                   }}
                 >
                   Check results status
