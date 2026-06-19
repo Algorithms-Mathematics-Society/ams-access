@@ -4274,16 +4274,9 @@ export default function ContestPageClient() {
               style={{
                 width: "100%",
                 height: sidebarCollapsed ? "52px" : "150px",
-                border: `2px solid ${
-                  faceStatus === "ok"
-                    ? "rgba(34,197,94,0.55)"
-                    : faceStatus === "away"
-                      ? "rgba(239,68,68,0.55)"
-                      : "rgba(148,163,184,0.14)"
-                }`,
+                border: "none",
                 boxSizing: "border-box",
                 position: "relative",
-                transition: "border-color 600ms ease",
               }}
             >
               <video
@@ -4332,12 +4325,24 @@ export default function ContestPageClient() {
                   background: "#0F0F0F",
                   border: "1px solid #1F1F1F",
                   fontSize: "9px",
-                  color: cameraHealthy ? "#22c55e" : cameraError ? "#ef4444" : "#f59e0b",
+                  color: !cameraEnabled
+                    ? "#94a3b8"
+                    : cameraHealthy
+                      ? "#94a3b8"
+                      : cameraError
+                        ? "#ef4444"
+                        : "#f59e0b",
                   fontFamily: "Inter, system-ui, sans-serif",
                   fontWeight: 600,
                 }}
               >
-                {cameraHealthy ? "Camera active" : cameraError ? "Camera issue" : "Camera starting"}
+                {!cameraEnabled
+                  ? "Cam off"
+                  : cameraHealthy
+                    ? "Camera active"
+                    : cameraError
+                      ? "Camera issue"
+                      : "Camera starting"}
               </div>
             )}
           </div>
