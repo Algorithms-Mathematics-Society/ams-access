@@ -5383,55 +5383,60 @@ export default function ContestPageClient() {
                       flexShrink: 0,
                     }}
                   >
-                    {runProgressSteps.map((step, index) => {
-                      const complete = index <= runProgressPhase;
-                      const current = index === runProgressPhase;
-                      return (
-                        <div
-                          key={step}
-                          style={{ display: "flex", alignItems: "center", gap: "10px" }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span
+                      style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: "11px",
+                        letterSpacing: "0.06em",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0",
+                        userSelect: "none",
+                      }}
+                    >
+                      {runProgressSteps.map((step, index) => {
+                        const current = index === runProgressPhase;
+                        const label = step.toUpperCase();
+                        return (
+                          <span key={step} style={{ display: "flex", alignItems: "center" }}>
                             <span
                               style={{
-                                width: "7px",
-                                height: "7px",
-                                borderRadius: "50%",
-                                background: complete
-                                  ? runError
-                                    ? "#ef4444"
-                                    : "var(--color-accent-base)"
-                                  : "#334155",
-                                boxShadow:
-                                  current && !runError
-                                    ? "0 0 8px rgb(var(--accent-rgb) / 0.6)"
-                                    : "none",
-                              }}
-                            />
-                            <span
-                              style={{
-                                color: complete ? "#cbd5e1" : "#475569",
-                                fontSize: "11px",
-                                fontWeight: current ? 700 : 500,
-                                fontFamily: "Inter, system-ui, sans-serif",
+                                color: current ? "#ffffff" : "#71717a",
+                                fontWeight: current ? 600 : 400,
                               }}
                             >
-                              {step}
+                              {current && index === 2 ? (
+                                <span
+                                  style={{
+                                    ["--_running" as string]: "1",
+                                  }}
+                                >
+                                  <style>{`
+                                    @media (prefers-reduced-motion: no-preference) {
+                                      @keyframes _ams_ellipsis {
+                                        0%,100% { opacity: 1; }
+                                        50% { opacity: 0.3; }
+                                      }
+                                      ._ams_running_ellipsis::after {
+                                        content: '…';
+                                        animation: _ams_ellipsis 1.2s ease-in-out infinite;
+                                        display: inline-block;
+                                      }
+                                    }
+                                  `}</style>
+                                  <span className="_ams_running_ellipsis">{label}</span>
+                                </span>
+                              ) : (
+                                label
+                              )}
                             </span>
-                          </div>
-                          {index < runProgressSteps.length - 1 && (
-                            <span
-                              style={{
-                                width: "24px",
-                                height: "1px",
-                                background:
-                                  index < runProgressPhase ? "var(--color-accent-base)" : "#334155",
-                              }}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
+                            {index < runProgressSteps.length - 1 && (
+                              <span style={{ color: "#71717a", margin: "0 6px" }}>{"→"}</span>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </span>
                   </div>
                 )}
                 <div
