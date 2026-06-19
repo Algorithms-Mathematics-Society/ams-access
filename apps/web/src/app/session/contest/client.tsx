@@ -4134,7 +4134,7 @@ export default function ContestPageClient() {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        borderRadius: "8px",
+                        borderRadius: "var(--radius-sm)",
                         border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.35)" : qStatus.border}`,
                         background: activeQ === i ? "rgb(var(--accent-rgb) / 0.1)" : qStatus.bg,
                         fontSize: "12px",
@@ -4193,7 +4193,7 @@ export default function ContestPageClient() {
                       <span
                         style={{
                           padding: "2px 6px",
-                          borderRadius: "999px",
+                          borderRadius: "var(--radius-sm)",
                           border: `1px solid ${qStatus.border}`,
                           background: qStatus.bg,
                           color: qStatus.color,
@@ -4832,14 +4832,9 @@ export default function ContestPageClient() {
                     role="status"
                     aria-live="polite"
                     style={{
-                      height: "24px",
                       display: "flex",
                       alignItems: "center",
                       gap: "6px",
-                      padding: "0 10px",
-                      borderRadius: "999px",
-                      border: `1px solid ${saveIndicator.border}`,
-                      background: saveIndicator.bg,
                       color: saveIndicator.color,
                       fontSize: "11px",
                       fontWeight: 600,
@@ -4900,7 +4895,7 @@ export default function ContestPageClient() {
                         alignItems: "center",
                         justifyContent: "center",
                         border: "1px solid rgba(148,163,184,0.18)",
-                        borderRadius: "6px",
+                        borderRadius: "var(--radius-sm)",
                         background: "rgba(148,163,184,0.06)",
                         color: "#94a3b8",
                         cursor: "pointer",
@@ -5059,7 +5054,7 @@ export default function ContestPageClient() {
                         gap: "8px",
                         padding: "0 22px",
                         border: `1px solid ${saving || isSubmitting ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
-                        borderRadius: "var(--radius-sm)",
+                        borderRadius: "var(--radius-md)",
                         background:
                           saving || isSubmitting
                             ? "rgb(var(--accent-rgb) / 0.14)"
