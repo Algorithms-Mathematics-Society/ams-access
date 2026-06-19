@@ -287,9 +287,10 @@ export function ChecklistItem({
   action?: ReactNode;
 }) {
   const c = getThemeColors(theme);
-  const tone = toneForStatus(status);
-  const t = toneStyles(tone, theme);
-  const Icon = t.icon;
+  // Telemetry-dot pattern: a single 6px status LED on the far right replaces the
+  // repetitive "Ready" pill, so the column scans as one vertical line of health.
+  const dotColor = status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : "#f59e0b";
+  const statusLabel = status === "ok" ? "Ready" : status === "fail" ? "Needs action" : "Checking";
   return (
     <div
       style={{
@@ -306,16 +307,25 @@ export function ChecklistItem({
           fontSize: "12px",
           fontWeight: 500,
           fontFamily: "var(--font-mono), monospace",
-          color: c.textMutedStrong,
+          color: "#a1a1aa",
           letterSpacing: 0,
         }}
       >
         {label}
       </span>
-      <StatusBadge tone={tone} theme={theme} icon={Icon}>
-        {status === "ok" ? "Ready" : status === "fail" ? "Needs action" : "Checking"}
-      </StatusBadge>
-      <div style={{ minWidth: "80px", display: "flex", justifyContent: "flex-end" }}>{action}</div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>{action}</div>
+      <span
+        role="img"
+        aria-label={statusLabel}
+        title={statusLabel}
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: dotColor,
+          flexShrink: 0,
+        }}
+      />
     </div>
   );
 }

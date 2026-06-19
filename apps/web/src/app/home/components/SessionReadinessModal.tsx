@@ -673,7 +673,7 @@ export function SessionReadinessModal({
           <div
             ref={techDetailsContentRef}
             style={{
-              maxHeight: showTechnicalDetails ? "200px" : "0px",
+              maxHeight: showTechnicalDetails ? "340px" : "0px",
               opacity: showTechnicalDetails ? 1 : 0,
               overflow: "hidden",
               transition: "max-height 0.28s ease, opacity 0.22s ease",
@@ -683,7 +683,7 @@ export function SessionReadinessModal({
               style={{
                 borderTop: `1px solid ${c.border}`,
                 padding: "12px 14px",
-                maxHeight: "150px",
+                maxHeight: "300px",
                 overflowY: "auto",
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: "11px",
@@ -694,10 +694,7 @@ export function SessionReadinessModal({
               }}
             >
               {consoleLogs.map((log, index) => (
-                <div
-                  key={index}
-                  style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}
-                >
+                <div key={index} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                   {parseLogLine(log, c.dot)}
                 </div>
               ))}
@@ -735,13 +732,13 @@ export function SessionReadinessModal({
         >
           {canProceed ? (
             onProceed ? (
-              /* §3 — Primary: AMS purple, borderRadius:0 (brutalist) */
+              /* §3 — Primary: AMS purple, unified radius (matches Validate / app buttons) */
               <button
                 onClick={() => void onProceed()}
                 style={{
                   minWidth: "170px",
                   height: "42px",
-                  borderRadius: "0",
+                  borderRadius: "var(--radius-md)",
                   border: "none",
                   background: "var(--color-accent-base)",
                   color: "#ffffff",
@@ -762,7 +759,7 @@ export function SessionReadinessModal({
                 style={{
                   minWidth: "170px",
                   height: "42px",
-                  borderRadius: "0",
+                  borderRadius: "var(--radius-md)",
                   border: "none",
                   background: "var(--color-accent-base)",
                   color: "#ffffff",

@@ -1,9 +1,9 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { Settings, PlayCircle } from "lucide-react";
+import { Info } from "lucide-react";
 import { getThemeColors } from "./utils";
-import { Button, ChecklistItem, InlineAlert } from "./ui-primitives";
+import { Button, ChecklistItem } from "./ui-primitives";
 import type { ReadinessState, ContestantReadinessContext } from "./types";
 
 export const ReadinessWidget = memo(function ReadinessWidget({
@@ -93,40 +93,54 @@ export const ReadinessWidget = memo(function ReadinessWidget({
         />
       </div>
 
-      {context && (
-        <InlineAlert
-          theme={theme}
-          tone={
+      {context &&
+        (() => {
+          // Highlighted trace log, not a consumer alert box: a 2px left rule +
+          // a bracketed monospace tag, coloured by state (electric amber for WARN).
+          const log =
             context.status === "ready"
-              ? "success"
+              ? { tag: "OK", color: "#22c55e" }
               : context.status === "advisory_warning"
-                ? "warning"
+                ? { tag: "WARN", color: "#fbbf24" }
                 : context.status === "checking"
-                  ? "accent"
-                  : "danger"
-          }
-          style={{ marginBottom: "18px" }}
-        >
-          {context.message}
-        </InlineAlert>
-      )}
+                  ? { tag: "SCAN", color: "#c084fc" }
+                  : { tag: "FAIL", color: "#ef4444" };
+          return (
+            <div
+              style={{
+                borderLeft: `2px solid ${log.color}`,
+                padding: "8px 0 8px 12px",
+                marginBottom: "18px",
+                fontFamily: "var(--font-mono), monospace",
+                fontSize: "12px",
+                lineHeight: 1.55,
+                color: log.color,
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>[{log.tag}]</span>{" "}
+              <span className="rl-info" tabIndex={0} style={{ color: log.color }}>
+                <Info size={13} strokeWidth={2.5} aria-label={context.message} />
+                <span className="rl-tip" role="tooltip">
+                  {context.message}
+                </span>
+              </span>
+            </div>
+          );
+        })()}
 
       <Button
         onClick={onSettingsRedirect}
         theme={theme}
         variant="primary"
-        style={{ width: "100%" }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "var(--color-accent-base)";
-          e.currentTarget.style.borderColor = "var(--color-accent-light)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "var(--color-accent-base)";
-          e.currentTarget.style.borderColor = "var(--color-accent-base)";
+        style={{
+          width: "100%",
+          borderRadius: "var(--radius-md)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
         }}
       >
-        <Settings size={14} strokeWidth={2} />
-        Open Settings
+        Open settings
       </Button>
 
       {onPracticeRun && (
@@ -134,10 +148,27 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           onClick={onPracticeRun}
           theme={theme}
           variant="secondary"
-          style={{ width: "100%", marginTop: "10px" }}
+          style={{
+            width: "100%",
+            marginTop: "10px",
+            borderRadius: "var(--radius-md)",
+            background: "transparent",
+            border: "1px solid #3f3f46",
+            color: "#a1a1aa",
+            fontWeight: 700,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "#ffffff";
+            e.currentTarget.style.borderColor = "#52525b";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "#a1a1aa";
+            e.currentTarget.style.borderColor = "#3f3f46";
+          }}
         >
-          <PlayCircle size={14} strokeWidth={2} />
-          Test my setup (practice run)
+          Test setup
         </Button>
       )}
     </div>

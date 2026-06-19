@@ -287,20 +287,18 @@ summary:focus-visible,
 
 .login-root {
   display: grid;
-  grid-template-columns: 45% 55%;
+  grid-template-columns: 44% 1fr;
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-mono);
-  /* §Technical-Terminal: match welcome screen's near-black canvas */
-  background: #0a0a0a;
+  background: var(--color-obsidian-base);
   color: var(--color-text-primary);
 }
 
 /* ── Left pane ── */
 .login-left {
-  /* §Technical-Terminal: neutral vignette — no purple tint */
-  background: #0a0a0a;
-  border-right: 1px solid #333338;
+  background: var(--surface-1);
+  border-right: 1px solid var(--color-border-base);
   display: flex;
   flex-direction: column;
   padding: 44px 52px;
@@ -340,14 +338,13 @@ summary:focus-visible,
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  text-align: left;
-  /* §align: same left edge as .login-logo above */
-  padding: 0;
+  text-align: center;
+  padding: 0 8px;
 }
 
-.login-brand-mark { margin-bottom: 28px; opacity: 0.92; align-self: flex-start; }
+.login-brand-mark { margin-bottom: 28px; opacity: 0.92; }
 
 .login-brand-headline {
   font-size: 24px;
@@ -357,12 +354,11 @@ summary:focus-visible,
   line-height: 1.2;
   margin-bottom: 12px;
   font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
-  text-align: left;
 }
 
 .login-brand-headline em {
   font-style: normal;
-  color: #f4f4f6;
+  color: var(--color-accent-base);
 }
 
 .login-brand-sub {
@@ -371,8 +367,7 @@ summary:focus-visible,
   color: var(--color-text-faint);
   font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
   margin-bottom: 40px;
-  max-width: 260px;
-  text-align: left;
+  max-width: 240px;
 }
 
 .login-brand-features {
@@ -380,7 +375,7 @@ summary:focus-visible,
   flex-direction: column;
   gap: 14px;
   width: 100%;
-  max-width: 280px;
+  max-width: 260px;
 }
 
 .login-brand-feature {
@@ -391,14 +386,15 @@ summary:focus-visible,
 }
 
 .login-brand-feature-icon {
-  /* §Technical-Terminal: flat icon, no container box */
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-hover);
+  border: 1px solid var(--color-accent-border);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  opacity: 0.85;
 }
 
 .login-brand-feature-text { display: flex; flex-direction: column; gap: 2px; }
@@ -428,8 +424,7 @@ summary:focus-visible,
 
 /* ── Right pane ── */
 .login-right {
-  /* §Technical-Terminal: unified near-black — no purple glow, no distinct surface */
-  background: #0a0a0a;
+  background: var(--surface-0);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -448,8 +443,7 @@ summary:focus-visible,
 .login-form-sub {
   font-size: var(--text-xs);
   color: var(--text-dim);
-  /* §Technical-Terminal: rule removed — whitespace carries separation */
-  margin-bottom: 32px;
+  margin-bottom: 28px;
 }
 
 .login-rule {
@@ -472,25 +466,23 @@ summary:focus-visible,
   transition: color var(--transition-fast);
 }
 
-.login-label--focused { color: #d4d4d8; }
+.login-label--focused { color: var(--color-accent-base); }
 
 .login-input {
   display: block;
   width: 100%;
-  /* §Technical-Terminal: solid near-black bg, zinc-800 1px border, crisp 4px radius */
-  background: #0A0A0F;
-  border: 1px solid #27272a;
-  border-radius: 0;
+  background: var(--color-obsidian-inner);
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-md);
   color: var(--color-text-primary);
-  font-family: var(--font-mono);
   font-size: 13px;
-  padding: 11px 14px;
+  padding: 12px 14px;
   outline: none;
   appearance: none;
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
-.login-input:focus        { border-color: #52525b; background: #0D0D14; }
+.login-input:focus        { border-color: rgb(var(--accent-rgb) / 0.45); background: #0D0D0D; }
 .login-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .login-input:disabled     { opacity: 0.45; cursor: not-allowed; }
 
@@ -506,12 +498,11 @@ summary:focus-visible,
   background: var(--color-accent-base);
   color: #fff;
   border: 1px solid var(--color-accent-base);
-  /* §Technical-Terminal: 0 radius — brutalist hard edge */
-  border-radius: 0;
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   min-height: 44px;
   padding: 0 24px;
@@ -519,7 +510,7 @@ summary:focus-visible,
   transition: filter var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.login-submit:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.login-submit:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 4px 14px rgb(var(--accent-rgb) / 0.3); }
 .login-submit:active:not(:disabled) { transform: translateY(0) scale(0.98); }
 .login-submit:focus-visible        { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .login-submit:disabled             { background: var(--color-obsidian-raised); border-color: rgb(var(--accent-rgb) / 0.22); color: var(--text-faint); cursor: not-allowed; }
@@ -531,10 +522,10 @@ summary:focus-visible,
   color: var(--text-dim); cursor: pointer; text-decoration: none;
   transition: color var(--transition-fast);
 }
-.login-textlink:hover { color: #fafafa; text-decoration: underline; }
+.login-textlink:hover { color: var(--color-accent-base); text-decoration: underline; }
 .login-textlink:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .login-textlink--quiet { color: var(--text-faint); }
-.login-textlink--quiet:hover { color: #d4d4d8; }
+.login-textlink--quiet:hover { color: var(--color-accent-light); }
 
 /* Error alert */
 .login-error {
@@ -573,28 +564,24 @@ summary:focus-visible,
 /* SSO */
 .login-sso-wrap {
   padding-top: 20px;
-  /* §Technical-Terminal: thin separator, no chunky border block */
-  border-top: 1px solid rgba(255,255,255,0.05);
+  border-top: 1px solid var(--color-border-base);
 }
 
 .login-sso-btn {
   width: 100%;
   background: transparent;
-  /* §Technical-Terminal: sleek 1px zinc-800 border, muted monospace label */
-  border: 1px solid #27272a;
-  border-radius: 0;
-  color: #52525b;
-  font-family: var(--font-mono);
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  font-family: inherit;
   font-size: var(--text-2xs);
   font-weight: 600;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
   padding: 0 16px;
-  min-height: 34px;
+  min-height: 38px;
   cursor: pointer;
   transition: border-color var(--transition-fast), color var(--transition-fast);
 }
-.login-sso-btn:hover        { border-color: #3f3f46; color: #a1a1aa; }
+.login-sso-btn:hover        { border-color: rgba(255,255,255,0.18); color: var(--text-soft); }
 .login-sso-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 
 .login-form-note {
@@ -613,8 +600,8 @@ summary:focus-visible,
   line-height: 1.6;
 }
 
-.login-form-support a               { color: #a1a1aa; text-decoration: none; }
-.login-form-support a:hover         { color: #fafafa; text-decoration: underline; }
+.login-form-support a               { color: rgb(var(--accent-rgb) / 0.8); text-decoration: none; }
+.login-form-support a:hover         { color: var(--color-accent-base); text-decoration: underline; }
 
 /* SSO modal */
 .login-modal-bg {
@@ -1179,7 +1166,7 @@ summary:focus-visible,
   align-items: center;
   justify-content: center;
   padding: 14px 80px;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-accent-base);
   background: var(--color-accent-base);
   color: #ffffff;
@@ -1283,4 +1270,45 @@ summary:focus-visible,
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   READINESS TRACE-LOG — [WARN] info affordance + hover tooltip
+   The banner shows just the bracketed tag + an info icon; the full
+   advisory text reveals on hover/focus as a styled popover.
+   ───────────────────────────────────────────────────────────── */
+.rl-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+  vertical-align: middle;
+  outline: none;
+}
+.rl-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 240px;
+  padding: 8px 10px;
+  background: #14141a;
+  border: 1px solid #2a2a30;
+  border-left: 2px solid currentColor;
+  color: #d4d4d8;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: normal;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.rl-info:hover .rl-tip,
+.rl-info:focus-visible .rl-tip {
+  opacity: 1;
+  transform: translateY(0);
 }

@@ -3150,15 +3150,6 @@ function ProgressBar({
   const phaseIndex = phases.findIndex((p) => current >= p.start && current <= p.end);
   const currentPhase = phaseIndex < 0 ? phases.length : phaseIndex + 1;
 
-  // Short abbreviation labels for phase groups in the stepper
-  const PHASE_SHORT: Record<string, string> = {
-    "Workspace Lockdown": "WORKSPACE",
-    "System Checks": "SYSTEM",
-    "Media Setup": "MEDIA",
-    "Identity Scan": "IDENTITY",
-    Finalizing: "FINALIZING",
-  };
-
   // Rough, reassuring time estimate (~8s/stage). Shown as "about …", never exact.
   const remainingStages = Math.max(0, STAGES.length - current);
   const estMinutes = Math.max(1, Math.ceil((remainingStages * 8) / 60));
@@ -3200,10 +3191,9 @@ function ProgressBar({
         </span>
       </div>
 
-      {/* Phase-grouped stepper */}
+      {/* Segmented telemetry bar — flat dashes grouped by phase (wider gap between groups) */}
       <div style={{ display: "flex", alignItems: "center" }}>
         {phases.map((phase, pi) => {
-          // Gather stage ids in this phase
           const stageIds: number[] = [];
           for (let id = phase.start; id <= phase.end; id++) stageIds.push(id);
 
@@ -3214,91 +3204,33 @@ function ProgressBar({
               key={`${phase.group}-${phase.start}`}
               style={{
                 display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-                marginRight: pi < phases.length - 1 ? 8 : 0,
+                gap: "3px",
+                marginRight: pi < phases.length - 1 ? 11 : 0,
               }}
             >
-              {/* Phase label */}
-              <span
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  letterSpacing: "0.1em",
-                  color: "rgba(255,255,255,0.45)",
-                  fontFamily: "Inter, system-ui, sans-serif",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {PHASE_SHORT[phase.group] ?? phase.group.toUpperCase()}
-              </span>
-
-              {/* Stage ticks row */}
-              <div style={{ display: "flex", gap: "4px" }}>
-                {stageIds.map((id) => {
-                  const stageResult = results[id];
-                  const status: "pass" | "checking" | "warn" | "pending" =
-                    id < current
-                      ? ((stageResult ?? "pass") as "pass" | "warn")
-                      : id === current
-                        ? "checking"
-                        : "pending";
-
-                  let bg: string;
-                  let border: string;
-                  let textColor: string;
-                  let content: React.ReactNode;
-                  let extraStyle: React.CSSProperties = {};
-
-                  if (status === "pass") {
-                    bg = "rgba(34,197,94,0.2)";
-                    border = "1px solid rgba(34,197,94,0.6)";
-                    textColor = "#22c55e";
-                    content = "✓";
-                  } else if (status === "checking") {
-                    bg = "rgba(255,255,255,0.04)";
-                    border = "2px solid rgba(255,255,255,0.7)";
-                    textColor = "#FFFFFF";
-                    content = String(id);
-                    extraStyle = { animation: "countdown-pulse 1.5s ease-in-out infinite" };
-                  } else if (status === "warn") {
-                    bg = "rgba(245,158,11,0.15)";
-                    border = "1px solid rgba(245,158,11,0.6)";
-                    textColor = "#f59e0b";
-                    content = "!";
-                  } else {
-                    bg = "rgba(255,255,255,0.04)";
-                    border = "1px solid rgba(255,255,255,0.15)";
-                    textColor = "rgba(255,255,255,0.25)";
-                    content = String(id);
-                  }
-
-                  return (
-                    <div
-                      key={id}
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: "var(--radius-sm)",
-                        background: bg,
-                        border,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "10px",
-                        fontWeight: 700,
-                        color: textColor,
-                        fontFamily: "'JetBrains Mono', monospace",
-                        transition:
-                          "background var(--transition-standard), border-color var(--transition-standard)",
-                        ...extraStyle,
-                      }}
-                    >
-                      {content}
-                    </div>
-                  );
-                })}
-              </div>
+              {stageIds.map((id) => {
+                const stageResult = results[id];
+                let bg: string;
+                if (id === current) {
+                  bg = "#ffffff"; // active — stark white leading edge
+                } else if (id < current) {
+                  bg = stageResult === "warn" ? "#f59e0b" : "#d4d4d8"; // completed
+                } else {
+                  bg = "#27272a"; // pending — barely registers
+                }
+                return (
+                  <div
+                    key={id}
+                    style={{
+                      width: 18,
+                      height: 3,
+                      borderRadius: 0,
+                      background: bg,
+                      transition: "background var(--transition-standard)",
+                    }}
+                  />
+                );
+              })}
             </div>
           );
         })}
@@ -4209,6 +4141,22 @@ export default function OnboardingPage() {
           onClick={() => void emergencyExit()}
           aria-label="Exit setup. Shortcut: Control Shift Q."
           title="Shortcut: Ctrl + Shift + Q"
+          style={{
+            background: "transparent",
+            border: "none",
+            borderRadius: 0,
+            color: "rgba(239,68,68,0.8)",
+            fontWeight: 700,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            padding: "4px 2px",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "#ef4444";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "rgba(239,68,68,0.8)";
+          }}
         >
           Exit setup
         </button>

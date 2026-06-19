@@ -66,7 +66,7 @@ export default function LoginPage() {
       });
       if (!res.ok) {
         setOtpState("idle");
-        setError("That code didn't match — request a new one.");
+        setError("That code didn't match. Request a new one.");
         return;
       }
       const data = (await res.json().catch(() => ({}))) as { email?: string; token?: string };
@@ -199,13 +199,6 @@ export default function LoginPage() {
                 strokeLinecap="square"
                 strokeLinejoin="miter"
               />
-              <path
-                d="M32 162L87 52L142 162"
-                stroke="rgb(var(--accent-rgb) / 0.25)"
-                strokeWidth="4"
-                strokeLinecap="square"
-                strokeLinejoin="miter"
-              />
             </svg>
           </div>
 
@@ -215,7 +208,7 @@ export default function LoginPage() {
             <em>Made fair.</em>
           </h2>
           <p className="login-brand-sub">
-            A calm, fair space for your coding contest — so your work is the only thing that counts.
+            A calm, fair space for your coding contest, so your work is the only thing that counts.
           </p>
 
           <div className="login-brand-features">
