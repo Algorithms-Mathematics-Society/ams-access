@@ -5681,11 +5681,9 @@ export default function ContestPageClient() {
                       {latestAttempt && (
                         <div
                           style={{
-                            border: "1px solid rgba(148,163,184,0.12)",
-                            background: "rgba(255,255,255,0.025)",
-                            borderRadius: "8px",
-                            padding: "12px",
+                            paddingBottom: "12px",
                             marginBottom: "12px",
+                            borderBottom: "1px solid rgba(255,255,255,0.06)",
                           }}
                         >
                           <div
@@ -5920,11 +5918,8 @@ export default function ContestPageClient() {
                                   <div
                                     style={{
                                       marginTop: "6px",
-                                      padding: "8px",
-                                      background: "#111",
-                                      border: "1px solid #1F1F1F",
-                                      borderLeft: "2px solid rgb(var(--accent-rgb) / 0.4)",
-                                      borderRadius: "var(--radius-sm)",
+                                      padding: "6px 8px",
+                                      borderLeft: "2px solid rgb(var(--accent-rgb) / 0.3)",
                                     }}
                                   >
                                     {isPending ? (
