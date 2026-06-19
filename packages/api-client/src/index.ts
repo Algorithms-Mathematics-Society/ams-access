@@ -171,6 +171,8 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   // Windows — mirrors core-rs; otherwise enforcement disarms on non-admin machines.
   const isWindows = typeof platform === "string" && platform.toLowerCase().startsWith("windows");
   const isMacos = typeof platform === "string" && platform.toLowerCase().startsWith("macos");
+  const isWindowsNoAdmin =
+    typeof platform === "string" && platform.toLowerCase() === "windows_no_admin";
   return {
     profile,
     checks: POLICY_CHECKS.map((kind) => {
@@ -214,6 +216,18 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
       // at contest time on macOS. Linux and Windows retain required+block so
       // their lockdown invariants are unchanged.
       if (kind === "keyboard_lockdown" && isMacos) {
+        return {
+          kind,
+          required: false,
+          severity: "warning" as const,
+          organizer_override_allowed: !strict,
+        };
+      }
+      // Unelevated Windows: keep auto-elevation + the Relaunch-as-Administrator
+      // recovery, but downgrade the platform gate to a warning so a candidate who
+      // truly cannot elevate is not trapped (no network firewall there; keyboard +
+      // process proctoring still hold). A genuinely unsupported OS stays blocking.
+      if (kind === "platform" && isWindowsNoAdmin) {
         return {
           kind,
           required: false,

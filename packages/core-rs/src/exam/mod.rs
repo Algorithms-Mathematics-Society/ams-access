@@ -196,6 +196,14 @@ impl SessionPolicy {
         let is_windows =
             matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
         let is_macos = matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("macos"));
+        // Unelevated Windows: auto-elevation + the Relaunch-as-Administrator
+        // recovery still run, but if a candidate genuinely cannot elevate (a
+        // locked-down machine where UAC needs credentials they lack), the
+        // Platform check is downgraded to a warning so they are not trapped.
+        // Cost: no network firewall on that machine; keyboard + process
+        // proctoring still apply. Genuinely unsupported OSes stay hard-blocked.
+        let is_windows_no_admin =
+            matches!(platform, Some(p) if p.eq_ignore_ascii_case("windows_no_admin"));
         let severity = if strict {
             BlockingSeverity::Block
         } else {
@@ -248,6 +256,8 @@ impl SessionPolicy {
                 // shell. Linux and Windows retain required+Block so their
                 // lockdown invariants are unchanged.
                 CheckKind::KeyboardLockdown if is_macos => (false, BlockingSeverity::Warning),
+                // Unelevated Windows → advisory Platform check (see is_windows_no_admin).
+                CheckKind::Platform if is_windows_no_admin => (false, BlockingSeverity::Warning),
                 _ => (required, severity.clone()),
             };
             ReadinessRequirement {
@@ -1264,6 +1274,45 @@ mod tests {
         assert!(
             matches!(windows_kbd.severity, BlockingSeverity::Block),
             "keyboard_lockdown must be Block on Windows"
+        );
+    }
+
+    #[test]
+    fn windows_no_admin_platform_check_is_advisory() {
+        // Unelevated Windows must not be trapped: the Platform check is advisory
+        // (auto-elevation + the Relaunch-as-Administrator recovery still run).
+        // Elevated Windows keeps it required+Block.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_no_admin"),
+        );
+        let plat = policy
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::Platform)
+            .expect("platform requirement present");
+        assert!(
+            !plat.required,
+            "platform must be advisory on windows_no_admin"
+        );
+        assert!(
+            matches!(plat.severity, BlockingSeverity::Warning),
+            "platform severity must be Warning on windows_no_admin, got {:?}",
+            plat.severity
+        );
+
+        let elevated = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let ep = elevated
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::Platform)
+            .expect("platform present on elevated windows policy");
+        assert!(
+            ep.required && matches!(ep.severity, BlockingSeverity::Block),
+            "elevated Windows must keep platform required+Block"
         );
     }
 
