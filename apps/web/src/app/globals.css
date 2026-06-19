@@ -1000,58 +1000,21 @@ summary:focus-visible,
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--surface-0);
+  /* §Technical-Terminal: near-black canvas; the vignette adds the center lift */
+  background: #060608;
 }
 
-/* ── Background atmosphere ── */
-
-/* Wide ambient bloom — fills the room with violet air */
-.welcome-glow-primary {
+/* ── Background — neutral monitor vignette (no glow) ── */
+.welcome-vignette {
   position: absolute;
   inset: 0;
   background: radial-gradient(
-    ellipse 110% 80% at 50% 44%,
-    rgba(80, 20, 170, 0.28)  0%,
-    rgba(50, 10, 120, 0.14) 40%,
-    transparent              70%
-  );
-  animation: welcome-breathe 8s ease-in-out infinite;
-  pointer-events: none;
-  will-change: opacity, transform;
-}
-
-/* Tight focused hot-spot under the logo */
-.welcome-glow-secondary {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    ellipse 55% 45% at 50% 42%,
-    rgb(var(--accent-rgb) / 0.14) 0%,
-    rgba(120, 40, 210, 0.06) 50%,
-    transparent              75%
-  );
-  animation: welcome-breathe 8s ease-in-out infinite 4s;
-  pointer-events: none;
-  will-change: opacity, transform;
-}
-
-/* Bottom gradient — lifts footer text off the dark canvas */
-.welcome-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to bottom,
-    transparent           0%,
-    transparent           44%,
-    rgba(3,  6, 16, 0.52) 68%,
-    rgba(3,  6, 16, 0.92) 100%
+    ellipse 72% 62% at 50% 46%,
+    #121218 0%,
+    #0a0a0d 50%,
+    #000000 100%
   );
   pointer-events: none;
-}
-
-@keyframes welcome-breathe {
-  0%, 100% { opacity: 0.80; transform: scale(1);    }
-  50%       { opacity: 1;    transform: scale(1.05); }
 }
 
 /* ── Corner badges ── */
@@ -1113,13 +1076,13 @@ summary:focus-visible,
   letter-spacing: 0.26em;
 }
 
-/* ── Logo ── */
+/* ── Centered content group (logo → wordmark → tagline → CTA) ── */
 
-.welcome-logo {
+.welcome-center {
   position: absolute;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -54%) translateY(14px);
+  transform: translate(-50%, -50%) translateY(10px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1129,171 +1092,109 @@ summary:focus-visible,
     transform var(--transition-slow);
 }
 
-.welcome-logo--in {
+.welcome-center--in {
   opacity: 1;
-  transform: translate(-50%, -54%) translateY(0);
-}
-
-/* Soft violet bloom behind the SVG mark */
-.welcome-logo-glow {
-  position: absolute;
-  width: 280px;
-  height: 220px;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -52%);
-  background: radial-gradient(
-    ellipse at 50% 55%,
-    rgb(var(--accent-rgb) / 0.16) 0%,
-    rgba(100, 30, 200, 0.08) 45%,
-    transparent              70%
-  );
-  pointer-events: none;
-  animation: welcome-breathe 8s ease-in-out infinite 2s;
-  will-change: opacity, transform;
+  transform: translate(-50%, -50%);
 }
 
 .welcome-logo-svg {
-  width: 116px;
-  height: 98px;
-  margin-bottom: 22px;
-  filter:
-    drop-shadow(0 0 12px rgb(var(--accent-light-rgb) / 0.45))
-    drop-shadow(0 0 28px rgba(120, 40, 220, 0.30));
+  width: 84px;
+  height: 71px;
+  margin-bottom: 24px;
+  /* §Technical-Terminal: crisp vector mark — no neon drop-shadow/blur */
+}
+
+/* §Technical-Terminal: the ACCESS wordmark as the brand vector (solid #EDF0F7),
+   extracted from public/ACCESS_WORDMARK.svg — replaces the CSS text title. */
+.welcome-wordmark-svg {
+  display: block;
+  height: 30px;
+  width: auto;
+  margin: 0 0 11px;
 }
 
 .welcome-wordmark {
   font-family: var(--font-sans, 'Inter', sans-serif);
-  font-size: 24px;
-  font-weight: 200;
-  letter-spacing: 0.60em;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   /* compensate so the word is truly centred despite trailing tracking */
-  padding-left: 0.60em;
-  color: rgba(255, 255, 255, 0.78);
+  padding-left: 0.14em;
+  color: #f4f4f6;
   text-transform: uppercase;
-  margin: 0 0 10px;
+  margin: 0 0 7px;
   line-height: 1;
-  text-shadow: 0 0 40px rgb(var(--accent-light-rgb) / 0.18);
 }
 
 .welcome-byline {
-  font-family: var(--font-sans, 'Inter', sans-serif);
-  font-size: 8px;
-  font-weight: 300;
-  letter-spacing: 0.50em;
-  padding-left: 0.50em;
-  color: rgba(255, 255, 255, 0.22);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.42em;
+  padding-left: 0.42em;
+  color: #475569;
   text-transform: uppercase;
-  margin: 0;
+  margin: 0 0 30px;
   line-height: 1;
 }
 
 /* ── Tagline ── */
 
 .welcome-tagline {
-  position: absolute;
-  bottom: 202px;
-  left: 0;
-  right: 0;
   text-align: center;
-  font-family: var(--font-sans, 'Inter', sans-serif);
-  font-size: 9.5px;
-  font-weight: 300;
-  letter-spacing: 0.34em;
-  padding-left: 0.34em;
-  color: rgba(255, 255, 255, 0.20);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  padding-left: 0.28em;
+  color: #64748b;
   text-transform: uppercase;
-  margin: 0;
-  opacity: 0;
-  transform: translateY(10px);
-  transition:
-    opacity   var(--transition-slow),
-    transform var(--transition-slow);
+  margin: 0 0 32px;
 }
 
-.welcome-tagline--in {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* ── Footer / CTA ── */
-
-.welcome-footer {
-  position: absolute;
-  bottom: 44px;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 15px;
-  opacity: 0;
-  transform: translateY(18px);
-  transition:
-    opacity   var(--transition-slow),
-    transform var(--transition-slow);
-}
-
-.welcome-footer--in {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.welcome-footer-rule {
-  width: 32px;
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgb(var(--accent-rgb) / 0.28),
-    transparent
-  );
-}
+/* ── CTA + session hint (now in the centered group) ── */
 
 .welcome-session-hint {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 8px;
   font-weight: 500;
   letter-spacing: 0.24em;
-  color: rgba(255, 255, 255, 0.16);
+  color: #6b7280;
   text-transform: uppercase;
-  margin: 0;
+  margin: 18px 0 0;
 }
 
+/* §Technical-Terminal: stark, filled brand-purple CTA — crisp 3px radius,
+   monospace label, no ambient glow / lift. */
 .welcome-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 14px 64px;
-  border-radius: var(--radius-md);
-  border: 1px solid rgb(var(--accent-rgb) / 0.32);
-  background: var(--surface-2);
-  color: rgba(255, 255, 255, 0.92);
-  font-family: var(--font-sans, Inter, sans-serif);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.18em;
-  padding-left: calc(64px + 0.18em);
+  padding: 14px 80px;
+  border-radius: 4px;
+  border: 1px solid var(--color-accent-base);
+  background: var(--color-accent-base);
+  color: #ffffff;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.20em;
+  padding-left: calc(80px + 0.20em);
   text-transform: uppercase;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgb(var(--accent-rgb) / 0.25);
   transition:
-    transform    var(--transition-standard),
-    box-shadow   var(--transition-standard),
+    background   var(--transition-standard),
     border-color var(--transition-standard);
 }
 
 .welcome-cta:hover {
-  transform: translateY(-3px) scale(1.018);
-  border-color: rgb(var(--accent-light-rgb) / 0.52);
-  box-shadow: 0 12px 32px rgb(var(--accent-rgb) / 0.35);
+  background: var(--color-accent-light);
+  border-color: var(--color-accent-light);
 }
 
 .welcome-cta:active {
-  transform: translateY(0) scale(0.972);
-  box-shadow:
-    0 0 18px rgb(var(--accent-rgb) / 0.18),
-    0 2px 8px rgba(0, 0, 0, 0.45);
+  background: var(--color-accent-base);
+  transform: translateY(1px);
 }
 
 .welcome-legal {

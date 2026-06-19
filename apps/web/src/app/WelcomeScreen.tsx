@@ -16,10 +16,8 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
 
   return (
     <div className="welcome-root">
-      <div className="welcome-glow-primary" />
-      <div className="welcome-glow-secondary" />
-      {/* glow-rim intentionally omitted — §2 polish */}
-      <div className="welcome-overlay" />
+      {/* Neutral monitor vignette — physicality without the violet glow. */}
+      <div className="welcome-vignette" />
 
       <div className={`welcome-corner welcome-corner-tl ${shown ? "welcome-corner--in" : ""}`}>
         <span className="welcome-status-dot" />
@@ -29,8 +27,8 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
         <span className="welcome-mono-tag welcome-mono-tag--accent">AMS Access</span>
       </div>
 
-      <div className={`welcome-logo ${shown ? "welcome-logo--in" : ""}`}>
-        <div className="welcome-logo-glow" />
+      {/* One cohesive centered block — logo → wordmark → tagline → CTA. */}
+      <div className={`welcome-center ${shown ? "welcome-center--in" : ""}`}>
         <svg className="welcome-logo-svg" viewBox="0 0 172 162" fill="none" aria-hidden="true">
           <path
             d="M2.00043 162L87.0004 2L172 162"
@@ -39,24 +37,11 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
             strokeLinecap="square"
             strokeLinejoin="miter"
           />
-          <path
-            d="M32 162L87 52L142 162"
-            stroke="rgb(var(--accent-rgb) / 0.25)"
-            strokeWidth="4"
-            strokeLinecap="square"
-            strokeLinejoin="miter"
-          />
         </svg>
-        <h1 className="welcome-wordmark">AMS</h1>
-        <p className="welcome-byline">Access</p>
-      </div>
-
-      <p className={`welcome-tagline ${shown ? "welcome-tagline--in" : ""}`}>
-        Fair · Secure · Proctored
-      </p>
-
-      <div className={`welcome-footer ${shown ? "welcome-footer--in" : ""}`}>
-        <div className="welcome-footer-rule" />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="welcome-wordmark-svg" src="/ACCESS_WORDMARK.svg" alt="Access" />
+        <p className="welcome-byline">by AMS</p>
+        <p className="welcome-tagline">Fair · Secure · Proctored</p>
         <button
           type="button"
           className="welcome-cta"
