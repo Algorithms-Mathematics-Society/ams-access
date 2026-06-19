@@ -918,14 +918,10 @@ const CountdownBadge = memo(function CountdownBadge({
   endAt: string;
   onExpiry?: () => void;
 }) {
-  const { remaining, phase, percentLeft } = useCountdown(endAt, onExpiry);
-  const R = 10;
-  const CIRC = 2 * Math.PI * R;
-  // Expired freezes the ring full; otherwise it sweeps down with the clock.
-  const offset = phase === "expired" ? 0 : CIRC * (1 - percentLeft);
+  const { remaining, phase } = useCountdown(endAt, onExpiry);
   const PHASE_COLOR: Record<CountdownPhase, string> = {
-    nominal: "var(--color-accent-base)",
-    warning: "var(--verdict-tle)",
+    nominal: "#e4e4e7",
+    warning: "#a1a1aa",
     critical: "var(--verdict-wa)",
     expired: "var(--text-dim)",
   };
@@ -940,7 +936,7 @@ const CountdownBadge = memo(function CountdownBadge({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: "8px",
+        gap: "6px",
         // A tinted pill contains the timer at the critical threshold so urgency
         // is signalled by shape, not colour alone.
         padding: isCritical ? "4px 12px" : "4px 0",
@@ -952,28 +948,6 @@ const CountdownBadge = memo(function CountdownBadge({
         animation: isCritical ? "countdown-pulse 1s ease-in-out infinite" : "none",
       }}
     >
-      <svg
-        width="28"
-        height="28"
-        viewBox="0 0 28 28"
-        style={{ transform: "rotate(-90deg)", flexShrink: 0 }}
-        aria-hidden="true"
-      >
-        <circle cx="14" cy="14" r={R} fill="none" stroke="rgba(148,163,184,0.1)" strokeWidth="2" />
-        <circle
-          cx="14"
-          cy="14"
-          r={R}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          strokeDasharray={`${CIRC}`}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          // Sweep and colour share one duration so the ring never lags the phase.
-          style={{ transition: "stroke-dashoffset 1s linear, stroke 1s linear" }}
-        />
-      </svg>
       {isExpired && (
         <Lock
           size={12}
@@ -3904,9 +3878,16 @@ export default function ContestPageClient() {
           <button
             type="button"
             onClick={() => setShowSupportModal(true)}
-            className="ic-btn ic-btn-amber"
+            className="ic-btn"
             title="Request support"
             aria-label="Request support"
+            style={{ color: "#71717a" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = "#71717a";
+            }}
           >
             <LifeBuoy size={18} strokeWidth={1.75} />
           </button>
@@ -3915,9 +3896,16 @@ export default function ContestPageClient() {
             <button
               type="button"
               onClick={() => setSubmitConfirm(true)}
-              className="ic-btn ic-btn-red"
+              className="ic-btn"
               title="Submit & exit contest"
               aria-label="Submit and exit contest"
+              style={{ color: "#71717a" }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#71717a";
+              }}
             >
               <LogOut size={18} strokeWidth={1.75} />
             </button>
@@ -5815,11 +5803,6 @@ export default function ContestPageClient() {
                             color: "#475569",
                           }}
                         >
-                          <Send
-                            size={22}
-                            strokeWidth={1.5}
-                            style={{ opacity: 0.35, color: "#64748b" }}
-                          />
                           <span
                             style={{
                               fontSize: "12px",
