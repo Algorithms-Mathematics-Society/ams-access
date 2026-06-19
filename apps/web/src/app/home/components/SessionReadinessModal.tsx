@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api-client";
@@ -13,11 +13,10 @@ import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { ReadinessState, ReadinessStatus } from "./types";
 import type { ReadinessReport } from "@ams/api-client";
 
+// §1 — Telemetry-dot check row: label left, single 6px dot flush right. No status text.
 function PreflightCheckItem({
   label,
   status,
-  successLabel,
-  failLabel,
   theme,
   variant = "required",
 }: {
@@ -30,14 +29,15 @@ function PreflightCheckItem({
 }) {
   const c = getThemeColors(theme);
   const failColor = variant === "optional" ? "#f59e0b" : "#ef4444";
-  const dotColor = status === "ok" ? c.dot : status === "fail" ? failColor : c.accent;
-  const valueColor = status === "ok" ? c.dot : status === "fail" ? failColor : c.accent;
-  const valueLabel =
+  const dotColor = status === "ok" ? "#22c55e" : status === "fail" ? failColor : c.accent;
+  const dotAriaLabel =
     status === "ok"
-      ? successLabel.toUpperCase()
+      ? "pass"
       : status === "fail"
-        ? failLabel.toUpperCase()
-        : "Checking...";
+        ? variant === "optional"
+          ? "warning"
+          : "fail"
+        : "checking";
 
   return (
     <div
@@ -53,36 +53,26 @@ function PreflightCheckItem({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: c.textMutedStrong,
+          color: "#a1a1aa",
           letterSpacing: "0.02em",
         }}
       >
         {label}
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <div
-          style={{
-            width: "5px",
-            height: "5px",
-            borderRadius: "50%",
-            background: dotColor,
-            flexShrink: 0,
-            boxShadow: status !== "checking" ? `0 0 6px ${dotColor}` : "none",
-            animation: status === "checking" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
-          }}
-        />
-        <span
-          style={{
-            fontSize: "11px",
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: 600,
-            letterSpacing: "0.06em",
-            color: valueColor,
-          }}
-        >
-          {valueLabel}
-        </span>
-      </div>
+      {/* Single 6px dot flush right — dot column stays perfectly aligned */}
+      <div
+        role="img"
+        aria-label={dotAriaLabel}
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: dotColor,
+          flexShrink: 0,
+          boxShadow: status !== "checking" ? `0 0 6px ${dotColor}` : "none",
+          animation: status === "checking" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+        }}
+      />
     </div>
   );
 }
@@ -321,6 +311,9 @@ export function SessionReadinessModal({
   const currentProgress = scanStatus === "scanning" ? 0 : score;
   const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
 
+  // §4 — Technical details: smooth height+opacity reveal
+  const techDetailsContentRef = useRef<HTMLDivElement>(null);
+
   return (
     <div
       role="dialog"
@@ -371,12 +364,10 @@ export function SessionReadinessModal({
           }}
         />
 
+        {/* §2 — Header: flat, no border/bg box */}
         <section
           style={{
             position: "relative",
-            border: `1px solid ${decisionTone.border}`,
-            background: decisionTone.bg,
-            borderRadius: "var(--radius-lg)",
             padding: "20px 22px",
             display: "flex",
             alignItems: "flex-start",
@@ -414,18 +405,15 @@ export function SessionReadinessModal({
               {context.message}
             </p>
           </div>
+          {/* §2 — "100% complete": raw percentage, no border/bg box */}
           <div
             style={{
               flexShrink: 0,
               minWidth: "86px",
-              border: `1px solid ${decisionTone.border}`,
-              background: isLight ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.16)",
-              borderRadius: "var(--radius-md)",
-              padding: "10px 12px",
-              textAlign: "center",
+              textAlign: "right",
             }}
           >
-            <div style={{ color: decisionTone.color, fontSize: "24px", fontWeight: 800 }}>
+            <div style={{ color: "#22c55e", fontSize: "24px", fontWeight: 800 }}>
               {Math.round(currentProgress)}%
             </div>
             <div
@@ -464,19 +452,15 @@ export function SessionReadinessModal({
               <h4 style={{ color: c.text, fontSize: "13px", fontWeight: 750, margin: 0 }}>
                 Required checks
               </h4>
+              {/* §2 — sub-header: plain muted text, no pill */}
               <span
                 style={{
-                  color: context.failedRequired > 0 ? "#fca5a5" : c.dot,
-                  background:
-                    context.failedRequired > 0 ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)",
-                  border: `1px solid ${context.failedRequired > 0 ? "rgba(239,68,68,0.22)" : "rgba(34,197,94,0.2)"}`,
-                  borderRadius: "999px",
-                  padding: "3px 8px",
+                  color: "#71717a",
                   fontSize: "11px",
-                  fontWeight: 700,
+                  fontWeight: 600,
                 }}
               >
-                {context.failedRequired > 0 ? `${context.failedRequired} to fix` : "Required ready"}
+                {context.failedRequired > 0 ? `${context.failedRequired} to fix` : "Passing"}
               </span>
             </div>
             <p
@@ -524,15 +508,12 @@ export function SessionReadinessModal({
               <h4 style={{ color: c.text, fontSize: "13px", fontWeight: 750, margin: 0 }}>
                 Optional warnings
               </h4>
+              {/* §2 — sub-header: plain muted text, no pill */}
               <span
                 style={{
-                  color: optionalWarningCount > 0 ? "#f59e0b" : c.textMuted,
-                  background: optionalWarningCount > 0 ? "rgba(245,158,11,0.1)" : "transparent",
-                  border: `1px solid ${optionalWarningCount > 0 ? "rgba(245,158,11,0.24)" : c.border}`,
-                  borderRadius: "999px",
-                  padding: "3px 8px",
+                  color: "#71717a",
                   fontSize: "11px",
-                  fontWeight: 700,
+                  fontWeight: 600,
                 }}
               >
                 {optionalWarningCount > 0 ? `${optionalWarningCount} advisory` : "Advisory only"}
@@ -565,6 +546,7 @@ export function SessionReadinessModal({
           </section>
         </div>
 
+        {/* macOS accessibility-denied recovery panel — logic untouched */}
         {showAccessibilityRecovery && (
           <section
             style={{
@@ -654,9 +636,8 @@ export function SessionReadinessModal({
           </section>
         )}
 
-        <details
-          open={showTechnicalDetails}
-          onToggle={(event) => setShowTechnicalDetails(event.currentTarget.open)}
+        {/* §4 — Technical details: smooth height+opacity CSS transition */}
+        <div
           style={{
             border: `1px solid ${c.border}`,
             background: isLight ? "#f8fafc" : c.innerBg,
@@ -664,14 +645,20 @@ export function SessionReadinessModal({
             overflow: "hidden",
           }}
         >
-          <summary
+          <button
+            type="button"
+            aria-expanded={showTechnicalDetails}
+            onClick={() => setShowTechnicalDetails((v) => !v)}
             style={{
+              width: "100%",
               cursor: "pointer",
               padding: "12px 14px",
               color: c.textMutedStrong,
               fontSize: "12px",
               fontWeight: 600,
-              listStyle: "none",
+              background: "transparent",
+              border: "none",
+              fontFamily: "inherit",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -682,49 +669,60 @@ export function SessionReadinessModal({
             <span style={{ color: c.textMuted, fontSize: "11px" }}>
               {showTechnicalDetails ? "Hide" : "Show"}
             </span>
-          </summary>
+          </button>
           <div
+            ref={techDetailsContentRef}
             style={{
-              borderTop: `1px solid ${c.border}`,
-              padding: "12px 14px",
-              maxHeight: "150px",
-              overflowY: "auto",
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: "11px",
-              color: "#A8A8A8",
-              display: "flex",
-              flexDirection: "column",
-              gap: "4px",
+              maxHeight: showTechnicalDetails ? "200px" : "0px",
+              opacity: showTechnicalDetails ? 1 : 0,
+              overflow: "hidden",
+              transition: "max-height 0.28s ease, opacity 0.22s ease",
             }}
           >
-            {consoleLogs.map((log, index) => (
-              <div
-                key={index}
-                style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}
-              >
-                {parseLogLine(log, c.dot)}
-              </div>
-            ))}
-            {scanStatus === "scanning" && (
-              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <span>Checking your device</span>
-                <span
-                  className="terminal-caret"
-                  style={{
-                    display: "inline-block",
-                    width: "6px",
-                    height: "12px",
-                    background: "currentColor",
-                    animation: "pulse-dot 1s ease infinite",
-                  }}
+            <div
+              style={{
+                borderTop: `1px solid ${c.border}`,
+                padding: "12px 14px",
+                maxHeight: "150px",
+                overflowY: "auto",
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: "11px",
+                color: "#A8A8A8",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+              }}
+            >
+              {consoleLogs.map((log, index) => (
+                <div
+                  key={index}
+                  style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}
                 >
-                  ▎
-                </span>
-              </div>
-            )}
+                  {parseLogLine(log, c.dot)}
+                </div>
+              ))}
+              {scanStatus === "scanning" && (
+                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <span>Checking your device</span>
+                  <span
+                    className="terminal-caret"
+                    style={{
+                      display: "inline-block",
+                      width: "6px",
+                      height: "12px",
+                      background: "currentColor",
+                      animation: "pulse-dot 1s ease infinite",
+                    }}
+                  >
+                    ▎
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-        </details>
+        </div>
 
+        {/* §3 — Button bar */}
         <div
           style={{
             display: "flex",
@@ -737,15 +735,16 @@ export function SessionReadinessModal({
         >
           {canProceed ? (
             onProceed ? (
+              /* §3 — Primary: AMS purple, borderRadius:0 (brutalist) */
               <button
                 onClick={() => void onProceed()}
                 style={{
                   minWidth: "170px",
                   height: "42px",
-                  borderRadius: "var(--radius-md)",
-                  border: `1px solid ${c.dot}`,
-                  background: c.dot,
-                  color: isLight ? "#ffffff" : "#04110a",
+                  borderRadius: "0",
+                  border: "none",
+                  background: "var(--color-accent-base)",
+                  color: "#ffffff",
                   fontSize: "13px",
                   fontWeight: 700,
                   fontFamily: "inherit",
@@ -763,10 +762,10 @@ export function SessionReadinessModal({
                 style={{
                   minWidth: "170px",
                   height: "42px",
-                  borderRadius: "var(--radius-md)",
-                  border: `1px solid ${c.dot}`,
-                  background: c.dot,
-                  color: isLight ? "#ffffff" : "#04110a",
+                  borderRadius: "0",
+                  border: "none",
+                  background: "var(--color-accent-base)",
+                  color: "#ffffff",
                   fontSize: "13px",
                   fontWeight: 700,
                   fontFamily: "inherit",
@@ -787,15 +786,15 @@ export function SessionReadinessModal({
               style={{
                 minWidth: "170px",
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${c.accentBorder}`,
-                background: c.accentLight,
-                color: c.accentText,
+                borderRadius: "0",
+                border: "none",
+                background: "var(--color-accent-base)",
+                color: "#ffffff",
                 fontSize: "13px",
                 fontWeight: 700,
                 fontFamily: "inherit",
                 cursor: "not-allowed",
-                opacity: 0.72,
+                opacity: 0.5,
               }}
             >
               {primaryActionLabel}
@@ -806,10 +805,10 @@ export function SessionReadinessModal({
               style={{
                 minWidth: "170px",
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid #f59e0b",
-                background: "rgba(245, 158, 11, 0.12)",
-                color: "#f59e0b",
+                borderRadius: "0",
+                border: "none",
+                background: "var(--color-accent-base)",
+                color: "#ffffff",
                 fontSize: "13px",
                 fontWeight: 700,
                 fontFamily: "inherit",
@@ -824,10 +823,10 @@ export function SessionReadinessModal({
               style={{
                 minWidth: "170px",
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${c.border}`,
-                background: c.innerBg,
-                color: c.textMutedStrong,
+                borderRadius: "0",
+                border: "none",
+                background: "var(--color-accent-base)",
+                color: "#ffffff",
                 fontSize: "13px",
                 fontWeight: 700,
                 fontFamily: "inherit",
@@ -837,22 +836,29 @@ export function SessionReadinessModal({
               {primaryActionLabel}
             </button>
           )}
+          {/* §3 — Secondary buttons: flat muted text, no border/bg */}
           {scanStatus !== "scanning" && (
             <button
               onClick={handleRescan}
               disabled={isRescanning}
               style={{
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${c.border}`,
                 background: "transparent",
-                color: c.textMutedStrong,
+                border: "none",
+                color: "#a1a1aa",
                 padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: 600,
                 fontFamily: "inherit",
                 cursor: isRescanning ? "not-allowed" : "pointer",
                 opacity: isRescanning ? 0.62 : 1,
+                transition: "color 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
               }}
             >
               Run checks again
@@ -863,15 +869,21 @@ export function SessionReadinessModal({
               onClick={onSettingsRedirect}
               style={{
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${c.border}`,
                 background: "transparent",
-                color: c.textMutedStrong,
+                border: "none",
+                color: "#a1a1aa",
                 padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: 600,
                 fontFamily: "inherit",
                 cursor: "pointer",
+                transition: "color 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
               }}
             >
               Open settings
@@ -882,15 +894,21 @@ export function SessionReadinessModal({
               onClick={onClose}
               style={{
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${c.border}`,
                 background: "transparent",
-                color: c.textMuted,
+                border: "none",
+                color: "#a1a1aa",
                 padding: "0 16px",
                 fontSize: "13px",
                 fontWeight: 500,
                 fontFamily: "inherit",
                 cursor: "pointer",
+                transition: "color 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
               }}
             >
               Back to contests
@@ -901,15 +919,21 @@ export function SessionReadinessModal({
               onClick={() => setHelpOpen(true)}
               style={{
                 height: "42px",
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${c.border}`,
                 background: "transparent",
-                color: c.textMutedStrong,
+                border: "none",
+                color: "#a1a1aa",
                 padding: "0 16px",
                 fontSize: "13px",
                 fontWeight: 600,
                 fontFamily: "inherit",
                 cursor: "pointer",
+                transition: "color 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
               }}
             >
               Get help
