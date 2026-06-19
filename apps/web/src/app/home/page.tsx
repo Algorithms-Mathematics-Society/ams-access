@@ -362,7 +362,18 @@ export default function HomePage() {
         ? await fetchOrganizerOverrides(API_URL, contestId, deviceId)
         : [];
       if (isCancelled()) return;
-      const basePolicy = sessionPolicy(strict ? "strict_contest" : "internal_pilot");
+      // Pass the OS so platform-conditioned policy applies — without it the gate
+      // used the platform-less defaults and hard-blocked macOS keyboard lockdown
+      // (which is meant to be advisory on macOS). Also lets the Windows-only
+      // display/RDP checks enforce here, matching the onboarding gate.
+      const devicePlatform = await invoke<{ os?: string }>("get_platform")
+        .then((p) => p?.os)
+        .catch(() => undefined);
+      if (isCancelled()) return;
+      const basePolicy = sessionPolicy(
+        strict ? "strict_contest" : "internal_pilot",
+        devicePlatform
+      );
       const policy = applyOrganizerOverrides(basePolicy, overrides);
       if (overrides.length > 0) {
         const kinds = overrides.map((grant) => grant.check_kind).join(", ");
