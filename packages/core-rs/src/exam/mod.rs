@@ -195,6 +195,7 @@ impl SessionPolicy {
         // silently disarm on exactly the lower-trust non-admin machines.
         let is_windows =
             matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
+        let is_macos = matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("macos"));
         let severity = if strict {
             BlockingSeverity::Block
         } else {
@@ -241,6 +242,12 @@ impl SessionPolicy {
                         (false, BlockingSeverity::Warning)
                     }
                 }
+                // KeyboardLockdown is advisory (warning, not required) on macOS:
+                // CGEventTap requires Accessibility permission which is often not
+                // granted on day-of and cannot be obtained without leaving the exam
+                // shell. Linux and Windows retain required+Block so their
+                // lockdown invariants are unchanged.
+                CheckKind::KeyboardLockdown if is_macos => (false, BlockingSeverity::Warning),
                 _ => (required, severity.clone()),
             };
             ReadinessRequirement {
@@ -1156,6 +1163,108 @@ mod tests {
                 .expect("check present");
             assert!(!check.blocking);
         }
+        // KeyboardLockdown: with the platform-aware policy builder (macos),
+        // the requirement is advisory. Verified in full by
+        // `macos_keyboard_lockdown_is_advisory_not_blocking`; here we just
+        // confirm it does not block on a passing macOS device state.
+        let kbd = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::KeyboardLockdown)
+            .expect("keyboard_lockdown check present");
+        assert!(!kbd.blocking, "keyboard_lockdown must not block on macOS");
+    }
+
+    #[test]
+    fn macos_keyboard_lockdown_is_advisory_not_blocking() {
+        // macOS strict contest: keyboard lockdown failure must NOT block entry.
+        // Linux and Windows must still be required+Block.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("macos"),
+        );
+        let kbd_req = policy
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::KeyboardLockdown)
+            .expect("keyboard_lockdown requirement present");
+        assert!(
+            !kbd_req.required,
+            "keyboard_lockdown must be non-required on macOS"
+        );
+        assert!(
+            matches!(kbd_req.severity, BlockingSeverity::Warning),
+            "keyboard_lockdown severity must be Warning on macOS, got {:?}",
+            kbd_req.severity
+        );
+
+        // Simulate keyboard lockdown failing on macOS — must NOT block.
+        let mut state = passing_state();
+        state.platform = Some("macos".to_string());
+        state.keyboard = Some(KeyboardInterceptResult {
+            active: false,
+            method: "accessibility_denied".to_string(),
+            platform: "macos".to_string(),
+        });
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_ne!(
+            report.decision,
+            EnforcementDecision::Blocked,
+            "macOS keyboard lockdown failure must not block contest entry"
+        );
+        assert!(
+            !report
+                .blocking_reasons
+                .contains(&FailureReasonCode::KeyboardLockdownUnavailable),
+            "KeyboardLockdownUnavailable must not appear in blocking_reasons on macOS"
+        );
+        let kbd_check = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::KeyboardLockdown)
+            .expect("keyboard_lockdown check present");
+        assert!(!kbd_check.blocking);
+        assert_eq!(kbd_check.outcome, CheckOutcome::Warn);
+
+        // Linux: keyboard lockdown must remain required+Block.
+        let linux_policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        let linux_kbd = linux_policy
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::KeyboardLockdown)
+            .expect("keyboard_lockdown present on linux policy");
+        assert!(
+            linux_kbd.required,
+            "keyboard_lockdown must be required on Linux"
+        );
+        assert!(
+            matches!(linux_kbd.severity, BlockingSeverity::Block),
+            "keyboard_lockdown must be Block on Linux"
+        );
+
+        // Windows: keyboard lockdown must remain required+Block.
+        let windows_policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let windows_kbd = windows_policy
+            .checks
+            .iter()
+            .find(|r| r.kind == CheckKind::KeyboardLockdown)
+            .expect("keyboard_lockdown present on windows policy");
+        assert!(
+            windows_kbd.required,
+            "keyboard_lockdown must be required on Windows"
+        );
+        assert!(
+            matches!(windows_kbd.severity, BlockingSeverity::Block),
+            "keyboard_lockdown must be Block on Windows"
+        );
     }
 
     #[test]

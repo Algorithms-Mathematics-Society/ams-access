@@ -170,6 +170,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   // Prefix match so "windows_no_admin" (unelevated Windows) is still treated as
   // Windows — mirrors core-rs; otherwise enforcement disarms on non-admin machines.
   const isWindows = typeof platform === "string" && platform.toLowerCase().startsWith("windows");
+  const isMacos = typeof platform === "string" && platform.toLowerCase().startsWith("macos");
   return {
     profile,
     checks: POLICY_CHECKS.map((kind) => {
@@ -205,6 +206,18 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           kind,
           required: block,
           severity: block ? ("block" as const) : ("warning" as const),
+          organizer_override_allowed: !strict,
+        };
+      }
+      // KeyboardLockdown is advisory (warning, not required) on macOS only.
+      // CGEventTap requires Accessibility permission which is often unavailable
+      // at contest time on macOS. Linux and Windows retain required+block so
+      // their lockdown invariants are unchanged.
+      if (kind === "keyboard_lockdown" && isMacos) {
+        return {
+          kind,
+          required: false,
+          severity: "warning" as const,
           organizer_override_allowed: !strict,
         };
       }
