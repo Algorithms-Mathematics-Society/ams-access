@@ -95,6 +95,7 @@ export default function HomePage() {
   const [resumeBusy, setResumeBusy] = useState(false);
   const [resumeVerification, setResumeVerification] = useState<ResumeVerificationState>("none");
   const [userEmail, setUserEmail] = useState("tester@ams.local");
+  const [userDisplayEmail, setUserDisplayEmail] = useState("");
   const [userEmailHydrated, setUserEmailHydrated] = useState(false);
   const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
   const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
@@ -705,6 +706,7 @@ export default function HomePage() {
   useEffect(() => {
     const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "tester@ams.local";
     setUserEmail(email);
+    setUserDisplayEmail(localStorage.getItem(STORAGE_KEYS.USER_DISPLAY_EMAIL) ?? email);
     setUserEmailHydrated(true);
     const cancelledRef = { current: false };
     const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
@@ -1204,7 +1206,7 @@ export default function HomePage() {
                     fontWeight: 500,
                   }}
                 >
-                  {userEmail}
+                  {userDisplayEmail || userEmail}
                 </span>
               </>
             )}

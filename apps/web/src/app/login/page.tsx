@@ -69,8 +69,16 @@ export default function LoginPage() {
         setError("That code didn't match. Request a new one.");
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { email?: string; token?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        email?: string;
+        display_email?: string;
+        token?: string;
+      };
       localStorage.setItem(STORAGE_KEYS.USER_EMAIL, data.email ?? email.trim());
+      localStorage.setItem(
+        STORAGE_KEYS.USER_DISPLAY_EMAIL,
+        data.display_email ?? data.email ?? email.trim()
+      );
       if (data.token) setCandidateToken(data.token);
       setTimeout(() => router.push("/home"), 400);
     } catch {

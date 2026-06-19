@@ -3475,6 +3475,12 @@ export default function ContestPageClient() {
   ).length;
   const candidateEmail =
     typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "";
+  // Real contact address for display (where results actually go). The synthetic
+  // login identity above stays the keying value for &email= lookups.
+  const candidateDisplayEmail =
+    typeof window !== "undefined"
+      ? (localStorage.getItem(STORAGE_KEYS.USER_DISPLAY_EMAIL) ?? candidateEmail)
+      : candidateEmail;
   useEffect(() => {
     if (!availableProblemTabs.includes(problemTab)) setProblemTab("statement");
     setCopiedSampleKey(null);
@@ -6622,16 +6628,16 @@ export default function ContestPageClient() {
                   marginTop: 4,
                 }}
               >
-                Results unlock in 48 hours
-                {candidateEmail ? (
+                Results unlock in 48 hours.
+                {candidateDisplayEmail ? (
                   <>
                     {" "}
-                    — we&rsquo;ll email you at{" "}
-                    <span style={{ color: "#94a3b8" }}>{candidateEmail}</span> when they&rsquo;re
-                    ready.
+                    We&rsquo;ll email you at{" "}
+                    <span style={{ color: "#94a3b8" }}>{candidateDisplayEmail}</span> when
+                    they&rsquo;re ready.
                   </>
                 ) : (
-                  <> — we&rsquo;ll email you when they&rsquo;re ready.</>
+                  <> We&rsquo;ll email you when they&rsquo;re ready.</>
                 )}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 12 }}>
