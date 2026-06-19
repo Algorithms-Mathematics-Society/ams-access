@@ -125,23 +125,6 @@ jobs:
           [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
           cp "$bin" apps/desktop/src-tauri/helpers/ams-access-networkhelper
 
-      - name: Sign network helper (macOS — Tauri does not deep-sign nested bundle binaries)
-        if: runner.os == 'macOS'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          # Notarization rejects unsigned nested Mach-O binaries. Tauri signs the
-          # main executable + the .app, but NOT helpers staged under Resources/.
-          # Sign the helper inside-out (hardened runtime + secure timestamp +
-          # Developer ID) BEFORE the Tauri build seals the outer bundle.
-          codesign --force --options runtime --timestamp \
-            --sign "$APPLE_SIGNING_IDENTITY" \
-            apps/desktop/src-tauri/helpers/ams-access-networkhelper
-          codesign --verify --strict --verbose=2 \
-            apps/desktop/src-tauri/helpers/ams-access-networkhelper
-          codesign -dvvv apps/desktop/src-tauri/helpers/ams-access-networkhelper 2>&1 \
-            | grep -Ei "authority|timestamp|runtime|flags" || true
-
       - name: Build Tauri app
         working-directory: apps/desktop
         env:

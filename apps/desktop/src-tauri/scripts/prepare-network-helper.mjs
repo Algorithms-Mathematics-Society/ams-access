@@ -84,14 +84,21 @@ if (!isMacOS) {
 
   // Sign with hardened runtime + secure timestamp so notarization accepts it.
   // APPLE_SIGNING_IDENTITY is set by CI before this script runs.
+  // BOTH bundled copies must be signed: tauri.conf.json bundles the macOS-named
+  // helper AND the linux-named copy (com.ams.access.networkhelper +
+  // ams-access-networkhelper) as resources, and notarization rejects ANY unsigned
+  // nested Mach-O. Signing only the first left ams-access-networkhelper unsigned
+  // → "binary is not signed / no hardened runtime / no secure timestamp".
   const signingIdentity = process.env.APPLE_SIGNING_IDENTITY;
   if (signingIdentity) {
-    execFileSync(
-      "codesign",
-      ["--force", "--sign", signingIdentity, "--options", "runtime", "--timestamp", bundledHelper],
-      { stdio: "inherit" }
-    );
-    console.log(`Signed network helper with identity: ${signingIdentity}`);
+    for (const target of [bundledHelper, bundledHelperLinux]) {
+      execFileSync(
+        "codesign",
+        ["--force", "--sign", signingIdentity, "--options", "runtime", "--timestamp", target],
+        { stdio: "inherit" }
+      );
+    }
+    console.log(`Signed both network-helper copies with identity: ${signingIdentity}`);
   } else {
     console.log("APPLE_SIGNING_IDENTITY not set — skipping helper codesign (local build).");
   }
