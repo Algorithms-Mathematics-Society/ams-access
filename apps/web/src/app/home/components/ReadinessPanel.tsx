@@ -27,7 +27,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
     <div
       style={{
         background: themeColors.cardBg,
-        border: `1px solid ${themeColors.border}`,
+        border: "1px solid #27272a",
         borderRadius: "var(--radius-md)",
         padding: "24px",
         boxShadow: "none",

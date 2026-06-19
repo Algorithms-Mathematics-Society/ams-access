@@ -22,9 +22,9 @@ const toneTokens: Record<Tone, { text: string; bg: string; border: string; icon:
     icon: CheckCircle,
   },
   warning: {
-    text: "#fbbf24",
-    bg: "rgba(245,158,11,0.08)",
-    border: "rgba(245,158,11,0.24)",
+    text: "#fde047",
+    bg: "rgba(234,179,8,0.10)",
+    border: "rgba(234,179,8,0.30)",
     icon: AlertCircle,
   },
   danger: {

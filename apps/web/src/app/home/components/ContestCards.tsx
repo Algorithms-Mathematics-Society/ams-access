@@ -467,12 +467,12 @@ export const ActiveContestCard = memo(
           }`,
           borderLeft: `2px solid ${entryTone.rail}`,
           borderRadius: "var(--radius-lg)",
-          padding: "22px 24px",
+          padding: "18px 20px",
           transition: "background var(--transition-fast), border-color var(--transition-fast)",
           boxShadow: "var(--elevation-1)",
           display: "flex",
           flexDirection: "column",
-          gap: "16px",
+          gap: "12px",
           position: "relative",
           overflow: "hidden",
           opacity:
@@ -563,10 +563,10 @@ export const ActiveContestCard = memo(
             style={{
               fontFamily: "'JetBrains Mono', monospace",
               fontVariantNumeric: "tabular-nums",
-              fontSize: hero.big ? "var(--text-xl)" : "19px",
-              fontWeight: 600,
+              fontSize: hero.big ? "16px" : "15px",
+              fontWeight: 700,
               letterSpacing: "-0.01em",
-              lineHeight: hero.big ? 1.1 : 1.05,
+              lineHeight: 1.2,
               color: themeColors.text,
             }}
           >
@@ -668,7 +668,7 @@ export const ActiveContestCard = memo(
                 />
               )
             )}
-            {resultsReady ? "View results" : entryState.ctaLabel}
+            {entryState.phase === "ended" ? "View Results" : entryState.ctaLabel}
           </Button>
         </div>
 

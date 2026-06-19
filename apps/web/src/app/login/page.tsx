@@ -226,7 +226,7 @@ export default function LoginPage() {
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#a1a1aa"
+                  stroke="var(--color-accent-base)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -251,7 +251,7 @@ export default function LoginPage() {
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#a1a1aa"
+                  stroke="var(--color-accent-base)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -276,7 +276,7 @@ export default function LoginPage() {
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#a1a1aa"
+                  stroke="var(--color-accent-base)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -303,6 +303,7 @@ export default function LoginPage() {
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
           <div className="login-form-sub">AMS Access &middot; A calm, proctored exam space</div>
+          <div className="login-rule" />
 
           {mode === "otp" ? (
             <form

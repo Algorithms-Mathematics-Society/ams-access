@@ -1253,14 +1253,16 @@ export default function HomePage() {
                 />
               </div>
 
-              <ReadinessWidget
-                readiness={readiness}
-                onSettingsRedirect={() => setActiveNav("settings")}
-                theme={theme}
-                onResolve={(key) => setActiveResolveModal(key)}
-                context={contestantReadiness}
-                onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
-              />
+              <div style={{ alignSelf: "start" }}>
+                <ReadinessWidget
+                  readiness={readiness}
+                  onSettingsRedirect={() => setActiveNav("settings")}
+                  theme={theme}
+                  onResolve={(key) => setActiveResolveModal(key)}
+                  context={contestantReadiness}
+                  onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
+                />
+              </div>
             </div>
           )}
 

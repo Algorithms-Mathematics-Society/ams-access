@@ -62,7 +62,7 @@ export function SessionActionsPanel({
     <div
       style={{
         background: c.cardBg,
-        border: `1px solid ${c.border}`,
+        border: "1px solid #27272a",
         borderRadius: "var(--radius-md)",
         padding: "20px",
         display: "grid",
@@ -106,6 +106,8 @@ export function SessionActionsPanel({
                 minWidth: 0,
                 cursor: inviteCodeBusy ? "not-allowed" : "text",
                 opacity: inviteCodeBusy ? 0.75 : 1,
+                background: "#1A1A24",
+                border: "1px solid #27272a",
               }}
             />
             <Button
@@ -254,7 +256,7 @@ export function SessionActionsPanel({
 
       <div
         style={{
-          borderLeft: `1px solid ${c.border}`,
+          borderLeft: "1px solid #27272a",
           paddingLeft: "18px",
           display: "flex",
           flexDirection: "column",
