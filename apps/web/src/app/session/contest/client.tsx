@@ -6118,7 +6118,7 @@ export default function ContestPageClient() {
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            color: proctoringOk ? "var(--verdict-ac)" : "var(--verdict-wa)",
+            color: proctoringOk ? "#71717a" : "#ef4444",
           }}
         >
           {proctoringOk ? (
@@ -6161,22 +6161,14 @@ export default function ContestPageClient() {
               cy="4.5"
               r="2"
               stroke={
-                faceStatus === "ok"
-                  ? "var(--verdict-ac)"
-                  : faceStatus === "away"
-                    ? "var(--verdict-tle)"
-                    : "var(--text-dim)"
+                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"
               }
               strokeWidth="1.1"
             />
             <path
               d="M1.5 11c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"
               stroke={
-                faceStatus === "ok"
-                  ? "var(--verdict-ac)"
-                  : faceStatus === "away"
-                    ? "var(--verdict-tle)"
-                    : "var(--text-dim)"
+                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"
               }
               strokeWidth="1.1"
               strokeLinecap="round"
@@ -6186,11 +6178,7 @@ export default function ContestPageClient() {
             style={{
               fontSize: "11px",
               color:
-                faceStatus === "ok"
-                  ? "var(--verdict-ac)"
-                  : faceStatus === "away"
-                    ? "var(--verdict-tle)"
-                    : "var(--text-dim)",
+                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a",
               letterSpacing: "0.06em",
             }}
           >
@@ -6210,7 +6198,7 @@ export default function ContestPageClient() {
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            color: online ? "var(--verdict-ac)" : "var(--verdict-tle)",
+            color: online ? "#71717a" : "#f59e0b",
           }}
         >
           {online ? (
@@ -6255,7 +6243,7 @@ export default function ContestPageClient() {
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            color: saveIndicator.color,
+            color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
           }}
         >
           <Save size={13} strokeWidth={2} aria-hidden="true" />
@@ -6284,23 +6272,15 @@ export default function ContestPageClient() {
         {/* Keyboard intercept */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-            <rect
-              x="1"
-              y="2.5"
-              width="10"
-              height="7"
-              rx="1.5"
-              stroke="var(--verdict-ac)"
-              strokeWidth="1.1"
-            />
+            <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
             <path
               d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
-              stroke="var(--verdict-ac)"
+              stroke="#71717a"
               strokeWidth="0.9"
               strokeLinecap="round"
             />
           </svg>
-          <span style={{ fontSize: "11px", color: "var(--verdict-ac)", letterSpacing: "0.06em" }}>
+          <span style={{ fontSize: "11px", color: "#71717a", letterSpacing: "0.06em" }}>
             Keyboard locked
           </span>
         </div>
