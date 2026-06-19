@@ -303,7 +303,6 @@ export default function LoginPage() {
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
           <div className="login-form-sub">AMS Access &middot; A calm, proctored exam space</div>
-          <div className="login-rule" />
 
           {mode === "otp" ? (
             <form

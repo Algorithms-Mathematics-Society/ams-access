@@ -287,18 +287,25 @@ summary:focus-visible,
 
 .login-root {
   display: grid;
-  grid-template-columns: 44% 1fr;
+  grid-template-columns: 45% 55%;
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-mono);
-  background: var(--color-obsidian-base);
+  /* §Technical-Terminal: match welcome screen's near-black canvas */
+  background: #060608;
   color: var(--color-text-primary);
 }
 
 /* ── Left pane ── */
 .login-left {
-  background: var(--surface-1);
-  border-right: 1px solid var(--color-border-base);
+  /* §Technical-Terminal: neutral vignette — no purple tint */
+  background: radial-gradient(
+    ellipse 80% 70% at 50% 50%,
+    #121218 0%,
+    #0a0a0d 55%,
+    #060608 100%
+  );
+  border-right: 1px solid rgba(255,255,255,0.05);
   display: flex;
   flex-direction: column;
   padding: 44px 52px;
@@ -338,13 +345,14 @@ summary:focus-visible,
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  text-align: center;
-  padding: 0 8px;
+  text-align: left;
+  /* §align: same left edge as .login-logo above */
+  padding: 0;
 }
 
-.login-brand-mark { margin-bottom: 28px; opacity: 0.92; }
+.login-brand-mark { margin-bottom: 28px; opacity: 0.92; align-self: flex-start; }
 
 .login-brand-headline {
   font-size: 24px;
@@ -354,6 +362,7 @@ summary:focus-visible,
   line-height: 1.2;
   margin-bottom: 12px;
   font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  text-align: left;
 }
 
 .login-brand-headline em {
@@ -367,7 +376,8 @@ summary:focus-visible,
   color: var(--color-text-faint);
   font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
   margin-bottom: 40px;
-  max-width: 240px;
+  max-width: 260px;
+  text-align: left;
 }
 
 .login-brand-features {
@@ -375,7 +385,7 @@ summary:focus-visible,
   flex-direction: column;
   gap: 14px;
   width: 100%;
-  max-width: 260px;
+  max-width: 280px;
 }
 
 .login-brand-feature {
@@ -386,15 +396,14 @@ summary:focus-visible,
 }
 
 .login-brand-feature-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-hover);
-  border: 1px solid var(--color-accent-border);
+  /* §Technical-Terminal: flat icon, no container box */
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .login-brand-feature-text { display: flex; flex-direction: column; gap: 2px; }
@@ -424,7 +433,12 @@ summary:focus-visible,
 
 /* ── Right pane ── */
 .login-right {
-  background: var(--surface-0);
+  /* §Technical-Terminal: unified near-black — no purple glow, no distinct surface */
+  background: radial-gradient(
+    ellipse 80% 80% at 60% 50%,
+    #0d0d14 0%,
+    #060608 100%
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -443,7 +457,8 @@ summary:focus-visible,
 .login-form-sub {
   font-size: var(--text-xs);
   color: var(--text-dim);
-  margin-bottom: 28px;
+  /* §Technical-Terminal: rule removed — whitespace carries separation */
+  margin-bottom: 32px;
 }
 
 .login-rule {
@@ -471,18 +486,20 @@ summary:focus-visible,
 .login-input {
   display: block;
   width: 100%;
-  background: var(--color-obsidian-inner);
-  border: 1px solid var(--color-border-input);
-  border-radius: var(--radius-md);
+  /* §Technical-Terminal: solid near-black bg, zinc-800 1px border, crisp 4px radius */
+  background: #0A0A0F;
+  border: 1px solid #27272a;
+  border-radius: 4px;
   color: var(--color-text-primary);
+  font-family: var(--font-mono);
   font-size: 13px;
-  padding: 12px 14px;
+  padding: 11px 14px;
   outline: none;
   appearance: none;
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
-.login-input:focus        { border-color: rgb(var(--accent-rgb) / 0.45); background: #0D0D0D; }
+.login-input:focus        { border-color: rgb(var(--accent-rgb) / 0.45); background: #0D0D14; }
 .login-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .login-input:disabled     { opacity: 0.45; cursor: not-allowed; }
 
@@ -498,11 +515,12 @@ summary:focus-visible,
   background: var(--color-accent-base);
   color: #fff;
   border: 1px solid var(--color-accent-base);
-  border-radius: var(--radius-md);
+  /* §Technical-Terminal: 4px radius to match welcome CTA */
+  border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   min-height: 44px;
   padding: 0 24px;
@@ -564,24 +582,28 @@ summary:focus-visible,
 /* SSO */
 .login-sso-wrap {
   padding-top: 20px;
-  border-top: 1px solid var(--color-border-base);
+  /* §Technical-Terminal: thin separator, no chunky border block */
+  border-top: 1px solid rgba(255,255,255,0.05);
 }
 
 .login-sso-btn {
   width: 100%;
   background: transparent;
-  border: 1px solid var(--color-border-input);
-  border-radius: var(--radius-md);
-  color: var(--text-dim);
-  font-family: inherit;
+  /* §Technical-Terminal: sleek 1px zinc-800 border, muted monospace label */
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  color: #52525b;
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
   padding: 0 16px;
-  min-height: 38px;
+  min-height: 34px;
   cursor: pointer;
   transition: border-color var(--transition-fast), color var(--transition-fast);
 }
-.login-sso-btn:hover        { border-color: rgba(255,255,255,0.18); color: var(--text-soft); }
+.login-sso-btn:hover        { border-color: #3f3f46; color: #a1a1aa; }
 .login-sso-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 
 .login-form-note {
