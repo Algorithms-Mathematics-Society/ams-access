@@ -272,7 +272,7 @@ export const ScheduledContestCard = memo(
           </Button>
         </div>
         <div style={{ marginTop: "4px", fontSize: "11px", color: themeColors.textMuted }}>
-          Timezone: {c.timezone || "UTC"}
+          Times shown in your local timezone
         </div>
       </div>
     );
@@ -407,6 +407,7 @@ export const ActiveContestCard = memo(
       }
     }, [col.bg, col.border, col.dot, entryState.phase, themeColors]);
 
+    // Format time in the candidate's LOCAL timezone (same basis as the countdown).
     const formatClock = (iso: string) => {
       const ms = Date.parse(iso);
       if (Number.isNaN(ms)) return "";
@@ -415,12 +416,25 @@ export const ActiveContestCard = memo(
           hour: "2-digit",
           minute: "2-digit",
           hour12: false,
-          timeZone: c.timezone || undefined,
+          // No timeZone override — uses device local time, consistent with the countdown.
         }).format(ms);
       } catch {
         return "";
       }
     };
+
+    // Short local timezone label, e.g. "IST", "EST", "UTC+5:30".
+    const localTzLabel = (() => {
+      try {
+        return (
+          new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+            .formatToParts(new Date())
+            .find((p) => p.type === "timeZoneName")?.value ?? ""
+        );
+      } catch {
+        return "";
+      }
+    })();
 
     // The instrument — the single time-to-next-state readout that leads the card.
     const hero = (() => {
@@ -439,9 +453,13 @@ export const ActiveContestCard = memo(
       return { label: "Status", value: entryState.statusLabel, big: false };
     })();
 
+    const clockRange = formatClock(c.start_at)
+      ? `${formatClock(c.start_at)}–${formatClock(c.end_at)}${localTzLabel ? ` (${localTzLabel})` : ""}`
+      : null;
+
     const metaParts = [
       `${c.question_count} ${c.question_count === 1 ? "problem" : "problems"}`,
-      formatClock(c.start_at) ? `${formatClock(c.start_at)}–${formatClock(c.end_at)}` : null,
+      clockRange,
       entryState.contestDateLabel && entryState.contestDateLabel !== "Date unavailable"
         ? entryState.contestDateLabel
         : null,

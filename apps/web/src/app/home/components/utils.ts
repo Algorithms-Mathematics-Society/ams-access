@@ -370,10 +370,12 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return unavailable;
 
   const verificationOpen = start - verificationWindowMinutes * 60 * 1000;
-  const verificationOpensAt = formatContestClock(verificationOpen, c.timezone);
-  const contestStartsAt = formatContestClock(c.start_at, c.timezone);
-  const contestEndsAt = formatContestClock(c.end_at, c.timezone);
-  const contestDateLabel = formatContestDateLabel(c.start_at, c.end_at, c.timezone);
+  // Format all displayed times in the candidate's LOCAL timezone (no contest-tz
+  // override), so they agree with the countdown which uses absolute Date.now().
+  const verificationOpensAt = formatContestClock(verificationOpen);
+  const contestStartsAt = formatContestClock(c.start_at);
+  const contestEndsAt = formatContestClock(c.end_at);
+  const contestDateLabel = formatContestDateLabel(c.start_at, c.end_at);
 
   if (status === "DRAFT") {
     return {
