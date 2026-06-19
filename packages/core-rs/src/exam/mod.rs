@@ -607,9 +607,13 @@ fn evaluate_requirement(
             Some(keyboard) => (
                 false,
                 Some(FailureReasonCode::KeyboardLockdownUnavailable),
+                // Include the method string so the UI can detect
+                // "accessibility_denied" specifically on macOS and present
+                // a targeted "Grant Accessibility permission" recovery panel
+                // rather than a generic "unavailable" message.
                 Some(format!(
-                    "keyboard lockdown unavailable on {}",
-                    keyboard.platform
+                    "keyboard lockdown unavailable on {} (method: {})",
+                    keyboard.platform, keyboard.method
                 )),
                 vec![
                     RecoveryAction::RetryReadinessScan,

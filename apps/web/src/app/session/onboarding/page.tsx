@@ -4232,17 +4232,65 @@ export default function OnboardingPage() {
           style={{
             margin: "20px auto 0",
             maxWidth: 560,
-            border: "1px solid rgba(239,68,68,0.28)",
-            background: "rgba(239,68,68,0.08)",
-            color: "#fca5a5",
+            border:
+              platform === "macos" && policyBlock.includes("accessibility_denied")
+                ? "1px solid #78350f"
+                : "1px solid rgba(239,68,68,0.28)",
+            background:
+              platform === "macos" && policyBlock.includes("accessibility_denied")
+                ? "#1c1007"
+                : "rgba(239,68,68,0.08)",
+            color:
+              platform === "macos" && policyBlock.includes("accessibility_denied")
+                ? "#fdba74"
+                : "#fca5a5",
             borderRadius: "var(--radius-md)",
-            padding: "12px 16px",
+            padding: "16px 20px",
             fontSize: "11px",
             fontFamily: "'JetBrains Mono', monospace",
             whiteSpace: "pre-line",
           }}
         >
-          {policyBlock}
+          {platform === "macos" && policyBlock.includes("accessibility_denied") ? (
+            <>
+              <p
+                style={{
+                  margin: "0 0 6px",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  color: "#fb923c",
+                }}
+              >
+                Grant Accessibility permission
+              </p>
+              <p
+                style={{ margin: "0 0 14px", fontSize: "12px", lineHeight: 1.6, color: "#fdba74" }}
+              >
+                AMS Access needs Accessibility permission to block exam keyboard shortcuts. Open
+                System Settings, find AMS Access under Privacy &amp; Security → Accessibility, and
+                toggle it on. Then run the device check again.
+              </p>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  className="onb-btn onb-btn--primary"
+                  onClick={() => void invoke("open_accessibility_settings")}
+                >
+                  Open Accessibility Settings
+                </button>
+                <button
+                  className="onb-btn onb-btn--secondary"
+                  onClick={() => {
+                    setPolicyBlock(null);
+                    setCurrentStage(4);
+                  }}
+                >
+                  Run checks again
+                </button>
+              </div>
+            </>
+          ) : (
+            policyBlock
+          )}
         </div>
       )}
       {currentStage > 0 && <ProgressBar current={currentStage} results={results} />}
