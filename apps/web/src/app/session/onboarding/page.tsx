@@ -3603,6 +3603,35 @@ export default function OnboardingPage() {
         }));
       }
       const status = String(body.eligibility_status ?? "blocked").toLowerCase();
+      const windowState = (body.session_window_state ?? "").toUpperCase();
+
+      // Authoritative backend window state takes precedence over secondary
+      // eligibility_status so that the 30-min late-entry buffer is honored
+      // and genuinely-closed windows are never allowed through.
+      //
+      // Priority order:
+      //  1. LIVE           → allow entry unconditionally (contest is active, late
+      //                       entry within the 30-min buffer is permitted).
+      //  2. LATE_CLOSED    → hard-block; 30-min late-entry window has passed.
+      //  3. ENDED          → hard-block; contest is over.
+      //  4. eligibility_status === "allowed" → allow (covers pre-start VERIFY_WINDOW_OPEN).
+      //  5. eligibility_status === "wait"    → not-open yet (verification window).
+      //  6. Anything else  → block (unknown / NOT_OPEN / default-safe).
+      if (windowState === "LIVE") return { ok: true, reason: null as string | null, state: "LIVE" };
+      if (windowState === "LATE_CLOSED")
+        return {
+          ok: false,
+          reason:
+            body.blocked_reason ||
+            "Entry closed — you can only join within 30 minutes of the contest start.",
+          state: "LATE_CLOSED",
+        };
+      if (windowState === "ENDED")
+        return {
+          ok: false,
+          reason: body.blocked_reason || "This contest has ended.",
+          state: "ENDED",
+        };
       if (status === "allowed")
         return {
           ok: true,
@@ -3615,19 +3644,11 @@ export default function OnboardingPage() {
           reason: body.blocked_reason || "Verification is not open for this contest yet.",
           state: body.session_window_state ?? "NOT_OPEN",
         };
-      // A candidate only reaches launch AFTER completing onboarding verification,
-      // so verification is already enforced by stage progression. readyForStart
-      // only means "sat through the pre-start countdown" and must NOT gate entry
-      // to a live contest — otherwise one transient failure (which clears
-      // readyForStart) permanently locks out a verified candidate, and legitimate
-      // late entry is wrongly refused. Late entry is acceptable.
-      if ((body.session_window_state ?? "").toUpperCase() === "LIVE") {
-        return { ok: true, reason: null as string | null, state: "LIVE" };
-      }
+      // Default-safe: unknown state → block.
       return {
         ok: false,
         reason: body.blocked_reason || "Join window is closed once contest starts.",
-        state: body.session_window_state ?? "LIVE",
+        state: body.session_window_state ?? "UNKNOWN",
       };
     } catch {
       return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
@@ -3951,6 +3972,13 @@ export default function OnboardingPage() {
       // infinite loop. So we probe the authoritative lock state and hard-stop
       // instead of navigating. Outside the desktop shell there is nothing to
       // lock, so this is skipped (browser/dev).
+      //
+      // macOS exception: the CGEventTap keyboard hook requires Accessibility
+      // permission which may not be granted; the readiness policy already marks
+      // macOS keyboard lockdown as advisory (warning, not block). Full-screen
+      // still engages on macOS, so an unlocked-keyboard state is expected and
+      // must NOT prevent contest entry. Hard-block only applies to Linux/Windows
+      // where keyboard lockdown is mandatory.
       if (tauriBridge) {
         let lockEngaged = false;
         try {
@@ -3967,12 +3995,25 @@ export default function OnboardingPage() {
             kind: "lockdown_failed",
             detail: "Desktop lockdown (keyboard / full-screen) did not engage.",
           }).catch(() => {});
-          setReadyForStart(false);
-          setTransitioning(false);
-          setPolicyBlock(
-            "We couldn't lock down your screen for the exam — keyboard/full-screen lockdown didn't engage. Re-run device setup and try again. A secured contest can't start without it."
-          );
-          return;
+          // On macOS the keyboard CGEventTap is advisory — full-screen lockdown
+          // still engages. Proceed into the contest but surface a security event
+          // so the proctor is aware. On Linux/Windows keyboard lockdown is
+          // mandatory; hard-block if it didn't engage.
+          const isMacOS = (deviceState.platform ?? platform ?? "").toLowerCase() === "macos";
+          if (!isMacOS) {
+            setReadyForStart(false);
+            setTransitioning(false);
+            setPolicyBlock(
+              "We couldn't lock down your screen for the exam — keyboard/full-screen lockdown didn't engage. Re-run device setup and try again. A secured contest can't start without it."
+            );
+            return;
+          }
+          // macOS: log advisory warning and continue into contest.
+          await invoke("log_proctoring_event", {
+            kind: "keyboard_lockdown_advisory",
+            detail:
+              "macOS keyboard lockdown did not engage (Accessibility permission not granted); full-screen lockdown active. Advisory only — contest entry proceeding.",
+          }).catch(() => {});
         }
       }
 
