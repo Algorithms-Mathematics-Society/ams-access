@@ -7092,7 +7092,7 @@ export default function ContestPageClient() {
         .pb-body h1 { font-size: 22px; } .pb-body h2 { font-size: 18px; } .pb-body h3 { font-size: 15px; }
         .pb-body strong { color: #f1f5f9; font-weight: 600; }
         .pb-body em { color: #a5b4fc; font-style: italic; }
-        .pb-body code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: rgb(var(--accent-rgb) / 0.1); color: #c4b5fd; padding: 1px 5px; border-radius: 4px; border: 1px solid rgb(var(--accent-rgb) / 0.2); }
+        .pb-body code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-weight: 400; background: #1E1E24; color: #e4e4e7; padding: 1px 5px; border-radius: var(--radius-sm, 4px); border: 1px solid rgba(255,255,255,0.08); }
         .pb-body pre { background: #071124; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
         .pb-body pre code { background: none; border: none; padding: 0; color: #94a3b8; font-size: 12.5px; }
         .pb-sample-block { position: relative; margin: 14px 0; }
