@@ -706,7 +706,7 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 .login-textlink--quiet {
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 .login-textlink--quiet:hover {
   color: var(--color-accent-light);
@@ -733,7 +733,7 @@ summary:focus-visible,
   background: transparent;
   border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-family: inherit;
   font-size: var(--text-2xs);
   font-weight: 700;
@@ -1498,7 +1498,7 @@ summary:focus-visible,
   font-size: 8.5px;
   font-weight: 700;
   letter-spacing: 0.22em;
-  color: var(--text-faint);
+  color: var(--text-dim);
   text-transform: uppercase;
 }
 
