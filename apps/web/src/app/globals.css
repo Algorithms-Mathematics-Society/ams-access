@@ -1236,11 +1236,11 @@ summary:focus-visible,
 }
 .help-input {
   width: 100%;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--theme-inner-bg);
+  border: 1px solid var(--theme-border-strong);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
-  color: #e2e8f0;
+  color: var(--theme-text);
   font-size: 13px;
   font-family: var(--font-mono);
   box-sizing: border-box;
@@ -1251,14 +1251,14 @@ summary:focus-visible,
 .help-input:focus {
   outline: none;
   border-color: rgb(var(--accent-rgb) / 0.45);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--theme-card-bg);
 }
 .help-input:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
 }
 .help-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .help-btn {
@@ -1295,13 +1295,13 @@ summary:focus-visible,
   flex: 0 1 auto;
   padding: 10px 18px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--theme-border-strong);
   color: var(--text-soft);
 }
 .help-btn-ghost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
+  background: var(--theme-hover);
+  border-color: var(--theme-accent-border);
+  color: var(--theme-text);
 }
 .help-btn-ghost:focus-visible {
   outline: 2px solid var(--color-border-focus);
