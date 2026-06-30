@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, LayoutGrid, Settings as SettingsIcon } from "lucide-react";
+import { Activity, LayoutGrid, Settings as SettingsIcon, Pin } from "lucide-react";
 import {
   applyOrganizerOverrides,
   fetchOrganizerOverrides,
@@ -83,6 +83,9 @@ export default function HomePage() {
   const [activeNav, setActiveNav] = useState("overview");
   const [signingOut, setSigningOut] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  // Open when pinned (clicked) or while hovered — collapse otherwise.
+  const sidebarOpen = sidebarExpanded || sidebarHovered;
   const [contests, setContests] = useState<InvitedContest[]>([]);
   const [contestsLoading, setContestsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -909,8 +912,10 @@ export default function HomePage() {
     >
       {/* ── Sidebar ── */}
       <aside
+        onMouseEnter={() => setSidebarHovered(true)}
+        onMouseLeave={() => setSidebarHovered(false)}
         style={{
-          width: sidebarExpanded ? "240px" : "60px",
+          width: sidebarOpen ? "240px" : "60px",
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
@@ -923,10 +928,10 @@ export default function HomePage() {
           willChange: "width",
         }}
       >
-        {/* ── Logo toggle ── */}
+        {/* ── Logo + pin toggle ── */}
         <button
           onClick={() => setSidebarExpanded((v) => !v)}
-          title="Toggle sidebar"
+          title={sidebarExpanded ? "Unpin sidebar" : "Pin sidebar open"}
           style={{
             display: "flex",
             alignItems: "center",
@@ -985,13 +990,28 @@ export default function HomePage() {
               whiteSpace: "nowrap",
               pointerEvents: "none",
               userSelect: "none",
-              opacity: sidebarExpanded ? 1 : 0,
-              transition: sidebarExpanded
+              opacity: sidebarOpen ? 1 : 0,
+              transition: sidebarOpen
                 ? "opacity var(--transition-standard) 160ms"
                 : "opacity var(--transition-fast)",
             }}
           >
             ACCESS
+          </span>
+          {/* Pin indicator — accent when pinned, muted otherwise; only shown when open */}
+          <span
+            style={{
+              marginLeft: "auto",
+              marginRight: "18px",
+              display: "flex",
+              alignItems: "center",
+              color: sidebarExpanded ? c.accent : c.textMuted,
+              opacity: sidebarOpen ? 1 : 0,
+              pointerEvents: "none",
+              transition: "opacity var(--transition-fast), color var(--transition-fast)",
+            }}
+          >
+            <Pin size={14} strokeWidth={1.8} fill={sidebarExpanded ? "currentColor" : "none"} />
           </span>
         </button>
 
@@ -1066,8 +1086,8 @@ export default function HomePage() {
                     whiteSpace: "nowrap",
                     pointerEvents: "none",
                     userSelect: "none",
-                    opacity: sidebarExpanded ? 1 : 0,
-                    transition: sidebarExpanded
+                    opacity: sidebarOpen ? 1 : 0,
+                    transition: sidebarOpen
                       ? "opacity var(--transition-standard) 160ms"
                       : "opacity var(--transition-fast)",
                   }}
@@ -1089,8 +1109,8 @@ export default function HomePage() {
               height: "44px",
               borderRadius: "var(--radius-md)",
               border: "1px solid transparent",
-              borderColor: sidebarExpanded ? c.border : "transparent",
-              background: sidebarExpanded ? "rgba(255,255,255,0.01)" : "transparent",
+              borderColor: sidebarOpen ? c.border : "transparent",
+              background: sidebarOpen ? "rgba(255,255,255,0.01)" : "transparent",
               marginBottom: "6px",
               overflow: "hidden",
               transition:
@@ -1134,8 +1154,8 @@ export default function HomePage() {
                 paddingRight: "8px",
                 pointerEvents: "none",
                 userSelect: "none",
-                opacity: sidebarExpanded ? 1 : 0,
-                transition: sidebarExpanded
+                opacity: sidebarOpen ? 1 : 0,
+                transition: sidebarOpen
                   ? "opacity var(--transition-standard) 160ms"
                   : "opacity var(--transition-fast)",
               }}
@@ -1170,9 +1190,9 @@ export default function HomePage() {
           <div
             style={{
               overflow: "hidden",
-              maxHeight: sidebarExpanded ? "44px" : "0px",
-              opacity: sidebarExpanded ? 1 : 0,
-              transition: sidebarExpanded
+              maxHeight: sidebarOpen ? "44px" : "0px",
+              opacity: sidebarOpen ? 1 : 0,
+              transition: sidebarOpen
                 ? "max-height var(--transition-standard) 60ms, opacity var(--transition-standard) 140ms"
                 : "opacity var(--transition-fast), max-height var(--transition-standard) 60ms",
             }}
