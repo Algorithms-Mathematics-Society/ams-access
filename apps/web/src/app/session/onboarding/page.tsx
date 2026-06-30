@@ -1320,7 +1320,7 @@ function Stage8_CameraInit({
 
   useEffect(() => {
     invoke<{ os: string }>("get_platform")
-      .then((p) => setIsWindows(p?.os === "windows"))
+      .then((p) => setIsWindows(p?.os?.toLowerCase().startsWith("windows") ?? false))
       .catch(() => {});
   }, []);
 
