@@ -141,6 +141,7 @@ pub enum FailureReasonCode {
     UnsupportedPlatform,
     ClockSkewDetected,
     ExternalDisplayDetected,
+    ExternalDisplayIndeterminate,
     RemoteServerDetected,
     ProbeUnavailable,
 }
@@ -727,13 +728,17 @@ fn evaluate_requirement(
         // platforms makes it doubly inert.
         CheckKind::ExternalDisplay => {
             let is_windows = matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
-            let bad = is_windows
-                && device_state
-                    .external_displays
-                    .as_ref()
-                    .map(|d| d.has_extra || d.has_wireless)
-                    .unwrap_or(false);
-            if bad {
+            let scan = device_state.external_displays.as_ref();
+
+            // Positive detection: a real extra/wireless display.
+            let detected = is_windows && scan.map(|d| d.has_extra || d.has_wireless).unwrap_or(false);
+            // Indeterminate: scan failed (count == 0 sentinel) or no scan was
+            // produced on a Windows device. Fail-closed — we cannot prove a
+            // single-screen environment. `is_windows &&` keeps this inert on
+            // macOS/Linux (Rust && short-circuits; they always have None here).
+            let indeterminate = is_windows && scan.map(|d| d.count == 0).unwrap_or(true);
+
+            if detected {
                 (
                     false,
                     Some(FailureReasonCode::ExternalDisplayDetected),
@@ -744,6 +749,19 @@ fn evaluate_requirement(
                     vec![
                         RecoveryAction::DisconnectExtraDisplays,
                         RecoveryAction::RetryReadinessScan,
+                    ],
+                )
+            } else if indeterminate {
+                (
+                    false,
+                    Some(FailureReasonCode::ExternalDisplayIndeterminate),
+                    Some(
+                        "Could not verify your display setup. Re-run the scan; if it persists, contact your proctor."
+                            .to_string(),
+                    ),
+                    vec![
+                        RecoveryAction::RetryReadinessScan,
+                        RecoveryAction::ContactOrganizer,
                     ],
                 )
             } else {
@@ -869,6 +887,102 @@ mod tests {
             rdp_server: None,
             network_helper_ready: Some(true),
         }
+    }
+
+    /// Strict policy + DeviceState for a Windows candidate, with the given scan.
+    fn windows_strict(scan: Option<DisplayScan>) -> (SessionPolicy, DeviceState) {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let mut state = passing_state();
+        state.platform = Some("windows".to_string());
+        state.external_displays = scan;
+        (policy, state)
+    }
+
+    #[test]
+    fn windows_strict_blocks_on_indeterminate_display_count_zero() {
+        let (policy, state) = windows_strict(Some(DisplayScan {
+            count: 0, // sentinel: scan could not verify
+            has_extra: false,
+            has_wireless: false,
+        }));
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayIndeterminate));
+    }
+
+    #[test]
+    fn windows_strict_blocks_when_scan_absent() {
+        let (policy, state) = windows_strict(None);
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayIndeterminate));
+    }
+
+    #[test]
+    fn windows_strict_passes_single_display() {
+        let (policy, state) = windows_strict(Some(DisplayScan {
+            count: 1,
+            has_extra: false,
+            has_wireless: false,
+        }));
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+        let ext = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::ExternalDisplay)
+            .expect("external display check present");
+        assert_eq!(ext.outcome, CheckOutcome::Pass);
+        assert!(!ext.blocking);
+    }
+
+    #[test]
+    fn windows_strict_detected_takes_precedence_over_indeterminate() {
+        let (policy, state) = windows_strict(Some(DisplayScan {
+            count: 2,
+            has_extra: true,
+            has_wireless: false,
+        }));
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayDetected));
+        assert!(!report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayIndeterminate));
+    }
+
+    #[test]
+    fn non_windows_count_zero_is_inert_byte_identical() {
+        // Byte-identical guard: even a count==0 scan on Linux must NOT block,
+        // because the evaluator is `is_windows && ...` (short-circuits off-Windows).
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        let mut state = passing_state(); // platform = "linux"
+        state.external_displays = Some(DisplayScan {
+            count: 0,
+            has_extra: false,
+            has_wireless: false,
+        });
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+        let ext = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::ExternalDisplay)
+            .expect("external display check present");
+        assert_eq!(ext.outcome, CheckOutcome::Pass);
+        assert!(!ext.blocking);
+        assert!(!report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ExternalDisplayIndeterminate));
     }
 
     #[test]

@@ -48,6 +48,7 @@ export type FailureReasonCode =
   | "unsupported_platform"
   | "clock_skew_detected"
   | "external_display_detected"
+  | "external_display_indeterminate"
   | "remote_server_detected"
   | "probe_unavailable";
 
