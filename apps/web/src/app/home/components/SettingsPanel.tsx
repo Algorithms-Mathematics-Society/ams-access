@@ -583,71 +583,46 @@ export const SettingsPanel = memo(function SettingsPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "560px" }}>
-      {/* Tab bar + Run Full Diagnostic */}
+      {/* Tab bar */}
       <div
         style={{
           display: "flex",
           alignItems: "flex-end",
-          justifyContent: "space-between",
           borderBottom: `1px solid ${c.border}`,
           marginBottom: "28px",
-          gap: "16px",
         }}
       >
-        <div style={{ display: "flex" }}>
-          {(["hardware", "permissions", "security", "about"] as const).map((tab) => {
-            const labels: Record<string, string> = {
-              hardware: "Hardware Diagnostics",
-              permissions: "Permissions Check",
-              security: "Security Environment",
-              about: "About / Legal",
-            };
-            const active = activeTab === tab;
-            return (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  padding: "12px 0",
-                  paddingBottom: "14px",
-                  marginRight: "28px",
-                  background: "transparent",
-                  border: "none",
-                  borderBottom: active ? `2px solid ${c.accent}` : "2px solid transparent",
-                  color: active ? c.text : c.textMuted,
-                  fontSize: "14px",
-                  fontWeight: active ? 600 : 400,
-                  cursor: "pointer",
-                  transition: "color var(--transition-fast), border-color var(--transition-fast)",
-                  outline: "none",
-                }}
-              >
-                {labels[tab]}
-              </button>
-            );
-          })}
-        </div>
-        <button
-          onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
-          disabled={securityBusy}
-          style={{
-            marginBottom: "10px",
-            padding: "0 20px",
-            minHeight: 40,
-            background: c.accent,
-            border: "none",
-            borderRadius: "var(--radius-sm)",
-            color: "white",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: securityBusy ? "not-allowed" : "pointer",
-            opacity: securityBusy ? 0.7 : 1,
-            flexShrink: 0,
-            transition: "opacity var(--transition-fast)",
-          }}
-        >
-          {securityBusy ? "Running..." : "Run Full Diagnostic"}
-        </button>
+        {(["hardware", "permissions", "security", "about"] as const).map((tab) => {
+          const labels: Record<string, string> = {
+            hardware: "Hardware Diagnostics",
+            permissions: "Permissions Check",
+            security: "Security Environment",
+            about: "About / Legal",
+          };
+          const active = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: "12px 0",
+                paddingBottom: "14px",
+                marginRight: "28px",
+                background: "transparent",
+                border: "none",
+                borderBottom: active ? `2px solid ${c.accent}` : "2px solid transparent",
+                color: active ? c.text : c.textMuted,
+                fontSize: "14px",
+                fontWeight: active ? 600 : 400,
+                cursor: "pointer",
+                transition: "color var(--transition-fast), border-color var(--transition-fast)",
+                outline: "none",
+              }}
+            >
+              {labels[tab]}
+            </button>
+          );
+        })}
       </div>
 
       {/* Settings Sub-Tab panels */}

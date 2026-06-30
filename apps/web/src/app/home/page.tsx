@@ -1018,8 +1018,6 @@ export default function HomePage() {
             }}
           >
             {userDisplayEmail || userEmail}
-            {" | "}
-            <span style={{ opacity: 0.6 }}>STUDENT EMAIL</span>
           </p>
           <button
             onClick={handleSignOut}
@@ -1201,17 +1199,48 @@ export default function HomePage() {
                 transition: "border-color var(--transition-standard)",
               }}
             >
-              <h1
+              <div
                 style={{
-                  fontSize: "24px",
-                  fontWeight: 700,
-                  color: c.text,
-                  letterSpacing: "0",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "16px",
                 }}
               >
-                {activeNav === "settings" && "Settings"}
-                {activeNav === "diagnostics" && "Diagnostics"}
-              </h1>
+                <h1
+                  style={{
+                    fontSize: "24px",
+                    fontWeight: 700,
+                    color: c.text,
+                    letterSpacing: "0",
+                  }}
+                >
+                  {activeNav === "settings" && "Settings"}
+                  {activeNav === "diagnostics" && "Diagnostics"}
+                </h1>
+                {activeNav === "settings" && (
+                  <button
+                    onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
+                    disabled={telemetryQuery.isLoading}
+                    style={{
+                      flexShrink: 0,
+                      padding: "0 20px",
+                      minHeight: 40,
+                      background: c.accent,
+                      border: "none",
+                      borderRadius: "var(--radius-sm)",
+                      color: "white",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      cursor: telemetryQuery.isLoading ? "not-allowed" : "pointer",
+                      opacity: telemetryQuery.isLoading ? 0.7 : 1,
+                      transition: "opacity var(--transition-fast)",
+                    }}
+                  >
+                    {telemetryQuery.isLoading ? "Running..." : "Run Full Diagnostic"}
+                  </button>
+                )}
+              </div>
               <p style={{ fontSize: "13px", color: c.textMuted, marginTop: "4px" }}>
                 {activeNav === "settings" &&
                   "Camera, microphone, security policies, and device settings"}
