@@ -4410,7 +4410,7 @@ export default function ContestPageClient() {
                   background: "#0F0F0F",
                   padding: "0 18px",
                   flexShrink: 0,
-                  height: "42px",
+                  height: "44px",
                 }}
               >
                 <span
@@ -4452,8 +4452,8 @@ export default function ContestPageClient() {
                       zIndex: 5,
                       display: "flex",
                       alignItems: "center",
-                      height: "38px",
-                      padding: "0 24px",
+                      height: "44px",
+                      padding: "0 18px",
                       borderBottom: "1px solid rgba(255,255,255,0.05)",
                       background: "rgba(15,15,15,0.96)",
                       backdropFilter: "blur(12px)",
@@ -4474,13 +4474,13 @@ export default function ContestPageClient() {
                           onClick={() => setProblemTab(tab)}
                           style={{
                             height: "100%",
-                            padding: "0 12px",
+                            padding: "0 14px",
                             borderRadius: 0,
                             border: "none",
                             borderBottom: `2px solid ${active ? "var(--color-accent-base)" : "transparent"}`,
                             background: "transparent",
                             color: active ? "var(--color-accent-light)" : "var(--text-dim)",
-                            fontSize: "12px",
+                            fontSize: "13px",
                             fontWeight: 600,
                             fontFamily: "Inter, system-ui, sans-serif",
                             cursor: "pointer",
@@ -4502,6 +4502,8 @@ export default function ContestPageClient() {
                       color: "var(--color-accent-base)",
                       fontWeight: 700,
                       fontFamily: "Inter, system-ui, sans-serif",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
                     }}
                   >
                     Problem {String.fromCharCode(65 + (questions[activeQ]?.order_index ?? activeQ))}
