@@ -509,6 +509,84 @@ fn record_proctoring_event(
     persist_proctoring_event(app, &entry);
 }
 
+#[cfg(target_os = "windows")]
+fn severity_str(s: platform_rs::kiosk::Severity) -> &'static str {
+    use platform_rs::kiosk::Severity::{High, Info, Low, Medium};
+    match s {
+        Info => "info",
+        Low => "low",
+        Medium => "medium",
+        High => "high",
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn execute_kiosk_action(
+    app: &tauri::AppHandle,
+    exam_hwnd: isize,
+    action: platform_rs::kiosk::Action,
+) {
+    use platform_rs::kiosk::Action;
+    use tauri::{Emitter, Manager};
+    match action {
+        Action::ReassertFullscreen => {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_fullscreen(true);
+            }
+        }
+        Action::ReassertAlwaysOnTop => {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_always_on_top(true);
+            }
+        }
+        Action::NudgeForeground => platform_rs::windows::set_exam_foreground(exam_hwnd),
+        Action::Report {
+            event,
+            severity,
+            detail,
+        } => {
+            record_violation(Some(app), event, &detail);
+            record_proctoring_event(
+                Some(app),
+                event,
+                &detail,
+                serde_json::json!({ "severity": severity_str(severity), "source": "kiosk" }),
+            );
+            let _ = app.emit(
+                "lockdown-event",
+                serde_json::json!({ "kind": event, "detail": detail }),
+            );
+        }
+        Action::ResumeBannerAndReport {
+            ever_locked,
+            duration_ms,
+        } => {
+            let detail = format!("away {}s", duration_ms / 1000);
+            record_violation(Some(app), "focus_resumed", &detail);
+            record_proctoring_event(
+                Some(app),
+                "focus_resumed",
+                &detail,
+                serde_json::json!({
+                    "severity": "info",
+                    "duration_ms": duration_ms,
+                    "ever_locked": ever_locked,
+                    "source": "kiosk"
+                }),
+            );
+            let _ = app.emit(
+                "lockdown-event",
+                serde_json::json!({
+                    "kind": "focus_resumed",
+                    "detail": detail,
+                    "duration_ms": duration_ms,
+                    "ever_locked": ever_locked,
+                }),
+            );
+        }
+    }
+}
+
 fn collect_fast_device_state() -> DeviceState {
     #[cfg(target_os = "windows")]
     let platform = Some(if platform_rs::windows::is_elevated() {
@@ -1331,34 +1409,52 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
                 record_violation(Some(&inj_app), kind, detail);
             });
 
-            // F1: native focus-loss watchdog. The webview's own blur events can be
-            // suppressed, so poll the OS foreground window directly. Edge-triggered
-            // (only the true→false transition is recorded) so a candidate who alt-tabs
-            // away logs exactly one focus_loss, not one per tick.
-            //
-            // The thread is spawned before LOCKDOWN_ENGAGED is set true (that happens
-            // right after lock_desktop() returns, below), so it MUST sleep before its
-            // first flag check — otherwise it would observe `false` and exit at once.
-            // The 750 ms initial sleep guarantees the flag is observed in its engaged
-            // state; the loop then exits cleanly on unlock (flag cleared).
+            // F1 + kiosk: native focus watchdog. Re-asserts fullscreen/foreground
+            // (drift-checked, flicker-safe) and reports lock/loss with severity.
+            // Posture is DETECT-AND-REPORT: CAD/Win+L are unblockable from user
+            // mode (see windows-fullscreen-kiosk spec §1); we never claim to block
+            // them and never auto-end a contest. All decision logic is the pure,
+            // unit-tested platform_rs::windows::decide(); this thread only observes
+            // and executes. Drains any open episode via on_teardown() on exit.
             let app_handle = app.clone();
             let hwnd_raw = hwnd.0 as isize;
             std::thread::spawn(move || {
-                let mut was_foreground = true;
+                use tauri::Manager;
+                let start = std::time::Instant::now();
+                let mut state = platform_rs::kiosk::KioskState::default();
                 loop {
                     std::thread::sleep(Duration::from_millis(750));
+                    let now_ms = start.elapsed().as_millis() as u64;
                     if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+                        for action in platform_rs::kiosk::on_teardown(&mut state, now_ms) {
+                            execute_kiosk_action(&app_handle, hwnd_raw, action);
+                        }
                         break;
                     }
-                    let fg = platform_rs::windows::is_foreground_window(hwnd_raw);
-                    if was_foreground && !fg {
-                        record_violation(
-                            Some(&app_handle),
-                            "focus_loss",
-                            "native_foreground_changed",
-                        );
+                    let (exam_fg, fg_null, fg_hwnd, fg_secure, fg_proc) =
+                        platform_rs::windows::observe_foreground(hwnd_raw);
+                    let (is_fs, is_aot) = app_handle
+                        .get_webview_window("main")
+                        .map(|w| {
+                            (
+                                w.is_fullscreen().unwrap_or(true),
+                                w.is_always_on_top().unwrap_or(true),
+                            )
+                        })
+                        .unwrap_or((true, true));
+                    let input = platform_rs::kiosk::TickInput {
+                        now_ms,
+                        exam_is_foreground: exam_fg,
+                        foreground_is_null: fg_null,
+                        foreground_hwnd: fg_hwnd,
+                        foreground_is_secure_system: fg_secure,
+                        foreground_process: fg_proc,
+                        is_fullscreen: is_fs,
+                        is_always_on_top: is_aot,
+                    };
+                    for action in platform_rs::kiosk::decide(&mut state, input) {
+                        execute_kiosk_action(&app_handle, hwnd_raw, action);
                     }
-                    was_foreground = fg;
                 }
             });
         }
