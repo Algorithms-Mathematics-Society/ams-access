@@ -200,6 +200,13 @@ summary:focus-visible,
     0.06
   ); /* NEW: neutral interactive overlay (row/button hover) */
 
+  /* Login-slice (Phase 1) theme-aware tokens — dark = byte-identical to the
+     originals; light = cream-safe. Ledger: apps/web/login-theme-migration-ledger.md */
+  --theme-error-bg: rgba(239, 68, 68, 0.06);
+  --theme-border-error: rgba(239, 68, 68, 0.25);
+  --theme-warn-text: #fbbf24;
+  --theme-text-faintest: rgba(255, 255, 255, 0.12);
+
   --density-compact: 12px;
   --density-standard: 18px;
   --density-relaxed: 24px;
@@ -321,6 +328,10 @@ summary:focus-visible,
   --theme-row-bg: rgba(35, 27, 48, 0.03);
   --theme-error-text: #b91c1c; /* 5.79:1 */
   --theme-hover: rgba(35, 27, 48, 0.05); /* NEW: neutral interactive overlay — darkens on cream */
+  --theme-error-bg: rgba(220, 38, 38, 0.07);
+  --theme-border-error: rgba(185, 28, 28, 0.3);
+  --theme-warn-text: #b45309; /* amber-700 — 4.5:1 cream / 5.02:1 card */
+  --theme-text-faintest: rgba(35, 27, 48, 0.2);
   --theme-accent: #7c3aed;
   --theme-accent-light: rgb(124 58 237 / 0.1);
   --theme-accent-border: rgb(124 58 237 / 0.28);
@@ -406,14 +417,14 @@ summary:focus-visible,
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-mono);
-  background: var(--color-obsidian-base);
-  color: var(--color-text-primary);
+  background: var(--theme-bg);
+  color: var(--theme-text);
 }
 
 /* ── Left pane ── */
 .login-left {
   background: var(--surface-1);
-  border-right: 1px solid var(--color-border-base);
+  border-right: 1px solid var(--theme-border);
   display: flex;
   flex-direction: column;
   padding: 44px 52px;
@@ -438,7 +449,7 @@ summary:focus-visible,
   font-weight: 700;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--color-text-dim);
+  color: var(--theme-text-muted-strong);
 }
 
 .login-logo-sub {
@@ -468,7 +479,7 @@ summary:focus-visible,
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--color-text-dim);
+  color: var(--theme-text-muted-strong);
   line-height: 1.2;
   margin-bottom: 12px;
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
@@ -482,7 +493,7 @@ summary:focus-visible,
 .login-brand-sub {
   font-size: 13px;
   line-height: 1.6;
-  color: var(--color-text-faint);
+  color: var(--theme-text-muted);
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   margin-bottom: 40px;
   max-width: 240px;
@@ -524,7 +535,7 @@ summary:focus-visible,
 .login-brand-feature-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-dim);
+  color: var(--theme-text-muted-strong);
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
 }
 
@@ -540,7 +551,7 @@ summary:focus-visible,
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.12);
+  color: var(--theme-text-faintest);
   text-transform: uppercase;
 }
 
@@ -561,7 +572,7 @@ summary:focus-visible,
 .login-form-title {
   font-size: 14px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--theme-text);
   margin-bottom: 6px;
 }
 
@@ -573,7 +584,7 @@ summary:focus-visible,
 
 .login-rule {
   height: 1px;
-  background: var(--color-border-base);
+  background: var(--theme-border);
   margin-bottom: 28px;
 }
 
@@ -600,10 +611,10 @@ summary:focus-visible,
 .login-input {
   display: block;
   width: 100%;
-  background: var(--color-obsidian-inner);
-  border: 1px solid var(--color-border-input);
+  background: var(--theme-inner-bg);
+  border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
-  color: var(--color-text-primary);
+  color: var(--theme-text);
   font-size: 13px;
   padding: 12px 14px;
   outline: none;
@@ -615,7 +626,7 @@ summary:focus-visible,
 
 .login-input:focus {
   border-color: rgb(var(--accent-rgb) / 0.45);
-  background: #0d0d0d;
+  background: var(--theme-bg);
 }
 .login-input:focus-visible {
   outline: 2px solid var(--color-border-focus);
@@ -668,7 +679,7 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 .login-submit:disabled {
-  background: var(--color-obsidian-raised);
+  background: var(--theme-card-bg);
   border-color: rgb(var(--accent-rgb) / 0.22);
   color: var(--text-faint);
   cursor: not-allowed;
@@ -705,12 +716,12 @@ summary:focus-visible,
 .login-error {
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid var(--color-border-error);
-  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid var(--theme-border-error);
+  background: var(--theme-error-bg);
   border-radius: var(--radius-md);
   font-size: 12px;
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
-  color: #fca5a5;
+  color: var(--theme-error-text);
   line-height: 1.5;
 }
 
@@ -720,7 +731,7 @@ summary:focus-visible,
   width: 100%;
   margin-top: 10px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
   color: var(--text-faint);
   font-family: inherit;
@@ -736,20 +747,20 @@ summary:focus-visible,
   text-align: center;
 }
 .login-dev-btn:hover {
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--theme-border-strong);
   color: var(--text-dim);
 }
 
 /* SSO */
 .login-sso-wrap {
   padding-top: 20px;
-  border-top: 1px solid var(--color-border-base);
+  border-top: 1px solid var(--theme-border);
 }
 
 .login-sso-btn {
   width: 100%;
   background: transparent;
-  border: 1px solid var(--color-border-input);
+  border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
   color: var(--text-dim);
   font-family: inherit;
@@ -763,7 +774,7 @@ summary:focus-visible,
     color var(--transition-fast);
 }
 .login-sso-btn:hover {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: var(--theme-border-strong);
   color: var(--text-soft);
 }
 .login-sso-btn:focus-visible {
@@ -809,7 +820,7 @@ summary:focus-visible,
 
 .login-modal {
   background: var(--surface-1);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--theme-border-strong);
   border-radius: var(--radius-md);
   padding: 32px 36px;
   max-width: 440px;
@@ -820,7 +831,7 @@ summary:focus-visible,
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  color: #fbbf24;
+  color: var(--theme-warn-text);
   text-transform: uppercase;
   margin-bottom: 12px;
 }
@@ -828,7 +839,7 @@ summary:focus-visible,
 .login-modal-title {
   font-size: 13px;
   font-weight: 700;
-  color: var(--color-text-primary);
+  color: var(--theme-text);
   margin-bottom: 16px;
 }
 
@@ -836,15 +847,15 @@ summary:focus-visible,
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   font-size: 13px;
   line-height: 1.65;
-  color: #888;
+  color: var(--text-dim);
   margin-bottom: 28px;
 }
 
 .login-modal-close {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--theme-border-strong);
   border-radius: var(--radius-md);
-  color: #d8b4fe;
+  color: var(--theme-accent-text);
   font-family: inherit;
   font-size: 11px;
   font-weight: 600;
@@ -856,8 +867,8 @@ summary:focus-visible,
     color var(--transition-fast);
 }
 .login-modal-close:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #aaa;
+  border-color: var(--theme-accent-border);
+  color: var(--theme-text-muted-strong);
 }
 .login-modal-close:focus-visible {
   outline: 2px solid var(--color-border-focus);
