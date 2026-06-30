@@ -1414,8 +1414,12 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
             // Posture is DETECT-AND-REPORT: CAD/Win+L are unblockable from user
             // mode (see windows-fullscreen-kiosk spec §1); we never claim to block
             // them and never auto-end a contest. All decision logic is the pure,
-            // unit-tested platform_rs::windows::decide(); this thread only observes
+            // unit-tested platform_rs::kiosk::decide(); this thread only observes
             // and executes. Drains any open episode via on_teardown() on exit.
+            // NOTE: the loop sleeps BEFORE its first LOCKDOWN_ENGAGED check — this
+            // thread is spawned just before LOCKDOWN_ENGAGED is set true, so an
+            // immediate check would observe false and exit at once. Do not move
+            // the sleep below the flag check.
             let app_handle = app.clone();
             let hwnd_raw = hwnd.0 as isize;
             std::thread::spawn(move || {
