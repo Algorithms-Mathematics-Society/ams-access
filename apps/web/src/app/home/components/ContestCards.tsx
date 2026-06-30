@@ -407,36 +407,7 @@ export const ActiveContestCard = memo(
       }
     }, [col.bg, col.border, col.dot, entryState.phase, themeColors]);
 
-    // Format time in the candidate's LOCAL timezone (same basis as the countdown).
-    const formatClock = (iso: string) => {
-      const ms = Date.parse(iso);
-      if (Number.isNaN(ms)) return "";
-      try {
-        return new Intl.DateTimeFormat(undefined, {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-          // No timeZone override — uses device local time, consistent with the countdown.
-        }).format(ms);
-      } catch {
-        return "";
-      }
-    };
-
-    // Short local timezone label, e.g. "IST", "EST", "UTC+5:30".
-    const localTzLabel = (() => {
-      try {
-        return (
-          new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
-            .formatToParts(new Date())
-            .find((p) => p.type === "timeZoneName")?.value ?? ""
-        );
-      } catch {
-        return "";
-      }
-    })();
-
-    // The instrument — the single time-to-next-state readout that leads the card.
+    // The time-to-next-state readout used by the meta line.
     const hero = (() => {
       const start = Date.parse(c.start_at);
       const end = Date.parse(c.end_at);
@@ -453,17 +424,33 @@ export const ActiveContestCard = memo(
       return { label: "Status", value: entryState.statusLabel, big: false };
     })();
 
-    const clockRange = formatClock(c.start_at)
-      ? `${formatClock(c.start_at)}–${formatClock(c.end_at)}${localTzLabel ? ` (${localTzLabel})` : ""}`
-      : null;
+    // Date string for the meta line (e.g. "1 June, 2026").
+    const cardDate = (() => {
+      const ms = Date.parse(c.start_at);
+      if (Number.isNaN(ms)) return entryState.contestDateLabel;
+      try {
+        return new Intl.DateTimeFormat(undefined, {
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }).format(ms);
+      } catch {
+        return entryState.contestDateLabel;
+      }
+    })();
 
-    const metaParts = [
-      `${c.question_count} ${c.question_count === 1 ? "problem" : "problems"}`,
-      clockRange,
-      entryState.contestDateLabel && entryState.contestDateLabel !== "Date unavailable"
-        ? entryState.contestDateLabel
-        : null,
-    ].filter(Boolean) as string[];
+    // Human-readable status for the single meta line.
+    const metaStatus = (() => {
+      if (entryState.phase === "ended") {
+        if (resultsUnlocked) return "Results Ready";
+        if (resultsLockedCountdown) return `Results in ${resultsLockedCountdown}`;
+        return "Session Ended";
+      }
+      if (entryState.phase === "live") return `${hero.value} left`;
+      if (entryState.phase === "too_early" || entryState.phase === "verification_open")
+        return `Starts in ${hero.value}`;
+      return entryState.timingLabel;
+    })();
 
     const showHelper = ["blocked", "metadata_unavailable", "draft"].includes(entryState.phase);
     const resultsReady = entryState.phase === "ended" && resultsUnlocked;
@@ -481,146 +468,72 @@ export const ActiveContestCard = memo(
               ? "var(--surface-2)"
               : "var(--surface-1)",
           border: `1px solid ${
-            hovered && canEnter ? "rgb(var(--accent-rgb) / 0.35)" : themeColors.border
+            hovered && canEnter ? "rgb(var(--accent-rgb) / 0.25)" : themeColors.border
           }`,
-          borderLeft: `2px solid ${entryTone.rail}`,
-          borderRadius: "var(--radius-lg)",
-          padding: "18px 20px",
+          borderRadius: "var(--radius-md)",
+          padding: "16px 20px",
           transition: "background var(--transition-fast), border-color var(--transition-fast)",
-          boxShadow: "var(--elevation-1)",
           display: "flex",
           flexDirection: "column",
-          gap: "12px",
-          position: "relative",
-          overflow: "hidden",
-          opacity:
-            entryState.phase === "ended" || entryState.phase === "metadata_unavailable" ? 0.6 : 1,
+          gap: "10px",
         }}
       >
-        <div>
-          <div
+        {/* Header row: title + status chip */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: "12px",
+          }}
+        >
+          <h3
             style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              gap: "16px",
-              marginBottom: "8px",
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
-              <h3
-                style={{
-                  fontSize: "19px",
-                  fontWeight: 600,
-                  color: themeColors.text,
-                  letterSpacing: "-0.01em",
-                  lineHeight: 1.3,
-                  margin: 0,
-                  fontFamily: "var(--font-sans), system-ui, sans-serif",
-                  maxWidth: "100%",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {c.title}
-              </h3>
-              <p
-                style={{
-                  fontSize: "13px",
-                  color: themeColors.textMuted,
-                  fontWeight: 500,
-                  margin: "4px 0 0",
-                }}
-              >
-                {c.org_name}
-              </p>
-            </div>
-            <ContestStatePill phase={entryState.phase} theme={theme}>
-              {entryState.statusLabel}
-            </ContestStatePill>
-          </div>
-        </div>
-
-        {c.description && (
-          <p
-            style={{
-              fontSize: "14px",
-              color: themeColors.textMutedStrong,
-              lineHeight: 1.6,
+              fontSize: "16px",
+              fontWeight: 600,
+              color: themeColors.text,
+              letterSpacing: "-0.01em",
+              lineHeight: 1.3,
               margin: 0,
-              display: "-webkit-box",
-              WebkitLineClamp: 3,
-              WebkitBoxOrient: "vertical",
+              fontFamily: "var(--font-sans), system-ui, sans-serif",
+              minWidth: 0,
               overflow: "hidden",
               textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            {c.description}
-          </p>
-        )}
-
-        <div style={{ height: "1px", background: themeColors.border }} />
-
-        {/* The instrument — time-to-next-state, the readout the eye lands on first */}
-        <div>
-          <div
-            style={{
-              fontSize: "11px",
-              fontWeight: 600,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase" as const,
-              color: themeColors.textMuted,
-              marginBottom: "6px",
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {hero.label}
-          </div>
-          <div
-            style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontVariantNumeric: "tabular-nums",
-              fontSize: hero.big ? "16px" : "15px",
-              fontWeight: 700,
-              letterSpacing: "-0.01em",
-              lineHeight: 1.2,
-              color: themeColors.text,
-            }}
-          >
-            {hero.value}
-          </div>
+            {c.title}
+          </h3>
+          <ContestStatePill phase={entryState.phase} theme={theme}>
+            {entryState.statusLabel}
+          </ContestStatePill>
         </div>
 
+        {/* Single muted meta line: date · status · N Questions */}
+        <p
+          style={{
+            fontSize: "12px",
+            color: themeColors.textMuted,
+            margin: 0,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1.4,
+          }}
+        >
+          {cardDate} · {metaStatus} · {c.question_count}{" "}
+          {c.question_count === 1 ? "Question" : "Questions"}
+        </p>
+
+        {/* Action row */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: "18px",
-            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            gap: "10px",
+            marginTop: "2px",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "14px",
-              flexWrap: "wrap",
-              color: themeColors.textMutedStrong,
-              fontSize: "12px",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {metaParts.join("  ·  ")}
-            </span>
-          </div>
-
           <Button
             type="button"
             onClick={() => {
@@ -650,6 +563,7 @@ export const ActiveContestCard = memo(
                   ? "danger"
                   : "secondary"
             }
+            size="small"
             onMouseEnter={() => {
               if (canEnter) setBtnHovered(true);
             }}
@@ -668,16 +582,14 @@ export const ActiveContestCard = memo(
           >
             {entering ? (
               <Loader2
-                size={14}
+                size={13}
                 strokeWidth={2}
-                style={{
-                  animation: "spin 600ms linear infinite",
-                }}
+                style={{ animation: "spin 600ms linear infinite" }}
               />
             ) : (
               canEnter && (
                 <Play
-                  size={14}
+                  size={13}
                   strokeWidth={2}
                   style={{
                     transition: "transform var(--transition-fast)",
@@ -690,11 +602,12 @@ export const ActiveContestCard = memo(
           </Button>
         </div>
 
+        {/* Gating helper for blocked / metadata_unavailable / draft */}
         {showHelper && (
           <div
             style={{
               borderTop: `1px solid ${themeColors.border}`,
-              paddingTop: "12px",
+              paddingTop: "10px",
             }}
           >
             <span
@@ -709,13 +622,14 @@ export const ActiveContestCard = memo(
           </div>
         )}
 
+        {/* Readiness context — "fix N checks before entering" gating hint */}
         {readinessContext && readinessContext.status !== "checking" && (
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: "7px",
-              paddingTop: "12px",
+              paddingTop: "10px",
               borderTop: `1px solid ${themeColors.border}`,
             }}
           >
