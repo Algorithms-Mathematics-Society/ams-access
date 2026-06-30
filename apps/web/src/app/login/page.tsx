@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
@@ -105,10 +105,6 @@ export default function LoginPage() {
     }
     setResetState("sent");
   }
-
-  useEffect(() => {
-    localStorage.setItem("ams_theme", "dark");
-  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

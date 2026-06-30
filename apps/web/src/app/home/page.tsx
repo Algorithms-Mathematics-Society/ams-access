@@ -230,8 +230,6 @@ export default function HomePage() {
 
   useEffect(() => {
     setTheme("dark");
-    localStorage.setItem(STORAGE_KEYS.THEME, "dark");
-    document.documentElement.className = "dark";
   }, []);
 
   const c = useMemo(() => getThemeColors(theme), [theme]);
