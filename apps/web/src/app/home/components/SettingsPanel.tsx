@@ -654,15 +654,342 @@ export const SettingsPanel = memo(function SettingsPanel({
       <div>
         {activeTab === "hardware" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
+            {/* Camera Validation Capture card — full width */}
+            <div
+              style={{
+                background: c.cardBg,
+                border: `1px solid ${c.border}`,
+                borderRadius: "var(--radius-md)",
+                padding: "24px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+              }}
+            >
+              {/* Card header: title + status dot */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
+                  Camera Validation Capture
+                </h4>
+                <span
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: camStream ? "#22c55e" : "#f59e0b",
+                    display: "inline-block",
+                    flexShrink: 0,
+                  }}
+                />
+              </div>
+
+              {/* 2-col inner: viewfinder | controls */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "20px",
+                  alignItems: "start",
+                }}
+              >
+                {/* Viewfinder */}
+                <div
+                  style={{
+                    position: "relative",
+                    width: "100%",
+                    aspectRatio: "16 / 9",
+                    borderRadius: "var(--radius-md)",
+                    background: c.innerBg,
+                    overflow: "hidden",
+                    border: `1px solid ${c.border}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {camStream ? (
+                    <video
+                      ref={videoRef}
+                      muted
+                      playsInline
+                      autoPlay
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        transform: "scaleX(-1)",
+                      }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontFamily: "'JetBrains Mono', monospace",
+                        letterSpacing: "0.08em",
+                        color: c.textMuted,
+                      }}
+                    >
+                      CAPTURE DISCONNECTED
+                    </span>
+                  )}
+
+                  {/* Corner-bracket viewfinder overlays */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "12px",
+                      left: "12px",
+                      width: "16px",
+                      height: "16px",
+                      borderTop: `2px solid ${c.accent}`,
+                      borderLeft: `2px solid ${c.accent}`,
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "12px",
+                      right: "12px",
+                      width: "16px",
+                      height: "16px",
+                      borderTop: `2px solid ${c.accent}`,
+                      borderRight: `2px solid ${c.accent}`,
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "12px",
+                      left: "12px",
+                      width: "16px",
+                      height: "16px",
+                      borderBottom: `2px solid ${c.accent}`,
+                      borderLeft: `2px solid ${c.accent}`,
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "12px",
+                      right: "12px",
+                      width: "16px",
+                      height: "16px",
+                      borderBottom: `2px solid ${c.accent}`,
+                      borderRight: `2px solid ${c.accent}`,
+                    }}
+                  />
+                </div>
+
+                {/* Controls column */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {/* CAPTURE DEVICE label + select */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: c.textMuted,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      Capture Device
+                    </span>
+                    <select
+                      aria-label="Camera interface"
+                      value={selectedCam}
+                      onChange={(e) => setSelectedCam(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        background: c.innerBg,
+                        border: `1px solid ${c.border}`,
+                        borderRadius: "var(--radius-sm)",
+                        color: cameras.length > 0 ? c.text : c.textMuted,
+                        fontSize: "13px",
+                        outline: "2px solid transparent",
+                        cursor: "pointer",
+                        colorScheme: theme === "dark" ? "dark" : "light",
+                      }}
+                    >
+                      {cameras.length > 0 ? (
+                        cameras.map((cam) => (
+                          <option key={cam.deviceId} value={cam.deviceId}>
+                            {cam.label || `Interface ${cam.deviceId.slice(0, 6)}`}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">No device detected</option>
+                      )}
+                    </select>
+                  </div>
+
+                  {/* Initialize Capture Feed + Re-scan devices */}
+                  <div style={{ display: "flex", gap: "10px" }}>
+                    <button
+                      onClick={() => startCameraTest()}
+                      disabled={cameraBusy}
+                      style={{
+                        flex: 1,
+                        padding: "0 12px",
+                        minHeight: 40,
+                        background: c.accentLight,
+                        border: `1px solid ${c.accentBorder}`,
+                        borderRadius: "var(--radius-sm)",
+                        color: c.accentText,
+                        fontSize: "13px",
+                        fontWeight: 500,
+                        cursor: cameraBusy ? "not-allowed" : "pointer",
+                        opacity: cameraBusy ? 0.72 : 1,
+                        transition:
+                          "background var(--transition-fast), border-color var(--transition-fast)",
+                      }}
+                    >
+                      {cameraBusy
+                        ? "Starting..."
+                        : camStream
+                          ? "Restart Capture Feed"
+                          : "Initialize Capture Feed"}
+                    </button>
+                    <button
+                      onClick={() =>
+                        void navigator.mediaDevices
+                          ?.enumerateDevices()
+                          .then((ds) => setCameras(ds.filter((d) => d.kind === "videoinput")))
+                          .catch(() => {})
+                      }
+                      style={{
+                        flex: 1,
+                        padding: "0 12px",
+                        minHeight: 40,
+                        background: "transparent",
+                        border: `1px solid ${c.border}`,
+                        borderRadius: "var(--radius-sm)",
+                        color: c.textMuted,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        transition:
+                          "border-color var(--transition-fast), color var(--transition-fast)",
+                      }}
+                    >
+                      Re-scan devices
+                    </button>
+                  </div>
+
+                  {/* Streaming badge */}
+                  {camStream && (
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        color: theme === "light" ? "#10b981" : "#22c55e",
+                        fontFamily: "'JetBrains Mono', monospace",
+                        background:
+                          theme === "light" ? "rgba(16,185,129,0.08)" : "rgba(34,197,94,0.08)",
+                        padding: "3px 8px",
+                        borderRadius: "var(--radius-sm)",
+                        display: "inline-block",
+                        alignSelf: "flex-start",
+                      }}
+                    >
+                      STREAMING ACTIVE
+                    </span>
+                  )}
+
+                  {/* Camera error */}
+                  {cameraError && (
+                    <p style={{ fontSize: "12px", color: "#f87171", lineHeight: 1.5 }}>
+                      {cameraError}. Run the app as your normal desktop user and close other apps
+                      using the camera.
+                    </p>
+                  )}
+
+                  {/* Stream stats */}
+                  {camStream && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr 1fr",
+                        gap: "10px",
+                        background: c.innerBg,
+                        padding: "12px 16px",
+                        borderRadius: "var(--radius-sm)",
+                        border: `1px solid ${c.border}`,
+                      }}
+                    >
+                      <div>
+                        <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
+                          RESOLVING RES
+                        </p>
+                        <p
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            color: c.text,
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {camStats.resolution}
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
+                          ACQUISITION RATE
+                        </p>
+                        <p
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            color: c.text,
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {camStats.fps}
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
+                          ASPECT RATIO
+                        </p>
+                        <p
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            color: c.text,
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {camStats.aspect}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Helper text */}
+                  <p style={{ fontSize: "12px", color: c.textMuted, lineHeight: 1.5 }}>
+                    Widescreen 16:9 or 4:3 input accepted. Frames are scanned locally to extract
+                    face-landmark telemetry, no video leaves the device.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Audio | Speaker — 2-up grid */}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1.2fr 1fr",
-                gap: "32px",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "24px",
                 alignItems: "stretch",
               }}
             >
-              {/* Camera Validation Capture card — 2-col layout: viewfinder | controls */}
+              {/* Audio Microphone Calibration */}
               <div
                 style={{
                   background: c.cardBg,
@@ -671,10 +998,9 @@ export const SettingsPanel = memo(function SettingsPanel({
                   padding: "24px",
                   display: "flex",
                   flexDirection: "column",
-                  gap: "16px",
+                  gap: "18px",
                 }}
               >
-                {/* Card header: title + status dot */}
                 <div
                   style={{
                     display: "flex",
@@ -683,519 +1009,213 @@ export const SettingsPanel = memo(function SettingsPanel({
                   }}
                 >
                   <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
-                    Camera Validation Capture
+                    Audio Microphone Calibration
                   </h4>
                   <span
                     style={{
                       width: "8px",
                       height: "8px",
                       borderRadius: "50%",
-                      background: camStream ? "#22c55e" : "#f59e0b",
+                      background: micActive ? "#22c55e" : c.textMuted,
                       display: "inline-block",
                       flexShrink: 0,
                     }}
                   />
                 </div>
-
-                {/* 2-col inner: viewfinder | controls */}
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "20px",
-                    alignItems: "start",
-                  }}
-                >
-                  {/* Viewfinder */}
-                  <div
+                <p style={{ fontSize: "13px", color: c.textMuted, lineHeight: 1.5 }}>
+                  Calibrate active mic inputs to hold a clean environmental decibel threshold.
+                </p>
+                <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+                  <button
+                    onClick={toggleMicMonitor}
                     style={{
-                      position: "relative",
-                      width: "100%",
-                      aspectRatio: "16 / 9",
-                      borderRadius: "var(--radius-md)",
-                      background: c.innerBg,
-                      overflow: "hidden",
-                      border: `1px solid ${c.border}`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      flexShrink: 0,
+                      padding: "0 16px",
+                      minHeight: 40,
+                      background: micActive
+                        ? "rgba(239,68,68,0.08)"
+                        : theme === "light"
+                          ? "rgba(16,185,129,0.08)"
+                          : "rgba(34,197,94,0.08)",
+                      border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : theme === "light" ? "rgba(16,185,129,0.25)" : "rgba(34,197,94,0.3)"}`,
+                      borderRadius: "var(--radius-sm)",
+                      color: micActive ? "#ef4444" : theme === "light" ? "#10b981" : "#86efac",
+                      fontSize: "13px",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      transition:
+                        "background var(--transition-fast), border-color var(--transition-fast)",
                     }}
                   >
-                    {camStream ? (
-                      <video
-                        ref={videoRef}
-                        muted
-                        playsInline
-                        autoPlay
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          transform: "scaleX(-1)",
-                        }}
-                      />
-                    ) : (
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          fontFamily: "'JetBrains Mono', monospace",
-                          letterSpacing: "0.08em",
-                          color: c.textMuted,
-                        }}
-                      >
-                        CAPTURE DISCONNECTED
-                      </span>
-                    )}
-
-                    {/* Corner-bracket viewfinder overlays */}
-                    <div
+                    {micActive ? "Stop Decibel Monitor" : "Monitor Audio Feed"}
+                  </button>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <span
                       style={{
-                        position: "absolute",
-                        top: "12px",
-                        left: "12px",
-                        width: "16px",
-                        height: "16px",
-                        borderTop: `2px solid ${c.accent}`,
-                        borderLeft: `2px solid ${c.accent}`,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "12px",
-                        right: "12px",
-                        width: "16px",
-                        height: "16px",
-                        borderTop: `2px solid ${c.accent}`,
-                        borderRight: `2px solid ${c.accent}`,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: "12px",
-                        left: "12px",
-                        width: "16px",
-                        height: "16px",
-                        borderBottom: `2px solid ${c.accent}`,
-                        borderLeft: `2px solid ${c.accent}`,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: "12px",
-                        right: "12px",
-                        width: "16px",
-                        height: "16px",
-                        borderBottom: `2px solid ${c.accent}`,
-                        borderRight: `2px solid ${c.accent}`,
-                      }}
-                    />
-                  </div>
-
-                  {/* Controls column */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    {/* CAPTURE DEVICE label + select */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 600,
-                          color: c.textMuted,
-                          letterSpacing: "0.08em",
-                          textTransform: "uppercase",
-                          fontFamily: "'JetBrains Mono', monospace",
-                        }}
-                      >
-                        Capture Device
-                      </span>
-                      <select
-                        aria-label="Camera interface"
-                        value={selectedCam}
-                        onChange={(e) => setSelectedCam(e.target.value)}
-                        style={{
-                          width: "100%",
-                          padding: "10px 14px",
-                          background: c.innerBg,
-                          border: `1px solid ${c.border}`,
-                          borderRadius: "var(--radius-sm)",
-                          color: cameras.length > 0 ? c.text : c.textMuted,
-                          fontSize: "13px",
-                          outline: "2px solid transparent",
-                          cursor: "pointer",
-                          colorScheme: theme === "dark" ? "dark" : "light",
-                        }}
-                      >
-                        {cameras.length > 0 ? (
-                          cameras.map((cam) => (
-                            <option key={cam.deviceId} value={cam.deviceId}>
-                              {cam.label || `Interface ${cam.deviceId.slice(0, 6)}`}
-                            </option>
-                          ))
-                        ) : (
-                          <option value="">No device detected</option>
-                        )}
-                      </select>
-                    </div>
-
-                    {/* Initialize Capture Feed + Re-scan devices */}
-                    <div style={{ display: "flex", gap: "10px" }}>
-                      <button
-                        onClick={() => startCameraTest()}
-                        disabled={cameraBusy}
-                        style={{
-                          flex: 1,
-                          padding: "0 12px",
-                          minHeight: 40,
-                          background: c.accentLight,
-                          border: `1px solid ${c.accentBorder}`,
-                          borderRadius: "var(--radius-sm)",
-                          color: c.accentText,
-                          fontSize: "13px",
-                          fontWeight: 500,
-                          cursor: cameraBusy ? "not-allowed" : "pointer",
-                          opacity: cameraBusy ? 0.72 : 1,
-                          transition:
-                            "background var(--transition-fast), border-color var(--transition-fast)",
-                        }}
-                      >
-                        {cameraBusy
-                          ? "Starting..."
-                          : camStream
-                            ? "Restart Capture Feed"
-                            : "Initialize Capture Feed"}
-                      </button>
-                      <button
-                        onClick={() =>
-                          void navigator.mediaDevices
-                            ?.enumerateDevices()
-                            .then((ds) => setCameras(ds.filter((d) => d.kind === "videoinput")))
-                            .catch(() => {})
-                        }
-                        style={{
-                          flex: 1,
-                          padding: "0 12px",
-                          minHeight: 40,
-                          background: "transparent",
-                          border: `1px solid ${c.border}`,
-                          borderRadius: "var(--radius-sm)",
-                          color: c.textMuted,
-                          fontSize: "13px",
-                          cursor: "pointer",
-                          transition:
-                            "border-color var(--transition-fast), color var(--transition-fast)",
-                        }}
-                      >
-                        Re-scan devices
-                      </button>
-                    </div>
-
-                    {/* Streaming badge */}
-                    {camStream && (
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          color: theme === "light" ? "#10b981" : "#22c55e",
-                          fontFamily: "'JetBrains Mono', monospace",
-                          background:
-                            theme === "light" ? "rgba(16,185,129,0.08)" : "rgba(34,197,94,0.08)",
-                          padding: "3px 8px",
-                          borderRadius: "var(--radius-sm)",
-                          display: "inline-block",
-                          alignSelf: "flex-start",
-                        }}
-                      >
-                        STREAMING ACTIVE
-                      </span>
-                    )}
-
-                    {/* Camera error */}
-                    {cameraError && (
-                      <p style={{ fontSize: "12px", color: "#f87171", lineHeight: 1.5 }}>
-                        {cameraError}. Run the app as your normal desktop user and close other apps
-                        using the camera.
-                      </p>
-                    )}
-
-                    {/* Stream stats */}
-                    {camStream && (
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: "10px",
-                          background: c.innerBg,
-                          padding: "12px 16px",
-                          borderRadius: "var(--radius-sm)",
-                          border: `1px solid ${c.border}`,
-                        }}
-                      >
-                        <div>
-                          <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
-                            RESOLVING RES
-                          </p>
-                          <p
-                            style={{
-                              fontSize: "12px",
-                              fontWeight: 600,
-                              color: c.text,
-                              fontFamily: "'JetBrains Mono', monospace",
-                            }}
-                          >
-                            {camStats.resolution}
-                          </p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
-                            ACQUISITION RATE
-                          </p>
-                          <p
-                            style={{
-                              fontSize: "12px",
-                              fontWeight: 600,
-                              color: c.text,
-                              fontFamily: "'JetBrains Mono', monospace",
-                            }}
-                          >
-                            {camStats.fps}
-                          </p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: "11px", color: c.textMuted, marginBottom: "2px" }}>
-                            ASPECT RATIO
-                          </p>
-                          <p
-                            style={{
-                              fontSize: "12px",
-                              fontWeight: 600,
-                              color: c.text,
-                              fontFamily: "'JetBrains Mono', monospace",
-                            }}
-                          >
-                            {camStats.aspect}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Helper text */}
-                    <p style={{ fontSize: "12px", color: c.textMuted, lineHeight: 1.5 }}>
-                      Widescreen 16:9 or 4:3 input accepted. Frames are scanned locally to extract
-                      face-landmark telemetry, no video leaves the device.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Mic + Speaker column */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
-                <div
-                  style={{
-                    background: c.cardBg,
-                    border: `1px solid ${c.border}`,
-                    borderRadius: "var(--radius-md)",
-                    padding: "24px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "18px",
-                    flex: 1,
-                    justifyContent: "center",
-                  }}
-                >
-                  <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
-                    Audio Microphone calibration
-                  </h4>
-                  <p style={{ fontSize: "13px", color: c.textMuted, lineHeight: 1.5 }}>
-                    Detect and calibrate active microphone inputs to secure a clean environmental
-                    decibel threshold.
-                  </p>
-
-                  <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-                    <button
-                      onClick={toggleMicMonitor}
-                      style={{
-                        width: "auto",
-                        padding: "0 16px",
-                        minHeight: 40,
-                        minWidth: "180px",
-                        background: micActive
-                          ? "rgba(239,68,68,0.08)"
-                          : theme === "light"
-                            ? "rgba(16,185,129,0.08)"
-                            : "rgba(34,197,94,0.08)",
-                        border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : theme === "light" ? "rgba(16,185,129,0.25)" : "rgba(34,197,94,0.3)"}`,
-                        borderRadius: "var(--radius-sm)",
-                        color: micActive ? "#ef4444" : theme === "light" ? "#10b981" : "#86efac",
-                        fontSize: "13px",
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        transition:
-                          "background var(--transition-fast), border-color var(--transition-fast)",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        color: c.textMuted,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        fontFamily: "'JetBrains Mono', monospace",
                       }}
                     >
-                      {micActive ? "Stop Decibel Monitor" : "Monitor Audio Feed"}
-                    </button>
-
-                    <div style={{ flex: 1 }}>
-                      <div
-                        style={{
-                          height: "12px",
-                          background: c.innerBg,
-                          borderRadius: "var(--radius-sm)",
-                          overflow: "hidden",
-                          border: `1px solid ${c.border}`,
-                          position: "relative",
-                          marginBottom: "6px",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${micLevel}%`,
-                            height: "100%",
-                            background: "linear-gradient(90deg, #22c55e, var(--color-accent-base))",
-                            transition: "width 100ms linear",
-                          }}
-                        />
-                      </div>
-                      <p
-                        style={{
-                          fontSize: "11px",
-                          color: c.textMuted,
-                          fontFamily: "'JetBrains Mono', monospace",
-                        }}
-                      >
-                        REALTIME VALUE: {micLevel > 0 ? `${micLevel}% amplitude` : "STANDBY"}
-                      </p>
-                      {micError && (
-                        <p
-                          style={{
-                            fontSize: "11px",
-                            color: "#f87171",
-                            lineHeight: 1.4,
-                            marginTop: "6px",
-                          }}
-                        >
-                          {micError}. Check OS privacy settings and close other recording apps.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    background: c.cardBg,
-                    border: `1px solid ${c.border}`,
-                    borderRadius: "var(--radius-md)",
-                    padding: "24px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "18px",
-                    flex: 1,
-                    justifyContent: "center",
-                  }}
-                >
-                  <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
-                    Speaker Acoustic Output Test
-                  </h4>
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      Input Level
+                    </span>
                     <div
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
+                        height: "6px",
+                        background: c.innerBg,
+                        borderRadius: "var(--radius-sm)",
+                        overflow: "hidden",
+                        border: `1px solid ${c.border}`,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${micLevel}%`,
+                          height: "100%",
+                          background: "linear-gradient(90deg, #22c55e, var(--color-accent-base))",
+                          transition: "width 100ms linear",
+                        }}
+                      />
+                    </div>
+                    <p
+                      style={{
                         fontSize: "11px",
                         color: c.textMuted,
                         fontFamily: "'JetBrains Mono', monospace",
                       }}
                     >
-                      <span>TEST TONE GAIN AMPLITUDE</span>
-                      <span>{speakerVolume}%</span>
-                    </div>
-                    <input
-                      aria-label="Test tone gain amplitude"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={speakerVolume}
-                      onChange={(e) => setSpeakerVolume(Number(e.target.value))}
-                      style={{
-                        width: "100%",
-                        accentColor: "var(--color-accent-base)",
-                        background:
-                          theme === "light" ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)",
-                        height: "4px",
-                        borderRadius: "var(--radius-sm)",
-                        cursor: "pointer",
-                        outline: "2px solid transparent",
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-                    <button
-                      onClick={testSpeakers}
-                      disabled={speakerActive}
-                      style={{
-                        width: "auto",
-                        padding: "0 16px",
-                        minHeight: 40,
-                        background: speakerActive
-                          ? c.accentLight
-                          : theme === "light"
-                            ? "rgba(0,0,0,0.03)"
-                            : "rgba(255,255,255,0.04)",
-                        border: `1px solid ${c.border}`,
-                        borderRadius: "var(--radius-sm)",
-                        color: c.text,
-                        fontSize: "13px",
-                        cursor: speakerActive ? "not-allowed" : "pointer",
-                        transition:
-                          "background var(--transition-fast), border-color var(--transition-fast)",
-                      }}
-                    >
-                      {speakerActive ? "Playing Sine Wave..." : "Play Test Tone (440Hz)"}
-                    </button>
-
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <button
-                        onClick={() => setSpeakerSuccess(true)}
+                      REALTIME: {micLevel > 0 ? `${micLevel} dB · NOMINAL` : "STANDBY"}
+                    </p>
+                    {micError && (
+                      <p
                         style={{
-                          padding: "6px 12px",
-                          background:
-                            speakerSuccess === true ? "rgba(34,197,94,0.08)" : "transparent",
-                          border: `1px solid ${speakerSuccess === true ? "rgba(34,197,94,0.3)" : theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(34,197,94,0.15)"}`,
-                          borderRadius: "var(--radius-sm)",
-                          color: theme === "light" ? "#10b981" : "#86efac",
-                          fontSize: "12px",
-                          cursor: "pointer",
+                          fontSize: "11px",
+                          color: "#f87171",
+                          lineHeight: 1.4,
+                          marginTop: "6px",
                         }}
                       >
-                        Clear Signal
-                      </button>
-                      <button
-                        onClick={() => setSpeakerSuccess(false)}
-                        style={{
-                          padding: "6px 12px",
-                          background:
-                            speakerSuccess === false ? "rgba(239,68,68,0.08)" : "transparent",
-                          border: `1px solid ${speakerSuccess === false ? "rgba(239,68,68,0.3)" : theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(239,68,68,0.15)"}`,
-                          borderRadius: "var(--radius-sm)",
-                          color: "#ef4444",
-                          fontSize: "12px",
-                          cursor: "pointer",
-                        }}
-                      >
-                        No Signal
-                      </button>
-                    </div>
+                        {micError}. Check OS privacy settings and close other recording apps.
+                      </p>
+                    )}
                   </div>
+                </div>
+              </div>
+
+              {/* Speaker Acoustic Output Test */}
+              <div
+                style={{
+                  background: c.cardBg,
+                  border: `1px solid ${c.border}`,
+                  borderRadius: "var(--radius-md)",
+                  padding: "24px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "18px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <h4 style={{ fontSize: "14px", fontWeight: 600, color: c.text }}>
+                    Speaker Acoustic Output Test
+                  </h4>
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: speakerActive ? "#22c55e" : c.textMuted,
+                      display: "inline-block",
+                      flexShrink: 0,
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: "11px",
+                      color: c.textMuted,
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    <span>TEST TONE GAIN AMPLITUDE</span>
+                    <span>{speakerVolume}%</span>
+                  </div>
+                  <input
+                    aria-label="Test tone gain amplitude"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={speakerVolume}
+                    onChange={(e) => setSpeakerVolume(Number(e.target.value))}
+                    style={{
+                      width: "100%",
+                      accentColor: "var(--color-accent-base)",
+                      background: theme === "light" ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)",
+                      height: "4px",
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                      outline: "2px solid transparent",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                  <button
+                    onClick={testSpeakers}
+                    disabled={speakerActive}
+                    style={{
+                      flex: 1,
+                      padding: "0 16px",
+                      minHeight: 40,
+                      background: speakerActive
+                        ? c.accentLight
+                        : theme === "light"
+                          ? "rgba(0,0,0,0.03)"
+                          : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${c.border}`,
+                      borderRadius: "var(--radius-sm)",
+                      color: c.text,
+                      fontSize: "13px",
+                      cursor: speakerActive ? "not-allowed" : "pointer",
+                      transition:
+                        "background var(--transition-fast), border-color var(--transition-fast)",
+                    }}
+                  >
+                    {speakerActive ? "Playing..." : "Play"}
+                  </button>
+                  <button
+                    onClick={() => setSpeakerSuccess(true)}
+                    style={{
+                      flex: 1,
+                      padding: "0 16px",
+                      minHeight: 40,
+                      background: speakerSuccess === true ? "rgba(34,197,94,0.08)" : "transparent",
+                      border: `1px solid ${speakerSuccess === true ? "rgba(34,197,94,0.3)" : theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(34,197,94,0.15)"}`,
+                      borderRadius: "var(--radius-sm)",
+                      color: theme === "light" ? "#10b981" : "#86efac",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      transition:
+                        "background var(--transition-fast), border-color var(--transition-fast)",
+                    }}
+                  >
+                    Clear Signal
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* Theme indicator — moved from sidebar */}
+            {/* Theme placeholder bar — visual placeholder only, not wired to setTheme */}
             <div
               style={{
                 background: c.cardBg,
@@ -1204,7 +1224,6 @@ export const SettingsPanel = memo(function SettingsPanel({
                 padding: "14px 20px",
                 display: "flex",
                 alignItems: "center",
-                gap: "14px",
               }}
             >
               <span
@@ -1217,32 +1236,8 @@ export const SettingsPanel = memo(function SettingsPanel({
                   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                 }}
               >
-                Interface Theme
+                Theme Change Toggle or Something
               </span>
-              <div
-                style={{
-                  padding: "6px 12px",
-                  background: "rgb(var(--accent-rgb) / 0.08)",
-                  border: "1px solid rgb(var(--accent-rgb) / 0.2)",
-                  borderRadius: "var(--radius-sm)",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "var(--color-accent-light)",
-                  }}
-                >
-                  OBSIDIAN_DARK
-                </span>
-              </div>
-              <p style={{ fontSize: "11px", color: c.textMuted, margin: 0, lineHeight: 1.4 }}>
-                Locked by workstation environment policy.
-              </p>
             </div>
           </div>
         )}
