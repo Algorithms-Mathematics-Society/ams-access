@@ -33,14 +33,24 @@ writer, 1.1 MUST neutralize the competing writers:
 | `onboarding/page.tsx:24`  | `getItem("ams_theme")` (read)                          | **Leave** — read-only; onboarding is gated dark in 1.2 and migrated in 2b. Harmless.                                                                                   |
 | `contest/client.tsx:1868` | `EDITOR_THEME_KEY`                                     | **Out of scope** — separate Monaco editor-theme key (slice 2d).                                                                                                        |
 
-**Open decision for the spec reviewer — existing stored `"dark"`:** current users already have
-`"ams_theme"="dark"` from the force-writes (a non-choice). Two options:
+**Existing stored `"dark"` — decided: A now, B at end of Phase 2.** Current users carry
+`"ams_theme"="dark"` written by the **force-pins** — a **known non-choice** (nobody selected it). The
+resolution is staged, gated on light-mode coverage, NOT on whether stored-dark is a "real preference":
 
-- **(A, recommended) No migration.** They keep `"dark"` (explicit) → stay dark until they toggle.
-  Zero surprise; the system-default applies only to fresh installs.
-- **(B) One-time clear** on first run of the new mechanism, so everyone gets the system default.
-  Cleaner intent, but flips existing dark users to light if their OS is light.
-  Recommend **A** (no surprise flip on a proctored tool). Flagged for your call.
+- **1.1 / now → A (no migration).** Keep the stored `"dark"`. The reason is **not** that it's a genuine
+  preference (it isn't) — it's that **light mode is still partial**: clearing it now would flip a
+  system-light existing user into light and straight onto unmigrated home/onboarding/contest. We
+  temporarily honor a value nobody chose, purely to avoid surprising users with light on screens that
+  aren't themed yet. The module treats `storedTheme()` uniformly; no special-casing — A is simply "don't
+  clear."
+- **End of Phase 2 → B (one-time clear).** Once **every** screen is migrated and light is universally
+  safe, run a one-time clear of the stale force-pinned value so existing users get their **genuine system
+  preference** on a fully-themed app, with no half-broken routes.
+
+> **DEFERRED TRIGGER (record — do not forget):** _Clear the stale force-pinned `ams_theme` value once
+> Phase 2 completes (all screens migrated, light universally safe)._ This is the only thing that converts
+> the temporarily-honored non-choice back into the intended system-default behavior. Owner: whoever lands
+> the final Phase 2 (2d) slice. If this is skipped, every pre-1.1 user is silently pinned dark forever.
 
 ## Architecture
 
