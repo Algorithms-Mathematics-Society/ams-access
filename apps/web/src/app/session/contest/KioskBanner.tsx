@@ -21,6 +21,7 @@ export function KioskBanner() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
 
     listen<ResumePayload>("lockdown-event", (p) => {
       if (p?.kind !== "focus_resumed") return;
@@ -34,11 +35,13 @@ export function KioskBanner() {
       timer = setTimeout(() => setMsg(null), 8000);
     })
       .then((u) => {
-        unlisten = u;
+        if (cancelled) u();
+        else unlisten = u;
       })
       .catch(() => {});
 
     return () => {
+      cancelled = true;
       unlisten?.();
       if (timer) clearTimeout(timer);
     };
