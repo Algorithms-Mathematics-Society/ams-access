@@ -6,6 +6,7 @@ import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { setCandidateToken } from "@/lib/candidate-auth";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
@@ -296,7 +297,10 @@ export default function LoginPage() {
       </div>
 
       {/* ══════════════════ RIGHT PANE ══════════════════ */}
-      <div className="login-right">
+      <div className="login-right" style={{ position: "relative" }}>
+        <div style={{ position: "absolute", top: 16, right: 16, zIndex: 1 }}>
+          <ThemeToggle />
+        </div>
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
           <div className="login-form-sub">AMS Access &middot; A calm, proctored exam space</div>

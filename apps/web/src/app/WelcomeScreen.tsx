@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface WelcomeScreenProps {
   onEnter: () => void;
@@ -25,6 +26,7 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
       </div>
       <div className={`welcome-corner welcome-corner-tr ${shown ? "welcome-corner--in" : ""}`}>
         <span className="welcome-mono-tag welcome-mono-tag--accent">AMS Access</span>
+        <ThemeToggle />
       </div>
 
       {/* One cohesive centered block — logo → wordmark → tagline → CTA. */}
