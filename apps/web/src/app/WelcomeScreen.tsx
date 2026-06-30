@@ -40,8 +40,7 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
             strokeLinejoin="miter"
           />
         </svg>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="welcome-wordmark-svg" src="/ACCESS_WORDMARK.svg" alt="Access" />
+        <span className="welcome-wordmark-svg" role="img" aria-label="Access" />
         <p className="welcome-byline">by AMS</p>
         <p className="welcome-tagline">Fair · Secure · Proctored</p>
         <button

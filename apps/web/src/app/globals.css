@@ -1540,8 +1540,14 @@ summary:focus-visible,
 .welcome-wordmark-svg {
   display: block;
   height: 30px;
-  width: auto;
+  width: 176px; /* viewBox 492×84 → aspect 5.857 at 30px tall */
   margin: 0 0 11px;
+  /* Mask (not <img>) so the wordmark takes the theme text colour and flips:
+     near-white #fff in dark, plum-ink #231b30 in light. The asset's baked
+     #EDF0F7 fill is irrelevant under a mask. */
+  background: var(--theme-text);
+  -webkit-mask: url(/ACCESS_WORDMARK.svg) no-repeat center / contain;
+  mask: url(/ACCESS_WORDMARK.svg) no-repeat center / contain;
 }
 
 .welcome-wordmark {
