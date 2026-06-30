@@ -367,6 +367,8 @@ Expected: PASS. Then confirm the script is present in an exported page:
 Run: `grep -l 'prefers-color-scheme' apps/web/out/index.html`
 Expected: `apps/web/out/index.html` (the inline script is in the static HTML).
 
+> **This grep proves PRESENCE only** — that the script string reached the static HTML (it catches the server/client proxy-bug class, where the import would yield `[object Object]` instead of the script). It does **not** prove the script _runs correctly_ or that there's no flash/hydration warning. The runtime behavior of Tasks 3+4 is gated by the **enumerated matrix in Task 4 Step 5** — that matrix, not this grep, is the proof the FOUC mechanism works.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -473,16 +475,45 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 Run: `pnpm --filter @ams/web build`
 Expected: PASS.
 
-- [ ] **Step 5: Manual no-flash proof (record result)**
+- [ ] **Step 5: Manual runtime matrix — the real no-flash/no-hydration gate (enumerate every cell)**
 
-Run the app (`pnpm --filter @ams/web dev`), on welcome and login:
+This matrix — NOT the Task 3 grep — is the proof Tasks 3+4 work at runtime. The pure logic is unit-tested (Task 1); the FOUC + hydration + persistence glue has no automated test, so every cell below must be checked and recorded with its actual result. Run on **both welcome and login** (`pnpm --filter @ams/web dev`). Set "OS" via the system appearance setting (or DevTools → Rendering → "Emulate CSS prefers-color-scheme"). Set "stored" by editing `localStorage["ams_theme"]` in the console and reloading. "No hydration warning" = a clean DevTools console (no `Warning: ... did not match` / `hydration` messages).
 
-1. With OS in dark and no stored pref → loads dark, no flash.
-2. With OS in light and no stored pref → loads light, no flash, toggle icon correct.
-3. Toggle → flips instantly, no reload.
-4. Reload → persisted choice survives.
-5. DevTools console → no hydration warning.
-   Record outcomes for the /code-review.
+For **every** cell, the expected outcome is: **(i)** no flash (the page paints the correct theme on the very first frame — no dark→light or light→dark jump), **(ii)** correct initial theme = the "Expected theme" column, **(iii)** clean console (no hydration warning), **(iv)** persistence/behavior as noted.
+
+**A. Initial resolution — cold load (6 cells):**
+
+| #   | OS    | stored `ams_theme` | Expected theme      | Result |
+| --- | ----- | ------------------ | ------------------- | ------ |
+| A1  | dark  | (none)             | dark                | ☐      |
+| A2  | light | (none)             | light               | ☐      |
+| A3  | dark  | `"dark"`           | dark                | ☐      |
+| A4  | light | `"dark"`           | dark (stored wins)  | ☐      |
+| A5  | dark  | `"light"`          | light (stored wins) | ☐      |
+| A6  | light | `"light"`          | light               | ☐      |
+
+**B. Persistence — reload (2 cells):** after toggling, hard-reload; choice must survive (no flash back to the other theme).
+
+| #   | Action                 | Expected after reload            | Result |
+| --- | ---------------------- | -------------------------------- | ------ |
+| B1  | toggle → light, reload | still light, `ams_theme="light"` | ☐      |
+| B2  | toggle → dark, reload  | still dark, `ams_theme="dark"`   | ☐      |
+
+**C. Toggle — no reload (2 cells):** instant class swap, icon updates, no reload, no flash.
+
+| #   | From  | Expected                               | Result |
+| --- | ----- | -------------------------------------- | ------ |
+| C1  | dark  | click → light instantly; moon→sun icon | ☐      |
+| C2  | light | click → dark instantly; sun→moon icon  | ☐      |
+
+**D. Cross-tab + live OS change (2 cells):**
+
+| #   | Action                                          | Expected                                                    | Result |
+| --- | ----------------------------------------------- | ----------------------------------------------------------- | ------ |
+| D1  | two tabs on login; toggle in tab A              | tab B reflects the new theme without reload (storage event) | ☐      |
+| D2  | no stored pref; change OS dark↔light at runtime | app flips live to match (matchMedia listener)               | ☐      |
+
+**12 cells total. Any cell that flashes, resolves to the wrong theme, logs a hydration warning, or fails to persist is a Task-3/4 failure — fix before the /code-review.** Record the filled table for the review.
 
 - [ ] **Step 6: Commit**
 
