@@ -65,277 +65,268 @@ export function SessionActionsPanel({
         border: "1px solid #27272a",
         borderRadius: "var(--radius-md)",
         padding: "20px",
-        display: "grid",
-        gridTemplateColumns: "1.25fr 0.75fr",
-        gap: "18px",
-        alignItems: "stretch",
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
       }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <div>
-          <label
-            htmlFor="session-code"
-            style={{
-              display: "block",
-              fontSize: "11px",
-              color: "rgba(255,255,255,0.45)",
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              marginBottom: "6px",
-              fontWeight: 600,
-            }}
-          >
-            Session Code
-          </label>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!inviteCodeBusy) onInviteCodeSubmit();
-            }}
-            style={{ display: "flex", gap: "10px" }}
-          >
-            <Field
-              id="session-code"
-              theme={theme}
-              value={inviteCode}
-              onChange={(e) => onInviteCodeChange(e.target.value)}
-              disabled={inviteCodeBusy}
-              placeholder="Enter invite code"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                cursor: inviteCodeBusy ? "not-allowed" : "text",
-                opacity: inviteCodeBusy ? 0.75 : 1,
-                background: "#1A1A24",
-                border: "1px solid #27272a",
-              }}
-            />
-            <Button
-              type="submit"
-              disabled={inviteCodeBusy}
-              theme={theme}
-              variant="secondary"
-              style={{ minWidth: "96px" }}
-              onMouseEnter={(e) => {
-                if (inviteCodeBusy) return;
-                e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.12)";
-                e.currentTarget.style.borderColor = c.accentText;
-              }}
-              onMouseLeave={(e) => {
-                if (inviteCodeBusy) return;
-                e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.06)";
-                e.currentTarget.style.borderColor = c.accentBorder;
-              }}
-            >
-              {inviteCodeBusy && (
-                <Loader2
-                  size={14}
-                  strokeWidth={2}
-                  style={{ animation: "spin 1s linear infinite" }}
-                />
-              )}
-              {inviteCodeBusy ? "Checking" : "Validate"}
-            </Button>
-          </form>
-          {/* Compound invite result — when success + warning coexist, show as single amber message */}
-          {inviteSuccessMsg && inviteCodeStatus ? (
-            <p
-              role="status"
-              style={{
-                marginTop: "8px",
-                color: "#fcd34d",
-                fontSize: "13px",
-                lineHeight: 1.5,
-                fontWeight: 500,
-                display: "flex",
-                alignItems: "flex-start",
-                gap: "6px",
-              }}
-            >
-              <AlertTriangle
-                size={14}
-                strokeWidth={2}
-                style={{ flexShrink: 0, marginTop: "2px" }}
-              />
-              <span>
-                {inviteSuccessMsg} {inviteCodeStatus}
-              </span>
-              {onDismissInviteSuccess && (
-                <button
-                  type="button"
-                  onClick={onDismissInviteSuccess}
-                  aria-label="Dismiss"
-                  style={{
-                    marginLeft: "auto",
-                    background: "none",
-                    border: "none",
-                    color: "rgba(252,211,77,0.6)",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                    lineHeight: 1,
-                    padding: "0 2px",
-                    fontFamily: "inherit",
-                    flexShrink: 0,
-                  }}
-                >
-                  <X size={14} strokeWidth={2} />
-                </button>
-              )}
-            </p>
-          ) : inviteSuccessMsg ? (
-            <p
-              role="status"
-              style={{
-                marginTop: "8px",
-                color: "#22c55e",
-                fontSize: "13px",
-                lineHeight: 1.45,
-                fontWeight: 600,
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-              }}
-            >
-              <CheckCircle size={14} strokeWidth={2} aria-hidden="true" />
-              {inviteSuccessMsg}
-              {onDismissInviteSuccess && (
-                <button
-                  type="button"
-                  onClick={onDismissInviteSuccess}
-                  aria-label="Dismiss"
-                  style={{
-                    marginLeft: "4px",
-                    background: "none",
-                    border: "none",
-                    color: "rgba(34,197,94,0.5)",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                    lineHeight: 1,
-                    padding: "0 2px",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <X size={14} strokeWidth={2} />
-                </button>
-              )}
-            </p>
-          ) : inviteCodeStatus ? (
-            <InlineAlert theme={theme} tone="danger" style={{ marginTop: "8px" }}>
-              {inviteCodeStatus}
-            </InlineAlert>
-          ) : null}
-        </div>
-
-        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-          <Button
-            onClick={onRefresh}
-            disabled={sessionsRefreshing}
+      {/* ── SESSION CODE hero ────────────────────────────────────── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <label
+          htmlFor="session-code"
+          style={{
+            display: "block",
+            fontSize: "11px",
+            color: "rgba(255,255,255,0.45)",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            fontWeight: 600,
+          }}
+        >
+          Session Code
+        </label>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!inviteCodeBusy) onInviteCodeSubmit();
+          }}
+          style={{ display: "flex", gap: "10px" }}
+        >
+          <Field
+            id="session-code"
             theme={theme}
-            variant="secondary"
-            onMouseDown={(e) => {
-              if (!sessionsRefreshing) e.currentTarget.style.transform = "scale(0.98)";
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.transform = "scale(1)";
-            }}
-          >
-            <RefreshCw
-              size={14}
-              strokeWidth={2}
-              style={{ animation: sessionsRefreshing ? "spin 1s linear infinite" : "none" }}
-            />
-            {sessionsRefreshing ? "Refreshing" : "Refresh Sessions"}
-          </Button>
-          {sessionsError && (
-            <span style={{ alignSelf: "center", color: "#ef4444", fontSize: "12px" }}>
-              {sessionsError}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div
-        style={{
-          borderLeft: "1px solid #27272a",
-          paddingLeft: "18px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          gap: "12px",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          <p
+            value={inviteCode}
+            onChange={(e) => onInviteCodeChange(e.target.value)}
+            disabled={inviteCodeBusy}
+            placeholder="Enter invite code"
             style={{
-              fontSize: "11px",
-              color: "rgba(255,255,255,0.45)",
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              fontWeight: 600,
+              flex: 1,
+              minWidth: 0,
+              cursor: inviteCodeBusy ? "not-allowed" : "text",
+              opacity: inviteCodeBusy ? 0.75 : 1,
+              background: "#1A1A24",
+              border: "1px solid #27272a",
+            }}
+          />
+          <Button
+            type="submit"
+            disabled={inviteCodeBusy}
+            theme={theme}
+            variant="primary"
+            style={{ minWidth: "96px" }}
+            onMouseEnter={(e) => {
+              if (inviteCodeBusy) return;
+              e.currentTarget.style.background = "var(--color-accent-base)";
+              e.currentTarget.style.borderColor = c.accentText;
+              e.currentTarget.style.boxShadow = "0 10px 24px rgb(var(--accent-rgb) / 0.22)";
+            }}
+            onMouseLeave={(e) => {
+              if (inviteCodeBusy) return;
+              e.currentTarget.style.background = "var(--color-accent-base)";
+              e.currentTarget.style.borderColor = c.accentBorder;
+              e.currentTarget.style.boxShadow = "none";
             }}
           >
-            Resume
-          </p>
-          {activeSession ? (
-            <>
-              <p
+            {inviteCodeBusy && (
+              <Loader2 size={14} strokeWidth={2} style={{ animation: "spin 1s linear infinite" }} />
+            )}
+            {inviteCodeBusy ? "Checking" : "Validate"}
+          </Button>
+        </form>
+        {/* Compound invite result — when success + warning coexist, show as single amber message */}
+        {inviteSuccessMsg && inviteCodeStatus ? (
+          <p
+            role="status"
+            style={{
+              marginTop: "8px",
+              color: "#fcd34d",
+              fontSize: "13px",
+              lineHeight: 1.5,
+              fontWeight: 500,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "6px",
+            }}
+          >
+            <AlertTriangle size={14} strokeWidth={2} style={{ flexShrink: 0, marginTop: "2px" }} />
+            <span>
+              {inviteSuccessMsg} {inviteCodeStatus}
+            </span>
+            {onDismissInviteSuccess && (
+              <button
+                type="button"
+                onClick={onDismissInviteSuccess}
+                aria-label="Dismiss"
                 style={{
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  fontWeight: 600,
-                  fontSize: "13px",
-                  color: c.text,
-                  lineHeight: 1.3,
+                  marginLeft: "auto",
+                  background: "none",
+                  border: "none",
+                  color: "rgba(252,211,77,0.6)",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  lineHeight: 1,
+                  padding: "0 2px",
+                  fontFamily: "inherit",
+                  flexShrink: 0,
                 }}
               >
-                {activeSession.contest_title ?? `Session ${activeSession.contest_id.slice(0, 8)}`}
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    padding: "2px 7px",
-                    borderRadius: "var(--radius-sm)",
-                    fontWeight: 600,
-                    background: resumeRequestPending
-                      ? "rgba(245,158,11,0.12)"
-                      : resumeVerification === "verified"
-                        ? "rgba(34,197,94,0.12)"
-                        : resumeVerification === "checking" || resumeVerification === "unverified"
-                          ? "rgb(var(--accent-rgb) / 0.1)"
-                          : "rgba(239,68,68,0.1)",
-                    color: resumeRequestPending
-                      ? "#fbbf24"
-                      : resumeVerification === "verified"
-                        ? "#4ade80"
-                        : resumeVerification === "checking" || resumeVerification === "unverified"
-                          ? c.accentText
-                          : "#fca5a5",
-                  }}
-                >
-                  {resumeRequestPending
-                    ? "Approval pending"
-                    : resumeVerification === "verified"
-                      ? "Verified"
-                      : resumeVerification === "checking" || resumeVerification === "unverified"
-                        ? "Checking..."
-                        : "Unverified"}
-                </span>
-                {activeSession.updated_at && resumeVerification === "verified" && (
-                  <span style={{ fontSize: "11px", color: c.textMuted }}>
-                    {new Date(activeSession.updated_at).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                )}
-              </div>
-            </>
-          ) : (
-            <p style={{ color: c.textMuted, fontSize: "13px", lineHeight: 1.45 }}>
-              No active session stored on this device.
+                <X size={14} strokeWidth={2} />
+              </button>
+            )}
+          </p>
+        ) : inviteSuccessMsg ? (
+          <p
+            role="status"
+            style={{
+              marginTop: "8px",
+              color: "#22c55e",
+              fontSize: "13px",
+              lineHeight: 1.45,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: "5px",
+            }}
+          >
+            <CheckCircle size={14} strokeWidth={2} aria-hidden="true" />
+            {inviteSuccessMsg}
+            {onDismissInviteSuccess && (
+              <button
+                type="button"
+                onClick={onDismissInviteSuccess}
+                aria-label="Dismiss"
+                style={{
+                  marginLeft: "4px",
+                  background: "none",
+                  border: "none",
+                  color: "rgba(34,197,94,0.5)",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  lineHeight: 1,
+                  padding: "0 2px",
+                  fontFamily: "inherit",
+                }}
+              >
+                <X size={14} strokeWidth={2} />
+              </button>
+            )}
+          </p>
+        ) : inviteCodeStatus ? (
+          <InlineAlert theme={theme} tone="danger" style={{ marginTop: "8px" }}>
+            {inviteCodeStatus}
+          </InlineAlert>
+        ) : null}
+      </div>
+
+      {/* ── Refresh affordance ────────────────────────────────────── */}
+      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+        <Button
+          onClick={onRefresh}
+          disabled={sessionsRefreshing}
+          theme={theme}
+          variant="secondary"
+          size="small"
+          onMouseDown={(e) => {
+            if (!sessionsRefreshing) e.currentTarget.style.transform = "scale(0.98)";
+          }}
+          onMouseUp={(e) => {
+            e.currentTarget.style.transform = "scale(1)";
+          }}
+        >
+          <RefreshCw
+            size={14}
+            strokeWidth={2}
+            style={{ animation: sessionsRefreshing ? "spin 1s linear infinite" : "none" }}
+          />
+          {sessionsRefreshing ? "Refreshing" : "Refresh Sessions"}
+        </Button>
+        {sessionsError && (
+          <span style={{ alignSelf: "center", color: "#ef4444", fontSize: "12px" }}>
+            {sessionsError}
+          </span>
+        )}
+      </div>
+
+      {/* ── Resume section (secondary) ────────────────────────────── */}
+      <div
+        style={{
+          borderTop: "1px solid #27272a",
+          paddingTop: "16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "11px",
+            color: "rgba(255,255,255,0.45)",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            fontWeight: 600,
+          }}
+        >
+          Resume
+        </p>
+        {activeSession ? (
+          <>
+            <p
+              style={{
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                fontWeight: 600,
+                fontSize: "13px",
+                color: c.text,
+                lineHeight: 1.3,
+              }}
+            >
+              {activeSession.contest_title ?? `Session ${activeSession.contest_id.slice(0, 8)}`}
             </p>
-          )}
-        </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+              <span
+                style={{
+                  fontSize: "11px",
+                  padding: "2px 7px",
+                  borderRadius: "var(--radius-sm)",
+                  fontWeight: 600,
+                  background: resumeRequestPending
+                    ? "rgba(245,158,11,0.12)"
+                    : resumeVerification === "verified"
+                      ? "rgba(34,197,94,0.12)"
+                      : resumeVerification === "checking" || resumeVerification === "unverified"
+                        ? "rgb(var(--accent-rgb) / 0.1)"
+                        : "rgba(239,68,68,0.1)",
+                  color: resumeRequestPending
+                    ? "#fbbf24"
+                    : resumeVerification === "verified"
+                      ? "#4ade80"
+                      : resumeVerification === "checking" || resumeVerification === "unverified"
+                        ? c.accentText
+                        : "#fca5a5",
+                }}
+              >
+                {resumeRequestPending
+                  ? "Approval pending"
+                  : resumeVerification === "verified"
+                    ? "Verified"
+                    : resumeVerification === "checking" || resumeVerification === "unverified"
+                      ? "Checking..."
+                      : "Unverified"}
+              </span>
+              {activeSession.updated_at && resumeVerification === "verified" && (
+                <span style={{ fontSize: "11px", color: c.textMuted }}>
+                  {new Date(activeSession.updated_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              )}
+            </div>
+          </>
+        ) : (
+          <p style={{ color: c.textMuted, fontSize: "13px", lineHeight: 1.45 }}>
+            No active session stored on this device.
+          </p>
+        )}
         <Button
           onClick={onResume}
           disabled={resumeButtonDisabled}

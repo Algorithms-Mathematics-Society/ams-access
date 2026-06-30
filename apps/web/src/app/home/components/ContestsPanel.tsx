@@ -144,9 +144,10 @@ export function ContestsPanel({
           textTransform: "uppercase",
           marginBottom: "16px",
           fontWeight: 600,
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         }}
       >
-        Contests ({contests.length})
+        CONTESTS ({contests.length})
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         {contests.map((c) => {
