@@ -4197,7 +4197,7 @@ export default function ContestPageClient() {
                         style={{
                           fontSize: "11px",
                           fontWeight: 700,
-                          color: activeQ === i ? "var(--color-accent-light)" : "#94a3b8",
+                          color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
                           flexShrink: 0,
                         }}
                       >
