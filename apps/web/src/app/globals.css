@@ -7,62 +7,62 @@
    ───────────────────────────────────────────────────────────── */
 @theme {
   /* Obsidian palette */
-  --color-obsidian-base:    #0F0F0F;
-  --color-obsidian-raised:  #1F1F1F;
-  --color-obsidian-deep:    #000000;
-  --color-obsidian-inner:   #0A0A0A;
+  --color-obsidian-base: #0f0f0f;
+  --color-obsidian-raised: #1f1f1f;
+  --color-obsidian-deep: #000000;
+  --color-obsidian-inner: #0a0a0a;
 
   /* Indicator colours */
-  --color-indicator-secure:  #22c55e;
-  --color-indicator-warn:    #f59e0b;
-  --color-indicator-error:   #ef4444;
-  --color-indicator-info:    #38bdf8;
+  --color-indicator-secure: #22c55e;
+  --color-indicator-warn: #f59e0b;
+  --color-indicator-error: #ef4444;
+  --color-indicator-info: #38bdf8;
 
   /* Accent — violet. SINGLE SOURCE OF TRUTH: --accent-rgb / --accent-light-rgb
      (defined in :root below). Every accent token derives from those two triplets,
      so the whole app reshades from one line. */
-  --color-accent-base:   rgb(var(--accent-rgb));
-  --color-accent-light:  rgb(var(--accent-light-rgb));
-  --color-accent-faint:  rgb(var(--accent-rgb) / 0.12);
-  --color-accent-border: rgb(var(--accent-rgb) / 0.30);
-  --color-accent-hover:  rgb(var(--accent-rgb) / 0.08);
+  --color-accent-base: rgb(var(--accent-rgb));
+  --color-accent-light: rgb(var(--accent-light-rgb));
+  --color-accent-faint: rgb(var(--accent-rgb) / 0.12);
+  --color-accent-border: rgb(var(--accent-rgb) / 0.3);
+  --color-accent-hover: rgb(var(--accent-rgb) / 0.08);
 
   /* Text hierarchy */
-  --color-text-primary:  #ffffff;
-  --color-text-muted:    rgba(255,255,255,0.45);
-  --color-text-faint:    rgba(255,255,255,0.28);
-  --color-text-dim:      rgba(255,255,255,0.75);
+  --color-text-primary: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.45);
+  --color-text-faint: rgba(255, 255, 255, 0.28);
+  --color-text-dim: rgba(255, 255, 255, 0.75);
 
   /* Borders */
-  --color-border-base:   rgba(255,255,255,0.05);
-  --color-border-input:  rgba(255,255,255,0.08);
-  --color-border-focus:  rgb(var(--accent-rgb) / 0.65);
-  --color-border-error:  rgba(239,68,68,0.25);
+  --color-border-base: rgba(255, 255, 255, 0.05);
+  --color-border-input: rgba(255, 255, 255, 0.08);
+  --color-border-focus: rgb(var(--accent-rgb) / 0.65);
+  --color-border-error: rgba(239, 68, 68, 0.25);
 
   /* Legacy aliases used by other pages */
-  --color-bg-base:        #000000;
-  --color-bg-elevated:    #09090b;
-  --color-bg-secondary:   rgb(14 15 18);
+  --color-bg-base: #000000;
+  --color-bg-elevated: #09090b;
+  --color-bg-secondary: rgb(14 15 18);
   /* One brand-purple accent ramp (consolidated — was #8b5cf6/#a78bfa). */
-  --color-accent:         var(--color-accent-base);
-  --color-accent-bright:  var(--color-accent-light);
-  --color-accent-deep:    #7c3aed;
-  --color-text-secondary: rgba(255,255,255,0.6);
-  --color-success:        #22c55e;
-  --color-warning:        #f59e0b;
-  --color-error:          #ef4444;
-  --color-info:           #38bdf8;
+  --color-accent: var(--color-accent-base);
+  --color-accent-bright: var(--color-accent-light);
+  --color-accent-deep: #7c3aed;
+  --color-text-secondary: rgba(255, 255, 255, 0.6);
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #38bdf8;
 
   /* Easing */
   --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Transitions */
-  --transition-fast:     120ms ease;
+  --transition-fast: 120ms ease;
   --transition-standard: 240ms cubic-bezier(0.22, 1, 0.36, 1);
-  --transition-slow:     600ms cubic-bezier(0.22, 1, 0.36, 1);
+  --transition-slow: 600ms cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Font families surfaced as utilities */
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -83,17 +83,13 @@ html {
 html,
 body {
   height: 100%;
-  background-color: #0F0F0F;
+  background-color: #0f0f0f;
   color: #ffffff;
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
-
-
-
-
 
 .legal-shell {
   scroll-behavior: smooth;
@@ -112,14 +108,14 @@ main {
 input[type="email"],
 input[type="password"],
 input[type="text"] {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-family: "JetBrains Mono", "Fira Code", monospace !important;
   box-shadow: none !important;
   -webkit-appearance: none !important;
   appearance: none !important;
 }
 
 input::placeholder {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-family: "JetBrains Mono", "Fira Code", monospace !important;
   font-weight: 500 !important;
   letter-spacing: 0px !important;
   opacity: 0.35 !important;
@@ -128,9 +124,16 @@ input::placeholder {
 /* ─────────────────────────────────────────────────────────────
    SCROLLBAR
    ───────────────────────────────────────────────────────────── */
-::-webkit-scrollbar       { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.25); border-radius: var(--radius-sm); }
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--accent-rgb) / 0.25);
+  border-radius: var(--radius-sm);
+}
 
 /* ─────────────────────────────────────────────────────────────
    ACCESSIBLE FOCUS — one authoritative keyboard-focus ring for every control.
@@ -162,49 +165,65 @@ summary:focus-visible,
   /* ── BRAND ACCENT — single source of truth (RGB triplets) ──────────────
      All accent tokens, themes, and inline styles resolve to these. Edit the
      hue here, once, and every accent surface follows. ── */
-  --accent-rgb:       168 85 247;
+  --accent-rgb: 168 85 247;
   --accent-light-rgb: 192 132 252;
 
-  --theme-bg:                #0F0F0F;
-  --theme-sidebar-bg:        #1F1F1F;
-  --theme-card-bg:           #1F1F1F;
-  --theme-inner-bg:          #0F0F0F;
-  --theme-border:            rgba(255,255,255,0.05);
-  --theme-border-strong:     rgba(255,255,255,0.12);
-  --theme-text:              #ffffff;
-  --theme-text-muted:        rgba(255,255,255,0.45);
-  --theme-text-muted-strong: rgba(255,255,255,0.7);
-  --theme-accent:            var(--color-accent-base);
-  --theme-accent-light:      rgb(var(--accent-rgb) / 0.12);
-  --theme-accent-border:     rgb(var(--accent-rgb) / 0.3);
-  --theme-accent-text:       var(--color-accent-light);
-  --theme-console-text:      rgba(255,255,255,0.72);
-  --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
-  --theme-shadow-hover:      0 12px 36px rgb(var(--accent-rgb) / 0.08);
-  --theme-dot:               #22c55e;
+  --theme-bg: #0f0f0f;
+  --theme-sidebar-bg: #1f1f1f;
+  --theme-card-bg: #1f1f1f;
+  --theme-inner-bg: #0f0f0f;
+  --theme-border: rgba(255, 255, 255, 0.05);
+  --theme-border-strong: rgba(255, 255, 255, 0.12);
+  --theme-text: #ffffff;
+  --theme-text-muted: rgba(255, 255, 255, 0.45);
+  --theme-text-muted-strong: rgba(255, 255, 255, 0.7);
+  --theme-accent: var(--color-accent-base);
+  --theme-accent-light: rgb(var(--accent-rgb) / 0.12);
+  --theme-accent-border: rgb(var(--accent-rgb) / 0.3);
+  --theme-accent-text: var(--color-accent-light);
+  --theme-console-text: rgba(255, 255, 255, 0.72);
+  --theme-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  --theme-shadow-hover: 0 12px 36px rgb(var(--accent-rgb) / 0.08);
+  --theme-dot: #22c55e;
 
-  --density-compact:  12px;
+  /* Theme-aware tokens added for the results-screen migration. NOTE: dark is NOT
+     pixel-unchanged. --theme-error-text and --theme-row-bg match the originals
+     exactly, but --theme-text-faint was deliberately adjusted (#475569 -> 45% white)
+     and slice 1 also normalized several existing-token dark renderings in results.
+     Full old->new ratio ledger: apps/web/results-theme-migration-ledger.md.
+     Light values live in the .light block below. */
+  --theme-text-faint: rgba(255, 255, 255, 0.45);
+  --theme-row-bg: rgba(255, 255, 255, 0.025);
+  --theme-error-text: #fca5a5;
+  --theme-hover: rgba(
+    255,
+    255,
+    255,
+    0.06
+  ); /* NEW: neutral interactive overlay (row/button hover) */
+
+  --density-compact: 12px;
   --density-standard: 18px;
-  --density-relaxed:  24px;
+  --density-relaxed: 24px;
 
   /* ── Surface ramp (one near-black set; kills #070a10/#05070b/#141414 drift) ── */
-  --surface-0: #0B0B0E;   /* page background */
-  --surface-1: #131318;   /* cards / panels */
-  --surface-2: #1B1B22;   /* raised / inputs */
+  --surface-0: #0b0b0e; /* page background */
+  --surface-1: #131318; /* cards / panels */
+  --surface-2: #1b1b22; /* raised / inputs */
 
   /* ── Elevation ramp — depth on near-black via layered shadow (a tight contact
      shadow + a soft ambient one), paired with the surface step + hairline border.
      e2 is the hover/raised lift (real depth, not accent glow); e3 is for modals. ── */
-  --elevation-1: 0 2px 6px rgba(0,0,0,0.30), 0 8px 22px rgba(0,0,0,0.22);
-  --elevation-2: 0 6px 16px rgba(0,0,0,0.40), 0 20px 46px rgba(0,0,0,0.36);
-  --elevation-3: 0 12px 32px rgba(0,0,0,0.48), 0 30px 76px rgba(0,0,0,0.46);
+  --elevation-1: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 22px rgba(0, 0, 0, 0.22);
+  --elevation-2: 0 6px 16px rgba(0, 0, 0, 0.4), 0 20px 46px rgba(0, 0, 0, 0.36);
+  --elevation-3: 0 12px 32px rgba(0, 0, 0, 0.48), 0 30px 76px rgba(0, 0, 0, 0.46);
 
   /* ── Modal / overlay z-index scale (replaces arbitrary inline literals) ──
      base:     toasts, inline popovers (below full-screen overlays)
      overlay:  support modal, media-warning, blocked-app proctoring overlays
      critical: face soft-block, time's-up (must float above everything) ── */
-  --modal-z-base:     9200;
-  --modal-z-overlay:  9500;
+  --modal-z-base: 9200;
+  --modal-z-overlay: 9500;
   --modal-z-critical: 10000;
 
   /* ── Radius scale (kills 2px/10px one-offs) ── */
@@ -215,29 +234,29 @@ summary:focus-visible,
 
   /* ── Type scale — 12px is the readable floor; 11px micro-labels only ── */
   --text-2xs: 11px;
-  --text-xs:  12px;
-  --text-sm:  13px;
+  --text-xs: 12px;
+  --text-sm: 13px;
   --text-base: 14px;
-  --text-lg:  19px;
-  --text-xl:  24px;
-  --text-2xl: 30px;   /* contest hero timer, results rank */
-  --text-3xl: 44px;   /* lock-in countdown — the one true display size */
+  --text-lg: 19px;
+  --text-xl: 24px;
+  --text-2xl: 30px; /* contest hero timer, results rank */
+  --text-3xl: 44px; /* lock-in countdown — the one true display size */
 
   /* ── Muted text tiers (AA-legible on near-black) ── */
-  --text-soft:  rgba(255,255,255,0.72);
-  --text-dim:   rgba(255,255,255,0.58);
-  --text-faint: rgba(255,255,255,0.45);
+  --text-soft: rgba(255, 255, 255, 0.72);
+  --text-dim: rgba(255, 255, 255, 0.58);
+  --text-faint: rgba(255, 255, 255, 0.45);
 
   /* ── Canonical verdict palette (shared by exam screen, trust strip, results) ── */
-  --verdict-ac:      #22c55e;
-  --verdict-wa:      #ef4444;
-  --verdict-tle:     #f59e0b;
-  --verdict-mle:     #fb923c;
-  --verdict-re:      #f97316;
-  --verdict-ce:      #c4b5fd;
-  --verdict-ie:      #cbd5e1;
+  --verdict-ac: #22c55e;
+  --verdict-wa: #ef4444;
+  --verdict-tle: #f59e0b;
+  --verdict-mle: #fb923c;
+  --verdict-re: #f97316;
+  --verdict-ce: #c4b5fd;
+  --verdict-ie: #cbd5e1;
   --verdict-running: #60a5fa;
-  --verdict-none:    #64748b;
+  --verdict-none: #64748b;
 
   /* ── Accessible focus ring (used everywhere) ── */
   --focus-ring: 0 0 0 2px rgb(var(--accent-rgb) / 0.7);
@@ -245,23 +264,97 @@ summary:focus-visible,
 
 .dark {
   color-scheme: dark;
-  --theme-bg:                #0F0F0F;
-  --theme-sidebar-bg:        #1F1F1F;
-  --theme-card-bg:           #1F1F1F;
-  --theme-inner-bg:          #0F0F0F;
-  --theme-border:            rgba(255,255,255,0.05);
-  --theme-border-strong:     rgba(255,255,255,0.12);
-  --theme-text:              #ffffff;
-  --theme-text-muted:        rgba(255,255,255,0.45);
-  --theme-text-muted-strong: rgba(255,255,255,0.7);
-  --theme-accent:            var(--color-accent-base);
-  --theme-accent-light:      rgb(var(--accent-rgb) / 0.12);
-  --theme-accent-border:     rgb(var(--accent-rgb) / 0.3);
-  --theme-accent-text:       var(--color-accent-light);
-  --theme-console-text:      rgba(255,255,255,0.72);
-  --theme-shadow:            0 4px 16px rgba(0,0,0,0.2);
-  --theme-shadow-hover:      0 12px 36px rgb(var(--accent-rgb) / 0.08);
-  --theme-dot:               #22c55e;
+  --theme-bg: #0f0f0f;
+  --theme-sidebar-bg: #1f1f1f;
+  --theme-card-bg: #1f1f1f;
+  --theme-inner-bg: #0f0f0f;
+  --theme-border: rgba(255, 255, 255, 0.05);
+  --theme-border-strong: rgba(255, 255, 255, 0.12);
+  --theme-text: #ffffff;
+  --theme-text-muted: rgba(255, 255, 255, 0.45);
+  --theme-text-muted-strong: rgba(255, 255, 255, 0.7);
+  --theme-accent: var(--color-accent-base);
+  --theme-accent-light: rgb(var(--accent-rgb) / 0.12);
+  --theme-accent-border: rgb(var(--accent-rgb) / 0.3);
+  --theme-accent-text: var(--color-accent-light);
+  --theme-console-text: rgba(255, 255, 255, 0.72);
+  --theme-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  --theme-shadow-hover: 0 12px 36px rgb(var(--accent-rgb) / 0.08);
+  --theme-dot: #22c55e;
+
+  /* Theme-aware tokens added for the results-screen migration. NOTE: dark is NOT
+     pixel-unchanged. --theme-error-text and --theme-row-bg match the originals
+     exactly, but --theme-text-faint was deliberately adjusted (#475569 -> 45% white)
+     and slice 1 also normalized several existing-token dark renderings in results.
+     Full old->new ratio ledger: apps/web/results-theme-migration-ledger.md.
+     Light values live in the .light block below. */
+  --theme-text-faint: rgba(255, 255, 255, 0.45);
+  --theme-row-bg: rgba(255, 255, 255, 0.025);
+  --theme-error-text: #fca5a5;
+  --theme-hover: rgba(
+    255,
+    255,
+    255,
+    0.06
+  ); /* NEW: neutral interactive overlay (row/button hover) */
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LIGHT THEME — cream surfaces + rich purple pastel accents.
+   Applied when <html class="light">. Only screens that consume the
+   --theme-* / --surface-* / --text-* / --verdict-* token layer flip;
+   dark values above are untouched, so dark-pinned screens are unaffected.
+   Slice 1 consumer: results. Contrast values verified (see ui-upgrade-plan.md).
+   ───────────────────────────────────────────────────────────── */
+.light {
+  color-scheme: light;
+
+  /* Brand reads richer/darker on cream so it survives AA */
+  --accent-rgb: 124 58 237; /* #7C3AED */
+  --accent-light-rgb: 167 139 250; /* #A78BFA — decorative only */
+
+  --theme-bg: #f6f2ea;
+  --theme-sidebar-bg: #fbf8f2;
+  --theme-card-bg: #ffffff;
+  --theme-inner-bg: #f0eadd;
+  --theme-border: rgba(60, 42, 90, 0.12);
+  --theme-border-strong: rgba(60, 42, 90, 0.22);
+  --theme-text: #231b30;
+  --theme-text-muted: rgba(35, 27, 48, 0.65); /* 4.96:1 — corrected up from .62 */
+  --theme-text-muted-strong: rgba(35, 27, 48, 0.82);
+  --theme-text-faint: rgba(35, 27, 48, 0.55);
+  --theme-row-bg: rgba(35, 27, 48, 0.03);
+  --theme-error-text: #b91c1c; /* 5.79:1 */
+  --theme-hover: rgba(35, 27, 48, 0.05); /* NEW: neutral interactive overlay — darkens on cream */
+  --theme-accent: #7c3aed;
+  --theme-accent-light: rgb(124 58 237 / 0.1);
+  --theme-accent-border: rgb(124 58 237 / 0.28);
+  --theme-accent-text: #6d28d9; /* 6.36:1 on cream */
+  --theme-console-text: rgba(35, 27, 48, 0.74);
+  --theme-shadow: 0 1px 2px rgba(60, 40, 90, 0.06), 0 10px 28px rgba(60, 40, 90, 0.08);
+  --theme-shadow-hover: 0 16px 36px rgba(124, 58, 237, 0.14);
+  --theme-dot: #15803d; /* 4.49:1 on cream — was #16a34a (2.95:1, failed 3:1 status-dot rule) */
+
+  /* Surface ramp — results' page bg uses var(--surface-0) */
+  --surface-0: #f6f2ea;
+  --surface-1: #ffffff;
+  --surface-2: #f0eadd;
+
+  /* Shared muted tiers results references via var(--text-dim/--text-faint) */
+  --text-soft: rgba(35, 27, 48, 0.82);
+  --text-dim: rgba(35, 27, 48, 0.65);
+  --text-faint: rgba(35, 27, 48, 0.55);
+
+  /* Verdict palette — darkened one step to clear 4.5:1 as small text on cream */
+  --verdict-ac: #166534; /* 6.39:1 */
+  --verdict-wa: #b91c1c; /* 5.79:1 */
+  --verdict-tle: #92400e; /* 6.35:1 */
+  --verdict-mle: #9a3412; /* 6.54:1 */
+  --verdict-re: #7c2d12; /* 8.39:1 — distinct from MLE */
+  --verdict-ce: #7c3aed; /* 5.10:1 */
+  --verdict-ie: #475569; /* 6.79:1 */
+  --verdict-running: #1d4ed8; /* 6.00:1 */
+  --verdict-none: #52525b; /* 6.92:1 */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -270,16 +363,43 @@ summary:focus-visible,
 .theme-transition {
   transition:
     background-color var(--transition-standard),
-    border-color     var(--transition-standard),
-    color            var(--transition-standard),
-    box-shadow       var(--transition-standard);
+    border-color var(--transition-standard),
+    color var(--transition-standard),
+    box-shadow var(--transition-standard);
 }
 
-.text-display-title   { font-size: 24px !important; font-weight: 600 !important; letter-spacing: -0.02em !important; line-height: 32px !important; }
-.text-subsection-title{ font-size: 19px !important; font-weight: 500 !important; letter-spacing:  0.02em !important; line-height: 24px !important; }
-.text-body-copy        { font-size: 13px !important; font-weight: 400 !important; letter-spacing:  0px   !important; line-height: 20px !important; }
-.text-mono-console     { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 12px !important; font-weight: 400 !important; letter-spacing: 0.04em !important; line-height: 18px !important; }
-.text-micro-label      { font-size: 11px !important; font-weight: 600 !important; letter-spacing: 0.12em !important; line-height: 14px !important; text-transform: uppercase !important; }
+.text-display-title {
+  font-size: 24px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+  line-height: 32px !important;
+}
+.text-subsection-title {
+  font-size: 19px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em !important;
+  line-height: 24px !important;
+}
+.text-body-copy {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0px !important;
+  line-height: 20px !important;
+}
+.text-mono-console {
+  font-family: "JetBrains Mono", "Fira Code", monospace !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.04em !important;
+  line-height: 18px !important;
+}
+.text-micro-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.12em !important;
+  line-height: 14px !important;
+  text-transform: uppercase !important;
+}
 
 /* ─────────────────────────────────────────────────────────────
    LOGIN PAGE — two-pane split layout
@@ -344,7 +464,10 @@ summary:focus-visible,
   padding: 0 8px;
 }
 
-.login-brand-mark { margin-bottom: 28px; opacity: 0.92; }
+.login-brand-mark {
+  margin-bottom: 28px;
+  opacity: 0.92;
+}
 
 .login-brand-headline {
   font-size: 24px;
@@ -353,7 +476,7 @@ summary:focus-visible,
   color: var(--color-text-dim);
   line-height: 1.2;
   margin-bottom: 12px;
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
 }
 
 .login-brand-headline em {
@@ -365,7 +488,7 @@ summary:focus-visible,
   font-size: 13px;
   line-height: 1.6;
   color: var(--color-text-faint);
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   margin-bottom: 40px;
   max-width: 240px;
 }
@@ -397,19 +520,23 @@ summary:focus-visible,
   flex-shrink: 0;
 }
 
-.login-brand-feature-text { display: flex; flex-direction: column; gap: 2px; }
+.login-brand-feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .login-brand-feature-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text-dim);
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
 }
 
 .login-brand-feature-desc {
   font-size: 12px;
   color: var(--text-dim);
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   line-height: 1.4;
 }
 
@@ -418,7 +545,7 @@ summary:focus-visible,
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(255,255,255,0.12);
+  color: rgba(255, 255, 255, 0.12);
   text-transform: uppercase;
 }
 
@@ -431,12 +558,15 @@ summary:focus-visible,
   padding: 40px 56px;
 }
 
-.login-form-wrap { width: 100%; max-width: 360px; }
+.login-form-wrap {
+  width: 100%;
+  max-width: 360px;
+}
 
 .login-form-title {
   font-size: 14px;
   font-weight: 700;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255, 255, 255, 0.9);
   margin-bottom: 6px;
 }
 
@@ -453,7 +583,9 @@ summary:focus-visible,
 }
 
 /* Fields */
-.login-field { margin-bottom: 18px; }
+.login-field {
+  margin-bottom: 18px;
+}
 
 .login-label {
   display: block;
@@ -466,7 +598,9 @@ summary:focus-visible,
   transition: color var(--transition-fast);
 }
 
-.login-label--focused { color: var(--color-accent-base); }
+.login-label--focused {
+  color: var(--color-accent-base);
+}
 
 .login-input {
   display: block;
@@ -479,15 +613,28 @@ summary:focus-visible,
   padding: 12px 14px;
   outline: none;
   appearance: none;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
 }
 
-.login-input:focus        { border-color: rgb(var(--accent-rgb) / 0.45); background: #0D0D0D; }
-.login-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.login-input:disabled     { opacity: 0.45; cursor: not-allowed; }
+.login-input:focus {
+  border-color: rgb(var(--accent-rgb) / 0.45);
+  background: #0d0d0d;
+}
+.login-input:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.login-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Submit */
-.login-submit-wrap { margin-top: 24px; }
+.login-submit-wrap {
+  margin-top: 24px;
+}
 
 .login-submit {
   display: flex;
@@ -507,35 +654,67 @@ summary:focus-visible,
   min-height: 44px;
   padding: 0 24px;
   cursor: pointer;
-  transition: filter var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    filter var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
-.login-submit:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 4px 14px rgb(var(--accent-rgb) / 0.3); }
-.login-submit:active:not(:disabled) { transform: translateY(0) scale(0.98); }
-.login-submit:focus-visible        { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.login-submit:disabled             { background: var(--color-obsidian-raised); border-color: rgb(var(--accent-rgb) / 0.22); color: var(--text-faint); cursor: not-allowed; }
+.login-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgb(var(--accent-rgb) / 0.3);
+}
+.login-submit:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+.login-submit:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.login-submit:disabled {
+  background: var(--color-obsidian-raised);
+  border-color: rgb(var(--accent-rgb) / 0.22);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
 
 /* Secondary textlink buttons */
 .login-textlink {
-  background: none; border: none; padding: 6px 2px;
-  font-family: inherit; font-size: var(--text-xs);
-  color: var(--text-dim); cursor: pointer; text-decoration: none;
+  background: none;
+  border: none;
+  padding: 6px 2px;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: none;
   transition: color var(--transition-fast);
 }
-.login-textlink:hover { color: var(--color-accent-base); text-decoration: underline; }
-.login-textlink:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.login-textlink--quiet { color: var(--text-faint); }
-.login-textlink--quiet:hover { color: var(--color-accent-light); }
+.login-textlink:hover {
+  color: var(--color-accent-base);
+  text-decoration: underline;
+}
+.login-textlink:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.login-textlink--quiet {
+  color: var(--text-faint);
+}
+.login-textlink--quiet:hover {
+  color: var(--color-accent-light);
+}
 
 /* Error alert */
 .login-error {
   margin-top: 12px;
   padding: 10px 12px;
   border: 1px solid var(--color-border-error);
-  background: rgba(239,68,68,0.06);
+  background: rgba(239, 68, 68, 0.06);
   border-radius: var(--radius-md);
   font-size: 12px;
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   color: #fca5a5;
   line-height: 1.5;
 }
@@ -546,7 +725,7 @@ summary:focus-visible,
   width: 100%;
   margin-top: 10px;
   background: transparent;
-  border: 1px solid rgba(255,255,255,0.04);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: var(--radius-md);
   color: var(--text-faint);
   font-family: inherit;
@@ -556,10 +735,15 @@ summary:focus-visible,
   text-transform: uppercase;
   padding: 8px 16px;
   cursor: pointer;
-  transition: border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
   text-align: center;
 }
-.login-dev-btn:hover { border-color: rgba(255,255,255,0.08); color: var(--text-dim); }
+.login-dev-btn:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+}
 
 /* SSO */
 .login-sso-wrap {
@@ -579,14 +763,22 @@ summary:focus-visible,
   padding: 0 16px;
   min-height: 38px;
   cursor: pointer;
-  transition: border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
-.login-sso-btn:hover        { border-color: rgba(255,255,255,0.18); color: var(--text-soft); }
-.login-sso-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.login-sso-btn:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--text-soft);
+}
+.login-sso-btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
 
 .login-form-note {
   margin-top: 18px;
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   font-size: var(--text-xs);
   color: var(--text-dim);
   line-height: 1.6;
@@ -594,20 +786,26 @@ summary:focus-visible,
 
 .login-form-support {
   margin-top: 10px;
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   font-size: var(--text-xs);
   color: var(--text-dim);
   line-height: 1.6;
 }
 
-.login-form-support a               { color: rgb(var(--accent-rgb) / 0.8); text-decoration: none; }
-.login-form-support a:hover         { color: var(--color-accent-base); text-decoration: underline; }
+.login-form-support a {
+  color: rgb(var(--accent-rgb) / 0.8);
+  text-decoration: none;
+}
+.login-form-support a:hover {
+  color: var(--color-accent-base);
+  text-decoration: underline;
+}
 
 /* SSO modal */
 .login-modal-bg {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.88);
+  background: rgba(0, 0, 0, 0.88);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -616,7 +814,7 @@ summary:focus-visible,
 
 .login-modal {
   background: var(--surface-1);
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-md);
   padding: 32px 36px;
   max-width: 440px;
@@ -632,10 +830,15 @@ summary:focus-visible,
   margin-bottom: 12px;
 }
 
-.login-modal-title { font-size: 13px; font-weight: 700; color: var(--color-text-primary); margin-bottom: 16px; }
+.login-modal-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 16px;
+}
 
 .login-modal-body {
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   font-size: 13px;
   line-height: 1.65;
   color: #888;
@@ -644,7 +847,7 @@ summary:focus-visible,
 
 .login-modal-close {
   background: transparent;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-md);
   color: #d8b4fe;
   font-family: inherit;
@@ -653,16 +856,30 @@ summary:focus-visible,
   padding: 0 18px;
   min-height: 38px;
   cursor: pointer;
-  transition: border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
-.login-modal-close:hover        { border-color: rgba(255,255,255,0.2); color: #aaa; }
-.login-modal-close:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.login-modal-close:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #aaa;
+}
+.login-modal-close:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
 
 /* Responsive */
 @media (max-width: 720px) {
-  .login-root                        { grid-template-columns: 1fr; }
-  .login-left                        { display: none; }
-  .login-right                       { padding: 32px 24px; }
+  .login-root {
+    grid-template-columns: 1fr;
+  }
+  .login-left {
+    display: none;
+  }
+  .login-right {
+    padding: 32px 24px;
+  }
 }
 
 /* ── SYSTEM_LOGS pane ───────────────────────────────────────
@@ -675,10 +892,10 @@ summary:focus-visible,
   left: 0;
   right: 0;
   z-index: 50;
-  background: rgba(10,10,10,0.97);
-  border-top: 1px solid rgba(255,255,255,0.06);
+  background: rgba(10, 10, 10, 0.97);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding: 6px 16px 8px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 11px;
   display: flex;
   flex-direction: column;
@@ -702,15 +919,27 @@ summary:focus-visible,
   animation: slideUp 120ms var(--ease-cinematic) both;
 }
 .syslog-ts {
-  color: rgba(255,255,255,0.2);
+  color: rgba(255, 255, 255, 0.2);
   flex-shrink: 0;
   font-size: 9px;
 }
-.syslog-level-err  { color: #ef4444; font-weight: 700; flex-shrink: 0; }
-.syslog-level-info { color: rgb(var(--accent-rgb) / 0.8); font-weight: 700; flex-shrink: 0; }
-.syslog-level-ok   { color: #22c55e; font-weight: 700; flex-shrink: 0; }
+.syslog-level-err {
+  color: #ef4444;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.syslog-level-info {
+  color: rgb(var(--accent-rgb) / 0.8);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.syslog-level-ok {
+  color: #22c55e;
+  font-weight: 700;
+  flex-shrink: 0;
+}
 .syslog-msg {
-  color: rgba(255,255,255,0.65);
+  color: rgba(255, 255, 255, 0.65);
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
@@ -721,48 +950,87 @@ summary:focus-visible,
    KEYFRAMES
    ───────────────────────────────────────────────────────────── */
 @keyframes blink-cursor {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1;   transform: scale(1);   }
-  50%       { opacity: 0.4; transform: scale(0.9); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideDown {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0);    }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Modal entrance — settles up from a slightly smaller scale while fading in. */
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.92); }
-  to   { opacity: 1; transform: scale(1);    }
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Cold-start loading shells — gentle breath so the label reads as "working",
    not "stuck". */
 @keyframes loadingPulse {
-  0%, 100% { opacity: 1;    }
-  50%       { opacity: 0.55; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
-
-
 
 .login-spinner {
   animation: spin 0.8s linear infinite;
@@ -772,19 +1040,60 @@ summary:focus-visible,
 /* ─────────────────────────────────────────────────────────────
    ONBOARDING BUTTON
    ───────────────────────────────────────────────────────────── */
-.onb-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px;
-  min-height:40px; padding:0 16px; border-radius:var(--radius-sm);
-  font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:600; letter-spacing:0.04em;
-  cursor:pointer; border:1px solid transparent;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); }
-.onb-btn:focus-visible { outline:2px solid var(--color-border-focus); outline-offset:2px; }
-.onb-btn:disabled { opacity:.5; cursor:not-allowed; }
-.onb-btn--primary { background:var(--color-accent-base); color:#fff; border-color:var(--color-accent-base); }
-.onb-btn--primary:hover:not(:disabled){ filter:brightness(1.08); }
-.onb-btn--secondary { background:transparent; color:var(--text-soft); border-color:rgba(255,255,255,0.12); }
-.onb-btn--secondary:hover:not(:disabled){ background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.2); color:#fff; }
-.onb-btn--danger { background:transparent; color:#f87171; border-color:rgba(239,68,68,0.3); }
-.onb-btn--danger:hover:not(:disabled){ background:rgba(239,68,68,0.12); color:#fca5a5; }
+.onb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.onb-btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.onb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.onb-btn--primary {
+  background: var(--color-accent-base);
+  color: #fff;
+  border-color: var(--color-accent-base);
+}
+.onb-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.onb-btn--secondary {
+  background: transparent;
+  color: var(--text-soft);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.onb-btn--secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.onb-btn--danger {
+  background: transparent;
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.onb-btn--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+}
 
 /* ─────────────────────────────────────────────────────────────
    ROUTE LOADING + CONTEST EDITOR STATIC SURFACES
@@ -796,8 +1105,10 @@ summary:focus-visible,
   align-items: center;
   justify-content: center;
   gap: 18px;
-  background: #0F0F0F;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  background: var(
+    --theme-bg
+  ); /* was #0f0f0f — flips to cream in light; dark value is #0F0F0F (identical) */
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   animation: fadeIn var(--transition-standard) both;
 }
 /* Spinner ring — inherits the route tint via currentColor (track is the same
@@ -815,16 +1126,26 @@ summary:focus-visible,
 }
 /* Intentional tint ramp: calm soft (home) → neutral white (onboarding) →
    charged accent (contest) → accent-light (results reveal). */
-.route-loading-shell--home { color: var(--text-soft); }
-.route-loading-shell--onboarding { color: #ffffff; }
-.route-loading-shell--contest { color: var(--color-accent-base); }
-.route-loading-shell--results { color: var(--color-accent-light); }
+.route-loading-shell--home {
+  color: var(--text-soft);
+}
+.route-loading-shell--onboarding {
+  color: #ffffff;
+}
+.route-loading-shell--contest {
+  color: var(--color-accent-base);
+}
+.route-loading-shell--results {
+  color: var(
+    --theme-accent-text
+  ); /* was --color-accent-light (#A78BFA, 2.44:1 on cream); now flips: lavender on dark, #6D28D9 on cream */
+}
 .contest-editor-pane {
   flex: 1;
   position: relative;
   min-height: 0;
   min-width: 0;
-  background: #0F0F0F;
+  background: #0f0f0f;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -833,30 +1154,42 @@ summary:focus-visible,
 /* Row hover + a barely-there odd-row stripe to anchor the eye across a wide
    table. The is-me row sets its background inline (from --accent-rgb), so it
    wins over both rules below. */
-.lb-row { transition: background var(--transition-fast); }
-.lb-row:nth-child(even) { background: rgba(255, 255, 255, 0.022); }
-.lb-row:hover           { background: rgba(255, 255, 255, 0.045); }
+.lb-row {
+  transition: background var(--transition-fast);
+}
+.lb-row:nth-child(even) {
+  background: var(--theme-row-bg);
+}
+.lb-row:hover {
+  background: var(--theme-hover);
+}
 
 .results-btn {
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast),
-              color var(--transition-fast), filter var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    filter var(--transition-fast);
 }
 .results-btn-ghost {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  border: 1px solid var(--theme-border-strong);
   color: var(--text-soft);
   padding: 8px 18px;
 }
 .results-btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
+  background: var(--theme-hover);
+  border-color: var(--theme-border-strong);
+  color: var(--theme-text);
 }
-.results-btn-ghost:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.results-btn-ghost:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
 .results-btn-primary {
   background: var(--color-accent-deep);
   border: 1px solid transparent;
@@ -864,8 +1197,30 @@ summary:focus-visible,
   font-weight: 600;
   padding: 8px 20px;
 }
-.results-btn-primary:hover { filter: brightness(1.1); }
-.results-btn-primary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.results-btn-primary:hover {
+  filter: brightness(1.1);
+}
+.results-btn-primary:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* Inline-styled controls get a hover floor (resting styles stay inline). */
+.results-load-btn {
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+.results-load-btn:hover {
+  background: rgb(var(--accent-rgb) / 0.18) !important;
+  border-color: rgb(var(--accent-rgb) / 0.34) !important;
+}
+.results-problem-row {
+  transition: background var(--transition-fast);
+}
+.results-problem-row:hover {
+  background: var(--theme-hover) !important;
+}
 
 /* ─────────────────────────────────────────────────────────────
    HELP REQUEST MODAL (shared escape-hatch)
@@ -883,24 +1238,38 @@ summary:focus-visible,
   font-size: 13px;
   font-family: var(--font-mono);
   box-sizing: border-box;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
 }
 .help-input:focus {
   outline: none;
   border-color: rgb(var(--accent-rgb) / 0.45);
   background: rgba(255, 255, 255, 0.07);
 }
-.help-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.help-input::placeholder { color: var(--text-faint); }
+.help-input:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.help-input::placeholder {
+  color: var(--text-faint);
+}
 
 .help-btn {
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast),
-              color var(--transition-fast), filter var(--transition-fast), opacity var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    filter var(--transition-fast),
+    opacity var(--transition-fast);
 }
-.help-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.help-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .help-btn-primary {
   flex: 1;
   padding: 10px 18px;
@@ -909,8 +1278,13 @@ summary:focus-visible,
   color: #ffffff;
   font-weight: 600;
 }
-.help-btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
-.help-btn-primary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.help-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.help-btn-primary:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
 .help-btn-ghost {
   flex: 0 1 auto;
   padding: 10px 18px;
@@ -923,7 +1297,10 @@ summary:focus-visible,
   border-color: rgba(255, 255, 255, 0.2);
   color: #ffffff;
 }
-.help-btn-ghost:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.help-btn-ghost:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
 
 /* "YOU" chip — promotes the inline marker to a real token. */
 .results-you-chip {
@@ -968,31 +1345,73 @@ summary:focus-visible,
   cursor: pointer;
   padding: 5px;
   border-radius: var(--radius-sm);
-  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
   flex-shrink: 0;
 }
-.ic-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.ic-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 
-.ic-btn-muted   { color: rgba(255,255,255,0.58); }
-.ic-btn-muted:hover:not(:disabled)   { color: #ffffff; background: rgba(255,255,255,0.06); }
+.ic-btn-muted {
+  color: rgba(255, 255, 255, 0.58);
+}
+.ic-btn-muted:hover:not(:disabled) {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+}
 
-.ic-btn-white   { color: rgba(255,255,255,0.72); }
-.ic-btn-white:hover:not(:disabled)   { color: #f1f5f9; background: rgba(255,255,255,0.07); }
+.ic-btn-white {
+  color: rgba(255, 255, 255, 0.72);
+}
+.ic-btn-white:hover:not(:disabled) {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.07);
+}
 
-.ic-btn-amber   { color: #f59e0b; }
-.ic-btn-amber:hover:not(:disabled)   { color: #fbbf24; background: rgba(245,158,11,0.12); }
+.ic-btn-amber {
+  color: #f59e0b;
+}
+.ic-btn-amber:hover:not(:disabled) {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.12);
+}
 
-.ic-btn-red     { color: #ef4444; }
-.ic-btn-red:hover:not(:disabled)     { color: #f87171; background: rgba(239,68,68,0.12); }
+.ic-btn-red {
+  color: #ef4444;
+}
+.ic-btn-red:hover:not(:disabled) {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+}
 
-.ic-btn-violet  { color: var(--color-accent-base); }
-.ic-btn-violet:hover:not(:disabled)  { color: var(--color-accent-light); background: rgb(var(--accent-rgb) / 0.12); }
+.ic-btn-violet {
+  color: var(--color-accent-base);
+}
+.ic-btn-violet:hover:not(:disabled) {
+  color: var(--color-accent-light);
+  background: rgb(var(--accent-rgb) / 0.12);
+}
 
-.ic-btn-green   { color: #22c55e; }
-.ic-btn-green:hover:not(:disabled)   { color: #4ade80; background: rgba(34,197,94,0.12); }
+.ic-btn-green {
+  color: #22c55e;
+}
+.ic-btn-green:hover:not(:disabled) {
+  color: #4ade80;
+  background: rgba(34, 197, 94, 0.12);
+}
 
-@keyframes ic-spin { to { transform: rotate(360deg); } }
-.ic-spin { animation: ic-spin 0.75s linear infinite; }
+@keyframes ic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ic-spin {
+  animation: ic-spin 0.75s linear infinite;
+}
 
 /* ── Welcome page ─────────────────────────────────────────────── */
 .welcome-root {
@@ -1021,7 +1440,7 @@ summary:focus-visible,
   gap: 8px;
   opacity: 0;
   transition:
-    opacity   var(--transition-slow),
+    opacity var(--transition-slow),
     transform var(--transition-slow);
 }
 
@@ -1048,21 +1467,32 @@ summary:focus-visible,
   border-radius: 50%;
   flex-shrink: 0;
   background: #22c55e;
-  box-shadow: 0 0 7px rgba(34, 197, 94, 0.9), 0 0 2px #22c55e;
+  box-shadow:
+    0 0 7px rgba(34, 197, 94, 0.9),
+    0 0 2px #22c55e;
   animation: welcome-dot-pulse 2.8s ease-in-out infinite;
 }
 
 @keyframes welcome-dot-pulse {
-  0%, 100% { opacity: 1;   box-shadow: 0 0 7px rgba(34,197,94,0.9), 0 0 2px #22c55e; }
-  50%       { opacity: 0.4; box-shadow: 0 0 3px rgba(34,197,94,0.4); }
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow:
+      0 0 7px rgba(34, 197, 94, 0.9),
+      0 0 2px #22c55e;
+  }
+  50% {
+    opacity: 0.4;
+    box-shadow: 0 0 3px rgba(34, 197, 94, 0.4);
+  }
 }
 
 .welcome-mono-tag {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 8.5px;
   font-weight: 700;
   letter-spacing: 0.22em;
-  color: rgba(255, 255, 255, 0.30);
+  color: rgba(255, 255, 255, 0.3);
   text-transform: uppercase;
 }
 
@@ -1083,7 +1513,7 @@ summary:focus-visible,
   align-items: center;
   opacity: 0;
   transition:
-    opacity   var(--transition-slow),
+    opacity var(--transition-slow),
     transform var(--transition-slow);
 }
 
@@ -1109,7 +1539,7 @@ summary:focus-visible,
 }
 
 .welcome-wordmark {
-  font-family: var(--font-sans, 'Inter', sans-serif);
+  font-family: var(--font-sans, "Inter", sans-serif);
   font-size: 32px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -1122,7 +1552,7 @@ summary:focus-visible,
 }
 
 .welcome-byline {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0.42em;
@@ -1137,7 +1567,7 @@ summary:focus-visible,
 
 .welcome-tagline {
   text-align: center;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.28em;
@@ -1150,7 +1580,7 @@ summary:focus-visible,
 /* ── CTA + session hint (now in the centered group) ── */
 
 .welcome-session-hint {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 8px;
   font-weight: 500;
   letter-spacing: 0.24em;
@@ -1170,15 +1600,15 @@ summary:focus-visible,
   border: 1px solid var(--color-accent-base);
   background: var(--color-accent-base);
   color: #ffffff;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.20em;
-  padding-left: calc(80px + 0.20em);
+  letter-spacing: 0.2em;
+  padding-left: calc(80px + 0.2em);
   text-transform: uppercase;
   cursor: pointer;
   transition:
-    background   var(--transition-standard),
+    background var(--transition-standard),
     border-color var(--transition-standard);
 }
 
@@ -1215,12 +1645,20 @@ summary:focus-visible,
 /* ─────────────────────────────────────────────────────────────
    RESPONSIVE — HOME LAYOUT CHROME
    ───────────────────────────────────────────────────────────── */
-.home-header  { padding: 28px 48px 24px; }
-.home-content { padding: 36px 48px; }
+.home-header {
+  padding: 28px 48px 24px;
+}
+.home-content {
+  padding: 36px 48px;
+}
 
 @media (max-width: 900px) {
-  .home-header  { padding: 20px 24px 16px; }
-  .home-content { padding: 20px 24px; }
+  .home-header {
+    padding: 20px 24px 16px;
+  }
+  .home-content {
+    padding: 20px 24px;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1242,20 +1680,41 @@ summary:focus-visible,
    CONTEST — KEYFRAMES
    ───────────────────────────────────────────────────────────── */
 @keyframes countdown-pulse {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(0.98); }
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.98);
+  }
 }
 
 /* The verdict moment: a one-shot reveal when a submission resolves. currentColor
    resolves to the verdict colour, so the glow is verdict-tinted for free. */
 @keyframes verdict-reveal {
-  0%   { transform: scale(1);   box-shadow: 0 0 0 0 transparent; }
-  50%  { transform: scale(1.1); box-shadow: 0 0 12px 0 currentColor; }
-  100% { transform: scale(1);   box-shadow: 0 0 0 0 transparent; }
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 12px 0 currentColor;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 @keyframes verdict-reveal-ac {
-  0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 transparent; }
-  40%      { transform: scale(1.05); box-shadow: 0 0 12px 0 currentColor; }
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  40% {
+    transform: scale(1.05);
+    box-shadow: 0 0 12px 0 currentColor;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1305,7 +1764,9 @@ summary:focus-visible,
   opacity: 0;
   transform: translateY(4px);
   pointer-events: none;
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
 }
 .rl-info:hover .rl-tip,
 .rl-info:focus-visible .rl-tip {
