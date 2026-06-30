@@ -5211,7 +5211,7 @@ export default function ContestPageClient() {
                           ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
-                      fontWeight: 600,
+                      fontWeight: terminalTab === "stdout" ? 600 : 500,
                       cursor: "pointer",
                       height: "100%",
                       padding: "0 4px",
@@ -5232,7 +5232,7 @@ export default function ContestPageClient() {
                           ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
-                      fontWeight: 600,
+                      fontWeight: terminalTab === "logs" ? 600 : 500,
                       cursor: "pointer",
                       height: "100%",
                       padding: "0 4px",
@@ -5270,7 +5270,7 @@ export default function ContestPageClient() {
                           ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
-                      fontWeight: 600,
+                      fontWeight: terminalTab === "submissions" ? 600 : 500,
                       cursor: "pointer",
                       height: "100%",
                       padding: "0 4px",
@@ -5467,11 +5467,11 @@ export default function ContestPageClient() {
                         style={{
                           color: "#64748b",
                           fontSize: "10px",
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.1em",
                           marginBottom: "8px",
                         }}
                       >
-                        Output
+                        OUTPUT
                       </div>
                       {/* LeetCode-style sample results for a "Run on Judge". Runs
                           are judged against sample tests only and never appear in
