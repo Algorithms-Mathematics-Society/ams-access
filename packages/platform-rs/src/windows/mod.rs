@@ -743,6 +743,29 @@ pub fn detect_remote_desktop() -> bool {
 
 // ── External-display detection (F10) ──────────────────────────────────────────
 
+/// Resolve the attached monitor count, absorbing a transient failure.
+///
+/// `read` returns the raw `SM_CMONITORS` value (`<= 0` on failure). Returns the
+/// first positive count, or `0` — the "could not verify" sentinel — if every
+/// attempt fails. `backoff(attempt)` is invoked between attempts (real sleep in
+/// production, a no-op in tests). Pure: no Win32, so it is unit-testable.
+fn resolve_monitor_count(
+    attempts: u32,
+    mut read: impl FnMut() -> i32,
+    mut backoff: impl FnMut(u32),
+) -> u32 {
+    for attempt in 0..attempts {
+        let raw = read();
+        if raw > 0 {
+            return raw as u32;
+        }
+        if attempt + 1 < attempts {
+            backoff(attempt);
+        }
+    }
+    0
+}
+
 /// Probe the attached display topology.
 ///
 /// `count` is the number of display monitors currently attached (a candidate
@@ -754,18 +777,23 @@ pub fn detect_remote_desktop() -> bool {
 /// wireless sink mirrors rather than extends. Never panics; on any Win32 error
 /// the corresponding signal degrades to a conservative default.
 pub fn detect_external_displays() -> core_rs::exam::DisplayScan {
+    use std::time::Duration;
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CMONITORS};
 
-    // Monitor count: SM_CMONITORS counts display monitors on the desktop. It
-    // returns 0 only on failure, in which case we assume a single display so we
-    // never block a candidate on a query glitch.
-    let raw = unsafe { GetSystemMetrics(SM_CMONITORS) };
-    let count = if raw <= 0 { 1 } else { raw as u32 };
-    let has_extra = count > 1;
+    // 3 reads at ~0/200/400 ms, early-exit on the first positive count. A
+    // transient SM_CMONITORS == 0 (GPU TDR / hotplug debounce / RDP transition)
+    // settles in ~100-300 ms; the 200 ms spacing samples ACROSS that window
+    // rather than re-reading the same instant. All-fail leaves count == 0,
+    // the indeterminate sentinel (core-rs blocks it on strict Windows).
+    let count = resolve_monitor_count(
+        3,
+        || unsafe { GetSystemMetrics(SM_CMONITORS) },
+        |_| std::thread::sleep(Duration::from_millis(200)),
+    );
 
     DisplayScan {
         count,
-        has_extra,
+        has_extra: count > 1,
         has_wireless: detect_wireless_display(),
     }
 }
@@ -1599,4 +1627,43 @@ unsafe extern "system" fn clipboard_wndproc(
     }
 
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::resolve_monitor_count;
+
+    #[test]
+    fn first_positive_read_short_circuits() {
+        let mut calls = 0;
+        let count = resolve_monitor_count(
+            3,
+            || {
+                calls += 1;
+                2
+            },
+            |_| {},
+        );
+        assert_eq!(count, 2);
+        assert_eq!(calls, 1); // no further reads after a good one
+    }
+
+    #[test]
+    fn retries_absorb_a_transient_zero() {
+        let mut reads = [0, 0, 3].into_iter();
+        let count = resolve_monitor_count(3, || reads.next().unwrap(), |_| {});
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn persistent_failure_yields_zero_sentinel() {
+        let count = resolve_monitor_count(3, || 0, |_| {});
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn negative_reads_are_treated_as_failure() {
+        let count = resolve_monitor_count(2, || -1, |_| {});
+        assert_eq!(count, 0);
+    }
 }
