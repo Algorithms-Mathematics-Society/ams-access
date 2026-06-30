@@ -478,6 +478,7 @@ function Stage3_MonitorDetection({
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [scanIndeterminate, setScanIndeterminate] = useState(false);
   const theme = useTheme();
   const isLight = theme === "light";
 
@@ -485,7 +486,7 @@ function Stage3_MonitorDetection({
   // violation we enforce at the gate (mirrors the `external_display` block in
   // core-rs). On macOS/Linux — or when an organizer override is present — this
   // stays an advisory warning so behavior off-Windows is unchanged.
-  const isWindows = platform?.toLowerCase() === "windows";
+  const isWindows = platform?.toLowerCase().startsWith("windows") ?? false;
   const multiDisplay = monitors.length > 1;
   const hardBlock = isWindows && multiDisplay && !externalDisplayOverride;
 
@@ -512,6 +513,13 @@ function Stage3_MonitorDetection({
       mons = [];
     }
 
+    // Windows fail-closed: an empty enumeration is "could not verify", NOT a
+    // single screen. Off-Windows (or with an organizer override) keep the prior
+    // advisory synthetic-single fallback so macOS/Linux behavior is unchanged.
+    const enumFailed = mons.length === 0;
+    const indeterminate = isWindows && !externalDisplayOverride && enumFailed;
+    setScanIndeterminate(indeterminate);
+
     const list = mons.length
       ? mons
       : [
@@ -526,16 +534,52 @@ function Stage3_MonitorDetection({
     setScanning(false);
     setDone(true);
 
-    if (list.length === 1) {
+    // Auto-advance only on a verified single screen. Indeterminate (Windows)
+    // and multi-display both hold the candidate at this stage.
+    if (!indeterminate && list.length === 1) {
       setTimeout(() => {
         onPass();
       }, 1200);
     }
-  }, [onPass]);
+  }, [onPass, isWindows, externalDisplayOverride]);
 
   useEffect(() => {
     void runDetection();
   }, [runDetection]);
+
+  // Load-bearing escape: while a Windows block (indeterminate or multi-display)
+  // is showing, poll organizer overrides every 10s. An `external_display` waiver
+  // means this device is allowed through, so advance via onPass() (the final-
+  // stage gate independently re-fetches and honors the same override at
+  // page.tsx:3937, so advancing here is consistent). No-op off-Windows / once
+  // unblocked. contestId is read from the URL — the same source the parent uses
+  // (page.tsx ~3400); this component has no contestId prop.
+  const blocked =
+    isWindows && !externalDisplayOverride && (scanIndeterminate || monitors.length > 1);
+  useEffect(() => {
+    if (!blocked) return;
+    const contestId =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("contestId")
+        : null;
+    if (!contestId) return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      try {
+        const grants = await fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId());
+        if (!cancelled && grants.some((g) => g.check_kind === "external_display")) {
+          clearInterval(id);
+          onPass(); // override is a waiver -> advance past Stage 3
+        }
+      } catch {
+        /* transient fetch error — keep polling */
+      }
+    }, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [blocked, onPass]);
 
   return (
     <div className="flex flex-col items-start w-full">
@@ -598,7 +642,9 @@ function Stage3_MonitorDetection({
         >
           <CheckLine
             label={`${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`}
-            status={multiDisplay ? (hardBlock ? "fail" : "warn") : "pass"}
+            status={
+              multiDisplay ? (hardBlock ? "fail" : "warn") : scanIndeterminate ? "fail" : "pass"
+            }
           />
           {multiDisplay ? (
             <>
@@ -642,7 +688,36 @@ function Stage3_MonitorDetection({
               </Button>
             </>
           ) : (
-            <CheckLine label="Single screen environment confirmed" status="pass" />
+            !scanIndeterminate && (
+              <CheckLine label="Single screen environment confirmed" status="pass" />
+            )
+          )}
+          {scanIndeterminate && !multiDisplay && (
+            <>
+              <CheckLine label="Could not verify your display setup" status="fail" />
+              <div
+                style={{
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                  fontSize: "12px",
+                  lineHeight: 1.7,
+                  color: "#ef4444",
+                  marginTop: "4px",
+                }}
+              >
+                We couldn&apos;t confirm how many screens are connected. Re-run the scan; if it
+                keeps failing, contact your proctor to be waived in.
+              </div>
+              <Button
+                theme={theme}
+                variant="danger"
+                size="small"
+                onClick={() => void runDetection()}
+                disabled={scanning}
+                style={{ marginTop: "12px" }}
+              >
+                {scanning ? "Scanning..." : "Re-scan displays"}
+              </Button>
+            </>
           )}
         </div>
       )}
