@@ -188,11 +188,9 @@ summary:focus-visible,
 
   /* Theme-aware tokens added for the results-screen migration. NOTE: dark is NOT
      pixel-unchanged. --theme-error-text and --theme-row-bg match the originals
-     exactly, but --theme-text-faint was deliberately adjusted (#475569 -> 45% white)
-     and slice 1 also normalized several existing-token dark renderings in results.
+     exactly; slice 1 also normalized several existing-token dark renderings in results.
      Full old->new ratio ledger: apps/web/results-theme-migration-ledger.md.
      Light values live in the .light block below. */
-  --theme-text-faint: rgba(255, 255, 255, 0.45);
   --theme-row-bg: rgba(255, 255, 255, 0.025);
   --theme-error-text: #fca5a5;
   --theme-hover: rgba(
@@ -284,11 +282,9 @@ summary:focus-visible,
 
   /* Theme-aware tokens added for the results-screen migration. NOTE: dark is NOT
      pixel-unchanged. --theme-error-text and --theme-row-bg match the originals
-     exactly, but --theme-text-faint was deliberately adjusted (#475569 -> 45% white)
-     and slice 1 also normalized several existing-token dark renderings in results.
+     exactly; slice 1 also normalized several existing-token dark renderings in results.
      Full old->new ratio ledger: apps/web/results-theme-migration-ledger.md.
      Light values live in the .light block below. */
-  --theme-text-faint: rgba(255, 255, 255, 0.45);
   --theme-row-bg: rgba(255, 255, 255, 0.025);
   --theme-error-text: #fca5a5;
   --theme-hover: rgba(
@@ -322,7 +318,6 @@ summary:focus-visible,
   --theme-text: #231b30;
   --theme-text-muted: rgba(35, 27, 48, 0.65); /* 4.96:1 — corrected up from .62 */
   --theme-text-muted-strong: rgba(35, 27, 48, 0.82);
-  --theme-text-faint: rgba(35, 27, 48, 0.55);
   --theme-row-bg: rgba(35, 27, 48, 0.03);
   --theme-error-text: #b91c1c; /* 5.79:1 */
   --theme-hover: rgba(35, 27, 48, 0.05); /* NEW: neutral interactive overlay — darkens on cream */
@@ -1183,7 +1178,7 @@ summary:focus-visible,
 }
 .results-btn-ghost:hover {
   background: var(--theme-hover);
-  border-color: var(--theme-border-strong);
+  border-color: var(--theme-accent-border);
   color: var(--theme-text);
 }
 .results-btn-ghost:focus-visible {
