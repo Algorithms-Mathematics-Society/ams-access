@@ -944,10 +944,14 @@ mod tests {
 
     #[test]
     fn windows_strict_detected_takes_precedence_over_indeterminate() {
+        // Adversarial both-true case: count==0 makes `indeterminate` true AND
+        // has_wireless makes `detected` true. Only this input actually exercises
+        // the if/else precedence — a real display must surface as
+        // ExternalDisplayDetected, never masked by the indeterminate code.
         let (policy, state) = windows_strict(Some(DisplayScan {
-            count: 2,
-            has_extra: true,
-            has_wireless: false,
+            count: 0,
+            has_extra: false,
+            has_wireless: true,
         }));
         let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
         assert!(report
