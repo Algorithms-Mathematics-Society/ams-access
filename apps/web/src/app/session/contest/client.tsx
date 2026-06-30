@@ -40,6 +40,7 @@ import {
   type SubmissionAttemptRecord,
 } from "./submission-state";
 import { countdownPhase, type CountdownPhase } from "./countdown";
+import { KioskBanner } from "./KioskBanner";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -3647,6 +3648,7 @@ export default function ContestPageClient() {
         fontFamily: "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       }}
     >
+      <KioskBanner />
       {/* Floating warning toast during grace period */}
       {lockGraceActive && lockGraceCountdown > 0 && (
         <div
