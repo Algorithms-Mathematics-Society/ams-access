@@ -1258,7 +1258,8 @@ export const SettingsPanel = memo(function SettingsPanel({
                   }
                   secure={
                     platformInfo
-                      ? platformInfo.os === "linux" || platformInfo.os === "windows"
+                      ? platformInfo.os === "linux" ||
+                        platformInfo.os.toLowerCase().startsWith("windows")
                       : false
                   }
                   theme={theme}
@@ -1283,7 +1284,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                 />
                 <SecurityInfoRow
                   label={
-                    platformInfo?.os === "windows"
+                    platformInfo?.os?.toLowerCase().startsWith("windows")
                       ? "Debugger/injection profile"
                       : "Startup injection check"
                   }
@@ -1299,19 +1300,19 @@ export const SettingsPanel = memo(function SettingsPanel({
                 />
                 <SecurityInfoRow
                   label={
-                    platformInfo?.os === "windows"
+                    platformInfo?.os?.toLowerCase().startsWith("windows")
                       ? "Native lockdown support"
                       : "Linux ptrace scope"
                   }
                   val={
-                    platformInfo?.os === "windows"
+                    platformInfo?.os?.toLowerCase().startsWith("windows")
                       ? "Keyboard hook and firewall commands available"
                       : securityEnv
                         ? `ptrace_scope ${securityEnv.ptrace_scope}`
                         : "Checking"
                   }
                   secure={
-                    platformInfo?.os === "windows" ||
+                    platformInfo?.os?.toLowerCase().startsWith("windows") ||
                     (securityEnv ? securityEnv.ptrace_scope > 0 : false)
                   }
                   theme={theme}
@@ -1360,7 +1361,12 @@ export const SettingsPanel = memo(function SettingsPanel({
                   // The same executable can appear multiple times in a scan, so
                   // `name` is not a unique key — pair it with the index.
                   processScan.found.map((name, i) => (
-                    <ProcessListItem key={`${name}-${i}`} name={name} restricted={true} theme={theme} />
+                    <ProcessListItem
+                      key={`${name}-${i}`}
+                      name={name}
+                      restricted={true}
+                      theme={theme}
+                    />
                   ))
                 ) : (
                   <>

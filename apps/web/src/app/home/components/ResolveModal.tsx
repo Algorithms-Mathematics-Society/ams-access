@@ -79,7 +79,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
     case "camera": {
       // On Windows the usual cause is the OS privacy toggle — deep-link
       // straight to it so fixing it is one click, not a Settings scavenger hunt.
-      const winCamera = platform?.os === "windows";
+      const winCamera = platform?.os?.toLowerCase().startsWith("windows") ?? false;
       return {
         title: "Camera needs attention",
         problem: "AMS Access cannot confirm a working camera for this session.",
@@ -104,7 +104,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
       };
     }
     case "mic": {
-      const winMic = platform?.os === "windows";
+      const winMic = platform?.os?.toLowerCase().startsWith("windows") ?? false;
       return {
         title: "Microphone needs attention",
         problem: "AMS Access cannot confirm a working microphone for this session.",
@@ -182,7 +182,7 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
       // Windows without elevation is recoverable in one click: the relaunch
       // command raises the standard UAC consent prompt — no manual
       // right-click "Run as administrator" needed.
-      if (platform?.os === "windows" && platform.elevated === false) {
+      if (platform?.os?.toLowerCase().startsWith("windows") && platform?.elevated === false) {
         return {
           title: "Administrator approval needed",
           problem:

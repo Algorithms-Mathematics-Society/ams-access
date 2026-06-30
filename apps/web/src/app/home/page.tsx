@@ -193,14 +193,14 @@ export default function HomePage() {
           platform:
             snapshot.platform &&
             (snapshot.platform.os === "linux" ||
-              snapshot.platform.os === "windows" ||
+              snapshot.platform.os.toLowerCase().startsWith("windows") ||
               snapshot.platform.os === "macos")
               ? "ok"
               : "fail",
           keyboard:
             snapshot.platform &&
             (snapshot.platform.os === "linux" ||
-              snapshot.platform.os === "windows" ||
+              snapshot.platform.os.toLowerCase().startsWith("windows") ||
               snapshot.platform.os === "macos")
               ? "ok"
               : "fail",
