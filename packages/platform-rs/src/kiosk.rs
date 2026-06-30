@@ -3,6 +3,11 @@
 const KIOSK_TICK_MS: u64 = 750;
 const NULL_LOCK_TICKS: u32 = 2;
 const GIVE_UP_ATTEMPTS: u32 = 4;
+/// Re-assert audit events are throttled to at most one per this window, per kind,
+/// so a sustained fullscreen/always-on-top fight cannot flood the proctor log,
+/// while a single drift (e.g. one F11 press) is always reported. The window op
+/// itself is NEVER throttled — only the audit event is.
+const REASSERT_REPORT_THROTTLE_MS: u64 = 5000;
 
 /// Backoff before the next foreground nudge, by 1-based attempt number:
 /// 1→750ms, 2→1500, 3→3000, 4→6000 (capped). The *schedule* — not the count —
@@ -10,6 +15,16 @@ const GIVE_UP_ATTEMPTS: u32 = 4;
 fn backoff_ms(attempt: u32) -> u64 {
     let shift = attempt.saturating_sub(1).min(13);
     KIOSK_TICK_MS.saturating_mul(1u64 << shift).min(6000)
+}
+
+/// True if a re-assert audit event for this kind may be emitted now (first ever,
+/// or the throttle window has elapsed since the last emit). The caller updates
+/// the last-emit timestamp only when it actually emits.
+fn reassert_report_due(last_ms: Option<u64>, now_ms: u64) -> bool {
+    match last_ms {
+        None => true,
+        Some(last) => now_ms.saturating_sub(last) >= REASSERT_REPORT_THROTTLE_MS,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -43,6 +58,8 @@ struct Episode {
 pub struct KioskState {
     episode: Option<Episode>,
     null_streak: u32,
+    last_fs_reassert_ms: Option<u64>,
+    last_aot_reassert_ms: Option<u64>,
 }
 
 pub struct TickInput {
@@ -86,10 +103,26 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
             });
         }
         if !input.is_fullscreen {
-            actions.push(Action::ReassertFullscreen);
+            actions.push(Action::ReassertFullscreen); // enforcement: every drift tick
+            if reassert_report_due(state.last_fs_reassert_ms, input.now_ms) {
+                state.last_fs_reassert_ms = Some(input.now_ms);
+                actions.push(Action::Report {
+                    event: "fullscreen_reasserted",
+                    severity: Severity::Info,
+                    detail: "exam lost fullscreen while focused — re-asserted".into(),
+                });
+            }
         }
         if !input.is_always_on_top {
-            actions.push(Action::ReassertAlwaysOnTop);
+            actions.push(Action::ReassertAlwaysOnTop); // enforcement: every drift tick
+            if reassert_report_due(state.last_aot_reassert_ms, input.now_ms) {
+                state.last_aot_reassert_ms = Some(input.now_ms);
+                actions.push(Action::Report {
+                    event: "always_on_top_reasserted",
+                    severity: Severity::Info,
+                    detail: "exam lost always-on-top while focused — re-asserted".into(),
+                });
+            }
         }
         return actions;
     }
@@ -304,15 +337,17 @@ mod tests {
     #[test]
     fn case_a_reasserts_only_on_drift() {
         let mut s = KioskState::default();
+        // no drift → nothing
         assert!(decide(&mut s, exam_fg(0, true, true)).is_empty());
-        assert_eq!(
-            decide(&mut s, exam_fg(0, false, true)),
-            vec![Action::ReassertFullscreen]
-        );
-        assert_eq!(
-            decide(&mut s, exam_fg(0, true, false)),
-            vec![Action::ReassertAlwaysOnTop]
-        );
+        // fullscreen drift (first) → window op + throttled Info report, no aot op
+        let a = decide(&mut s, exam_fg(0, false, true));
+        assert!(a.contains(&Action::ReassertFullscreen));
+        assert!(has(&a, "fullscreen_reasserted"));
+        assert!(!a.iter().any(|x| matches!(x, Action::ReassertAlwaysOnTop)));
+        // always-on-top drift (first) → window op + throttled Info report
+        let b = decide(&mut s, exam_fg(0, true, false));
+        assert!(b.contains(&Action::ReassertAlwaysOnTop));
+        assert!(has(&b, "always_on_top_reasserted"));
     }
 
     #[test]
@@ -423,5 +458,44 @@ mod tests {
         assert!(has(&a, "focus_episode_unresolved_at_session_end"));
         assert!(s.episode.is_none());
         assert!(on_teardown(&mut s, 4000).is_empty());
+    }
+
+    fn count_event(a: &[Action], e: &str) -> usize {
+        a.iter()
+            .filter(|x| matches!(x, Action::Report { event, .. } if *event == e))
+            .count()
+    }
+
+    #[test]
+    fn reassert_throttle_is_per_kind_independent() {
+        let mut s = KioskState::default();
+        // fullscreen drift at t0 → fullscreen event, NO aot event
+        let a = decide(&mut s, exam_fg(0, false, true));
+        assert_eq!(count_event(&a, "fullscreen_reasserted"), 1);
+        assert_eq!(count_event(&a, "always_on_top_reasserted"), 0);
+        // t=1000 (within the fullscreen throttle window): fullscreen STILL drifts (its event is
+        // suppressed) but always-on-top drifts for the FIRST time → it emits independently,
+        // proving the two throttle timestamps are separate.
+        let b = decide(&mut s, exam_fg(1000, false, false));
+        assert_eq!(count_event(&b, "fullscreen_reasserted"), 0);
+        assert_eq!(count_event(&b, "always_on_top_reasserted"), 1);
+    }
+
+    #[test]
+    fn reassert_first_emits_sustained_throttled_then_reemits_after_gap() {
+        let mut s = KioskState::default();
+        // first drift → exactly one event, and the window op
+        let t0 = decide(&mut s, exam_fg(0, false, true));
+        assert_eq!(count_event(&t0, "fullscreen_reasserted"), 1);
+        assert!(t0.contains(&Action::ReassertFullscreen));
+        // sustained sub-window fight → event suppressed, but the window op STILL fires every tick
+        let t700 = decide(&mut s, exam_fg(700, false, true));
+        assert_eq!(count_event(&t700, "fullscreen_reasserted"), 0);
+        assert!(t700.contains(&Action::ReassertFullscreen));
+        let t1400 = decide(&mut s, exam_fg(1400, false, true));
+        assert_eq!(count_event(&t1400, "fullscreen_reasserted"), 0);
+        // after the throttle window elapses, a fresh drift emits again (throttle resets, no latch)
+        let t5000 = decide(&mut s, exam_fg(5000, false, true));
+        assert_eq!(count_event(&t5000, "fullscreen_reasserted"), 1);
     }
 }
