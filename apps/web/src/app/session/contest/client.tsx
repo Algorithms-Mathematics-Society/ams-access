@@ -4031,15 +4031,16 @@ export default function ContestPageClient() {
         >
           <div
             style={{
-              padding: sidebarCollapsed ? "14px 0" : "14px 14px 8px",
+              padding: sidebarCollapsed ? "12px 0" : "12px 14px 10px",
               borderBottom: "1px solid #1F1F1F",
               display: "flex",
               alignItems: "center",
               justifyContent: sidebarCollapsed ? "center" : "space-between",
+              gap: "8px",
             }}
           >
             {!sidebarCollapsed && (
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <p
                   style={{
                     fontSize: "10px",
@@ -4055,16 +4056,41 @@ export default function ContestPageClient() {
                 </p>
                 <p
                   style={{
-                    margin: "4px 0 0",
-                    fontSize: "10px",
-                    color: "#94a3b8",
+                    margin: "3px 0 0",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    color: "var(--color-accent-light)",
                     fontFamily: "Inter, system-ui, sans-serif",
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {attemptedQuestionCount} attempted · {acceptedQuestionCount} accepted ·{" "}
-                  {remainingQuestionCount} remaining
+                  {acceptedQuestionCount} / {questions.length} Solved
                 </p>
+                {/* Segmented progress bar */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "2px",
+                    marginTop: "6px",
+                  }}
+                >
+                  {questions.map((q) => {
+                    const qStatus = questionStatusMap[q.id];
+                    return (
+                      <div
+                        key={q.id}
+                        style={{
+                          flex: 1,
+                          height: "3px",
+                          borderRadius: "var(--radius-pill)",
+                          background: qStatus.color,
+                        }}
+                      />
+                    );
+                  })}
+                </div>
               </div>
             )}
             <button
@@ -4079,6 +4105,7 @@ export default function ContestPageClient() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                flexShrink: 0,
               }}
               title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
             >
@@ -4154,7 +4181,7 @@ export default function ContestPageClient() {
                         color: activeQ === i ? "var(--color-accent-light)" : qStatus.color,
                       }}
                     >
-                      {i + 1}
+                      {String.fromCharCode(65 + i)}
                     </span>
                   ) : (
                     <div
@@ -4169,25 +4196,13 @@ export default function ContestPageClient() {
                       <span
                         style={{
                           fontSize: "11px",
-                          fontWeight: 600,
-                          color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
+                          fontWeight: 700,
+                          color: activeQ === i ? "var(--color-accent-light)" : "#94a3b8",
                           flexShrink: 0,
                         }}
                       >
-                        {i + 1}
+                        {String.fromCharCode(65 + i)}.
                       </span>
-                      <span
-                        style={{
-                          width: "9px",
-                          height: "9px",
-                          borderRadius: "var(--radius-pill)",
-                          background: qStatus.color,
-                          color: qStatus.color,
-                          // Always-on glow so status reads at a glance, not only when active.
-                          boxShadow: "0 0 6px currentColor",
-                          flexShrink: 0,
-                        }}
-                      />
                       <span
                         style={{
                           fontSize: "12px",
@@ -4204,20 +4219,13 @@ export default function ContestPageClient() {
                       </span>
                       <span
                         style={{
-                          padding: "2px 6px",
-                          borderRadius: "var(--radius-sm)",
-                          border: `1px solid ${qStatus.border}`,
-                          background: qStatus.bg,
-                          color: qStatus.color,
-                          fontSize: "9px",
-                          fontWeight: 700,
-                          fontFamily: "Inter, system-ui, sans-serif",
-                          whiteSpace: "nowrap",
+                          width: "7px",
+                          height: "7px",
+                          borderRadius: "var(--radius-pill)",
+                          background: qStatus.color,
                           flexShrink: 0,
                         }}
-                      >
-                        {qStatus.shortLabel}
-                      </span>
+                      />
                     </div>
                   )}
                 </button>
