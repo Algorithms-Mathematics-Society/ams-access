@@ -4605,7 +4605,7 @@ export default function ContestPageClient() {
                     borderBottom: "1px solid #1F1F1F",
                     background: "#0F0F0F",
                     padding: "0 12px",
-                    gap: "4px",
+                    gap: "6px",
                     flexShrink: 0,
                     height: "38px",
                   }}
@@ -4632,12 +4632,10 @@ export default function ContestPageClient() {
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          border: "1px solid",
-                          borderColor: isActive ? "#1F1F1F" : "transparent",
-                          borderBottom: "none",
+                          border: `1px solid ${isActive ? "rgba(255,255,255,0.08)" : "transparent"}`,
                           background: isActive ? "#1F1F1F" : "transparent",
-                          borderRadius: "8px 8px 0 0",
-                          height: "100%",
+                          borderRadius: "6px",
+                          height: "28px",
                           flexShrink: 0,
                           position: "relative",
                         }}
@@ -4651,7 +4649,7 @@ export default function ContestPageClient() {
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            padding: isScratch ? "0 6px 0 12px" : "0 16px",
+                            padding: isScratch ? "0 4px 0 10px" : "0 12px",
                             background: "transparent",
                             border: "none",
                             color: isActive ? "#ffffff" : "#475569",
@@ -4709,7 +4707,7 @@ export default function ContestPageClient() {
                             aria-label={`Close ${file.name}`}
                             style={{
                               position: "absolute",
-                              top: "32px",
+                              top: "calc(100% + 8px)",
                               right: "4px",
                               zIndex: 20,
                               width: "190px",
@@ -4872,8 +4870,6 @@ export default function ContestPageClient() {
                       />
                     ) : saveIndicator.icon === "error" ? (
                       <AlertCircle size={12} strokeWidth={2} />
-                    ) : saveIndicator.icon === "saved" ? (
-                      <Check size={12} strokeWidth={2} />
                     ) : (
                       <span
                         style={{
@@ -4896,8 +4892,8 @@ export default function ContestPageClient() {
                     alignItems: "center",
                     padding: "0 12px",
                     gap: "0",
-                    height: "48px",
-                    background: "#0a0a0a",
+                    height: "44px",
+                    background: "#0F0F0F",
                     borderBottom: "1px solid #1F1F1F",
                     flexShrink: 0,
                   }}
@@ -5009,23 +5005,21 @@ export default function ContestPageClient() {
                       title="Runs your code against the sample tests only — does not count toward your score."
                       aria-label="Run on judge"
                       style={{
-                        height: "40px",
+                        width: "34px",
+                        height: "34px",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        gap: "8px",
-                        padding: "0 16px",
+                        padding: "0",
                         border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.14)" : "rgba(148,163,184,0.22)"}`,
                         borderRadius: "var(--radius-sm)",
                         background: "transparent",
                         color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#cbd5e1",
-                        fontSize: "13px",
-                        fontWeight: 500,
-                        fontFamily: "Inter, system-ui, sans-serif",
                         cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
                         opacity: isRunning || !sessionId ? 0.75 : 1,
                         transition:
                           "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
+                        flexShrink: 0,
                       }}
                       onMouseEnter={(e) => {
                         if (isRunning || !sessionId) return;
@@ -5055,7 +5049,6 @@ export default function ContestPageClient() {
                       ) : (
                         <Play size={15} strokeWidth={2} />
                       )}
-                      {isRunning ? "Running" : "Run on Judge"}
                     </button>
                     <button
                       type="button"
@@ -5133,7 +5126,7 @@ export default function ContestPageClient() {
                           ? "Saving"
                           : submissionError
                             ? "Submit Failed"
-                            : "Submit Solution"}
+                            : "Submit"}
                     </button>
                   </div>
                   {/* end primary actions group */}
