@@ -937,24 +937,33 @@ const CountdownBadge = memo(function CountdownBadge({
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        // A tinted pill contains the timer at the critical threshold so urgency
-        // is signalled by shape, not colour alone.
-        padding: isCritical ? "4px 12px" : "4px 0",
+        // A tinted pill contains the timer — always shown; urgency escalates at
+        // the critical threshold via shape + red tint (signalled by shape, not
+        // colour alone).
+        padding: "4px 12px",
         borderRadius: "var(--radius-pill)",
-        backgroundColor: isCritical ? "rgba(239, 68, 68, 0.12)" : "transparent",
-        border: `1px solid ${isCritical ? "rgba(239, 68, 68, 0.30)" : "transparent"}`,
+        backgroundColor: isCritical ? "rgba(239, 68, 68, 0.12)" : "rgba(255,255,255,0.05)",
+        border: `1px solid ${isCritical ? "rgba(239, 68, 68, 0.30)" : "rgba(255,255,255,0.08)"}`,
         transition:
           "background-color var(--transition-standard), border-color var(--transition-standard)",
         animation: isCritical ? "countdown-pulse 1s ease-in-out infinite" : "none",
       }}
     >
-      {isExpired && (
+      {isExpired ? (
         <Lock
           size={12}
           strokeWidth={2.5}
           color={color}
           aria-hidden="true"
           style={{ flexShrink: 0 }}
+        />
+      ) : (
+        <Loader2
+          size={13}
+          strokeWidth={2}
+          color={color}
+          aria-hidden="true"
+          style={{ flexShrink: 0, animation: "spin 2s linear infinite" }}
         />
       )}
       <span
@@ -3821,16 +3830,15 @@ export default function ContestPageClient() {
       {/* ── Top bar ── */}
       <header
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
           alignItems: "center",
-          justifyContent: "space-between",
           padding: "0 20px",
-          height: "52px",
+          height: "48px",
           borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
           background: "#0F0F0F",
           flexShrink: 0,
           boxShadow: "none",
-          gap: "16px",
         }}
       >
         {/* Left: Logo + contest title */}
@@ -3879,8 +3887,10 @@ export default function ContestPageClient() {
         {/* Center: Timer */}
         <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} onExpiry={handleContestExpiry} />
 
-        {/* Right: Submit */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        {/* Right: Support + exit */}
+        <div
+          style={{ display: "flex", alignItems: "center", gap: "10px", justifyContent: "flex-end" }}
+        >
           <button
             type="button"
             onClick={() => setShowSupportModal(true)}
@@ -3996,7 +4006,15 @@ export default function ContestPageClient() {
       </header>
 
       {/* ── Body ── */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden", background: "#0F0F0F" }}>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          overflow: "hidden",
+          background: "#0F0F0F",
+          position: "relative",
+        }}
+      >
         {/* Question list sidebar */}
         <aside
           style={{
