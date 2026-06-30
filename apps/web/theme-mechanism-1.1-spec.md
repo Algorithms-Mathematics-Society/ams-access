@@ -60,6 +60,12 @@ resolution is staged, gated on light-mode coverage, NOT on whether stored-dark i
 > Phase 2 completes (all screens migrated, light universally safe)._ This is the only thing that converts
 > the temporarily-honored non-choice back into the intended system-default behavior. Owner: whoever lands
 > the final Phase 2 (2d) slice. If this is skipped, every pre-1.1 user is silently pinned dark forever.
+>
+> **Implement the clear as `localStorage.removeItem(STORAGE_KEYS.THEME)`, NOT `localStorage.clear()`**
+> (final-review catch). The cross-tab `storage` handler keys on `e.key === "ams_theme"`; `removeItem`
+> fires `storage` with `e.key === "ams_theme"` so other open tabs re-resolve live, whereas `clear()` fires
+> with `e.key === null` and is (correctly) ignored — leaving sibling tabs on a stale class until reload.
+> (Also: `clear()` would wipe every unrelated app key.)
 
 ## Architecture
 
