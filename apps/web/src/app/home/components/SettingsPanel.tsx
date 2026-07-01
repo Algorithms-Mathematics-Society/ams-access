@@ -293,7 +293,6 @@ export const SettingsPanel = memo(function SettingsPanel({
   readiness,
   setReadiness,
   theme,
-  setTheme,
   onSecurityEvent,
   telemetry,
   refreshTelemetry,
@@ -301,7 +300,6 @@ export const SettingsPanel = memo(function SettingsPanel({
   readiness: ReadinessState;
   setReadiness: Dispatch<SetStateAction<ReadinessState>>;
   theme: "dark" | "light";
-  setTheme: (t: "dark" | "light") => void;
   onSecurityEvent: (event: string, level?: SecurityLogLevel) => void;
   telemetry: TelemetryQueryState;
   refreshTelemetry: (force?: boolean, source?: string) => Promise<void>;
@@ -1190,7 +1188,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               </div>
             </div>
 
-            {/* Theme placeholder bar — visual placeholder only, not wired to setTheme */}
+            {/* Theme placeholder bar — future home-toggle site; wired when home tokenization completes (Phase 2a step 3+). Not wired to any setter. */}
             <div
               style={{
                 background: c.cardBg,
