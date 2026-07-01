@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "export",
+  // Hide the Next.js dev-mode indicator (the bottom-left logomark button). Dev-only cosmetic —
+  // it never ships in `output: "export"` production builds; this just keeps dev screenshots clean.
+  devIndicators: false,
   images: {
     unoptimized: true,
   },
