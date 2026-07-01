@@ -6,6 +6,8 @@ import "./globals.css";
 // export (_next/static/media), letting the offline exam shell render math.
 import "katex/dist/katex.min.css";
 import { buildInitBody } from "@/lib/theme-core";
+import { DARK_LOCKED_ROUTES, buildDarkLockBody } from "@/lib/theme-dark-lock-core";
+import { DarkLockController } from "@/lib/theme-dark-lock";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 const inter = Inter({
@@ -27,7 +29,7 @@ export const metadata: Metadata = {
   description: "Secure exam shell",
 };
 
-const THEME_INIT_SCRIPT = `(function(){${buildInitBody(STORAGE_KEYS.THEME)}})();`;
+const THEME_INIT_SCRIPT = `(function(){${buildInitBody(STORAGE_KEYS.THEME)}${buildDarkLockBody(DARK_LOCKED_ROUTES)}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -38,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <DarkLockController />
         {children}
       </body>
     </html>
