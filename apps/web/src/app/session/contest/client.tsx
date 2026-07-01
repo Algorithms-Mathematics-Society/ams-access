@@ -3496,6 +3496,13 @@ export default function ContestPageClient() {
   }, [activeQ, availableProblemTabs, problemTab]);
 
   const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
+  const cameraStatusLabel = !cameraEnabled
+    ? "Camera off"
+    : cameraHealthy
+      ? "Camera active"
+      : cameraError
+        ? "Camera issue"
+        : "Camera starting";
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
   const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
   const faceBlockMessage = cameraHealthy
@@ -4360,7 +4367,9 @@ export default function ContestPageClient() {
                     })}
                   </div>
                 )}
-                <article style={{ padding: "28px 28px 34px", maxWidth: "760px" }}>
+                {/* Bottom padding reserves the fixed camera tile's footprint so statement
+                    text never scrolls under it (esp. with the rail collapsed). */}
+                <article style={{ padding: "28px 28px 178px", maxWidth: "760px" }}>
                   <p
                     style={{
                       margin: "0 0 8px",
@@ -5980,7 +5989,7 @@ export default function ContestPageClient() {
             left: 0,
             bottom: 0,
             width: sidebarCollapsed ? "52px" : "220px",
-            height: "182px",
+            height: "152px",
             background: "#0F0F0F",
             borderTop: "1px solid #1F1F1F",
             borderRight: "1px solid rgba(255, 255, 255, 0.05)",
@@ -5989,27 +5998,35 @@ export default function ContestPageClient() {
             pointerEvents: "none",
           }}
         />
-        {/* Docked Camera feed */}
+        {/* Docked Camera feed — v1.2: a self-contained video box with the cam/mic toggles
+            overlaid top-right (no separate bar, no wrapping label). Health is conveyed by the
+            border tint + title/aria-label, not a truncating text chip. */}
         <div
+          title={cameraStatusLabel}
+          aria-label={cameraStatusLabel}
           style={{
-            borderTop: "1px solid #1F1F1F",
             background: "#0F0F0F",
             position: "absolute",
             left: 0,
             bottom: 0,
             width: "220px",
+            height: "150px",
             zIndex: 50,
             display: (cameraStream ?? cameraError) ? "flex" : "none",
             flexDirection: "column",
+            border: `1px solid ${cameraError ? "#ef4444" : "#1F1F1F"}`,
+            overflow: "hidden",
           }}
         >
           <div
             style={{
+              position: "absolute",
+              top: "6px",
+              right: "6px",
+              zIndex: 2,
               display: "flex",
               alignItems: "center",
-              padding: "6px",
               gap: "6px",
-              borderBottom: "1px solid #1F1F1F",
             }}
           >
             <button
@@ -6048,7 +6065,7 @@ export default function ContestPageClient() {
           <div
             style={{
               width: "100%",
-              height: "150px",
+              height: "100%",
               border: "none",
               boxSizing: "border-box",
               position: "relative",
@@ -6068,35 +6085,6 @@ export default function ContestPageClient() {
                 borderRadius: "0",
               }}
             />
-          </div>
-
-          <div
-            style={{
-              position: "absolute",
-              bottom: "8px",
-              left: "8px",
-              padding: "2px 4px",
-              background: "#0F0F0F",
-              border: "1px solid #1F1F1F",
-              fontSize: "9px",
-              color: !cameraEnabled
-                ? "#94a3b8"
-                : cameraHealthy
-                  ? "#94a3b8"
-                  : cameraError
-                    ? "#ef4444"
-                    : "#f59e0b",
-              fontFamily: "Inter, system-ui, sans-serif",
-              fontWeight: 600,
-            }}
-          >
-            {!cameraEnabled
-              ? "Cam off"
-              : cameraHealthy
-                ? "Camera active"
-                : cameraError
-                  ? "Camera issue"
-                  : "Camera starting"}
           </div>
         </div>
       </div>
