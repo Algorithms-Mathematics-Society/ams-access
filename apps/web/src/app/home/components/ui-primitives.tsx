@@ -124,13 +124,13 @@ export const Button = forwardRef<
           ? { border: c.border, bg: "transparent", color: c.textMutedStrong }
           : {
               border: c.border,
-              bg: theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)",
+              bg: "var(--home-overlay-btn)",
               color: c.textMutedStrong,
             };
   const disabledStyle = {
-    border: theme === "light" ? "rgba(0,0,0,0.09)" : "rgba(255,255,255,0.1)",
-    bg: theme === "light" ? "rgba(0,0,0,0.045)" : "rgba(255,255,255,0.055)",
-    color: theme === "light" ? "rgba(0,0,0,0.38)" : "rgba(255,255,255,0.38)",
+    border: "var(--home-border-disabled)",
+    bg: "var(--home-overlay-disabled)",
+    color: "var(--home-text-disabled)",
   };
   const colors = disabled ? disabledStyle : base;
 
@@ -372,8 +372,7 @@ export function Dialog({
         background: c.cardBg,
         border: `1px solid ${c.borderStrong}`,
         borderRadius: "var(--radius-lg)",
-        boxShadow:
-          theme === "light" ? "0 24px 70px rgba(0,0,0,0.18)" : "0 24px 80px rgba(0,0,0,0.55)",
+        boxShadow: "var(--home-shadow-panel)",
         ...style,
       }}
     >

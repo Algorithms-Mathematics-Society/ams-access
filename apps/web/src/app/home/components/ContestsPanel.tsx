@@ -25,21 +25,21 @@ export function ContestsPanel({
   function statusColor(s: string) {
     if (s === "ACTIVE")
       return {
-        dot: theme === "light" ? "#10b981" : "#22c55e",
+        dot: "var(--theme-dot)",
         bg: "rgba(34,197,94,0.08)",
         border: "rgba(34,197,94,0.2)",
       };
     if (s === "SCHEDULED")
       return {
-        dot: theme === "light" ? "var(--color-accent-deep)" : "var(--color-accent-base)",
-        bg: theme === "light" ? "rgb(var(--accent-rgb) / 0.08)" : "rgb(var(--accent-rgb) / 0.08)",
-        border: theme === "light" ? "rgb(var(--accent-rgb) / 0.2)" : "rgb(var(--accent-rgb) / 0.2)",
+        dot: "var(--home-accent-dot)",
+        bg: "rgb(var(--accent-rgb) / 0.08)",
+        border: "rgb(var(--accent-rgb) / 0.2)",
       };
     if (s === "ENDED")
       return {
-        dot: theme === "light" ? "#7c7467" : "rgba(255,255,255,0.25)",
-        bg: theme === "light" ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)",
-        border: theme === "light" ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.1)",
+        dot: "var(--home-dot-ended)",
+        bg: "var(--home-overlay-ended)",
+        border: "var(--home-border-ended)",
       };
     return { dot: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)" };
   }
