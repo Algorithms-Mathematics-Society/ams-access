@@ -267,7 +267,8 @@ summary:focus-visible,
   --focus-ring: 0 0 0 2px rgb(var(--accent-rgb) / 0.7);
 }
 
-.dark {
+.dark,
+html.theme-dark-locked {
   color-scheme: dark;
   --theme-bg: #0f0f0f;
   --theme-sidebar-bg: #1f1f1f;
