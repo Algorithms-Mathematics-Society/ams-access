@@ -3545,6 +3545,24 @@ export default function ContestPageClient() {
       : cameraError
         ? "Camera issue"
         : "Camera starting";
+  // Footer status-dot badge — a small corner LED per proctoring icon. Decorative colour cue
+  // (aria-hidden); the real status stays in each icon's colour + its sr-only live region.
+  // green = working, red = not working, off-white = transient (saving / camera starting).
+  const footerStatusDot = (color: string) => (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        top: "-2px",
+        right: "-3px",
+        width: "6px",
+        height: "6px",
+        borderRadius: "50%",
+        background: color,
+        border: "1.5px solid #0F0F0F",
+      }}
+    />
+  );
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
   const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
   const faceBlockMessage = cameraHealthy
@@ -6244,6 +6262,7 @@ export default function ContestPageClient() {
           role="status"
           aria-live="polite"
           style={{
+            position: "relative",
             display: "flex",
             alignItems: "center",
             color: proctoringOk ? "#71717a" : "#ef4444",
@@ -6254,6 +6273,7 @@ export default function ContestPageClient() {
           ) : (
             <Shield size={15} strokeWidth={2} aria-hidden="true" />
           )}
+          {footerStatusDot(proctoringOk ? "var(--verdict-ac)" : "#ef4444")}
           <span className="sr-only">{proctoringOk ? "Secure" : "Action needed"}</span>
         </div>
 
@@ -6283,9 +6303,18 @@ export default function ContestPageClient() {
               strokeWidth="1.1"
               strokeLinecap="round"
             />
-            {/* Non-color cue: an alert dot present ONLY when the face has drifted (WCAG 1.4.1) */}
-            {faceStatus === "away" && <circle cx="10" cy="2" r="2" fill="#f59e0b" />}
+            {/* Non-color cue (WCAG 1.4.1): a shape present ONLY on away — kept as the face's
+                non-colour channel; the corner LED below is ADDITIVE colour reinforcement, not a
+                replacement. Placed top-LEFT so it never sits under that LED (top-right). */}
+            {faceStatus === "away" && <circle cx="2" cy="2" r="1.6" fill="#f59e0b" />}
           </svg>
+          {footerStatusDot(
+            faceStatus === "ok"
+              ? "var(--verdict-ac)"
+              : faceStatus === "away"
+                ? "#ef4444"
+                : "#e2e8f0"
+          )}
           <span className="sr-only">
             {faceStatus === "ok"
               ? "Face detected"
@@ -6300,6 +6329,7 @@ export default function ContestPageClient() {
           role="status"
           aria-live="polite"
           style={{
+            position: "relative",
             display: "flex",
             alignItems: "center",
             color: online ? "#71717a" : "#f59e0b",
@@ -6310,6 +6340,7 @@ export default function ContestPageClient() {
           ) : (
             <WifiOff size={15} strokeWidth={2} aria-hidden="true" />
           )}
+          {footerStatusDot(online ? "var(--verdict-ac)" : "#ef4444")}
           <span className="sr-only">{online ? "Connected" : "Reconnecting…"}</span>
         </div>
 
@@ -6318,34 +6349,41 @@ export default function ContestPageClient() {
           role="status"
           aria-live="polite"
           style={{
+            position: "relative",
             display: "flex",
             alignItems: "center",
             color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
           }}
         >
           <Save size={15} strokeWidth={2} aria-hidden="true" />
+          {footerStatusDot(
+            saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#e2e8f0" : "var(--verdict-ac)"
+          )}
           <span className="sr-only">
             {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           </span>
         </div>
 
         {/* Keyboard intercept — icon only; static state exposed via role=img label */}
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 12 12"
-          fill="none"
-          role="img"
-          aria-label="Keyboard locked"
-        >
-          <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
-          <path
-            d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
-            stroke="#71717a"
-            strokeWidth="0.9"
-            strokeLinecap="round"
-          />
-        </svg>
+        <span style={{ position: "relative", display: "flex", alignItems: "center" }}>
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 12 12"
+            fill="none"
+            role="img"
+            aria-label="Keyboard locked"
+          >
+            <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
+            <path
+              d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
+              stroke="#71717a"
+              strokeWidth="0.9"
+              strokeLinecap="round"
+            />
+          </svg>
+          {footerStatusDot("var(--verdict-ac)")}
+        </span>
 
         <div style={{ flex: 1 }} />
 
