@@ -4232,140 +4232,6 @@ export default function ContestPageClient() {
               );
             })}
           </div>
-
-          {/* Docked Camera feed */}
-          <div
-            style={{
-              borderTop: "1px solid #1F1F1F",
-              background: "#0F0F0F",
-              position: "relative",
-              flexShrink: 0,
-              display: (cameraStream ?? cameraError) ? "flex" : "none",
-              flexDirection: "column",
-            }}
-          >
-            {!sidebarCollapsed && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "6px",
-                  gap: "6px",
-                  borderBottom: "1px solid #1F1F1F",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => handleToggleMedia("camera", !cameraEnabled)}
-                  className={`ic-btn ${cameraEnabled ? "ic-btn-white" : "ic-btn-red"}`}
-                  title={
-                    cameraEnabled
-                      ? "Camera on — click to turn off"
-                      : "Camera off — click to turn on"
-                  }
-                  aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
-                >
-                  {cameraEnabled ? (
-                    <Video size={15} strokeWidth={1.75} />
-                  ) : (
-                    <VideoOff size={15} strokeWidth={1.75} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleToggleMedia("mic", !micEnabled)}
-                  className={`ic-btn ${micEnabled ? "ic-btn-white" : "ic-btn-red"}`}
-                  title={
-                    micEnabled
-                      ? "Microphone on — click to turn off"
-                      : "Microphone off — click to turn on"
-                  }
-                  aria-label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
-                >
-                  {micEnabled ? (
-                    <Mic size={15} strokeWidth={1.75} />
-                  ) : (
-                    <MicOff size={15} strokeWidth={1.75} />
-                  )}
-                </button>
-              </div>
-            )}
-            <div
-              style={{
-                width: "100%",
-                height: sidebarCollapsed ? "52px" : "150px",
-                border: "none",
-                boxSizing: "border-box",
-                position: "relative",
-              }}
-            >
-              <video
-                ref={cameraVideoRef}
-                muted
-                playsInline
-                autoPlay
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  transform: "scaleX(-1)",
-                  display: sidebarCollapsed ? "none" : "block",
-                  borderRadius: "0",
-                }}
-              />
-              {sidebarCollapsed && (
-                <div
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: cameraHealthy ? "#22c55e" : cameraError ? "#ef4444" : "#f59e0b",
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {!sidebarCollapsed && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "8px",
-                  left: "8px",
-                  padding: "2px 4px",
-                  background: "#0F0F0F",
-                  border: "1px solid #1F1F1F",
-                  fontSize: "9px",
-                  color: !cameraEnabled
-                    ? "#94a3b8"
-                    : cameraHealthy
-                      ? "#94a3b8"
-                      : cameraError
-                        ? "#ef4444"
-                        : "#f59e0b",
-                  fontFamily: "Inter, system-ui, sans-serif",
-                  fontWeight: 600,
-                }}
-              >
-                {!cameraEnabled
-                  ? "Cam off"
-                  : cameraHealthy
-                    ? "Camera active"
-                    : cameraError
-                      ? "Camera issue"
-                      : "Camera starting"}
-              </div>
-            )}
-          </div>
         </aside>
 
         {questions[activeQ]?.question_type === "follow_up" ? (
@@ -6107,6 +5973,132 @@ export default function ContestPageClient() {
             </div>
           </>
         )}
+        {/* Background-merge — pure presentation, reads sidebarCollapsed */}
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            width: sidebarCollapsed ? "52px" : "220px",
+            height: "182px",
+            background: "#0F0F0F",
+            borderTop: "1px solid #1F1F1F",
+            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
+            transition: "width 250ms",
+            zIndex: 49,
+            pointerEvents: "none",
+          }}
+        />
+        {/* Docked Camera feed */}
+        <div
+          style={{
+            borderTop: "1px solid #1F1F1F",
+            background: "#0F0F0F",
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            width: "220px",
+            zIndex: 50,
+            display: (cameraStream ?? cameraError) ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "6px",
+              gap: "6px",
+              borderBottom: "1px solid #1F1F1F",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => handleToggleMedia("camera", !cameraEnabled)}
+              className={`ic-btn ${cameraEnabled ? "ic-btn-white" : "ic-btn-red"}`}
+              title={
+                cameraEnabled ? "Camera on — click to turn off" : "Camera off — click to turn on"
+              }
+              aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
+            >
+              {cameraEnabled ? (
+                <Video size={15} strokeWidth={1.75} />
+              ) : (
+                <VideoOff size={15} strokeWidth={1.75} />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleMedia("mic", !micEnabled)}
+              className={`ic-btn ${micEnabled ? "ic-btn-white" : "ic-btn-red"}`}
+              title={
+                micEnabled
+                  ? "Microphone on — click to turn off"
+                  : "Microphone off — click to turn on"
+              }
+              aria-label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
+            >
+              {micEnabled ? (
+                <Mic size={15} strokeWidth={1.75} />
+              ) : (
+                <MicOff size={15} strokeWidth={1.75} />
+              )}
+            </button>
+          </div>
+          <div
+            style={{
+              width: "100%",
+              height: "150px",
+              border: "none",
+              boxSizing: "border-box",
+              position: "relative",
+            }}
+          >
+            <video
+              ref={cameraVideoRef}
+              muted
+              playsInline
+              autoPlay
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                transform: "scaleX(-1)",
+                display: "block",
+                borderRadius: "0",
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              position: "absolute",
+              bottom: "8px",
+              left: "8px",
+              padding: "2px 4px",
+              background: "#0F0F0F",
+              border: "1px solid #1F1F1F",
+              fontSize: "9px",
+              color: !cameraEnabled
+                ? "#94a3b8"
+                : cameraHealthy
+                  ? "#94a3b8"
+                  : cameraError
+                    ? "#ef4444"
+                    : "#f59e0b",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+            }}
+          >
+            {!cameraEnabled
+              ? "Cam off"
+              : cameraHealthy
+                ? "Camera active"
+                : cameraError
+                  ? "Camera issue"
+                  : "Camera starting"}
+          </div>
+        </div>
       </div>
 
       {/* ── Proctoring footer ── */}
