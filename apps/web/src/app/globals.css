@@ -305,12 +305,17 @@ html.theme-dark-locked {
 
 /* ─────────────────────────────────────────────────────────────
    LIGHT THEME — cream surfaces + rich purple pastel accents.
-   Applied when <html class="light">. Only screens that consume the
-   --theme-* / --surface-* / --text-* / --verdict-* token layer flip;
-   dark values above are untouched, so dark-pinned screens are unaffected.
+   Applied when <html class="light"> — EXCEPT on a dark-locked route
+   (`:not(.theme-dark-locked)`). The exclusion is load-bearing: light values here
+   span BOTH the :root-based tokens (--accent-rgb / --accent-light-rgb / --surface-*
+   / --text-* / --verdict-*) AND the --theme-* tokens, but the `.theme-dark-locked`
+   co-selector on `.dark` only re-pins the --theme-* subset. Excluding the whole
+   .light block when locked is complete-by-construction: every token falls back to
+   :root + .dark = an exact dark render (no light leaks the way the accents/surfaces/
+   text tiers did before this guard). Guarded by theme-dark-lock-coverage.test.mjs.
    Slice 1 consumer: results. Contrast values verified (see ui-upgrade-plan.md).
    ───────────────────────────────────────────────────────────── */
-.light {
+html.light:not(.theme-dark-locked) {
   color-scheme: light;
 
   /* Brand reads richer/darker on cream so it survives AA */
