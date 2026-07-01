@@ -4095,7 +4095,10 @@ export default function ContestPageClient() {
                           flex: 1,
                           height: "3px",
                           borderRadius: "var(--radius-pill)",
-                          background: qStatus.color,
+                          // Binary: solved (accepted) = green, everything else = gray. The
+                          // saved/attempted nuance stays on the row dots, not the summary bar.
+                          background:
+                            qStatus.label === "Accepted" ? "var(--verdict-ac)" : "var(--text-dim)",
                         }}
                       />
                     );
@@ -4130,7 +4133,8 @@ export default function ContestPageClient() {
             style={{
               flex: 1,
               overflowY: "auto",
-              padding: "8px",
+              // Clear the docked camera tile at the rail bottom (expanded only; hidden collapsed).
+              padding: sidebarCollapsed ? "8px" : "8px 8px 162px",
               display: "flex",
               flexDirection: "column",
               gap: "4px",
@@ -4232,7 +4236,9 @@ export default function ContestPageClient() {
                           width: "7px",
                           height: "7px",
                           borderRadius: "var(--radius-pill)",
-                          background: qStatus.color,
+                          // Active-first: the viewed question reads purple even if solved;
+                          // non-active falls back to its status colour (solved=green, etc.).
+                          background: activeQ === i ? "var(--color-accent-base)" : qStatus.color,
                           flexShrink: 0,
                         }}
                       />
@@ -5985,22 +5991,6 @@ export default function ContestPageClient() {
             </div>
           </>
         )}
-        {/* Background-merge — pure presentation, reads sidebarCollapsed */}
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            width: sidebarCollapsed ? "52px" : "220px",
-            height: "152px",
-            background: "#0F0F0F",
-            borderTop: "1px solid #1F1F1F",
-            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
-            transition: "width 250ms",
-            zIndex: 49,
-            pointerEvents: "none",
-          }}
-        />
         {/* Docked Camera feed — v1.2: a self-contained video box with the cam/mic toggles
             overlaid top-right (no separate bar, no wrapping label). Health is conveyed by the
             border tint + title/aria-label, not a truncating text chip. */}
@@ -6014,7 +6004,9 @@ export default function ContestPageClient() {
             width: "220px",
             height: "150px",
             zIndex: 50,
-            display: (cameraStream ?? cameraError) ? "flex" : "none",
+            // Docked over the expanded rail's bottom; hidden (NOT unmounted) when the rail
+            // collapses — <video> stays mounted, srcObject bound, tracks running (no teardown).
+            display: (cameraStream ?? cameraError) && !sidebarCollapsed ? "flex" : "none",
             flexDirection: "column",
             border: "1px solid #1F1F1F",
             overflow: "hidden",
