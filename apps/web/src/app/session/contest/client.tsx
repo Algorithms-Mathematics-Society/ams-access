@@ -4206,10 +4206,15 @@ export default function ContestPageClient() {
                     alignItems: "center",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     width: "100%",
-                    padding: sidebarCollapsed ? "8px 0" : "10px 12px",
+                    padding: sidebarCollapsed ? "6px 0" : "10px 12px",
                     borderRadius: "var(--radius-md)",
-                    border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
-                    background: activeQ === i ? "rgb(var(--accent-rgb) / 0.08)" : "transparent",
+                    // Collapsed: the badge itself is the single active pill — no outer box, so it
+                    // doesn't read as a pill-inside-a-pill. Expanded keeps the row highlight.
+                    border: `1px solid ${!sidebarCollapsed && activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
+                    background:
+                      !sidebarCollapsed && activeQ === i
+                        ? "rgb(var(--accent-rgb) / 0.08)"
+                        : "transparent",
                     cursor: "pointer",
                     fontFamily: "Inter, system-ui, sans-serif",
                     textAlign: "left",
@@ -4223,15 +4228,17 @@ export default function ContestPageClient() {
                   {sidebarCollapsed ? (
                     <span
                       style={{
-                        width: "30px",
+                        width: "34px",
                         height: "30px",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        borderRadius: "var(--radius-sm)",
-                        border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.35)" : qStatus.border}`,
-                        background: activeQ === i ? "rgb(var(--accent-rgb) / 0.1)" : qStatus.bg,
-                        fontSize: "12px",
+                        borderRadius: "var(--radius-md)",
+                        // Active = a single clean pill; others = plain status-coloured letter
+                        // (solved green / unsolved gray), matching the collapsed mockup.
+                        border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
+                        background: activeQ === i ? "rgb(var(--accent-rgb) / 0.12)" : "transparent",
+                        fontSize: "13px",
                         fontWeight: 700,
                         color: activeQ === i ? "var(--color-accent-light)" : qStatus.color,
                       }}
@@ -6224,9 +6231,9 @@ export default function ContestPageClient() {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "14px",
-          padding: "0 16px",
-          height: "36px",
+          gap: "18px",
+          padding: "0 18px",
+          height: "40px",
           borderTop: "1px solid rgba(255,255,255,0.05)",
           background: "#0F0F0F",
           flexShrink: 0,
@@ -6243,9 +6250,9 @@ export default function ContestPageClient() {
           }}
         >
           {proctoringOk ? (
-            <ShieldCheck size={13} strokeWidth={2} aria-hidden="true" />
+            <ShieldCheck size={15} strokeWidth={2} aria-hidden="true" />
           ) : (
-            <Shield size={13} strokeWidth={2} aria-hidden="true" />
+            <Shield size={15} strokeWidth={2} aria-hidden="true" />
           )}
           <span className="sr-only">{proctoringOk ? "Secure" : "Action needed"}</span>
         </div>
@@ -6258,7 +6265,7 @@ export default function ContestPageClient() {
           aria-live="polite"
           style={{ position: "relative", display: "flex", alignItems: "center" }}
         >
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             <circle
               cx="6"
               cy="4.5"
@@ -6299,9 +6306,9 @@ export default function ContestPageClient() {
           }}
         >
           {online ? (
-            <Wifi size={13} strokeWidth={2} aria-hidden="true" />
+            <Wifi size={15} strokeWidth={2} aria-hidden="true" />
           ) : (
-            <WifiOff size={13} strokeWidth={2} aria-hidden="true" />
+            <WifiOff size={15} strokeWidth={2} aria-hidden="true" />
           )}
           <span className="sr-only">{online ? "Connected" : "Reconnecting…"}</span>
         </div>
@@ -6316,7 +6323,7 @@ export default function ContestPageClient() {
             color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
           }}
         >
-          <Save size={13} strokeWidth={2} aria-hidden="true" />
+          <Save size={15} strokeWidth={2} aria-hidden="true" />
           <span className="sr-only">
             {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           </span>
@@ -6324,8 +6331,8 @@ export default function ContestPageClient() {
 
         {/* Keyboard intercept — icon only; static state exposed via role=img label */}
         <svg
-          width="11"
-          height="11"
+          width="15"
+          height="15"
           viewBox="0 0 12 12"
           fill="none"
           role="img"
