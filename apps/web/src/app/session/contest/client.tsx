@@ -50,6 +50,7 @@ import {
   LogOut,
   Video,
   VideoOff,
+  AlertTriangle,
   Mic,
   MicOff,
   ChevronLeft,
@@ -937,24 +938,33 @@ const CountdownBadge = memo(function CountdownBadge({
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        // A tinted pill contains the timer at the critical threshold so urgency
-        // is signalled by shape, not colour alone.
-        padding: isCritical ? "4px 12px" : "4px 0",
+        // A tinted pill contains the timer — always shown; urgency escalates at
+        // the critical threshold via shape + red tint (signalled by shape, not
+        // colour alone).
+        padding: "4px 12px",
         borderRadius: "var(--radius-pill)",
-        backgroundColor: isCritical ? "rgba(239, 68, 68, 0.12)" : "transparent",
-        border: `1px solid ${isCritical ? "rgba(239, 68, 68, 0.30)" : "transparent"}`,
+        backgroundColor: isCritical ? "rgba(239, 68, 68, 0.12)" : "rgba(255,255,255,0.05)",
+        border: `1px solid ${isCritical ? "rgba(239, 68, 68, 0.30)" : "rgba(255,255,255,0.08)"}`,
         transition:
           "background-color var(--transition-standard), border-color var(--transition-standard)",
         animation: isCritical ? "countdown-pulse 1s ease-in-out infinite" : "none",
       }}
     >
-      {isExpired && (
+      {isExpired ? (
         <Lock
           size={12}
           strokeWidth={2.5}
           color={color}
           aria-hidden="true"
           style={{ flexShrink: 0 }}
+        />
+      ) : (
+        <Loader2
+          size={13}
+          strokeWidth={2}
+          color={color}
+          aria-hidden="true"
+          style={{ flexShrink: 0, animation: "spin 2s linear infinite" }}
         />
       )}
       <span
@@ -1616,6 +1626,16 @@ export default function ContestPageClient() {
     value: boolean;
   } | null>(null);
   const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
+  // Deferred terminal-collapse feature. Shrink-to-tab-strip; the editor (flex:1) reclaims the
+  // freed height automatically. Output is NEVER silently hidden on the exam: auto-expand is the
+  // primary guarantee, the unread dot is the fallback. All of this only READS run state — the
+  // three renderers, isRunSubmission, setTerminalTab, and the run/submit handlers are untouched.
+  const [terminalCollapsed, setTerminalCollapsed] = useState(false);
+  const [terminalUnread, setTerminalUnread] = useState(false);
+  const terminalCollapsedRef = useRef(false);
+  const lastResultExpandIdRef = useRef<string | null>(null);
+  const lastResultStatusRef = useRef<string | null>(null);
+  const prevSubmittingRef = useRef(false);
   const [submissionsList, setSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
@@ -1623,6 +1643,37 @@ export default function ContestPageClient() {
   const [testResults, setTestResults] = useState<Record<string, any[]>>({});
   const [testResultFilter, setTestResultFilter] = useState<"all" | "failed" | "passed">("all");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Terminal-collapse effects (state/refs declared above; placed here so isSubmitting is in
+  // scope). All READ run state only — no renderer/handler/isRunSubmission is touched.
+  // Mirror collapsed state into a ref (so the result effect reads it without re-running on every
+  // collapse), and clear the unread dot the moment the panel is expanded/viewed.
+  useEffect(() => {
+    terminalCollapsedRef.current = terminalCollapsed;
+    if (!terminalCollapsed) setTerminalUnread(false);
+  }, [terminalCollapsed]);
+  // PRIMARY — auto-expand ONCE per NEW attempt result, keyed on the runResultAttemptId
+  // transition (a new id), NOT on runResult presence. A candidate who reads the output and
+  // deliberately re-collapses stays collapsed until the NEXT run's result. A same-attempt status
+  // update (e.g. QUEUED -> verdict) does NOT re-expand — it lights the unread dot (FALLBACK) if
+  // collapsed, so they still get a signal that their result landed.
+  useEffect(() => {
+    if (runResultAttemptId && runResultAttemptId !== lastResultExpandIdRef.current) {
+      lastResultExpandIdRef.current = runResultAttemptId;
+      lastResultStatusRef.current = runResult?.status ?? null;
+      setTerminalCollapsed(false);
+      return;
+    }
+    const status = runResult?.status ?? null;
+    if (status && status !== lastResultStatusRef.current) {
+      lastResultStatusRef.current = status;
+      if (terminalCollapsedRef.current) setTerminalUnread(true);
+    }
+  }, [runResultAttemptId, runResult]);
+  // Submit lands in Attempts — open the panel once when a submit is initiated.
+  useEffect(() => {
+    if (isSubmitting && !prevSubmittingRef.current) setTerminalCollapsed(false);
+    prevSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   // Timer expiry auto-submit overlay state.
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
@@ -3487,6 +3538,13 @@ export default function ContestPageClient() {
   }, [activeQ, availableProblemTabs, problemTab]);
 
   const cameraHealthy = Boolean(cameraStream && cameraVideoReady && !cameraError);
+  const cameraStatusLabel = !cameraEnabled
+    ? "Camera off"
+    : cameraHealthy
+      ? "Camera active"
+      : cameraError
+        ? "Camera issue"
+        : "Camera starting";
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
   const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
   const faceBlockMessage = cameraHealthy
@@ -3821,16 +3879,15 @@ export default function ContestPageClient() {
       {/* ── Top bar ── */}
       <header
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
           alignItems: "center",
-          justifyContent: "space-between",
           padding: "0 20px",
-          height: "52px",
+          height: "48px",
           borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
           background: "#0F0F0F",
           flexShrink: 0,
           boxShadow: "none",
-          gap: "16px",
         }}
       >
         {/* Left: Logo + contest title */}
@@ -3879,8 +3936,10 @@ export default function ContestPageClient() {
         {/* Center: Timer */}
         <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} onExpiry={handleContestExpiry} />
 
-        {/* Right: Submit */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        {/* Right: Support + exit */}
+        <div
+          style={{ display: "flex", alignItems: "center", gap: "10px", justifyContent: "flex-end" }}
+        >
           <button
             type="button"
             onClick={() => setShowSupportModal(true)}
@@ -3898,7 +3957,7 @@ export default function ContestPageClient() {
             <LifeBuoy size={18} strokeWidth={1.75} />
           </button>
 
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
             <button
               type="button"
               onClick={() => setSubmitConfirm(true)}
@@ -3996,32 +4055,43 @@ export default function ContestPageClient() {
       </header>
 
       {/* ── Body ── */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden", background: "#0F0F0F" }}>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          overflow: "hidden",
+          background: "#0F0F0F",
+          position: "relative",
+        }}
+      >
         {/* Question list sidebar */}
         <aside
           style={{
             width: sidebarCollapsed ? "52px" : "220px",
             flexShrink: 0,
-            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
+            // Visible divider + subtle elevation so the collapsed strip reads as a container
+            // (the badge no longer floats on the bare canvas now the camera left the rail).
+            borderRight: "1px solid #1F1F1F",
             display: "flex",
             flexDirection: "column",
-            background: "#0F0F0F",
+            background: sidebarCollapsed ? "#111111" : "#0F0F0F",
             boxShadow: "none",
             overflow: "hidden",
-            transition: "width 250ms",
+            transition: "width 250ms, background-color 250ms",
           }}
         >
           <div
             style={{
-              padding: sidebarCollapsed ? "14px 0" : "14px 14px 8px",
+              padding: sidebarCollapsed ? "12px 0" : "12px 14px 10px",
               borderBottom: "1px solid #1F1F1F",
               display: "flex",
               alignItems: "center",
               justifyContent: sidebarCollapsed ? "center" : "space-between",
+              gap: "8px",
             }}
           >
             {!sidebarCollapsed && (
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <p
                   style={{
                     fontSize: "10px",
@@ -4037,16 +4107,44 @@ export default function ContestPageClient() {
                 </p>
                 <p
                   style={{
-                    margin: "4px 0 0",
-                    fontSize: "10px",
-                    color: "#94a3b8",
+                    margin: "3px 0 0",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    color: "var(--color-accent-light)",
                     fontFamily: "Inter, system-ui, sans-serif",
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {attemptedQuestionCount} attempted · {acceptedQuestionCount} accepted ·{" "}
-                  {remainingQuestionCount} remaining
+                  {acceptedQuestionCount} / {questions.length} Solved
                 </p>
+                {/* Segmented progress bar */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "2px",
+                    marginTop: "6px",
+                  }}
+                >
+                  {questions.map((q) => {
+                    const qStatus = questionStatusMap[q.id];
+                    return (
+                      <div
+                        key={q.id}
+                        style={{
+                          flex: 1,
+                          height: "3px",
+                          borderRadius: "var(--radius-pill)",
+                          // Binary: solved (accepted) = green, everything else = gray. The
+                          // saved/attempted nuance stays on the row dots, not the summary bar.
+                          background:
+                            qStatus.label === "Accepted" ? "var(--verdict-ac)" : "var(--text-dim)",
+                        }}
+                      />
+                    );
+                  })}
+                </div>
               </div>
             )}
             <button
@@ -4061,6 +4159,7 @@ export default function ContestPageClient() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                flexShrink: 0,
               }}
               title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
             >
@@ -4075,7 +4174,8 @@ export default function ContestPageClient() {
             style={{
               flex: 1,
               overflowY: "auto",
-              padding: "8px",
+              // Clear the docked camera tile at the rail bottom (expanded only; hidden collapsed).
+              padding: sidebarCollapsed ? "8px" : "8px 8px 162px",
               display: "flex",
               flexDirection: "column",
               gap: "4px",
@@ -4106,10 +4206,15 @@ export default function ContestPageClient() {
                     alignItems: "center",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     width: "100%",
-                    padding: sidebarCollapsed ? "8px 0" : "10px 12px",
+                    padding: sidebarCollapsed ? "6px 0" : "10px 12px",
                     borderRadius: "var(--radius-md)",
-                    border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
-                    background: activeQ === i ? "rgb(var(--accent-rgb) / 0.08)" : "transparent",
+                    // Collapsed: the badge itself is the single active pill — no outer box, so it
+                    // doesn't read as a pill-inside-a-pill. Expanded keeps the row highlight.
+                    border: `1px solid ${!sidebarCollapsed && activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
+                    background:
+                      !sidebarCollapsed && activeQ === i
+                        ? "rgb(var(--accent-rgb) / 0.08)"
+                        : "transparent",
                     cursor: "pointer",
                     fontFamily: "Inter, system-ui, sans-serif",
                     textAlign: "left",
@@ -4123,20 +4228,22 @@ export default function ContestPageClient() {
                   {sidebarCollapsed ? (
                     <span
                       style={{
-                        width: "30px",
+                        width: "34px",
                         height: "30px",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        borderRadius: "var(--radius-sm)",
-                        border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.35)" : qStatus.border}`,
-                        background: activeQ === i ? "rgb(var(--accent-rgb) / 0.1)" : qStatus.bg,
-                        fontSize: "12px",
+                        borderRadius: "var(--radius-md)",
+                        // Active = a single clean pill; others = plain status-coloured letter
+                        // (solved green / unsolved gray), matching the collapsed mockup.
+                        border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
+                        background: activeQ === i ? "rgb(var(--accent-rgb) / 0.12)" : "transparent",
+                        fontSize: "13px",
                         fontWeight: 700,
                         color: activeQ === i ? "var(--color-accent-light)" : qStatus.color,
                       }}
                     >
-                      {i + 1}
+                      {String.fromCharCode(65 + i)}
                     </span>
                   ) : (
                     <div
@@ -4151,25 +4258,13 @@ export default function ContestPageClient() {
                       <span
                         style={{
                           fontSize: "11px",
-                          fontWeight: 600,
+                          fontWeight: 700,
                           color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
                           flexShrink: 0,
                         }}
                       >
-                        {i + 1}
+                        {String.fromCharCode(65 + i)}.
                       </span>
-                      <span
-                        style={{
-                          width: "9px",
-                          height: "9px",
-                          borderRadius: "var(--radius-pill)",
-                          background: qStatus.color,
-                          color: qStatus.color,
-                          // Always-on glow so status reads at a glance, not only when active.
-                          boxShadow: "0 0 6px currentColor",
-                          flexShrink: 0,
-                        }}
-                      />
                       <span
                         style={{
                           fontSize: "12px",
@@ -4186,159 +4281,20 @@ export default function ContestPageClient() {
                       </span>
                       <span
                         style={{
-                          padding: "2px 6px",
-                          borderRadius: "var(--radius-sm)",
-                          border: `1px solid ${qStatus.border}`,
-                          background: qStatus.bg,
-                          color: qStatus.color,
-                          fontSize: "9px",
-                          fontWeight: 700,
-                          fontFamily: "Inter, system-ui, sans-serif",
-                          whiteSpace: "nowrap",
+                          width: "7px",
+                          height: "7px",
+                          borderRadius: "var(--radius-pill)",
+                          // Active-first: the viewed question reads purple even if solved;
+                          // non-active falls back to its status colour (solved=green, etc.).
+                          background: activeQ === i ? "var(--color-accent-base)" : qStatus.color,
                           flexShrink: 0,
                         }}
-                      >
-                        {qStatus.shortLabel}
-                      </span>
+                      />
                     </div>
                   )}
                 </button>
               );
             })}
-          </div>
-
-          {/* Docked Camera feed */}
-          <div
-            style={{
-              borderTop: "1px solid #1F1F1F",
-              background: "#0F0F0F",
-              position: "relative",
-              flexShrink: 0,
-              display: (cameraStream ?? cameraError) ? "flex" : "none",
-              flexDirection: "column",
-            }}
-          >
-            {!sidebarCollapsed && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "6px",
-                  gap: "6px",
-                  borderBottom: "1px solid #1F1F1F",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => handleToggleMedia("camera", !cameraEnabled)}
-                  className={`ic-btn ${cameraEnabled ? "ic-btn-white" : "ic-btn-red"}`}
-                  title={
-                    cameraEnabled
-                      ? "Camera on — click to turn off"
-                      : "Camera off — click to turn on"
-                  }
-                  aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
-                >
-                  {cameraEnabled ? (
-                    <Video size={15} strokeWidth={1.75} />
-                  ) : (
-                    <VideoOff size={15} strokeWidth={1.75} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleToggleMedia("mic", !micEnabled)}
-                  className={`ic-btn ${micEnabled ? "ic-btn-white" : "ic-btn-red"}`}
-                  title={
-                    micEnabled
-                      ? "Microphone on — click to turn off"
-                      : "Microphone off — click to turn on"
-                  }
-                  aria-label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
-                >
-                  {micEnabled ? (
-                    <Mic size={15} strokeWidth={1.75} />
-                  ) : (
-                    <MicOff size={15} strokeWidth={1.75} />
-                  )}
-                </button>
-              </div>
-            )}
-            <div
-              style={{
-                width: "100%",
-                height: sidebarCollapsed ? "52px" : "150px",
-                border: "none",
-                boxSizing: "border-box",
-                position: "relative",
-              }}
-            >
-              <video
-                ref={cameraVideoRef}
-                muted
-                playsInline
-                autoPlay
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  transform: "scaleX(-1)",
-                  display: sidebarCollapsed ? "none" : "block",
-                  borderRadius: "0",
-                }}
-              />
-              {sidebarCollapsed && (
-                <div
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: cameraHealthy ? "#22c55e" : cameraError ? "#ef4444" : "#f59e0b",
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {!sidebarCollapsed && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "8px",
-                  left: "8px",
-                  padding: "2px 4px",
-                  background: "#0F0F0F",
-                  border: "1px solid #1F1F1F",
-                  fontSize: "9px",
-                  color: !cameraEnabled
-                    ? "#94a3b8"
-                    : cameraHealthy
-                      ? "#94a3b8"
-                      : cameraError
-                        ? "#ef4444"
-                        : "#f59e0b",
-                  fontFamily: "Inter, system-ui, sans-serif",
-                  fontWeight: 600,
-                }}
-              >
-                {!cameraEnabled
-                  ? "Cam off"
-                  : cameraHealthy
-                    ? "Camera active"
-                    : cameraError
-                      ? "Camera issue"
-                      : "Camera starting"}
-              </div>
-            )}
           </div>
         </aside>
 
@@ -4384,7 +4340,7 @@ export default function ContestPageClient() {
                   background: "#0F0F0F",
                   padding: "0 18px",
                   flexShrink: 0,
-                  height: "42px",
+                  height: "44px",
                 }}
               >
                 <span
@@ -4426,8 +4382,8 @@ export default function ContestPageClient() {
                       zIndex: 5,
                       display: "flex",
                       alignItems: "center",
-                      height: "38px",
-                      padding: "0 24px",
+                      height: "44px",
+                      padding: "0 18px",
                       borderBottom: "1px solid rgba(255,255,255,0.05)",
                       background: "rgba(15,15,15,0.96)",
                       backdropFilter: "blur(12px)",
@@ -4448,13 +4404,13 @@ export default function ContestPageClient() {
                           onClick={() => setProblemTab(tab)}
                           style={{
                             height: "100%",
-                            padding: "0 12px",
+                            padding: "0 14px",
                             borderRadius: 0,
                             border: "none",
                             borderBottom: `2px solid ${active ? "var(--color-accent-base)" : "transparent"}`,
                             background: "transparent",
                             color: active ? "var(--color-accent-light)" : "var(--text-dim)",
-                            fontSize: "12px",
+                            fontSize: "13px",
                             fontWeight: 600,
                             fontFamily: "Inter, system-ui, sans-serif",
                             cursor: "pointer",
@@ -4468,7 +4424,9 @@ export default function ContestPageClient() {
                     })}
                   </div>
                 )}
-                <article style={{ padding: "28px 28px 34px", maxWidth: "760px" }}>
+                {/* Bottom padding reserves the fixed camera tile's footprint so statement
+                    text never scrolls under it (esp. with the rail collapsed). */}
+                <article style={{ padding: "28px 28px 178px", maxWidth: "760px" }}>
                   <p
                     style={{
                       margin: "0 0 8px",
@@ -4476,6 +4434,8 @@ export default function ContestPageClient() {
                       color: "var(--color-accent-base)",
                       fontWeight: 700,
                       fontFamily: "Inter, system-ui, sans-serif",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
                     }}
                   >
                     Problem {String.fromCharCode(65 + (questions[activeQ]?.order_index ?? activeQ))}
@@ -4577,7 +4537,7 @@ export default function ContestPageClient() {
                     borderBottom: "1px solid #1F1F1F",
                     background: "#0F0F0F",
                     padding: "0 12px",
-                    gap: "4px",
+                    gap: "6px",
                     flexShrink: 0,
                     height: "38px",
                   }}
@@ -4604,12 +4564,10 @@ export default function ContestPageClient() {
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          border: "1px solid",
-                          borderColor: isActive ? "#1F1F1F" : "transparent",
-                          borderBottom: "none",
+                          border: `1px solid ${isActive ? "rgba(255,255,255,0.08)" : "transparent"}`,
                           background: isActive ? "#1F1F1F" : "transparent",
-                          borderRadius: "8px 8px 0 0",
-                          height: "100%",
+                          borderRadius: "6px",
+                          height: "28px",
                           flexShrink: 0,
                           position: "relative",
                         }}
@@ -4623,7 +4581,7 @@ export default function ContestPageClient() {
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            padding: isScratch ? "0 6px 0 12px" : "0 16px",
+                            padding: isScratch ? "0 4px 0 10px" : "0 12px",
                             background: "transparent",
                             border: "none",
                             color: isActive ? "#ffffff" : "#475569",
@@ -4681,7 +4639,7 @@ export default function ContestPageClient() {
                             aria-label={`Close ${file.name}`}
                             style={{
                               position: "absolute",
-                              top: "32px",
+                              top: "calc(100% + 8px)",
                               right: "4px",
                               zIndex: 20,
                               width: "190px",
@@ -4844,8 +4802,6 @@ export default function ContestPageClient() {
                       />
                     ) : saveIndicator.icon === "error" ? (
                       <AlertCircle size={12} strokeWidth={2} />
-                    ) : saveIndicator.icon === "saved" ? (
-                      <Check size={12} strokeWidth={2} />
                     ) : (
                       <span
                         style={{
@@ -4868,8 +4824,8 @@ export default function ContestPageClient() {
                     alignItems: "center",
                     padding: "0 12px",
                     gap: "0",
-                    height: "48px",
-                    background: "#0a0a0a",
+                    height: "44px",
+                    background: "#0F0F0F",
                     borderBottom: "1px solid #1F1F1F",
                     flexShrink: 0,
                   }}
@@ -4981,23 +4937,21 @@ export default function ContestPageClient() {
                       title="Runs your code against the sample tests only — does not count toward your score."
                       aria-label="Run on judge"
                       style={{
-                        height: "40px",
+                        width: "34px",
+                        height: "34px",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        gap: "8px",
-                        padding: "0 16px",
+                        padding: "0",
                         border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.14)" : "rgba(148,163,184,0.22)"}`,
                         borderRadius: "var(--radius-sm)",
                         background: "transparent",
                         color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#cbd5e1",
-                        fontSize: "13px",
-                        fontWeight: 500,
-                        fontFamily: "Inter, system-ui, sans-serif",
                         cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
                         opacity: isRunning || !sessionId ? 0.75 : 1,
                         transition:
                           "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
+                        flexShrink: 0,
                       }}
                       onMouseEnter={(e) => {
                         if (isRunning || !sessionId) return;
@@ -5027,7 +4981,6 @@ export default function ContestPageClient() {
                       ) : (
                         <Play size={15} strokeWidth={2} />
                       )}
-                      {isRunning ? "Running" : "Run on Judge"}
                     </button>
                     <button
                       type="button"
@@ -5105,7 +5058,7 @@ export default function ContestPageClient() {
                           ? "Saving"
                           : submissionError
                             ? "Submit Failed"
-                            : "Submit Solution"}
+                            : "Submit"}
                     </button>
                   </div>
                   {/* end primary actions group */}
@@ -5155,14 +5108,16 @@ export default function ContestPageClient() {
                 />
               </div>
 
-              {/* Bottom Right: Terminal */}
+              {/* Bottom Right: Terminal — collapses to just the tab strip; editor reclaims. */}
               <div
                 style={{
-                  height: "30%",
-                  minHeight: "200px",
+                  height: terminalCollapsed ? "38px" : "30%",
+                  minHeight: terminalCollapsed ? "38px" : "200px",
                   display: "flex",
                   flexDirection: "column",
                   background: "#0F0F0F",
+                  overflow: "hidden",
+                  transition: "height 160ms ease, min-height 160ms ease",
                 }}
               >
                 <div
@@ -5190,7 +5145,7 @@ export default function ContestPageClient() {
                           ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
-                      fontWeight: 600,
+                      fontWeight: terminalTab === "stdout" ? 600 : 500,
                       cursor: "pointer",
                       height: "100%",
                       padding: "0 4px",
@@ -5211,7 +5166,7 @@ export default function ContestPageClient() {
                           ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
-                      fontWeight: 600,
+                      fontWeight: terminalTab === "logs" ? 600 : 500,
                       cursor: "pointer",
                       height: "100%",
                       padding: "0 4px",
@@ -5249,7 +5204,7 @@ export default function ContestPageClient() {
                           ? "2px solid var(--color-accent-base)"
                           : "2px solid transparent",
                       fontFamily: "Inter, system-ui, sans-serif",
-                      fontWeight: 600,
+                      fontWeight: terminalTab === "submissions" ? 600 : 500,
                       cursor: "pointer",
                       height: "100%",
                       padding: "0 4px",
@@ -5357,6 +5312,49 @@ export default function ContestPageClient() {
                       )}
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setTerminalCollapsed((c) => !c)}
+                    title={terminalCollapsed ? "Expand output panel" : "Collapse output panel"}
+                    aria-label={
+                      terminalCollapsed
+                        ? terminalUnread
+                          ? "Expand output panel — output updated"
+                          : "Expand output panel"
+                        : "Collapse output panel"
+                    }
+                    style={{
+                      position: "relative",
+                      background: "transparent",
+                      border: "none",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "4px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {terminalCollapsed ? (
+                      <ChevronUp size={16} strokeWidth={2} />
+                    ) : (
+                      <ChevronDown size={16} strokeWidth={2} />
+                    )}
+                    {terminalUnread && (
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          top: "3px",
+                          right: "3px",
+                          width: "6px",
+                          height: "6px",
+                          borderRadius: "var(--radius-pill)",
+                          background: "var(--color-accent-base)",
+                        }}
+                      />
+                    )}
+                  </button>
                 </div>
                 {shouldShowRunProgress && (
                   <div
@@ -5446,11 +5444,11 @@ export default function ContestPageClient() {
                         style={{
                           color: "#64748b",
                           fontSize: "10px",
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.1em",
                           marginBottom: "8px",
                         }}
                       >
-                        Output
+                        OUTPUT
                       </div>
                       {/* LeetCode-style sample results for a "Run on Judge". Runs
                           are judged against sample tests only and never appear in
@@ -6086,6 +6084,146 @@ export default function ContestPageClient() {
             </div>
           </>
         )}
+        {/* Docked Camera feed — v1.2: a self-contained video box with the cam/mic toggles
+            overlaid top-right (no separate bar, no wrapping label). Health is conveyed by the
+            border tint + title/aria-label, not a truncating text chip. */}
+        <div
+          title={cameraStatusLabel}
+          style={{
+            background: "#0F0F0F",
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            width: "220px",
+            height: "150px",
+            zIndex: 50,
+            // Docked over the expanded rail's bottom; hidden (NOT unmounted) when the rail
+            // collapses — <video> stays mounted, srcObject bound, tracks running (no teardown).
+            display: (cameraStream ?? cameraError) && !sidebarCollapsed ? "flex" : "none",
+            flexDirection: "column",
+            border: "1px solid #1F1F1F",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: "6px",
+              right: "6px",
+              zIndex: 2,
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => handleToggleMedia("camera", !cameraEnabled)}
+              className={`ic-btn ${cameraEnabled ? "ic-btn-white" : "ic-btn-red"}`}
+              title={
+                cameraEnabled ? "Camera on — click to turn off" : "Camera off — click to turn on"
+              }
+              aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
+            >
+              {cameraEnabled ? (
+                <Video size={15} strokeWidth={1.75} />
+              ) : (
+                <VideoOff size={15} strokeWidth={1.75} />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleMedia("mic", !micEnabled)}
+              className={`ic-btn ${micEnabled ? "ic-btn-white" : "ic-btn-red"}`}
+              title={
+                micEnabled
+                  ? "Microphone on — click to turn off"
+                  : "Microphone off — click to turn on"
+              }
+              aria-label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
+            >
+              {micEnabled ? (
+                <Mic size={15} strokeWidth={1.75} />
+              ) : (
+                <MicOff size={15} strokeWidth={1.75} />
+              )}
+            </button>
+          </div>
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "none",
+              boxSizing: "border-box",
+              position: "relative",
+            }}
+          >
+            <video
+              ref={cameraVideoRef}
+              muted
+              playsInline
+              autoPlay
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                transform: "scaleX(-1)",
+                display: "block",
+                borderRadius: "0",
+              }}
+            />
+          </div>
+          {/* Camera health — announced via a content-based live region + a non-color visible
+              cue. Healthy = silent/clean box (mockup look); a chip appears ONLY on a problem.
+              ⚠ is reserved for a real fault — intentional-off gets a neutral icon, and the
+              transient "Starting…" resolves to an announced "Camera active" so an SR user hears
+              it clear rather than hearing "Starting…" stick. faceStatus/stream logic untouched. */}
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              bottom: "6px",
+              left: "6px",
+              zIndex: 2,
+              pointerEvents: "none",
+            }}
+          >
+            {cameraHealthy ? (
+              <span className="sr-only">Camera active</span>
+            ) : (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "2px 6px",
+                  background: "#0F0F0F",
+                  border: "1px solid #1F1F1F",
+                  borderRadius: "4px",
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  fontFamily: "Inter, system-ui, sans-serif",
+                  color: "#e2e8f0",
+                }}
+              >
+                {!cameraEnabled ? (
+                  <VideoOff size={11} strokeWidth={2} aria-hidden="true" />
+                ) : cameraError ? (
+                  <AlertTriangle size={11} strokeWidth={2} color="#f59e0b" aria-hidden="true" />
+                ) : (
+                  <Loader2
+                    size={11}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                    style={{ animation: "spin 1.2s linear infinite" }}
+                  />
+                )}
+                {!cameraEnabled ? "Off" : cameraError ? "Camera issue" : "Starting…"}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── Proctoring footer ── */}
@@ -6093,58 +6231,41 @@ export default function ContestPageClient() {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "20px",
-          padding: "0 20px",
-          height: "36px",
+          gap: "18px",
+          padding: "0 18px",
+          height: "40px",
           borderTop: "1px solid rgba(255,255,255,0.05)",
           background: "#0F0F0F",
           flexShrink: 0,
         }}
       >
-        {/* Secure session indicator */}
+        {/* Secure session — icon only; status announced via content-based live region */}
         <div
+          role="status"
+          aria-live="polite"
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "6px",
             color: proctoringOk ? "#71717a" : "#ef4444",
           }}
         >
           {proctoringOk ? (
-            <ShieldCheck size={13} strokeWidth={2} aria-hidden="true" />
+            <ShieldCheck size={15} strokeWidth={2} aria-hidden="true" />
           ) : (
-            <Shield size={13} strokeWidth={2} aria-hidden="true" />
+            <Shield size={15} strokeWidth={2} aria-hidden="true" />
           )}
-          <span
-            style={{
-              width: "8px",
-              height: "8px",
-              borderRadius: "var(--radius-pill)",
-              background: "currentColor",
-              boxShadow: proctoringOk ? "none" : "0 0 6px currentColor",
-              flexShrink: 0,
-              transition: "background-color var(--transition-fast)",
-            }}
-          />
-          <span
-            role="status"
-            aria-live="polite"
-            style={{
-              fontSize: "11px",
-              color: "currentColor",
-              fontWeight: 500,
-              letterSpacing: "0.06em",
-            }}
-          >
-            {proctoringOk ? "Secure" : "Action needed"}
-          </span>
+          <span className="sr-only">{proctoringOk ? "Secure" : "Action needed"}</span>
         </div>
 
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Face detection */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+        {/* Face detection — icon only; the re-center nudge is conveyed in THREE modalities:
+            a content-based live region (actionable guidance), a non-color shape cue (the alert
+            dot appears only when the face drifts), and colour. faceStatus logic is untouched. */}
+        <div
+          role="status"
+          aria-live="polite"
+          style={{ position: "relative", display: "flex", alignItems: "center" }}
+        >
+          <svg width="15" height="15" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             <circle
               cx="6"
               cy="4.5"
@@ -6162,117 +6283,69 @@ export default function ContestPageClient() {
               strokeWidth="1.1"
               strokeLinecap="round"
             />
+            {/* Non-color cue: an alert dot present ONLY when the face has drifted (WCAG 1.4.1) */}
+            {faceStatus === "away" && <circle cx="10" cy="2" r="2" fill="#f59e0b" />}
           </svg>
-          <span
-            style={{
-              fontSize: "11px",
-              color:
-                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a",
-              letterSpacing: "0.06em",
-            }}
-          >
+          <span className="sr-only">
             {faceStatus === "ok"
-              ? "Camera active"
+              ? "Face detected"
               : faceStatus === "away"
-                ? "Look forward"
+                ? "Face not centered — center your face in the camera"
                 : "Camera starting"}
           </span>
         </div>
 
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Connection */}
+        {/* Connection — icon only; status announced via content-based live region */}
         <div
+          role="status"
+          aria-live="polite"
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "6px",
             color: online ? "#71717a" : "#f59e0b",
           }}
         >
           {online ? (
-            <Wifi size={13} strokeWidth={2} aria-hidden="true" />
+            <Wifi size={15} strokeWidth={2} aria-hidden="true" />
           ) : (
-            <WifiOff size={13} strokeWidth={2} aria-hidden="true" />
+            <WifiOff size={15} strokeWidth={2} aria-hidden="true" />
           )}
-          {online ? (
-            <span
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "var(--radius-pill)",
-                background: "currentColor",
-                flexShrink: 0,
-                transition: "background-color var(--transition-fast)",
-              }}
-            />
-          ) : (
-            <Loader2
-              size={11}
-              strokeWidth={2.5}
-              aria-hidden="true"
-              style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }}
-            />
-          )}
-          <span
-            role="status"
-            aria-live="polite"
-            style={{ fontSize: "11px", color: "currentColor", letterSpacing: "0.06em" }}
-          >
-            {online ? "Connected" : "Reconnecting…"}
-          </span>
+          <span className="sr-only">{online ? "Connected" : "Reconnecting…"}</span>
         </div>
 
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Saved — mirrors the editor save indicator so candidates always know
-            their work is safe without hunting for it. */}
+        {/* Saved — icon only; mirrors the editor save indicator; content-based live region */}
         <div
+          role="status"
+          aria-live="polite"
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "6px",
             color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
           }}
         >
-          <Save size={13} strokeWidth={2} aria-hidden="true" />
-          <span
-            style={{
-              width: "8px",
-              height: "8px",
-              borderRadius: "var(--radius-pill)",
-              background: "currentColor",
-              boxShadow: saveError ? "0 0 6px currentColor" : "none",
-              flexShrink: 0,
-              transition: "background-color var(--transition-fast)",
-            }}
-          />
-          <span
-            role="status"
-            aria-live="polite"
-            style={{ fontSize: "11px", color: "currentColor", letterSpacing: "0.06em" }}
-          >
+          <Save size={15} strokeWidth={2} aria-hidden="true" />
+          <span className="sr-only">
             {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           </span>
         </div>
 
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Keyboard intercept */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-            <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
-            <path
-              d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
-              stroke="#71717a"
-              strokeWidth="0.9"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span style={{ fontSize: "11px", color: "#71717a", letterSpacing: "0.06em" }}>
-            Keyboard locked
-          </span>
-        </div>
+        {/* Keyboard intercept — icon only; static state exposed via role=img label */}
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 12 12"
+          fill="none"
+          role="img"
+          aria-label="Keyboard locked"
+        >
+          <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
+          <path
+            d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
+            stroke="#71717a"
+            strokeWidth="0.9"
+            strokeLinecap="round"
+          />
+        </svg>
 
         <div style={{ flex: 1 }} />
 
@@ -6285,15 +6358,14 @@ export default function ContestPageClient() {
           }}
         >
           Q{activeQ + 1}/{questions.length} · {attemptedQuestionCount} attempted ·{" "}
-          {acceptedQuestionCount} accepted · {remainingQuestionCount} remaining ·{" "}
-          {contest?.title ?? "—"}
+          {acceptedQuestionCount} accepted · {remainingQuestionCount} remaining · Evaluation
         </span>
 
         <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
 
-        {/* AMS badge */}
+        {/* Access wordmark */}
         <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.08em" }}>
-          AMS Access · Proctored
+          Access
         </span>
       </footer>
 
@@ -7061,6 +7133,10 @@ export default function ContestPageClient() {
       )}
 
       <style>{`
+        .sr-only {
+          position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+          overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
         @keyframes pulse-preview {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
