@@ -1626,6 +1626,16 @@ export default function ContestPageClient() {
     value: boolean;
   } | null>(null);
   const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
+  // Deferred terminal-collapse feature. Shrink-to-tab-strip; the editor (flex:1) reclaims the
+  // freed height automatically. Output is NEVER silently hidden on the exam: auto-expand is the
+  // primary guarantee, the unread dot is the fallback. All of this only READS run state — the
+  // three renderers, isRunSubmission, setTerminalTab, and the run/submit handlers are untouched.
+  const [terminalCollapsed, setTerminalCollapsed] = useState(false);
+  const [terminalUnread, setTerminalUnread] = useState(false);
+  const terminalCollapsedRef = useRef(false);
+  const lastResultExpandIdRef = useRef<string | null>(null);
+  const lastResultStatusRef = useRef<string | null>(null);
+  const prevSubmittingRef = useRef(false);
   const [submissionsList, setSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
@@ -1633,6 +1643,37 @@ export default function ContestPageClient() {
   const [testResults, setTestResults] = useState<Record<string, any[]>>({});
   const [testResultFilter, setTestResultFilter] = useState<"all" | "failed" | "passed">("all");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Terminal-collapse effects (state/refs declared above; placed here so isSubmitting is in
+  // scope). All READ run state only — no renderer/handler/isRunSubmission is touched.
+  // Mirror collapsed state into a ref (so the result effect reads it without re-running on every
+  // collapse), and clear the unread dot the moment the panel is expanded/viewed.
+  useEffect(() => {
+    terminalCollapsedRef.current = terminalCollapsed;
+    if (!terminalCollapsed) setTerminalUnread(false);
+  }, [terminalCollapsed]);
+  // PRIMARY — auto-expand ONCE per NEW attempt result, keyed on the runResultAttemptId
+  // transition (a new id), NOT on runResult presence. A candidate who reads the output and
+  // deliberately re-collapses stays collapsed until the NEXT run's result. A same-attempt status
+  // update (e.g. QUEUED -> verdict) does NOT re-expand — it lights the unread dot (FALLBACK) if
+  // collapsed, so they still get a signal that their result landed.
+  useEffect(() => {
+    if (runResultAttemptId && runResultAttemptId !== lastResultExpandIdRef.current) {
+      lastResultExpandIdRef.current = runResultAttemptId;
+      lastResultStatusRef.current = runResult?.status ?? null;
+      setTerminalCollapsed(false);
+      return;
+    }
+    const status = runResult?.status ?? null;
+    if (status && status !== lastResultStatusRef.current) {
+      lastResultStatusRef.current = status;
+      if (terminalCollapsedRef.current) setTerminalUnread(true);
+    }
+  }, [runResultAttemptId, runResult]);
+  // Submit lands in Attempts — open the panel once when a submit is initiated.
+  useEffect(() => {
+    if (isSubmitting && !prevSubmittingRef.current) setTerminalCollapsed(false);
+    prevSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   // Timer expiry auto-submit overlay state.
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
@@ -5060,14 +5101,16 @@ export default function ContestPageClient() {
                 />
               </div>
 
-              {/* Bottom Right: Terminal */}
+              {/* Bottom Right: Terminal — collapses to just the tab strip; editor reclaims. */}
               <div
                 style={{
-                  height: "30%",
-                  minHeight: "200px",
+                  height: terminalCollapsed ? "38px" : "30%",
+                  minHeight: terminalCollapsed ? "38px" : "200px",
                   display: "flex",
                   flexDirection: "column",
                   background: "#0F0F0F",
+                  overflow: "hidden",
+                  transition: "height 160ms ease, min-height 160ms ease",
                 }}
               >
                 <div
@@ -5262,6 +5305,49 @@ export default function ContestPageClient() {
                       )}
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setTerminalCollapsed((c) => !c)}
+                    title={terminalCollapsed ? "Expand output panel" : "Collapse output panel"}
+                    aria-label={
+                      terminalCollapsed
+                        ? terminalUnread
+                          ? "Expand output panel — output updated"
+                          : "Expand output panel"
+                        : "Collapse output panel"
+                    }
+                    style={{
+                      position: "relative",
+                      background: "transparent",
+                      border: "none",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "4px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {terminalCollapsed ? (
+                      <ChevronUp size={16} strokeWidth={2} />
+                    ) : (
+                      <ChevronDown size={16} strokeWidth={2} />
+                    )}
+                    {terminalUnread && (
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          top: "3px",
+                          right: "3px",
+                          width: "6px",
+                          height: "6px",
+                          borderRadius: "var(--radius-pill)",
+                          background: "var(--color-accent-base)",
+                        }}
+                      />
+                    )}
+                  </button>
                 </div>
                 {shouldShowRunProgress && (
                   <div
