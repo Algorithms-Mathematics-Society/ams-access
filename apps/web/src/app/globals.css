@@ -301,6 +301,37 @@ html.theme-dark-locked {
     255,
     0.06
   ); /* NEW: neutral interactive overlay (row/button hover) */
+
+  /* ── Home step-2 tokens (Phase 2a): dark = each site's exact pre-tokenize dark (byte-identical) ── */
+  --home-status-ok: #22c55e;
+  --home-status-ok-bg: rgba(34, 197, 94, 0.08);
+  --home-status-ok-border: rgba(34, 197, 94, 0.2);
+  --home-status-ok-border-strong: rgba(34, 197, 94, 0.3);
+  --home-clear-border: rgba(
+    34,
+    197,
+    94,
+    0.15
+  ); /* asymmetric: light is neutral — preserved, revisit at a home light design pass (ledger §C) */
+  --home-accent-dot: var(--color-accent-base);
+  --home-overlay-strong: rgba(255, 255, 255, 0.08);
+  --home-overlay-btn: rgba(255, 255, 255, 0.045);
+  --home-overlay-btn-hover: rgba(255, 255, 255, 0.075);
+  --home-overlay-disabled: rgba(255, 255, 255, 0.055);
+  --home-overlay-faint: rgba(255, 255, 255, 0.04);
+  --home-overlay-ended: rgba(255, 255, 255, 0.04);
+  --home-overlay-whisper: rgba(255, 255, 255, 0.01);
+  --home-border-ended: rgba(255, 255, 255, 0.1);
+  --home-border-disabled: rgba(255, 255, 255, 0.1);
+  --home-modal-surface: rgba(15, 23, 42, 0.96);
+  --home-modal-inner: rgba(255, 255, 255, 0.025);
+  --home-activecard-bg: linear-gradient(135deg, #090d16 0%, #05070b 100%);
+  --home-dot-ended: rgba(255, 255, 255, 0.25);
+  --home-dot-muted: rgba(255, 255, 255, 0.32);
+  --home-text-disabled: rgba(255, 255, 255, 0.38);
+  --home-shadow-panel: 0 24px 80px rgba(0, 0, 0, 0.55);
+  --home-shadow-card: var(--elevation-2);
+  --home-shadow-cta: 0 8px 24px rgb(var(--accent-rgb) / 0.3);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -367,6 +398,32 @@ html.light:not(.theme-dark-locked) {
   --verdict-ie: #475569; /* 6.79:1 */
   --verdict-running: #1d4ed8; /* 6.00:1 */
   --verdict-none: #52525b; /* 6.92:1 */
+
+  /* ── Home step-2 tokens (Phase 2a): measured/authored light ── */
+  --home-status-ok: #166534; /* MEASURED 5.95:1 on #f0eadd (darkest home-light surface) → AA; corrects #10b981 (2.28:1) */
+  --home-status-ok-bg: rgba(16, 185, 129, 0.08);
+  --home-status-ok-border: rgba(16, 185, 129, 0.2);
+  --home-status-ok-border-strong: rgba(16, 185, 129, 0.25);
+  --home-clear-border: rgba(0, 0, 0, 0.1);
+  --home-accent-dot: var(--color-accent-deep);
+  --home-overlay-strong: rgba(0, 0, 0, 0.08);
+  --home-overlay-btn: rgba(0, 0, 0, 0.035);
+  --home-overlay-btn-hover: rgba(0, 0, 0, 0.055);
+  --home-overlay-disabled: rgba(0, 0, 0, 0.045);
+  --home-overlay-faint: rgba(0, 0, 0, 0.03);
+  --home-overlay-ended: rgba(0, 0, 0, 0.04);
+  --home-overlay-whisper: rgba(0, 0, 0, 0.01);
+  --home-border-ended: rgba(0, 0, 0, 0.08);
+  --home-border-disabled: rgba(0, 0, 0, 0.09);
+  --home-modal-surface: #ffffff;
+  --home-modal-inner: #f8fafc;
+  --home-activecard-bg: linear-gradient(135deg, #ffffff 0%, #faf8f5 100%);
+  --home-dot-ended: #7c7467;
+  --home-dot-muted: #a8a29e;
+  --home-text-disabled: rgba(0, 0, 0, 0.38);
+  --home-shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.18);
+  --home-shadow-card: 0 20px 40px rgba(124, 58, 237, 0.08);
+  --home-shadow-cta: 0 8px 20px rgba(124, 58, 237, 0.2);
 }
 
 /* ─────────────────────────────────────────────────────────────
