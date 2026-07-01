@@ -6106,20 +6106,22 @@ export default function ContestPageClient() {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "20px",
-          padding: "0 20px",
+          gap: "14px",
+          padding: "0 16px",
           height: "36px",
           borderTop: "1px solid rgba(255,255,255,0.05)",
           background: "#0F0F0F",
           flexShrink: 0,
         }}
       >
-        {/* Secure session indicator */}
+        {/* Secure session — icon only */}
         <div
+          role="status"
+          aria-live="polite"
+          aria-label={proctoringOk ? "Secure" : "Action needed"}
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "6px",
             color: proctoringOk ? "#71717a" : "#ef4444",
           }}
         >
@@ -6128,78 +6130,33 @@ export default function ContestPageClient() {
           ) : (
             <Shield size={13} strokeWidth={2} aria-hidden="true" />
           )}
-          <span
-            style={{
-              width: "8px",
-              height: "8px",
-              borderRadius: "var(--radius-pill)",
-              background: "currentColor",
-              boxShadow: proctoringOk ? "none" : "0 0 6px currentColor",
-              flexShrink: 0,
-              transition: "background-color var(--transition-fast)",
-            }}
+        </div>
+
+        {/* Face detection — icon only */}
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <circle
+            cx="6"
+            cy="4.5"
+            r="2"
+            stroke={faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"}
+            strokeWidth="1.1"
           />
-          <span
-            role="status"
-            aria-live="polite"
-            style={{
-              fontSize: "11px",
-              color: "currentColor",
-              fontWeight: 500,
-              letterSpacing: "0.06em",
-            }}
-          >
-            {proctoringOk ? "Secure" : "Action needed"}
-          </span>
-        </div>
+          <path
+            d="M1.5 11c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"
+            stroke={faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"}
+            strokeWidth="1.1"
+            strokeLinecap="round"
+          />
+        </svg>
 
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Face detection */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-            <circle
-              cx="6"
-              cy="4.5"
-              r="2"
-              stroke={
-                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"
-              }
-              strokeWidth="1.1"
-            />
-            <path
-              d="M1.5 11c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"
-              stroke={
-                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"
-              }
-              strokeWidth="1.1"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span
-            style={{
-              fontSize: "11px",
-              color:
-                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a",
-              letterSpacing: "0.06em",
-            }}
-          >
-            {faceStatus === "ok"
-              ? "Camera active"
-              : faceStatus === "away"
-                ? "Look forward"
-                : "Camera starting"}
-          </span>
-        </div>
-
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Connection */}
+        {/* Connection — icon only */}
         <div
+          role="status"
+          aria-live="polite"
+          aria-label={online ? "Connected" : "Reconnecting…"}
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "6px",
             color: online ? "#71717a" : "#f59e0b",
           }}
         >
@@ -6208,84 +6165,32 @@ export default function ContestPageClient() {
           ) : (
             <WifiOff size={13} strokeWidth={2} aria-hidden="true" />
           )}
-          {online ? (
-            <span
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "var(--radius-pill)",
-                background: "currentColor",
-                flexShrink: 0,
-                transition: "background-color var(--transition-fast)",
-              }}
-            />
-          ) : (
-            <Loader2
-              size={11}
-              strokeWidth={2.5}
-              aria-hidden="true"
-              style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }}
-            />
-          )}
-          <span
-            role="status"
-            aria-live="polite"
-            style={{ fontSize: "11px", color: "currentColor", letterSpacing: "0.06em" }}
-          >
-            {online ? "Connected" : "Reconnecting…"}
-          </span>
         </div>
 
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Saved — mirrors the editor save indicator so candidates always know
-            their work is safe without hunting for it. */}
+        {/* Saved — icon only; mirrors the editor save indicator */}
         <div
+          role="status"
+          aria-live="polite"
+          aria-label={saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "6px",
             color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
           }}
         >
           <Save size={13} strokeWidth={2} aria-hidden="true" />
-          <span
-            style={{
-              width: "8px",
-              height: "8px",
-              borderRadius: "var(--radius-pill)",
-              background: "currentColor",
-              boxShadow: saveError ? "0 0 6px currentColor" : "none",
-              flexShrink: 0,
-              transition: "background-color var(--transition-fast)",
-            }}
+        </div>
+
+        {/* Keyboard intercept — icon only */}
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
+          <path
+            d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
+            stroke="#71717a"
+            strokeWidth="0.9"
+            strokeLinecap="round"
           />
-          <span
-            role="status"
-            aria-live="polite"
-            style={{ fontSize: "11px", color: "currentColor", letterSpacing: "0.06em" }}
-          >
-            {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
-          </span>
-        </div>
-
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
-
-        {/* Keyboard intercept */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-            <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
-            <path
-              d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
-              stroke="#71717a"
-              strokeWidth="0.9"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span style={{ fontSize: "11px", color: "#71717a", letterSpacing: "0.06em" }}>
-            Keyboard locked
-          </span>
-        </div>
+        </svg>
 
         <div style={{ flex: 1 }} />
 
@@ -6298,15 +6203,14 @@ export default function ContestPageClient() {
           }}
         >
           Q{activeQ + 1}/{questions.length} · {attemptedQuestionCount} attempted ·{" "}
-          {acceptedQuestionCount} accepted · {remainingQuestionCount} remaining ·{" "}
-          {contest?.title ?? "—"}
+          {acceptedQuestionCount} accepted · {remainingQuestionCount} remaining · Evaluation
         </span>
 
         <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.07)" }} />
 
-        {/* AMS badge */}
+        {/* Access wordmark */}
         <span style={{ fontSize: "11px", color: "var(--text-dim)", letterSpacing: "0.08em" }}>
-          AMS Access · Proctored
+          Access
         </span>
       </footer>
 
