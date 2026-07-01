@@ -6114,11 +6114,10 @@ export default function ContestPageClient() {
           flexShrink: 0,
         }}
       >
-        {/* Secure session — icon only */}
+        {/* Secure session — icon only; status announced via content-based live region */}
         <div
           role="status"
           aria-live="polite"
-          aria-label={proctoringOk ? "Secure" : "Action needed"}
           style={{
             display: "flex",
             alignItems: "center",
@@ -6130,30 +6129,51 @@ export default function ContestPageClient() {
           ) : (
             <Shield size={13} strokeWidth={2} aria-hidden="true" />
           )}
+          <span className="sr-only">{proctoringOk ? "Secure" : "Action needed"}</span>
         </div>
 
-        {/* Face detection — icon only */}
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-          <circle
-            cx="6"
-            cy="4.5"
-            r="2"
-            stroke={faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"}
-            strokeWidth="1.1"
-          />
-          <path
-            d="M1.5 11c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"
-            stroke={faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"}
-            strokeWidth="1.1"
-            strokeLinecap="round"
-          />
-        </svg>
-
-        {/* Connection — icon only */}
+        {/* Face detection — icon only; the re-center nudge is conveyed in THREE modalities:
+            a content-based live region (actionable guidance), a non-color shape cue (the alert
+            dot appears only when the face drifts), and colour. faceStatus logic is untouched. */}
         <div
           role="status"
           aria-live="polite"
-          aria-label={online ? "Connected" : "Reconnecting…"}
+          style={{ position: "relative", display: "flex", alignItems: "center" }}
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <circle
+              cx="6"
+              cy="4.5"
+              r="2"
+              stroke={
+                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"
+              }
+              strokeWidth="1.1"
+            />
+            <path
+              d="M1.5 11c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"
+              stroke={
+                faceStatus === "ok" ? "#71717a" : faceStatus === "away" ? "#f59e0b" : "#71717a"
+              }
+              strokeWidth="1.1"
+              strokeLinecap="round"
+            />
+            {/* Non-color cue: an alert dot present ONLY when the face has drifted (WCAG 1.4.1) */}
+            {faceStatus === "away" && <circle cx="10" cy="2" r="2" fill="#f59e0b" />}
+          </svg>
+          <span className="sr-only">
+            {faceStatus === "ok"
+              ? "Face detected"
+              : faceStatus === "away"
+                ? "Face not centered — center your face in the camera"
+                : "Camera starting"}
+          </span>
+        </div>
+
+        {/* Connection — icon only; status announced via content-based live region */}
+        <div
+          role="status"
+          aria-live="polite"
           style={{
             display: "flex",
             alignItems: "center",
@@ -6165,13 +6185,13 @@ export default function ContestPageClient() {
           ) : (
             <WifiOff size={13} strokeWidth={2} aria-hidden="true" />
           )}
+          <span className="sr-only">{online ? "Connected" : "Reconnecting…"}</span>
         </div>
 
-        {/* Saved — icon only; mirrors the editor save indicator */}
+        {/* Saved — icon only; mirrors the editor save indicator; content-based live region */}
         <div
           role="status"
           aria-live="polite"
-          aria-label={saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
           style={{
             display: "flex",
             alignItems: "center",
@@ -6179,10 +6199,20 @@ export default function ContestPageClient() {
           }}
         >
           <Save size={13} strokeWidth={2} aria-hidden="true" />
+          <span className="sr-only">
+            {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
+          </span>
         </div>
 
-        {/* Keyboard intercept — icon only */}
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        {/* Keyboard intercept — icon only; static state exposed via role=img label */}
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 12 12"
+          fill="none"
+          role="img"
+          aria-label="Keyboard locked"
+        >
           <rect x="1" y="2.5" width="10" height="7" rx="1.5" stroke="#71717a" strokeWidth="1.1" />
           <path
             d="M3 5.5h1M5 5.5h1M7 5.5h1M3 7.5h6"
@@ -6978,6 +7008,10 @@ export default function ContestPageClient() {
       )}
 
       <style>{`
+        .sr-only {
+          position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+          overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
         @keyframes pulse-preview {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
