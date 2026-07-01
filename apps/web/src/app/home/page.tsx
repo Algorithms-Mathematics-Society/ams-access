@@ -11,6 +11,8 @@ import {
   sessionPolicy,
 } from "@ams/api-client";
 import { fetchJson, useApiQuery } from "@/lib/api-client";
+import { useTheme } from "@/lib/theme";
+import { useDarkLocked } from "@/lib/theme-dark-lock"; // step-0 (shipped on main via PR #17)
 import { authHeaders } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
@@ -78,7 +80,12 @@ const NAV_ITEMS = [
 
 export default function HomePage() {
   const router = useRouter();
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const { theme: canonicalTheme } = useTheme(); // canonical single source
+  const darkLocked = useDarkLocked(); // step-0 JS facet: true while /home is dark-locked (it is, through step 3)
+  // Home is dark-locked through Phase 2a step 3. Its colors are JS ternaries until step 2, which a
+  // CSS lock can't constrain — so clamp the READ to dark while locked. Read-time derivation, NOT a
+  // writer: canonical stays the sole theme state. At the step-3 flip, delete the clamp.
+  const theme = darkLocked ? "dark" : canonicalTheme;
   const [activeNav, setActiveNav] = useState("overview");
   const [signingOut, setSigningOut] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
@@ -226,10 +233,6 @@ export default function HomePage() {
     },
     [appendSecurityEvent]
   );
-
-  useEffect(() => {
-    setTheme("dark");
-  }, []);
 
   const c = useMemo(() => getThemeColors(theme), [theme]);
 
@@ -1334,7 +1337,6 @@ export default function HomePage() {
                 readiness={readiness}
                 setReadiness={setReadiness}
                 theme={theme}
-                setTheme={setTheme}
                 onSecurityEvent={appendSecurityEvent}
                 telemetry={telemetryQuery}
                 refreshTelemetry={refreshTelemetry}
