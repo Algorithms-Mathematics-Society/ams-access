@@ -102,7 +102,6 @@ export function SessionReadinessModal({
 }: SessionReadinessModalProps) {
   const router = useRouter();
   const c = getThemeColors(theme);
-  const isLight = theme === "light";
   const [isRescanning, setIsRescanning] = useState(false);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -340,7 +339,7 @@ export function SessionReadinessModal({
           maxWidth: "680px",
           minHeight: "540px",
           maxHeight: "calc(100vh - 48px)",
-          background: isLight ? "#ffffff" : c.cardBg,
+          background: "var(--theme-card-bg)",
           border: `1px solid ${c.borderStrong}`,
           borderRadius: "var(--radius-lg)",
           padding: "36px",
@@ -438,7 +437,7 @@ export function SessionReadinessModal({
           <section
             style={{
               border: `1px solid ${c.border}`,
-              background: isLight ? "#ffffff" : c.innerBg,
+              background: "var(--theme-inner-bg)",
               borderRadius: "var(--radius-md)",
               padding: "16px 18px",
             }}
@@ -490,11 +489,7 @@ export function SessionReadinessModal({
             style={{
               border: `1px solid ${optionalWarningCount > 0 ? "rgba(245,158,11,0.24)" : c.border}`,
               background:
-                optionalWarningCount > 0
-                  ? "rgba(245,158,11,0.055)"
-                  : isLight
-                    ? "#ffffff"
-                    : c.innerBg,
+                optionalWarningCount > 0 ? "rgba(245,158,11,0.055)" : "var(--theme-inner-bg)",
               borderRadius: "var(--radius-md)",
               padding: "16px 18px",
             }}
@@ -643,7 +638,7 @@ export function SessionReadinessModal({
         <div
           style={{
             border: `1px solid ${c.border}`,
-            background: isLight ? "#f8fafc" : c.innerBg,
+            background: "var(--theme-inner-bg)",
             borderRadius: "var(--radius-md)",
             overflow: "hidden",
           }}

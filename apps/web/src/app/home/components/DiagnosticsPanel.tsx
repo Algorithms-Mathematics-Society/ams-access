@@ -19,15 +19,7 @@ function TelemetryStat({
 }) {
   const c = useMemo(() => getThemeColors(theme), [theme]);
   const dotColor =
-    status === "ok"
-      ? theme === "light"
-        ? "#10b981"
-        : "#22c55e"
-      : status === "fail"
-        ? "#ef4444"
-        : theme === "light"
-          ? "#a8a29e"
-          : "rgba(255,255,255,0.32)";
+    status === "ok" ? "var(--theme-dot)" : status === "fail" ? "#ef4444" : "var(--home-dot-muted)";
   return (
     <div
       style={{
@@ -291,9 +283,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                   color:
                     networkQuality === "unreachable" || networkQuality === "unavailable"
                       ? "#ef4444"
-                      : theme === "light"
-                        ? "#10b981"
-                        : "#22c55e",
+                      : "var(--home-status-ok)",
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -400,7 +390,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             onClick={exportReport}
             style={{
               padding: "9px 16px",
-              background: theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)",
+              background: "var(--home-overlay-btn)",
               border: `1px solid ${c.border}`,
               borderRadius: "var(--radius-sm)",
               color: c.textMutedStrong,
@@ -412,14 +402,12 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 "background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background =
-                theme === "light" ? "rgba(0,0,0,0.055)" : "rgba(255,255,255,0.075)";
+              e.currentTarget.style.background = "var(--home-overlay-btn-hover)";
               e.currentTarget.style.borderColor = c.borderStrong;
               e.currentTarget.style.color = c.text;
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background =
-                theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)";
+              e.currentTarget.style.background = "var(--home-overlay-btn)";
               e.currentTarget.style.borderColor = c.border;
               e.currentTarget.style.color = c.textMutedStrong;
             }}

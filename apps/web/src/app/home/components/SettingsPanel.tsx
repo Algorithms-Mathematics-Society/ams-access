@@ -49,13 +49,9 @@ function PermissionLine({
         style={{
           fontSize: "11px",
           fontWeight: 600,
-          color: enabled ? (theme === "light" ? "#10b981" : "#22c55e") : "#f59e0b",
-          background: enabled
-            ? theme === "light"
-              ? "rgba(16,185,129,0.08)"
-              : "rgba(34,197,94,0.08)"
-            : "rgba(245,158,11,0.08)",
-          border: `1px solid ${enabled ? (theme === "light" ? "rgba(16,185,129,0.2)" : "rgba(34,197,94,0.2)") : "rgba(245,158,11,0.2)"}`,
+          color: enabled ? "var(--home-status-ok)" : "#f59e0b",
+          background: enabled ? "var(--home-status-ok-bg)" : "rgba(245,158,11,0.08)",
+          border: `1px solid ${enabled ? "var(--home-status-ok-border)" : "rgba(245,158,11,0.2)"}`,
           padding: "4px 10px",
           borderRadius: "var(--radius-sm)",
           letterSpacing: "0.04em",
@@ -96,7 +92,7 @@ function SecurityInfoRow({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: secure ? (theme === "light" ? "#10b981" : "#22c55e") : "#ef4444",
+          color: secure ? "var(--home-status-ok)" : "#ef4444",
         }}
       >
         {val}
@@ -132,12 +128,8 @@ function ProcessListItem({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: restricted ? "#ef4444" : theme === "light" ? "#10b981" : "#22c55e",
-          background: restricted
-            ? "rgba(239,68,68,0.08)"
-            : theme === "light"
-              ? "rgba(16,185,129,0.08)"
-              : "rgba(34,197,94,0.08)",
+          color: restricted ? "#ef4444" : "var(--home-status-ok)",
+          background: restricted ? "rgba(239,68,68,0.08)" : "var(--home-status-ok-bg)",
           padding: "2px 6px",
           borderRadius: "var(--radius-sm)",
         }}
@@ -274,9 +266,7 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
             lineHeight: 1.5,
             color:
               status === "done"
-                ? theme === "light"
-                  ? "#10b981"
-                  : "#22c55e"
+                ? "var(--home-status-ok)"
                 : status === "error"
                   ? "#f87171"
                   : c.textMuted,
@@ -861,10 +851,9 @@ export const SettingsPanel = memo(function SettingsPanel({
                     <span
                       style={{
                         fontSize: "11px",
-                        color: theme === "light" ? "#10b981" : "#22c55e",
+                        color: "var(--home-status-ok)",
                         fontFamily: "'JetBrains Mono', monospace",
-                        background:
-                          theme === "light" ? "rgba(16,185,129,0.08)" : "rgba(34,197,94,0.08)",
+                        background: "var(--home-status-ok-bg)",
                         padding: "3px 8px",
                         borderRadius: "var(--radius-sm)",
                         display: "inline-block",
@@ -1005,14 +994,10 @@ export const SettingsPanel = memo(function SettingsPanel({
                       flexShrink: 0,
                       padding: "0 16px",
                       minHeight: 40,
-                      background: micActive
-                        ? "rgba(239,68,68,0.08)"
-                        : theme === "light"
-                          ? "rgba(16,185,129,0.08)"
-                          : "rgba(34,197,94,0.08)",
-                      border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : theme === "light" ? "rgba(16,185,129,0.25)" : "rgba(34,197,94,0.3)"}`,
+                      background: micActive ? "rgba(239,68,68,0.08)" : "var(--home-status-ok-bg)",
+                      border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : "var(--home-status-ok-border-strong)"}`,
                       borderRadius: "var(--radius-sm)",
-                      color: micActive ? "#ef4444" : theme === "light" ? "#10b981" : "#86efac",
+                      color: micActive ? "#ef4444" : "var(--home-status-ok)",
                       fontSize: "13px",
                       fontWeight: 500,
                       cursor: "pointer",
@@ -1134,7 +1119,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                     style={{
                       width: "100%",
                       accentColor: "var(--color-accent-base)",
-                      background: theme === "light" ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)",
+                      background: "var(--home-overlay-strong)",
                       height: "4px",
                       borderRadius: "var(--radius-sm)",
                       cursor: "pointer",
@@ -1150,11 +1135,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       flex: 1,
                       padding: "0 16px",
                       minHeight: 40,
-                      background: speakerActive
-                        ? c.accentLight
-                        : theme === "light"
-                          ? "rgba(0,0,0,0.03)"
-                          : "rgba(255,255,255,0.04)",
+                      background: speakerActive ? c.accentLight : "var(--home-overlay-faint)",
                       border: `1px solid ${c.border}`,
                       borderRadius: "var(--radius-sm)",
                       color: c.text,
@@ -1173,9 +1154,9 @@ export const SettingsPanel = memo(function SettingsPanel({
                       padding: "0 16px",
                       minHeight: 40,
                       background: speakerSuccess === true ? "rgba(34,197,94,0.08)" : "transparent",
-                      border: `1px solid ${speakerSuccess === true ? "rgba(34,197,94,0.3)" : theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(34,197,94,0.15)"}`,
+                      border: `1px solid ${speakerSuccess === true ? "rgba(34,197,94,0.3)" : "var(--home-clear-border)"}`,
                       borderRadius: "var(--radius-sm)",
-                      color: theme === "light" ? "#10b981" : "#86efac",
+                      color: "var(--home-status-ok)",
                       fontSize: "13px",
                       cursor: "pointer",
                       transition:
@@ -1536,7 +1517,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       justifyContent: "space-between",
                       padding: "10px 14px",
                       borderRadius: "var(--radius-sm)",
-                      background: theme === "light" ? "rgba(0,0,0,0.01)" : "rgba(255,255,255,0.01)",
+                      background: "var(--home-overlay-whisper)",
                       border: `1px solid ${c.border}`,
                     }}
                   >

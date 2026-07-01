@@ -45,7 +45,6 @@ export const ScheduledContestCard = memo(
     const [now, setNow] = useState(() => Date.now());
     const [hovered, setHovered] = useState(false);
     const themeColors = useMemo(() => getThemeColors(theme), [theme]);
-    const isLight = theme === "light";
 
     useEffect(() => {
       let active = true;
@@ -78,10 +77,8 @@ export const ScheduledContestCard = memo(
     const joinType = entryState.sessionType;
     const label = entryState.ctaLabel;
 
-    const cardHoverShadow = isLight ? "0 20px 40px rgba(124, 58, 237, 0.08)" : "var(--elevation-2)";
-    const btnHoverShadow = isLight
-      ? "0 8px 20px rgba(124, 58, 237, 0.2)"
-      : "0 8px 24px rgb(var(--accent-rgb) / 0.3)";
+    const cardHoverShadow = "var(--home-shadow-card)";
+    const btnHoverShadow = "var(--home-shadow-cta)";
 
     return (
       <div
@@ -90,9 +87,7 @@ export const ScheduledContestCard = memo(
         onFocus={() => setHovered(true)}
         onBlur={() => setHovered(false)}
         style={{
-          background: isLight
-            ? "linear-gradient(135deg, #ffffff 0%, #FAF8F5 100%)"
-            : "linear-gradient(135deg, #090d16 0%, #05070b 100%)",
+          background: "var(--home-activecard-bg)",
           border: `1px solid ${hovered ? themeColors.accent : themeColors.borderStrong}`,
           borderRadius: "var(--radius-md)",
           padding: "28px 32px",
@@ -301,7 +296,6 @@ export const ActiveContestCard = memo(
     const [btnHovered, setBtnHovered] = useState(false);
     const [entering, setEntering] = useState(false);
     const themeColors = useMemo(() => getThemeColors(theme), [theme]);
-    const isLight = theme === "light";
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
 
@@ -462,11 +456,7 @@ export const ActiveContestCard = memo(
         onFocus={() => setHovered(true)}
         onBlur={() => setHovered(false)}
         style={{
-          background: isLight
-            ? "#ffffff"
-            : hovered && canEnter
-              ? "var(--surface-2)"
-              : "var(--surface-1)",
+          background: hovered && canEnter ? "var(--surface-2)" : "var(--surface-1)",
           border: `1px solid ${
             hovered && canEnter ? "rgb(var(--accent-rgb) / 0.25)" : themeColors.border
           }`,

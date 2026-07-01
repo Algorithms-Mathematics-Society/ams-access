@@ -371,7 +371,7 @@ export function ResolveModal({
           width: "100%",
           borderRadius: "var(--radius-lg)",
           padding: "26px",
-          background: theme === "light" ? "#ffffff" : "rgba(15, 23, 42, 0.96)",
+          background: "var(--home-modal-surface)",
           border: `1px solid ${c.border}`,
           boxShadow: "var(--elevation-3)",
         }}
@@ -434,7 +434,7 @@ export function ResolveModal({
           style={{
             border: `1px solid ${c.border}`,
             borderRadius: "var(--radius-md)",
-            background: theme === "light" ? "#f8fafc" : "rgba(255,255,255,0.025)",
+            background: "var(--home-modal-inner)",
             padding: "13px 14px",
             marginBottom: "20px",
           }}
