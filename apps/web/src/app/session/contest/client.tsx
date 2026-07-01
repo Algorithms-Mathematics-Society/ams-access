@@ -50,6 +50,7 @@ import {
   LogOut,
   Video,
   VideoOff,
+  AlertTriangle,
   Mic,
   MicOff,
   ChevronLeft,
@@ -3915,7 +3916,7 @@ export default function ContestPageClient() {
             <LifeBuoy size={18} strokeWidth={1.75} />
           </button>
 
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
             <button
               type="button"
               onClick={() => setSubmitConfirm(true)}
@@ -4027,13 +4028,15 @@ export default function ContestPageClient() {
           style={{
             width: sidebarCollapsed ? "52px" : "220px",
             flexShrink: 0,
-            borderRight: "1px solid rgba(255, 255, 255, 0.05)",
+            // Visible divider + subtle elevation so the collapsed strip reads as a container
+            // (the badge no longer floats on the bare canvas now the camera left the rail).
+            borderRight: "1px solid #1F1F1F",
             display: "flex",
             flexDirection: "column",
-            background: "#0F0F0F",
+            background: sidebarCollapsed ? "#111111" : "#0F0F0F",
             boxShadow: "none",
             overflow: "hidden",
-            transition: "width 250ms",
+            transition: "width 250ms, background-color 250ms",
           }}
         >
           <div
@@ -6003,7 +6006,6 @@ export default function ContestPageClient() {
             border tint + title/aria-label, not a truncating text chip. */}
         <div
           title={cameraStatusLabel}
-          aria-label={cameraStatusLabel}
           style={{
             background: "#0F0F0F",
             position: "absolute",
@@ -6014,7 +6016,7 @@ export default function ContestPageClient() {
             zIndex: 50,
             display: (cameraStream ?? cameraError) ? "flex" : "none",
             flexDirection: "column",
-            border: `1px solid ${cameraError ? "#ef4444" : "#1F1F1F"}`,
+            border: "1px solid #1F1F1F",
             overflow: "hidden",
           }}
         >
@@ -6085,6 +6087,56 @@ export default function ContestPageClient() {
                 borderRadius: "0",
               }}
             />
+          </div>
+          {/* Camera health — announced via a content-based live region + a non-color visible
+              cue. Healthy = silent/clean box (mockup look); a chip appears ONLY on a problem.
+              ⚠ is reserved for a real fault — intentional-off gets a neutral icon, and the
+              transient "Starting…" resolves to an announced "Camera active" so an SR user hears
+              it clear rather than hearing "Starting…" stick. faceStatus/stream logic untouched. */}
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              bottom: "6px",
+              left: "6px",
+              zIndex: 2,
+              pointerEvents: "none",
+            }}
+          >
+            {cameraHealthy ? (
+              <span className="sr-only">Camera active</span>
+            ) : (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "2px 6px",
+                  background: "#0F0F0F",
+                  border: "1px solid #1F1F1F",
+                  borderRadius: "4px",
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  fontFamily: "Inter, system-ui, sans-serif",
+                  color: "#e2e8f0",
+                }}
+              >
+                {!cameraEnabled ? (
+                  <VideoOff size={11} strokeWidth={2} aria-hidden="true" />
+                ) : cameraError ? (
+                  <AlertTriangle size={11} strokeWidth={2} color="#f59e0b" aria-hidden="true" />
+                ) : (
+                  <Loader2
+                    size={11}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                    style={{ animation: "spin 1.2s linear infinite" }}
+                  />
+                )}
+                {!cameraEnabled ? "Off" : cameraError ? "Camera issue" : "Starting…"}
+              </span>
+            )}
           </div>
         </div>
       </div>
