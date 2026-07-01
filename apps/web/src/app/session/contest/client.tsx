@@ -6303,6 +6303,10 @@ export default function ContestPageClient() {
               strokeWidth="1.1"
               strokeLinecap="round"
             />
+            {/* Non-color cue (WCAG 1.4.1): a shape present ONLY on away — kept as the face's
+                non-colour channel; the corner LED below is ADDITIVE colour reinforcement, not a
+                replacement. Placed top-LEFT so it never sits under that LED (top-right). */}
+            {faceStatus === "away" && <circle cx="2" cy="2" r="1.6" fill="#f59e0b" />}
           </svg>
           {footerStatusDot(
             faceStatus === "ok"
