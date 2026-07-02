@@ -99,12 +99,12 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           // a bracketed monospace tag, coloured by state (electric amber for WARN).
           const log =
             context.status === "ready"
-              ? { tag: "OK", color: "#22c55e" }
+              ? { tag: "OK", color: "var(--home-status-ok)" }
               : context.status === "advisory_warning"
-                ? { tag: "WARN", color: "#fbbf24" }
+                ? { tag: "WARN", color: "var(--home-status-warn)" }
                 : context.status === "checking"
-                  ? { tag: "SCAN", color: "#c084fc" }
-                  : { tag: "FAIL", color: "#ef4444" };
+                  ? { tag: "SCAN", color: "var(--theme-accent-text)" }
+                  : { tag: "FAIL", color: "var(--home-status-error)" };
           return (
             <div
               style={{
@@ -154,7 +154,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
             borderRadius: "9999px",
             background: "transparent",
             border: "1px solid #3f3f46",
-            color: "#a1a1aa",
+            color: "var(--text-dim)",
             fontWeight: 700,
             letterSpacing: "0.14em",
             textTransform: "uppercase",
@@ -164,7 +164,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
             e.currentTarget.style.borderColor = "#52525b";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "#a1a1aa";
+            e.currentTarget.style.color = "var(--text-dim)";
             e.currentTarget.style.borderColor = "#3f3f46";
           }}
         >

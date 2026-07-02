@@ -6,8 +6,8 @@ import { getThemeColors } from "./utils";
 import type { SecurityLogEntry, SecurityLogLevel } from "./types";
 
 const LEVEL_COLOR: Record<SecurityLogLevel, string> = {
-  error: "#ef4444",
-  warn: "#f59e0b",
+  error: "var(--home-status-error)",
+  warn: "var(--home-status-warn)",
   info: "",
 };
 
@@ -28,7 +28,7 @@ export function parseLogLine(text: string, statusColor: string): ReactNode {
 
   return (
     <>
-      <span style={{ color: "#A8A8A8" }}>{prefix}</span>
+      <span style={{ color: "var(--text-dim)" }}>{prefix}</span>
       <span style={{ color: statusColor, fontWeight: 700 }}>{status}</span>
     </>
   );

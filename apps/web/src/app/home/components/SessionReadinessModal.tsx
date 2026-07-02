@@ -53,7 +53,7 @@ function PreflightCheckItem({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: "#a1a1aa",
+          color: "var(--text-dim)",
           letterSpacing: "0.02em",
         }}
       >
@@ -188,9 +188,17 @@ export function SessionReadinessModal({
     context.status === "ready" || context.status === "advisory_warning"
       ? { color: c.dot, bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.24)" }
       : context.status === "needs_action"
-        ? { color: "#f59e0b", bg: "rgba(245,158,11,0.09)", border: "rgba(245,158,11,0.28)" }
+        ? {
+            color: "var(--home-status-warn)",
+            bg: "rgba(245,158,11,0.09)",
+            border: "rgba(245,158,11,0.28)",
+          }
         : context.status === "blocked_by_policy"
-          ? { color: "#fca5a5", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.26)" }
+          ? {
+              color: "var(--theme-error-text)",
+              bg: "rgba(239,68,68,0.08)",
+              border: "rgba(239,68,68,0.26)",
+            }
           : { color: c.accentText, bg: c.accentLight, border: c.accentBorder };
 
   const requiredPolicyChecks = requiredReportChecks;
@@ -415,7 +423,7 @@ export function SessionReadinessModal({
               textAlign: "right",
             }}
           >
-            <div style={{ color: "#22c55e", fontSize: "24px", fontWeight: 800 }}>
+            <div style={{ color: "var(--home-status-ok)", fontSize: "24px", fontWeight: 800 }}>
               {Math.round(currentProgress)}%
             </div>
             <div
@@ -457,7 +465,7 @@ export function SessionReadinessModal({
               {/* §2 — sub-header: plain muted text, no pill */}
               <span
                 style={{
-                  color: "#71717a",
+                  color: "var(--text-dim)",
                   fontSize: "11px",
                   fontWeight: 600,
                 }}
@@ -509,7 +517,7 @@ export function SessionReadinessModal({
               {/* §2 — sub-header: plain muted text, no pill */}
               <span
                 style={{
-                  color: "#71717a",
+                  color: "var(--text-dim)",
                   fontSize: "11px",
                   fontWeight: 600,
                 }}
@@ -570,7 +578,7 @@ export function SessionReadinessModal({
               />
               <h4
                 style={{
-                  color: "#fca5a5",
+                  color: "var(--theme-error-text)",
                   fontSize: "13px",
                   fontWeight: 750,
                   margin: 0,
@@ -600,7 +608,7 @@ export function SessionReadinessModal({
                   borderRadius: "var(--radius-md)",
                   border: "1px solid rgba(239,68,68,0.5)",
                   background: "rgba(239,68,68,0.14)",
-                  color: "#fca5a5",
+                  color: "var(--theme-error-text)",
                   padding: "0 14px",
                   fontSize: "12px",
                   fontWeight: 700,
@@ -685,7 +693,7 @@ export function SessionReadinessModal({
                 overflowY: "auto",
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: "11px",
-                color: "#A8A8A8",
+                color: "var(--text-dim)",
                 display: "flex",
                 flexDirection: "column",
                 gap: "4px",
@@ -840,7 +848,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: 600,
@@ -853,7 +861,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Run checks again
@@ -866,7 +874,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: 600,
@@ -878,7 +886,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Open settings
@@ -891,7 +899,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 16px",
                 fontSize: "13px",
                 fontWeight: 500,
@@ -903,7 +911,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Back to contests
@@ -916,7 +924,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 16px",
                 fontSize: "13px",
                 fontWeight: 600,
@@ -928,7 +936,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Get help

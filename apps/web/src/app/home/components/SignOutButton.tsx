@@ -30,7 +30,7 @@ export function SignOutButton({
         borderRadius: "var(--radius-md)",
         border: hovered ? "1px solid rgba(239,68,68,0.2)" : "1px solid transparent",
         background: hovered ? "rgba(239,68,68,0.08)" : "transparent",
-        color: hovered ? "rgba(239,68,68,0.75)" : c.textMuted,
+        color: hovered ? "var(--home-status-error)" : c.textMuted,
         fontSize: "13px",
         fontWeight: 400,
         fontFamily: "inherit",

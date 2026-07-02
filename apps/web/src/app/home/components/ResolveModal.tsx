@@ -390,7 +390,7 @@ export function ResolveModal({
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
-              color: "#f59e0b",
+              color: "var(--home-status-warn)",
               fontWeight: 800,
             }}
           >
@@ -473,7 +473,7 @@ export function ResolveModal({
               borderRadius: "var(--radius-md)",
               background: "rgba(245, 158, 11, 0.10)",
               border: "1px solid rgba(245, 158, 11, 0.32)",
-              color: "#f59e0b",
+              color: "var(--home-status-warn)",
               fontSize: "12.5px",
               lineHeight: 1.55,
             }}
@@ -564,7 +564,7 @@ export function ResolveModal({
                     height: "40px",
                     padding: "0 16px",
                     background: "rgba(239, 68, 68, 0.12)",
-                    color: "#ef4444",
+                    color: "var(--home-status-error)",
                     border: "1px solid rgba(239, 68, 68, 0.35)",
                     borderRadius: "var(--radius-md)",
                     fontWeight: 700,
@@ -588,7 +588,7 @@ export function ResolveModal({
                   height: "40px",
                   padding: "0 16px",
                   background: "rgba(239, 68, 68, 0.10)",
-                  color: "#ef4444",
+                  color: "var(--home-status-error)",
                   border: "1px solid rgba(239, 68, 68, 0.30)",
                   borderRadius: "var(--radius-md)",
                   fontWeight: 700,
@@ -611,7 +611,7 @@ export function ResolveModal({
                 activeFlow.primaryAction === "retry"
                   ? "rgba(245, 158, 11, 0.14)"
                   : "var(--color-accent-base)",
-              color: activeFlow.primaryAction === "retry" ? "#f59e0b" : "#ffffff",
+              color: activeFlow.primaryAction === "retry" ? "var(--home-status-warn)" : "#ffffff",
               border: `1px solid ${activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.36)" : "var(--color-accent-base)"}`,
               borderRadius: "var(--radius-md)",
               fontWeight: 700,

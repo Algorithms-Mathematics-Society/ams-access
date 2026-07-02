@@ -249,7 +249,7 @@ export const ScheduledContestCard = memo(
               color: canJoin
                 ? "#ffffff"
                 : phase === "too_early"
-                  ? "#f59e0b"
+                  ? "var(--home-status-warn)"
                   : themeColors.textMuted,
               boxShadow: hovered && canJoin ? btnHoverShadow : "none",
               transition: "box-shadow var(--transition-slow)",
@@ -340,12 +340,12 @@ export const ActiveContestCard = memo(
         case "too_early":
           return {
             rail: "#f59e0b",
-            statusColor: "#f59e0b",
+            statusColor: "var(--home-status-warn)",
             statusBg: "rgba(245,158,11,0.08)",
             statusBorder: "rgba(245,158,11,0.24)",
             actionBg: "rgba(245,158,11,0.08)",
             actionBorder: "rgba(245,158,11,0.35)",
-            actionText: "#f59e0b",
+            actionText: "var(--home-status-warn)",
           };
         case "verification_open":
           return {
@@ -381,12 +381,12 @@ export const ActiveContestCard = memo(
         case "blocked":
           return {
             rail: "#ef4444",
-            statusColor: "#fca5a5",
+            statusColor: "var(--theme-error-text)",
             statusBg: "rgba(239,68,68,0.08)",
             statusBorder: "rgba(239,68,68,0.24)",
             actionBg: "rgba(239,68,68,0.08)",
             actionBorder: "rgba(239,68,68,0.28)",
-            actionText: "#fca5a5",
+            actionText: "var(--theme-error-text)",
           };
         default:
           return {

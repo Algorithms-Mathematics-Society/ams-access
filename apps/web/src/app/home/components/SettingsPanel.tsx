@@ -49,7 +49,7 @@ function PermissionLine({
         style={{
           fontSize: "11px",
           fontWeight: 600,
-          color: enabled ? "var(--home-status-ok)" : "#f59e0b",
+          color: enabled ? "var(--home-status-ok)" : "var(--home-status-warn)",
           background: enabled ? "var(--home-status-ok-bg)" : "rgba(245,158,11,0.08)",
           border: `1px solid ${enabled ? "var(--home-status-ok-border)" : "rgba(245,158,11,0.2)"}`,
           padding: "4px 10px",
@@ -92,7 +92,7 @@ function SecurityInfoRow({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: secure ? "var(--home-status-ok)" : "#ef4444",
+          color: secure ? "var(--home-status-ok)" : "var(--home-status-error)",
         }}
       >
         {val}
@@ -128,7 +128,7 @@ function ProcessListItem({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: restricted ? "#ef4444" : "var(--home-status-ok)",
+          color: restricted ? "var(--home-status-error)" : "var(--home-status-ok)",
           background: restricted ? "rgba(239,68,68,0.08)" : "var(--home-status-ok-bg)",
           padding: "2px 6px",
           borderRadius: "var(--radius-sm)",
@@ -268,7 +268,7 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
               status === "done"
                 ? "var(--home-status-ok)"
                 : status === "error"
-                  ? "#f87171"
+                  ? "var(--theme-error-text)"
                   : c.textMuted,
           }}
         >
@@ -866,7 +866,13 @@ export const SettingsPanel = memo(function SettingsPanel({
 
                   {/* Camera error */}
                   {cameraError && (
-                    <p style={{ fontSize: "12px", color: "#f87171", lineHeight: 1.5 }}>
+                    <p
+                      style={{
+                        fontSize: "12px",
+                        color: "var(--theme-error-text)",
+                        lineHeight: 1.5,
+                      }}
+                    >
                       {cameraError}. Run the app as your normal desktop user and close other apps
                       using the camera.
                     </p>
@@ -997,7 +1003,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       background: micActive ? "rgba(239,68,68,0.08)" : "var(--home-status-ok-bg)",
                       border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : "var(--home-status-ok-border-strong)"}`,
                       borderRadius: "var(--radius-sm)",
-                      color: micActive ? "#ef4444" : "var(--home-status-ok)",
+                      color: micActive ? "var(--home-status-error)" : "var(--home-status-ok)",
                       fontSize: "13px",
                       fontWeight: 500,
                       cursor: "pointer",
@@ -1051,7 +1057,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       <p
                         style={{
                           fontSize: "11px",
-                          color: "#f87171",
+                          color: "var(--theme-error-text)",
                           lineHeight: 1.4,
                           marginTop: "6px",
                         }}
@@ -1424,7 +1430,7 @@ export const SettingsPanel = memo(function SettingsPanel({
               <p
                 style={{
                   fontSize: "12px",
-                  color: processScan?.clean === false ? "#f87171" : c.textMuted,
+                  color: processScan?.clean === false ? "var(--theme-error-text)" : c.textMuted,
                   lineHeight: 1.5,
                 }}
               >

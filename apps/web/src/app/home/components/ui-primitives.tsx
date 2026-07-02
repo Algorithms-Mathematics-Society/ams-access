@@ -119,7 +119,11 @@ export const Button = forwardRef<
     variant === "primary"
       ? { border: "var(--color-accent-base)", bg: "var(--color-accent-base)", color: "#ffffff" }
       : variant === "danger"
-        ? { border: "rgba(239,68,68,0.3)", bg: "rgba(239,68,68,0.1)", color: "#fca5a5" }
+        ? {
+            border: "rgba(239,68,68,0.3)",
+            bg: "rgba(239,68,68,0.1)",
+            color: "var(--theme-error-text)",
+          }
         : variant === "ghost"
           ? { border: c.border, bg: "transparent", color: c.textMutedStrong }
           : {
@@ -307,7 +311,7 @@ export function ChecklistItem({
           fontSize: "12px",
           fontWeight: 500,
           fontFamily: "var(--font-mono), monospace",
-          color: "#a1a1aa",
+          color: "var(--text-dim)",
           letterSpacing: 0,
         }}
       >

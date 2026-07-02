@@ -282,7 +282,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 style={{
                   color:
                     networkQuality === "unreachable" || networkQuality === "unavailable"
-                      ? "#ef4444"
+                      ? "var(--home-status-error)"
                       : "var(--home-status-ok)",
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
@@ -375,7 +375,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
               background: copied ? "rgba(34,197,94,0.1)" : c.accentLight,
               border: `1px solid ${copied ? "rgba(34,197,94,0.25)" : c.accentBorder}`,
               borderRadius: "var(--radius-sm)",
-              color: copied ? "#4ade80" : c.accentText,
+              color: copied ? "var(--home-status-ok)" : c.accentText,
               fontSize: "13px",
               fontWeight: 500,
               fontFamily: "inherit",
