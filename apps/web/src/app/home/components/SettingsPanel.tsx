@@ -50,8 +50,8 @@ function PermissionLine({
           fontSize: "11px",
           fontWeight: 600,
           color: enabled ? "var(--home-status-ok)" : "var(--home-status-warn)",
-          background: enabled ? "var(--home-status-ok-bg)" : "rgba(245,158,11,0.08)",
-          border: `1px solid ${enabled ? "var(--home-status-ok-border)" : "rgba(245,158,11,0.2)"}`,
+          background: enabled ? "var(--home-status-ok-bg)" : "var(--home-status-warn-bg)",
+          border: `1px solid ${enabled ? "var(--home-status-ok-border)" : "var(--home-status-warn-border-20)"}`,
           padding: "4px 10px",
           borderRadius: "var(--radius-sm)",
           letterSpacing: "0.04em",
@@ -129,7 +129,7 @@ function ProcessListItem({
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
           color: restricted ? "var(--home-status-error)" : "var(--home-status-ok)",
-          background: restricted ? "rgba(239,68,68,0.08)" : "var(--home-status-ok-bg)",
+          background: restricted ? "var(--home-status-error-bg)" : "var(--home-status-ok-bg)",
           padding: "2px 6px",
           borderRadius: "var(--radius-sm)",
         }}
@@ -202,9 +202,9 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
   const working = status === "working";
   const accentBorder =
     status === "done"
-      ? "rgba(34,197,94,0.3)"
+      ? "var(--home-status-ok-border-strong)"
       : status === "error"
-        ? "rgba(239,68,68,0.3)"
+        ? "var(--home-status-error-border)"
         : c.border;
 
   return (
@@ -645,7 +645,9 @@ export const SettingsPanel = memo(function SettingsPanel({
                     width: "8px",
                     height: "8px",
                     borderRadius: "50%",
-                    background: camStream ? "#22c55e" : "#f59e0b",
+                    background: camStream
+                      ? "var(--home-status-ok-dot)"
+                      : "var(--home-status-warn-dot)",
                     display: "inline-block",
                     flexShrink: 0,
                   }}
@@ -984,7 +986,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       width: "8px",
                       height: "8px",
                       borderRadius: "50%",
-                      background: micActive ? "#22c55e" : c.textMuted,
+                      background: micActive ? "var(--home-status-ok-dot)" : c.textMuted,
                       display: "inline-block",
                       flexShrink: 0,
                     }}
@@ -1000,8 +1002,10 @@ export const SettingsPanel = memo(function SettingsPanel({
                       flexShrink: 0,
                       padding: "0 16px",
                       minHeight: 40,
-                      background: micActive ? "rgba(239,68,68,0.08)" : "var(--home-status-ok-bg)",
-                      border: `1px solid ${micActive ? "rgba(239,68,68,0.3)" : "var(--home-status-ok-border-strong)"}`,
+                      background: micActive
+                        ? "var(--home-status-error-bg)"
+                        : "var(--home-status-ok-bg)",
+                      border: `1px solid ${micActive ? "var(--home-status-error-border)" : "var(--home-status-ok-border-strong)"}`,
                       borderRadius: "var(--radius-sm)",
                       color: micActive ? "var(--home-status-error)" : "var(--home-status-ok)",
                       fontSize: "13px",
@@ -1039,7 +1043,8 @@ export const SettingsPanel = memo(function SettingsPanel({
                         style={{
                           width: `${micLevel}%`,
                           height: "100%",
-                          background: "linear-gradient(90deg, #22c55e, var(--color-accent-base))",
+                          background:
+                            "linear-gradient(90deg, var(--home-status-ok-dot), var(--color-accent-base))",
                           transition: "width 100ms linear",
                         }}
                       />
@@ -1096,7 +1101,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       width: "8px",
                       height: "8px",
                       borderRadius: "50%",
-                      background: speakerActive ? "#22c55e" : c.textMuted,
+                      background: speakerActive ? "var(--home-status-ok-dot)" : c.textMuted,
                       display: "inline-block",
                       flexShrink: 0,
                     }}
@@ -1159,8 +1164,9 @@ export const SettingsPanel = memo(function SettingsPanel({
                       flex: 1,
                       padding: "0 16px",
                       minHeight: 40,
-                      background: speakerSuccess === true ? "rgba(34,197,94,0.08)" : "transparent",
-                      border: `1px solid ${speakerSuccess === true ? "rgba(34,197,94,0.3)" : "var(--home-clear-border)"}`,
+                      background:
+                        speakerSuccess === true ? "var(--home-status-ok-bg)" : "transparent",
+                      border: `1px solid ${speakerSuccess === true ? "var(--home-status-ok-border-strong)" : "var(--home-clear-border)"}`,
                       borderRadius: "var(--radius-sm)",
                       color: "var(--home-status-ok)",
                       fontSize: "13px",

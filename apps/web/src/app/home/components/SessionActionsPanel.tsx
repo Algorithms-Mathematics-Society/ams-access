@@ -291,12 +291,12 @@ export function SessionActionsPanel({
                   borderRadius: "var(--radius-sm)",
                   fontWeight: 600,
                   background: resumeRequestPending
-                    ? "rgba(245,158,11,0.12)"
+                    ? "var(--home-status-warn-bg-12)"
                     : resumeVerification === "verified"
-                      ? "rgba(34,197,94,0.12)"
+                      ? "var(--home-status-ok-bg-12)"
                       : resumeVerification === "checking" || resumeVerification === "unverified"
                         ? "rgb(var(--accent-rgb) / 0.1)"
-                        : "rgba(239,68,68,0.1)",
+                        : "var(--home-status-error-bg-10)",
                   color: resumeRequestPending
                     ? "var(--home-status-warn)"
                     : resumeVerification === "verified"

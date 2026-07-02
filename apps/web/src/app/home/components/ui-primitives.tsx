@@ -120,8 +120,8 @@ export const Button = forwardRef<
       ? { border: "var(--color-accent-base)", bg: "var(--color-accent-base)", color: "#ffffff" }
       : variant === "danger"
         ? {
-            border: "rgba(239,68,68,0.3)",
-            bg: "rgba(239,68,68,0.1)",
+            border: "var(--home-status-error-border)",
+            bg: "var(--home-status-error-bg-10)",
             color: "var(--theme-error-text)",
           }
         : variant === "ghost"
@@ -293,7 +293,12 @@ export function ChecklistItem({
   const c = getThemeColors(theme);
   // Telemetry-dot pattern: a single 6px status LED on the far right replaces the
   // repetitive "Ready" pill, so the column scans as one vertical line of health.
-  const dotColor = status === "ok" ? "#22c55e" : status === "fail" ? "#ef4444" : "#f59e0b";
+  const dotColor =
+    status === "ok"
+      ? "var(--home-status-ok-dot)"
+      : status === "fail"
+        ? "var(--home-status-error-dot)"
+        : "var(--home-status-warn-dot)";
   const statusLabel = status === "ok" ? "Ready" : status === "fail" ? "Needs action" : "Checking";
   return (
     <div

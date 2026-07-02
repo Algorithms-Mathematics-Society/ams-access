@@ -19,7 +19,11 @@ function TelemetryStat({
 }) {
   const c = useMemo(() => getThemeColors(theme), [theme]);
   const dotColor =
-    status === "ok" ? "var(--theme-dot)" : status === "fail" ? "#ef4444" : "var(--home-dot-muted)";
+    status === "ok"
+      ? "var(--theme-dot)"
+      : status === "fail"
+        ? "var(--home-status-error-dot)"
+        : "var(--home-dot-muted)";
   return (
     <div
       style={{
@@ -372,8 +376,8 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             onClick={copySupportSummary}
             style={{
               padding: "9px 16px",
-              background: copied ? "rgba(34,197,94,0.1)" : c.accentLight,
-              border: `1px solid ${copied ? "rgba(34,197,94,0.25)" : c.accentBorder}`,
+              background: copied ? "var(--home-status-ok-bg-10)" : c.accentLight,
+              border: `1px solid ${copied ? "var(--home-status-ok-border-25)" : c.accentBorder}`,
               borderRadius: "var(--radius-sm)",
               color: copied ? "var(--home-status-ok)" : c.accentText,
               fontSize: "13px",

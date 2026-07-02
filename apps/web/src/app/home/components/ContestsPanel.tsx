@@ -26,8 +26,8 @@ export function ContestsPanel({
     if (s === "ACTIVE")
       return {
         dot: "var(--theme-dot)",
-        bg: "rgba(34,197,94,0.08)",
-        border: "rgba(34,197,94,0.2)",
+        bg: "var(--home-status-ok-bg)",
+        border: "var(--home-status-ok-border)",
       };
     if (s === "SCHEDULED")
       return {
@@ -41,7 +41,11 @@ export function ContestsPanel({
         bg: "var(--home-overlay-ended)",
         border: "var(--home-border-ended)",
       };
-    return { dot: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)" };
+    return {
+      dot: "var(--home-status-warn-dot)",
+      bg: "var(--home-status-warn-bg)",
+      border: "var(--home-status-warn-border-20)",
+    };
   }
 
   if (loading) {

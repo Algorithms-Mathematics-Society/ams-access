@@ -236,15 +236,15 @@ export const ScheduledContestCard = memo(
                 canJoin
                   ? themeColors.accent
                   : phase === "too_early"
-                    ? "rgba(245,158,11,0.35)"
+                    ? "var(--home-status-warn-border-35)"
                     : phase === "blocked" || phase === "metadata_unavailable"
-                      ? "rgba(239,68,68,0.28)"
+                      ? "var(--home-status-error-border-28)"
                       : themeColors.border
               }`,
               background: canJoin
                 ? "var(--color-accent-base)"
                 : phase === "too_early"
-                  ? "rgba(245,158,11,0.08)"
+                  ? "var(--home-status-warn-bg)"
                   : "rgba(255,255,255,0.055)",
               color: canJoin
                 ? "#ffffff"
@@ -339,12 +339,12 @@ export const ActiveContestCard = memo(
       switch (entryState.phase) {
         case "too_early":
           return {
-            rail: "#f59e0b",
+            rail: "var(--home-status-warn-dot)",
             statusColor: "var(--home-status-warn)",
-            statusBg: "rgba(245,158,11,0.08)",
-            statusBorder: "rgba(245,158,11,0.24)",
-            actionBg: "rgba(245,158,11,0.08)",
-            actionBorder: "rgba(245,158,11,0.35)",
+            statusBg: "var(--home-status-warn-bg)",
+            statusBorder: "var(--home-status-warn-border-24)",
+            actionBg: "var(--home-status-warn-bg)",
+            actionBorder: "var(--home-status-warn-border-35)",
             actionText: "var(--home-status-warn)",
           };
         case "verification_open":
@@ -380,12 +380,12 @@ export const ActiveContestCard = memo(
         case "metadata_unavailable":
         case "blocked":
           return {
-            rail: "#ef4444",
+            rail: "var(--home-status-error-dot)",
             statusColor: "var(--theme-error-text)",
-            statusBg: "rgba(239,68,68,0.08)",
-            statusBorder: "rgba(239,68,68,0.24)",
-            actionBg: "rgba(239,68,68,0.08)",
-            actionBorder: "rgba(239,68,68,0.28)",
+            statusBg: "var(--home-status-error-bg)",
+            statusBorder: "var(--home-status-error-border-24)",
+            actionBg: "var(--home-status-error-bg)",
+            actionBorder: "var(--home-status-error-border-28)",
             actionText: "var(--theme-error-text)",
           };
         default:

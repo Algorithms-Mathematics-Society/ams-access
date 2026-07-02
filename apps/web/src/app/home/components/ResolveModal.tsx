@@ -384,8 +384,8 @@ export function ResolveModal({
               width: "38px",
               height: "38px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(245, 158, 11, 0.1)",
-              border: "1px solid rgba(245, 158, 11, 0.3)",
+              background: "var(--home-status-warn-bg-10)",
+              border: "1px solid var(--home-status-warn-border)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -471,8 +471,8 @@ export function ResolveModal({
               margin: "0 0 14px",
               padding: "10px 12px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(245, 158, 11, 0.10)",
-              border: "1px solid rgba(245, 158, 11, 0.32)",
+              background: "var(--home-status-warn-bg-10)",
+              border: "1px solid var(--home-status-warn-border-32)",
               color: "var(--home-status-warn)",
               fontSize: "12.5px",
               lineHeight: 1.55,
@@ -563,9 +563,9 @@ export function ResolveModal({
                   style={{
                     height: "40px",
                     padding: "0 16px",
-                    background: "rgba(239, 68, 68, 0.12)",
+                    background: "var(--home-status-error-bg-12)",
                     color: "var(--home-status-error)",
-                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                    border: "1px solid var(--home-status-error-border-35)",
                     borderRadius: "var(--radius-md)",
                     fontWeight: 700,
                     fontSize: "13px",
@@ -587,9 +587,9 @@ export function ResolveModal({
                 style={{
                   height: "40px",
                   padding: "0 16px",
-                  background: "rgba(239, 68, 68, 0.10)",
+                  background: "var(--home-status-error-bg-10)",
                   color: "var(--home-status-error)",
-                  border: "1px solid rgba(239, 68, 68, 0.30)",
+                  border: "1px solid var(--home-status-error-border)",
                   borderRadius: "var(--radius-md)",
                   fontWeight: 700,
                   fontSize: "13px",
@@ -609,10 +609,10 @@ export function ResolveModal({
               padding: "0 16px",
               background:
                 activeFlow.primaryAction === "retry"
-                  ? "rgba(245, 158, 11, 0.14)"
+                  ? "var(--home-status-warn-bg-14)"
                   : "var(--color-accent-base)",
               color: activeFlow.primaryAction === "retry" ? "var(--home-status-warn)" : "#ffffff",
-              border: `1px solid ${activeFlow.primaryAction === "retry" ? "rgba(245, 158, 11, 0.36)" : "var(--color-accent-base)"}`,
+              border: `1px solid ${activeFlow.primaryAction === "retry" ? "var(--home-status-warn-border-36)" : "var(--color-accent-base)"}`,
               borderRadius: "var(--radius-md)",
               fontWeight: 700,
               fontSize: "13px",
