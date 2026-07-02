@@ -57,7 +57,7 @@ export const SecurityOperationsLog = memo(function SecurityOperationsLog({
           style={{
             fontSize: "11px",
             fontWeight: 600,
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             fontFamily: "'JetBrains Mono', monospace",

@@ -34,6 +34,14 @@ const lightValRaw = (token) => {
   return m[1];
 };
 
+// Read a token's raw dark value (hex or rgba) from the .dark, html.theme-dark-locked block.
+const darkValRaw = (token) => {
+  const block = css.slice(css.indexOf(".dark,\nhtml.theme-dark-locked"));
+  const m = block.match(new RegExp(token + ":\\s*(#[0-9a-fA-F]{6}|rgba?\\([^)]+\\))"));
+  if (!m) throw new Error(`dark value for ${token} not found`);
+  return m[1];
+};
+
 // Parse a raw hex or rgba(...) value to [r,g,b]; composite over bg if alpha < 1.
 const parseColor = (raw, bg) => {
   if (raw.startsWith("#")) return hex(raw);
@@ -152,5 +160,47 @@ test("PROVEN-SENSITIVE: old success shade #4ade80 FAILS AA on #f0eadd", () => {
   assert.ok(
     ratio < 4.5,
     `expected #4ade80 to FAIL AA on #f0eadd, got ${ratio.toFixed(2)}:1 — contrast math or compositing is wrong`
+  );
+});
+
+// ── 3a-neutral: new neutral/surface tokens — dark EXACT, light black-alpha (direction) ──
+const NEUTRAL_TOKENS = {
+  "--home-overlay-faintest": { dark: "rgba(255,255,255,0.02)", lightMaxChannel: 0 },
+  "--home-overlay-rail": { dark: "rgba(255,255,255,0.24)", lightMaxChannel: 0 },
+  "--home-border-control": { dark: "#3f3f46", lightMaxChannel: 90 },
+  "--home-border-hover": { dark: "#52525b", lightMaxChannel: 90 },
+};
+function normHex(s) {
+  return s.replace(/\s+/g, "").toLowerCase();
+}
+function maxChannel(rgbaStr) {
+  const m = rgbaStr.match(/rgba?\(([^)]+)\)/i);
+  if (!m) {
+    const h = normHex(rgbaStr).replace("#", "");
+    return Math.max(
+      parseInt(h.slice(0, 2), 16),
+      parseInt(h.slice(2, 4), 16),
+      parseInt(h.slice(4, 6), 16)
+    );
+  }
+  const [r, g, b] = m[1].split(",").map((x) => parseInt(x, 10));
+  return Math.max(r, g, b);
+}
+for (const [tok, exp] of Object.entries(NEUTRAL_TOKENS)) {
+  test(`3a-neutral: ${tok} dark == ledger literal (EXACT)`, () => {
+    assert.equal(normHex(darkValRaw(tok)).replace(/,/g, ""), normHex(exp.dark).replace(/,/g, ""));
+  });
+  test(`3a-neutral: ${tok} light facet is BLACK-alpha / dark-on-cream (never white-alpha)`, () => {
+    const mc = maxChannel(lightValRaw(tok));
+    assert.ok(
+      mc <= exp.lightMaxChannel + 1,
+      `${tok} light max channel ${mc} — must be dark ink, not white-alpha`
+    );
+  });
+}
+test("3a-neutral PROVEN-SENSITIVE: a white-alpha light facet FAILS the direction check", () => {
+  assert.ok(
+    maxChannel("rgba(255,255,255,0.24)") > 90,
+    "direction check is insensitive — would pass white-alpha"
   );
 });

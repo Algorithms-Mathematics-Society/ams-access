@@ -188,7 +188,7 @@ export function Field({
         height: "38px",
         borderRadius: "var(--radius-md)",
         border: `1px solid ${c.border}`,
-        background: "rgba(255,255,255,0.02)",
+        background: "var(--home-overlay-faintest)",
         color: c.text,
         padding: "0 14px",
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",

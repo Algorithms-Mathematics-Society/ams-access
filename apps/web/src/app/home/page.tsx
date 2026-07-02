@@ -969,7 +969,7 @@ export default function HomePage() {
               fontSize: "12px",
               fontWeight: 500,
               letterSpacing: "0.4em",
-              color: "rgba(255,255,255,0.85)",
+              color: "var(--theme-text-muted-strong)",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
             }}
@@ -1197,7 +1197,7 @@ export default function HomePage() {
               className="home-header"
               style={{
                 background: "var(--surface-0)",
-                borderBottom: "1px solid rgba(255,255,255,0.08)",
+                borderBottom: "1px solid var(--home-overlay-strong)",
                 flexShrink: 0,
                 transition: "border-color var(--transition-standard)",
               }}
