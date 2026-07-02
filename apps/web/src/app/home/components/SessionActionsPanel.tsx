@@ -199,7 +199,7 @@ export function SessionActionsPanel({
                   marginLeft: "4px",
                   background: "none",
                   border: "none",
-                  color: "rgba(34,197,94,0.5)",
+                  color: "var(--home-status-ok)",
                   cursor: "pointer",
                   fontSize: "14px",
                   lineHeight: 1,

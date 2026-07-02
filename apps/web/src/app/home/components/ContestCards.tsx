@@ -17,18 +17,32 @@ import type {
   ContestantReadinessStatus,
 } from "./types";
 
-function readinessStatusColor(status: ContestantReadinessStatus): string {
+function readinessDotColor(status: ContestantReadinessStatus): string {
   switch (status) {
     case "ready":
-      return "#4ade80";
+      return "var(--home-status-ok-dot)";
     case "needs_action":
-      return "#fca5a5";
+      return "var(--home-status-error-dot)";
     case "advisory_warning":
-      return "#fcd34d";
+      return "var(--home-status-warn-dot)";
     case "blocked_by_policy":
-      return "#fca5a5";
+      return "var(--home-status-error-dot)";
     default:
       return "rgb(var(--accent-rgb) / 0.7)";
+  }
+}
+function readinessTextColor(status: ContestantReadinessStatus): string {
+  switch (status) {
+    case "ready":
+      return "var(--home-status-ok)";
+    case "needs_action":
+      return "var(--theme-error-text)";
+    case "advisory_warning":
+      return "var(--home-status-warn)";
+    case "blocked_by_policy":
+      return "var(--theme-error-text)";
+    default:
+      return "var(--theme-accent-text)";
   }
 }
 
@@ -628,14 +642,14 @@ export const ActiveContestCard = memo(
                 width: "5px",
                 height: "5px",
                 borderRadius: "50%",
-                background: readinessStatusColor(readinessContext.status),
+                background: readinessDotColor(readinessContext.status),
                 flexShrink: 0,
               }}
             />
             <span
               style={{
                 fontSize: "11px",
-                color: readinessStatusColor(readinessContext.status),
+                color: readinessTextColor(readinessContext.status),
                 lineHeight: 1.4,
               }}
             >
