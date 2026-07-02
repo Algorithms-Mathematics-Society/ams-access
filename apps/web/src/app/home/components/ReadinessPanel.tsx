@@ -27,7 +27,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
     <div
       style={{
         background: themeColors.cardBg,
-        border: "1px solid #27272a",
+        border: "1px solid var(--theme-border)",
         borderRadius: "var(--radius-md)",
         padding: "24px",
         boxShadow: "none",
@@ -153,19 +153,19 @@ export const ReadinessWidget = memo(function ReadinessWidget({
             marginTop: "10px",
             borderRadius: "9999px",
             background: "transparent",
-            border: "1px solid #3f3f46",
+            border: "1px solid var(--home-border-control)",
             color: "var(--text-dim)",
             fontWeight: 700,
             letterSpacing: "0.14em",
             textTransform: "uppercase",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "#ffffff";
-            e.currentTarget.style.borderColor = "#52525b";
+            e.currentTarget.style.color = "var(--theme-text)";
+            e.currentTarget.style.borderColor = "var(--home-border-hover)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.color = "var(--text-dim)";
-            e.currentTarget.style.borderColor = "#3f3f46";
+            e.currentTarget.style.borderColor = "var(--home-border-control)";
           }}
         >
           Test setup

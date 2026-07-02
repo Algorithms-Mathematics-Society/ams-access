@@ -62,7 +62,7 @@ export function SessionActionsPanel({
     <div
       style={{
         background: c.cardBg,
-        border: "1px solid #27272a",
+        border: "1px solid var(--theme-border)",
         borderRadius: "var(--radius-md)",
         padding: "20px",
         display: "flex",
@@ -104,8 +104,8 @@ export function SessionActionsPanel({
               minWidth: 0,
               cursor: inviteCodeBusy ? "not-allowed" : "text",
               opacity: inviteCodeBusy ? 0.75 : 1,
-              background: "#1A1A24",
-              border: "1px solid #27272a",
+              background: "var(--surface-2)",
+              border: "1px solid var(--theme-border)",
             }}
           />
           <Button
@@ -252,7 +252,7 @@ export function SessionActionsPanel({
       {/* ── Resume section (secondary) ────────────────────────────── */}
       <div
         style={{
-          borderTop: "1px solid #27272a",
+          borderTop: "1px solid var(--theme-border)",
           paddingTop: "16px",
           display: "flex",
           flexDirection: "column",
