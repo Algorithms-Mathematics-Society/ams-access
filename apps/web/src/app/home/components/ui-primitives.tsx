@@ -8,41 +8,49 @@ import { getThemeColors } from "./utils";
 type ThemeName = "dark" | "light";
 type Tone = "neutral" | "success" | "warning" | "danger" | "accent" | "muted";
 
+// toneTokens — all values are semantic/neutral CSS vars (theme-aware).
+// Dark normalizations logged (see per-property comments below for exact Δ):
+//   neutral.text → --theme-text-muted-strong (dark α0.72→0.70, Δ0.02)
+//   neutral.border → --theme-border-strong (dark α0.10→0.12, Δ0.02)
+//   muted.text → --theme-text-muted (dark α0.50→0.45, Δ0.05)
+//   muted.bg → --home-overlay-faint (dark α0.035→0.04, Δ0.005)
+//   success.text → --home-status-ok (shade-norm green-400→green-500 per §3)
+//   warning.text → --home-status-warn (shade-norm yellow-300→amber-500 per §3)
 const toneTokens: Record<Tone, { text: string; bg: string; border: string; icon: LucideIcon }> = {
   neutral: {
-    text: "rgba(255,255,255,0.72)",
-    bg: "rgba(255,255,255,0.045)",
-    border: "rgba(255,255,255,0.1)",
+    text: "var(--theme-text-muted-strong)", // dark rgba(255,255,255,0.70); was 0.72 (Δ0.02)
+    bg: "var(--home-overlay-btn)", // dark rgba(255,255,255,0.045); exact
+    border: "var(--theme-border-strong)", // dark rgba(255,255,255,0.12); was 0.10 (Δ0.02)
     icon: AlertCircle,
   },
   success: {
-    text: "#4ade80",
-    bg: "rgba(34,197,94,0.08)",
-    border: "rgba(34,197,94,0.22)",
+    text: "var(--home-status-ok)", // dark #22c55e; was #4ade80 (shade-norm)
+    bg: "var(--home-status-ok-bg)", // dark rgba(34,197,94,0.08); exact
+    border: "var(--home-status-ok-border-22)", // dark rgba(34,197,94,0.22); exact
     icon: CheckCircle,
   },
   warning: {
-    text: "#fde047",
-    bg: "rgba(234,179,8,0.10)",
-    border: "rgba(234,179,8,0.30)",
+    text: "var(--home-status-warn)", // dark #f59e0b; was #fde047 (shade-norm)
+    bg: "var(--home-status-warn-tone-bg)", // dark rgba(234,179,8,0.10); exact
+    border: "var(--home-status-warn-tone-border)", // dark rgba(234,179,8,0.30); exact
     icon: AlertCircle,
   },
   danger: {
-    text: "#fca5a5",
-    bg: "rgba(239,68,68,0.08)",
-    border: "rgba(239,68,68,0.26)",
+    text: "var(--theme-error-text)", // dark #fca5a5; exact
+    bg: "var(--home-status-error-bg)", // dark rgba(239,68,68,0.08); exact
+    border: "var(--home-status-error-border-26)", // dark rgba(239,68,68,0.26); exact
     icon: XCircle,
   },
   accent: {
-    text: "var(--color-accent-light)",
-    bg: "rgb(var(--accent-rgb) / 0.09)",
-    border: "rgb(var(--accent-rgb) / 0.3)",
+    text: "var(--theme-accent-text)", // was var(--color-accent-light); now theme-aware AA
+    bg: "rgb(var(--accent-rgb) / 0.09)", // unchanged (already theme-aware)
+    border: "rgb(var(--accent-rgb) / 0.3)", // unchanged (already theme-aware)
     icon: Loader2,
   },
   muted: {
-    text: "rgba(255,255,255,0.5)",
-    bg: "rgba(255,255,255,0.035)",
-    border: "rgba(255,255,255,0.08)",
+    text: "var(--theme-text-muted)", // dark rgba(255,255,255,0.45); was 0.50 (Δ0.05)
+    bg: "var(--home-overlay-faint)", // dark rgba(255,255,255,0.04); was 0.035 (Δ0.005)
+    border: "var(--home-overlay-strong)", // dark rgba(255,255,255,0.08); exact
     icon: AlertCircle,
   },
 };
@@ -53,18 +61,10 @@ export function toneForStatus(status: "ok" | "fail" | "checking"): Tone {
   return "accent";
 }
 
+// All toneTokens are now theme-aware CSS vars — no color-branching needed.
 export function toneStyles(tone: Tone, theme: ThemeName) {
-  const tokens = toneTokens[tone];
-  if (theme === "dark") return tokens;
-  if (tone === "neutral" || tone === "muted") {
-    return {
-      ...tokens,
-      text: "rgba(31,25,18,0.62)",
-      bg: "rgba(31,25,18,0.035)",
-      border: "rgba(31,25,18,0.1)",
-    };
-  }
-  return tokens;
+  void theme; // kept for callers; theme-branching removed (tokens adapt automatically)
+  return toneTokens[tone];
 }
 
 export function Panel({
