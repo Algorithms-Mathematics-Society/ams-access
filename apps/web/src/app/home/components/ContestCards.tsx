@@ -259,7 +259,7 @@ export const ScheduledContestCard = memo(
                 ? "var(--color-accent-base)"
                 : phase === "too_early"
                   ? "var(--home-status-warn-bg)"
-                  : "rgba(255,255,255,0.055)",
+                  : "var(--home-overlay-disabled)",
               color: canJoin
                 ? "#ffffff"
                 : phase === "too_early"
@@ -383,11 +383,11 @@ export const ActiveContestCard = memo(
           };
         case "ended":
           return {
-            rail: "rgba(255,255,255,0.24)",
+            rail: "var(--home-overlay-rail)",
             statusColor: themeColors.textMuted,
-            statusBg: "rgba(255,255,255,0.035)",
+            statusBg: "var(--home-overlay-faint)",
             statusBorder: themeColors.border,
-            actionBg: "rgba(255,255,255,0.04)",
+            actionBg: "var(--home-overlay-faint)",
             actionBorder: themeColors.border,
             actionText: themeColors.textMuted,
           };
@@ -406,9 +406,9 @@ export const ActiveContestCard = memo(
           return {
             rail: themeColors.textMuted,
             statusColor: themeColors.textMuted,
-            statusBg: "rgba(255,255,255,0.035)",
+            statusBg: "var(--home-overlay-faint)",
             statusBorder: themeColors.border,
-            actionBg: "rgba(255,255,255,0.04)",
+            actionBg: "var(--home-overlay-faint)",
             actionBorder: themeColors.border,
             actionText: themeColors.textMuted,
           };

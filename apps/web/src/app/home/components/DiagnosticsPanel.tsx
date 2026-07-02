@@ -363,7 +363,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             marginBottom: "16px",
             lineHeight: 1.5,
             padding: "10px 12px",
-            background: "rgba(255,255,255,0.02)",
+            background: "var(--home-overlay-faintest)",
             border: `1px solid ${c.border}`,
             borderRadius: "var(--radius-sm)",
           }}

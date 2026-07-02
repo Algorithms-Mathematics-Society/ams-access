@@ -70,8 +70,8 @@ export function ContestsPanel({
             style={{
               height: "90px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(255,255,255,0.015)",
-              border: "1px solid rgba(255,255,255,0.04)",
+              background: "var(--home-overlay-whisper)",
+              border: "1px solid var(--theme-border)",
               marginBottom: "12px",
               animation: "pulse-dot 2.5s ease-in-out infinite",
             }}
@@ -99,7 +99,7 @@ export function ContestsPanel({
             width: "40px",
             height: "40px",
             borderRadius: "var(--radius-sm)",
-            background: "rgba(255,255,255,0.01)",
+            background: "var(--home-overlay-whisper)",
             border: `1px solid ${themeColors.border}`,
             display: "flex",
             alignItems: "center",
