@@ -54,7 +54,7 @@ export function ContestsPanel({
         <p
           style={{
             fontSize: "11px",
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             marginBottom: "16px",
@@ -143,7 +143,7 @@ export function ContestsPanel({
       <p
         style={{
           fontSize: "11px",
-          color: "rgba(255,255,255,0.45)",
+          color: "var(--theme-text-muted)",
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           marginBottom: "16px",

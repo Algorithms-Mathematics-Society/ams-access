@@ -77,7 +77,7 @@ export function SessionActionsPanel({
           style={{
             display: "block",
             fontSize: "11px",
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             fontWeight: 600,
@@ -262,7 +262,7 @@ export function SessionActionsPanel({
         <p
           style={{
             fontSize: "11px",
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             fontWeight: 600,

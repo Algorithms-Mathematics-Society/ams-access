@@ -969,7 +969,7 @@ export default function HomePage() {
               fontSize: "12px",
               fontWeight: 500,
               letterSpacing: "0.4em",
-              color: "rgba(255,255,255,0.85)",
+              color: "var(--theme-text-muted-strong)",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
             }}

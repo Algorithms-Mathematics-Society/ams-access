@@ -39,7 +39,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           style={{
             fontSize: "11px",
             fontWeight: 600,
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
           }}
