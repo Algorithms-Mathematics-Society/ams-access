@@ -17,18 +17,32 @@ import type {
   ContestantReadinessStatus,
 } from "./types";
 
-function readinessStatusColor(status: ContestantReadinessStatus): string {
+function readinessDotColor(status: ContestantReadinessStatus): string {
   switch (status) {
     case "ready":
-      return "#4ade80";
+      return "var(--home-status-ok-dot)";
     case "needs_action":
-      return "#fca5a5";
+      return "var(--home-status-error-dot)";
     case "advisory_warning":
-      return "#fcd34d";
+      return "var(--home-status-warn-dot)";
     case "blocked_by_policy":
-      return "#fca5a5";
+      return "var(--home-status-error-dot)";
     default:
       return "rgb(var(--accent-rgb) / 0.7)";
+  }
+}
+function readinessTextColor(status: ContestantReadinessStatus): string {
+  switch (status) {
+    case "ready":
+      return "var(--home-status-ok)";
+    case "needs_action":
+      return "var(--theme-error-text)";
+    case "advisory_warning":
+      return "var(--home-status-warn)";
+    case "blocked_by_policy":
+      return "var(--theme-error-text)";
+    default:
+      return "var(--theme-accent-text)";
   }
 }
 
@@ -236,20 +250,20 @@ export const ScheduledContestCard = memo(
                 canJoin
                   ? themeColors.accent
                   : phase === "too_early"
-                    ? "rgba(245,158,11,0.35)"
+                    ? "var(--home-status-warn-border-35)"
                     : phase === "blocked" || phase === "metadata_unavailable"
-                      ? "rgba(239,68,68,0.28)"
+                      ? "var(--home-status-error-border-28)"
                       : themeColors.border
               }`,
               background: canJoin
                 ? "var(--color-accent-base)"
                 : phase === "too_early"
-                  ? "rgba(245,158,11,0.08)"
+                  ? "var(--home-status-warn-bg)"
                   : "rgba(255,255,255,0.055)",
               color: canJoin
                 ? "#ffffff"
                 : phase === "too_early"
-                  ? "#f59e0b"
+                  ? "var(--home-status-warn)"
                   : themeColors.textMuted,
               boxShadow: hovered && canJoin ? btnHoverShadow : "none",
               transition: "box-shadow var(--transition-slow)",
@@ -339,13 +353,13 @@ export const ActiveContestCard = memo(
       switch (entryState.phase) {
         case "too_early":
           return {
-            rail: "#f59e0b",
-            statusColor: "#f59e0b",
-            statusBg: "rgba(245,158,11,0.08)",
-            statusBorder: "rgba(245,158,11,0.24)",
-            actionBg: "rgba(245,158,11,0.08)",
-            actionBorder: "rgba(245,158,11,0.35)",
-            actionText: "#f59e0b",
+            rail: "var(--home-status-warn-dot)",
+            statusColor: "var(--home-status-warn)",
+            statusBg: "var(--home-status-warn-bg)",
+            statusBorder: "var(--home-status-warn-border-24)",
+            actionBg: "var(--home-status-warn-bg)",
+            actionBorder: "var(--home-status-warn-border-35)",
+            actionText: "var(--home-status-warn)",
           };
         case "verification_open":
           return {
@@ -380,13 +394,13 @@ export const ActiveContestCard = memo(
         case "metadata_unavailable":
         case "blocked":
           return {
-            rail: "#ef4444",
-            statusColor: "#fca5a5",
-            statusBg: "rgba(239,68,68,0.08)",
-            statusBorder: "rgba(239,68,68,0.24)",
-            actionBg: "rgba(239,68,68,0.08)",
-            actionBorder: "rgba(239,68,68,0.28)",
-            actionText: "#fca5a5",
+            rail: "var(--home-status-error-dot)",
+            statusColor: "var(--theme-error-text)",
+            statusBg: "var(--home-status-error-bg)",
+            statusBorder: "var(--home-status-error-border-24)",
+            actionBg: "var(--home-status-error-bg)",
+            actionBorder: "var(--home-status-error-border-28)",
+            actionText: "var(--theme-error-text)",
           };
         default:
           return {
@@ -628,14 +642,14 @@ export const ActiveContestCard = memo(
                 width: "5px",
                 height: "5px",
                 borderRadius: "50%",
-                background: readinessStatusColor(readinessContext.status),
+                background: readinessDotColor(readinessContext.status),
                 flexShrink: 0,
               }}
             />
             <span
               style={{
                 fontSize: "11px",
-                color: readinessStatusColor(readinessContext.status),
+                color: readinessTextColor(readinessContext.status),
                 lineHeight: 1.4,
               }}
             >

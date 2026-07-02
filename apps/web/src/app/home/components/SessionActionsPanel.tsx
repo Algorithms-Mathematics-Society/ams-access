@@ -139,7 +139,7 @@ export function SessionActionsPanel({
             role="status"
             style={{
               marginTop: "8px",
-              color: "#fcd34d",
+              color: "var(--home-status-warn)",
               fontSize: "13px",
               lineHeight: 1.5,
               fontWeight: 500,
@@ -161,7 +161,7 @@ export function SessionActionsPanel({
                   marginLeft: "auto",
                   background: "none",
                   border: "none",
-                  color: "rgba(252,211,77,0.6)",
+                  color: "var(--home-status-warn)",
                   cursor: "pointer",
                   fontSize: "14px",
                   lineHeight: 1,
@@ -179,7 +179,7 @@ export function SessionActionsPanel({
             role="status"
             style={{
               marginTop: "8px",
-              color: "#22c55e",
+              color: "var(--home-status-ok)",
               fontSize: "13px",
               lineHeight: 1.45,
               fontWeight: 600,
@@ -199,7 +199,7 @@ export function SessionActionsPanel({
                   marginLeft: "4px",
                   background: "none",
                   border: "none",
-                  color: "rgba(34,197,94,0.5)",
+                  color: "var(--home-status-ok)",
                   cursor: "pointer",
                   fontSize: "14px",
                   lineHeight: 1,
@@ -241,7 +241,9 @@ export function SessionActionsPanel({
           {sessionsRefreshing ? "Refreshing" : "Refresh Sessions"}
         </Button>
         {sessionsError && (
-          <span style={{ alignSelf: "center", color: "#ef4444", fontSize: "12px" }}>
+          <span
+            style={{ alignSelf: "center", color: "var(--home-status-error)", fontSize: "12px" }}
+          >
             {sessionsError}
           </span>
         )}
@@ -289,19 +291,19 @@ export function SessionActionsPanel({
                   borderRadius: "var(--radius-sm)",
                   fontWeight: 600,
                   background: resumeRequestPending
-                    ? "rgba(245,158,11,0.12)"
+                    ? "var(--home-status-warn-bg-12)"
                     : resumeVerification === "verified"
-                      ? "rgba(34,197,94,0.12)"
+                      ? "var(--home-status-ok-bg-12)"
                       : resumeVerification === "checking" || resumeVerification === "unverified"
                         ? "rgb(var(--accent-rgb) / 0.1)"
-                        : "rgba(239,68,68,0.1)",
+                        : "var(--home-status-error-bg-10)",
                   color: resumeRequestPending
-                    ? "#fbbf24"
+                    ? "var(--home-status-warn)"
                     : resumeVerification === "verified"
-                      ? "#4ade80"
+                      ? "var(--home-status-ok)"
                       : resumeVerification === "checking" || resumeVerification === "unverified"
                         ? c.accentText
-                        : "#fca5a5",
+                        : "var(--theme-error-text)",
                 }}
               >
                 {resumeRequestPending

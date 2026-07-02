@@ -265,6 +265,56 @@ summary:focus-visible,
 
   /* ── Accessible focus ring (used everywhere) ── */
   --focus-ring: 0 0 0 2px rgb(var(--accent-rgb) / 0.7);
+
+  /* ── Home 3a: semantic-status decorative tints
+     Theme-independent: translucent tints composite correctly over dark OR cream;
+     solid status dots/rails/glows read fine on both. Dark-preserving — EXACT literal
+     values, NO value changed. α-tag suffix = α×100 (e.g. -24 for 0.24); base name =
+     canonical α (most-used site count). ok-bg/border/border-strong covered by
+     existing step-2 tokens in .dark/.light blocks and skipped here. ── */
+
+  /* ok / green */
+  --home-status-ok-dot: #22c55e;
+  --home-status-ok-bg-10: rgba(34, 197, 94, 0.1);
+  --home-status-ok-bg-12: rgba(34, 197, 94, 0.12);
+  --home-status-ok-border-22: rgba(34, 197, 94, 0.22);
+  --home-status-ok-border-24: rgba(34, 197, 94, 0.24);
+  --home-status-ok-border-25: rgba(34, 197, 94, 0.25);
+  --home-status-ok-emerald-bg: rgba(16, 185, 129, 0.08); /* emerald-500 score=100 spotlight */
+
+  /* error / red */
+  --home-status-error-dot: #ef4444;
+  --home-status-error-bg-07: rgba(239, 68, 68, 0.07);
+  --home-status-error-bg: rgba(239, 68, 68, 0.08);
+  --home-status-error-bg-10: rgba(239, 68, 68, 0.1);
+  --home-status-error-bg-12: rgba(239, 68, 68, 0.12);
+  --home-status-error-bg-14: rgba(239, 68, 68, 0.14);
+  --home-status-error-border-20: rgba(239, 68, 68, 0.2);
+  --home-status-error-border-24: rgba(239, 68, 68, 0.24);
+  --home-status-error-border-26: rgba(239, 68, 68, 0.26);
+  --home-status-error-border-28: rgba(239, 68, 68, 0.28);
+  --home-status-error-border: rgba(239, 68, 68, 0.3);
+  --home-status-error-border-35: rgba(239, 68, 68, 0.35);
+  --home-status-error-border-36: rgba(239, 68, 68, 0.36);
+  --home-status-error-border-50: rgba(239, 68, 68, 0.5);
+
+  /* warn / amber (+ yellow-400 toneToken variants) */
+  --home-status-warn-dot: #f59e0b;
+  --home-status-warn-tone-bg: rgba(234, 179, 8, 0.1); /* yellow-400 warning toneToken bg */
+  --home-status-warn-tone-border: rgba(234, 179, 8, 0.3); /* yellow-400 warning toneToken border */
+  --home-status-warn-bg-055: rgba(245, 158, 11, 0.055);
+  --home-status-warn-bg: rgba(245, 158, 11, 0.08);
+  --home-status-warn-bg-09: rgba(245, 158, 11, 0.09);
+  --home-status-warn-bg-10: rgba(245, 158, 11, 0.1);
+  --home-status-warn-bg-12: rgba(245, 158, 11, 0.12);
+  --home-status-warn-bg-14: rgba(245, 158, 11, 0.14);
+  --home-status-warn-border-20: rgba(245, 158, 11, 0.2);
+  --home-status-warn-border-24: rgba(245, 158, 11, 0.24);
+  --home-status-warn-border-28: rgba(245, 158, 11, 0.28);
+  --home-status-warn-border: rgba(245, 158, 11, 0.3);
+  --home-status-warn-border-32: rgba(245, 158, 11, 0.32);
+  --home-status-warn-border-35: rgba(245, 158, 11, 0.35);
+  --home-status-warn-border-36: rgba(245, 158, 11, 0.36);
 }
 
 .dark,
@@ -332,6 +382,10 @@ html.theme-dark-locked {
   --home-shadow-panel: 0 24px 80px rgba(0, 0, 0, 0.55);
   --home-shadow-card: var(--elevation-2);
   --home-shadow-cta: 0 8px 24px rgb(var(--accent-rgb) / 0.3);
+
+  /* ── Home 3a readable tokens (Phase 3a) ── */
+  --home-status-error: #ef4444; /* danger STRONG (FAIL/insecure/flagged/destructive) */
+  --home-status-warn: #f59e0b; /* warning (fold target: majority + strongest amber) */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -424,6 +478,10 @@ html.light:not(.theme-dark-locked) {
   --home-shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.18);
   --home-shadow-card: 0 20px 40px rgba(124, 58, 237, 0.08);
   --home-shadow-cta: 0 8px 20px rgba(124, 58, 237, 0.2);
+
+  /* ── Home 3a readable tokens (Phase 3a) ── */
+  --home-status-error: #b91c1c; /* 5.40:1 on #f0eadd — reuses measured danger light */
+  --home-status-warn: #92400e; /* MEASURED 5.91:1 on #f0eadd — darker than free-screen #b45309 (4.20, failed) */
 }
 
 /* ─────────────────────────────────────────────────────────────
