@@ -373,6 +373,10 @@ html.theme-dark-locked {
   --home-overlay-whisper: rgba(255, 255, 255, 0.01);
   --home-border-ended: rgba(255, 255, 255, 0.1);
   --home-border-disabled: rgba(255, 255, 255, 0.1);
+  --home-overlay-faintest: rgba(255, 255, 255, 0.02);
+  --home-overlay-rail: rgba(255, 255, 255, 0.24);
+  --home-border-control: #3f3f46;
+  --home-border-hover: #52525b;
   --home-modal-surface: rgba(15, 23, 42, 0.96);
   --home-modal-inner: rgba(255, 255, 255, 0.025);
   --home-activecard-bg: linear-gradient(135deg, #090d16 0%, #05070b 100%);
@@ -469,6 +473,10 @@ html.light:not(.theme-dark-locked) {
   --home-overlay-whisper: rgba(0, 0, 0, 0.01);
   --home-border-ended: rgba(0, 0, 0, 0.08);
   --home-border-disabled: rgba(0, 0, 0, 0.09);
+  --home-overlay-faintest: rgba(0, 0, 0, 0.02);
+  --home-overlay-rail: rgba(0, 0, 0, 0.24);
+  --home-border-control: rgba(60, 42, 90, 0.3);
+  --home-border-hover: rgba(60, 42, 90, 0.45);
   --home-modal-surface: #ffffff;
   --home-modal-inner: #f8fafc;
   --home-activecard-bg: linear-gradient(135deg, #ffffff 0%, #faf8f5 100%);
