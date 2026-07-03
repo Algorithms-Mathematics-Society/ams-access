@@ -1555,7 +1555,6 @@ export default function ContestPageClient() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
@@ -2284,7 +2283,6 @@ export default function ContestPageClient() {
     const normalizedLanguage = normalizeLanguageLabel(newLanguage);
     setSelectedLanguage(normalizedLanguage);
     setHasUnsavedChanges(true);
-    setSaved(false);
     const q = questions[activeQ];
     if (!q) return;
     setQuestionFiles((prev) => {
@@ -2308,7 +2306,6 @@ export default function ContestPageClient() {
 
   function handleCodeChange(value: string) {
     setHasUnsavedChanges(true);
-    setSaved(false);
     setSaveError(null);
     const qId = questions[activeQ]?.id ?? "";
     const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
@@ -2322,7 +2319,6 @@ export default function ContestPageClient() {
 
   function addEditorFile() {
     setHasUnsavedChanges(true);
-    setSaved(false);
     const qId = questions[activeQ]?.id ?? "question";
     setQuestionFiles((prev) => {
       const files = prev[qId] ?? [];
@@ -2339,7 +2335,6 @@ export default function ContestPageClient() {
 
   function removeEditorFile(fileId: string) {
     setHasUnsavedChanges(true);
-    setSaved(false);
     const qId = questions[activeQ]?.id ?? "";
     setQuestionFiles((prev) => {
       const files = (prev[qId] ?? []).filter((f) => f.id !== fileId);
@@ -2570,11 +2565,8 @@ export default function ContestPageClient() {
       saveRetryCountRef.current = 0;
       setSavedLocallyOnly(false);
       clearLocalAnswerBuffer(qId);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
       return true;
     } catch {
-      setSaved(false);
       // The buffer write above means the work is safe locally regardless.
       saveRetryCountRef.current += 1;
       if (saveRetryCountRef.current >= MAX_SAVE_RETRIES) {
