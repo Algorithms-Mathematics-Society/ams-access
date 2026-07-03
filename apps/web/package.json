@@ -8,7 +8,7 @@
     "prebuild": "node scripts/setup-tfjs-wasm.mjs && node scripts/setup-blazeface-model.mjs && node scripts/setup-mediapipe.mjs --if-used",
     "build": "next build && node scripts/check-size-budgets.mjs",
     "lint": "next typegen && tsc --noEmit",
-    "test": "node --test --experimental-strip-types src/app/session/contest/submission-state.test.mjs src/app/session/contest/countdown.test.mjs src/lib/verdict.test.mjs src/lib/candidate-auth.test.mjs src/lib/theme-core.test.mjs src/lib/theme-dark-lock-core.test.mjs src/lib/theme-dark-lock-coverage.test.mjs src/lib/home-tokenize-aa.test.mjs src/lib/home-color-completeness.test.mjs src/app/session/contest/autosave-timing.test.mjs src/app/session/contest/save-indicator.test.mjs src/app/session/contest/save-edit-state.test.mjs src/lib/abort-timeout.test.mjs",
+    "test": "node --test --experimental-strip-types src/app/session/contest/submission-state.test.mjs src/app/session/contest/countdown.test.mjs src/lib/verdict.test.mjs src/lib/candidate-auth.test.mjs src/lib/theme-core.test.mjs src/lib/theme-dark-lock-core.test.mjs src/lib/theme-dark-lock-coverage.test.mjs src/lib/home-tokenize-aa.test.mjs src/lib/home-color-completeness.test.mjs src/app/session/contest/autosave-timing.test.mjs src/app/session/contest/save-indicator.test.mjs src/app/session/contest/save-edit-state.test.mjs src/app/session/contest/save-coordinator.test.mjs src/lib/abort-timeout.test.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "clean": "rm -rf .next out",
     "mediapipe:setup": "node scripts/setup-mediapipe.mjs",

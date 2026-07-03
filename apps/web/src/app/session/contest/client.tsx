@@ -43,6 +43,7 @@ import { countdownPhase, type CountdownPhase } from "./countdown";
 import { computeAutosaveDelayMs } from "./autosave-timing";
 import { deriveSaveIndicator } from "./save-indicator";
 import { saveErrorAfterEdit } from "./save-edit-state";
+import { createSaveCoordinator } from "./save-coordinator";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -2529,7 +2530,14 @@ export default function ContestPageClient() {
     }
   }
 
-  async function handleSave(): Promise<boolean> {
+  // The actual network-save body. Recreated fresh every render (a plain
+  // function declaration, same as before this refactor) so it always closes
+  // over THIS render's editorFiles/selectedLanguage/activeFileId/sessionId —
+  // never stale. Never call this directly; go through `handleSave` below, so
+  // overlapping calls are serialized/coalesced by the save coordinator instead
+  // of firing concurrent overlapping POSTs to /answers (see
+  // ./save-coordinator.ts for why that matters).
+  async function doSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) {
       setSaveError("No active session is available. Reopen the contest and try again.");
       return false;
@@ -2588,6 +2596,36 @@ export default function ContestPageClient() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // doSaveRef always points at THIS render's fresh `doSave` closure. The
+  // coordinator instance below is created exactly once (module-lifetime, via
+  // useRef) and must never call a stale closure from the render it was
+  // created in — it calls through this ref instead, so every invocation
+  // (including a coalesced follow-up that runs renders later) reads live
+  // state.
+  const doSaveRef = useRef(doSave);
+  doSaveRef.current = doSave;
+
+  // One coordinator instance for the lifetime of this component. Serializes
+  // doSave calls (never two overlapping network writes) and coalesces any
+  // requests that arrive while one is in flight into exactly one fresh
+  // follow-up — so the 600ms autosave debounce racing an await-caller
+  // (triggerRun/handleSubmitSolution/attemptFinalSubmit) can never produce a
+  // stale overwrite or a dropped save. See ./save-coordinator.ts.
+  const saveCoordinatorRef = useRef<(() => Promise<boolean>) | null>(null);
+  if (!saveCoordinatorRef.current) {
+    saveCoordinatorRef.current = createSaveCoordinator(() => doSaveRef.current());
+  }
+
+  // Public entry point — unchanged call signature for every existing call
+  // site (autosave timer, triggerRun, handleSubmitSolution,
+  // attemptFinalSubmit). Delegates to the coordinator instead of firing a raw
+  // network write directly, so an await-caller here still gets a truthful
+  // save of current (or later) content even if an autosave is already in
+  // flight.
+  function handleSave(): Promise<boolean> {
+    return saveCoordinatorRef.current!();
   }
 
   async function handleSubmitSolution() {
