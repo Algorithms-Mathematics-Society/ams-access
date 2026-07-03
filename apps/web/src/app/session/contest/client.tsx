@@ -2644,11 +2644,6 @@ export default function ContestPageClient() {
     setTerminalTab("submissions");
 
     try {
-      const savedOk = await handleSave();
-      if (!savedOk) {
-        throw new Error("Failed to save answer prior to submission.");
-      }
-
       const qId = questions[activeQ].id;
       // Idempotency key for this logical submission. Harmless if ignored today;
       // lets the backend dedupe retries of the same submission once it consumes it.
