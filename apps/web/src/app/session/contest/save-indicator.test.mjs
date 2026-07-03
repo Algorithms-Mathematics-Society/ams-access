@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveSaveIndicator } from "./save-indicator.ts";
+import { deriveSaveIndicator, footerSaveView } from "./save-indicator.ts";
 
 const S = (over = {}) => ({ saveError: null, saving: false, hasUnsavedChanges: false, ...over });
 
@@ -44,4 +44,39 @@ test("precedence: saving beats unsaved; each maps to its icon", () => {
   assert.equal(deriveSaveIndicator(S({ saving: true })).label, "Saving…");
   assert.equal(deriveSaveIndicator(S({ hasUnsavedChanges: true })).icon, "pending");
   assert.equal(deriveSaveIndicator(S({ hasUnsavedChanges: true })).label, "Saving…");
+});
+
+test("SAFETY: footerSaveView — the footer's own presentation must not drift from the tested discriminant", () => {
+  // "Saved" may appear ONLY for icon "saved" — every other icon must read as not-saved.
+  for (const icon of ["error", "loading", "pending"]) {
+    assert.notEqual(
+      footerSaveView(icon).label,
+      "Saved",
+      `footer must not claim Saved for icon '${icon}'`
+    );
+  }
+  assert.equal(footerSaveView("saved").label, "Saved");
+});
+
+test("footerSaveView preserves the footer's exact existing presentation (colors + dot + labels)", () => {
+  assert.deepEqual(footerSaveView("error"), {
+    color: "#ef4444",
+    dotColor: "#ef4444",
+    label: "Not saved",
+  });
+  assert.deepEqual(footerSaveView("loading"), {
+    color: "#f59e0b",
+    dotColor: "#e2e8f0",
+    label: "Saving…",
+  });
+  assert.deepEqual(footerSaveView("pending"), {
+    color: "#f59e0b",
+    dotColor: "#e2e8f0",
+    label: "Saving…",
+  });
+  assert.deepEqual(footerSaveView("saved"), {
+    color: "#71717a",
+    dotColor: "var(--verdict-ac)",
+    label: "Saved",
+  });
 });

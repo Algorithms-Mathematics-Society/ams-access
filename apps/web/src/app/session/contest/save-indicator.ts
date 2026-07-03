@@ -55,3 +55,24 @@ export function deriveSaveIndicator(state: SaveIndicatorState): SaveIndicator {
     icon: "saved",
   };
 }
+
+export type FooterSaveView = {
+  color: string;
+  dotColor: string;
+  label: string;
+};
+
+// Footer save indicator — its own compact presentation (shorter labels, different
+// colors than the main indicator), but the STATE CLASSIFICATION is driven off the
+// same `icon` discriminant `deriveSaveIndicator` returns, so the footer can never
+// drift from the tested "never falsely Saved" invariant above.
+export function footerSaveView(icon: SaveIndicatorIcon): FooterSaveView {
+  if (icon === "error") {
+    return { color: "#ef4444", dotColor: "#ef4444", label: "Not saved" };
+  }
+  if (icon === "saved") {
+    return { color: "#71717a", dotColor: "var(--verdict-ac)", label: "Saved" };
+  }
+  // "loading" and "pending" share the footer's in-flight presentation.
+  return { color: "#f59e0b", dotColor: "#e2e8f0", label: "Saving…" };
+}

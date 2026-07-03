@@ -41,7 +41,7 @@ import {
 } from "./submission-state";
 import { countdownPhase, type CountdownPhase } from "./countdown";
 import { computeAutosaveDelayMs } from "./autosave-timing";
-import { deriveSaveIndicator } from "./save-indicator";
+import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
 import { VerdictBadge } from "@/lib/VerdictBadge";
@@ -6349,7 +6349,10 @@ export default function ContestPageClient() {
           <span className="sr-only">{online ? "Connected" : "Reconnecting…"}</span>
         </div>
 
-        {/* Saved — icon only; mirrors the editor save indicator; content-based live region */}
+        {/* Saved — icon only; mirrors the editor save indicator; content-based live region.
+            State classification is driven off saveIndicator.icon (the same safety-tested
+            deriveSaveIndicator discriminant the main indicator uses above), so this footer
+            can never drift into showing "Saved" when the main indicator wouldn't. */}
         <div
           role="status"
           aria-live="polite"
@@ -6357,16 +6360,12 @@ export default function ContestPageClient() {
             position: "relative",
             display: "flex",
             alignItems: "center",
-            color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
+            color: footerSaveView(saveIndicator.icon).color,
           }}
         >
           <Save size={15} strokeWidth={2} aria-hidden="true" />
-          {footerStatusDot(
-            saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#e2e8f0" : "var(--verdict-ac)"
-          )}
-          <span className="sr-only">
-            {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
-          </span>
+          {footerStatusDot(footerSaveView(saveIndicator.icon).dotColor)}
+          <span className="sr-only">{footerSaveView(saveIndicator.icon).label}</span>
         </div>
 
         {/* Keyboard intercept — icon only; static state exposed via role=img label */}
