@@ -32,6 +32,7 @@ import {
 } from "./editor-pane";
 import {
   isPendingSubmissionStatus,
+  isUiBlockingPending,
   normalizeAttemptForRunResult,
   normalizeSubmissionVerdict,
   shouldAutoExpandAttempt,
@@ -1642,6 +1643,7 @@ export default function ContestPageClient() {
   const lastResultStatusRef = useRef<string | null>(null);
   const prevSubmittingRef = useRef(false);
   const [submissionsList, setSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
+  const [submissionsListQId, setSubmissionsListQId] = useState<string | null>(null);
   const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
@@ -1769,6 +1771,7 @@ export default function ContestPageClient() {
       const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
       filtered.sort((a, b) => b.attempt_no - a.attempt_no);
       setSubmissionsList(filtered);
+      setSubmissionsListQId(qId);
       setRunResult((prev) => {
         if (!prev) return prev;
         const latestForRun =
@@ -2401,7 +2404,11 @@ export default function ContestPageClient() {
         }),
       });
       if (!res.ok) {
-        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        const errData = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+          retry_after_secs?: number;
+        };
         if (errData.code === "SESSION_ALREADY_SUBMITTED") {
           setIsRunning(false);
           setRunError("Your session has already been submitted.");
@@ -2410,6 +2417,16 @@ export default function ContestPageClient() {
         if (errData.code === "ALREADY_PENDING") {
           setIsRunning(false);
           setRunError("Your previous attempt is still being judged — please wait.");
+          return;
+        }
+        if (errData.code === "COOLDOWN") {
+          setIsRunning(false);
+          const ra = errData.retry_after_secs;
+          setRunError(
+            ra
+              ? `Please wait ~${ra}s before running again.`
+              : "Please wait a few seconds before running again."
+          );
           return;
         }
         if (errData.code === "QUEUE_ERROR") {
@@ -2665,6 +2682,7 @@ export default function ContestPageClient() {
         const errData = (await response.json().catch(() => ({}))) as {
           error?: string;
           code?: string;
+          retry_after_secs?: number;
         };
         if (errData.code === "SESSION_ALREADY_SUBMITTED") {
           setSubmissionError("Your session has already been submitted.");
@@ -2672,6 +2690,19 @@ export default function ContestPageClient() {
         }
         if (errData.code === "ALREADY_PENDING") {
           setSubmissionError("Your previous attempt is still being judged — please wait.");
+          return;
+        }
+        if (errData.code === "COOLDOWN") {
+          const ra = errData.retry_after_secs;
+          setSubmissionError(
+            ra
+              ? `Please wait ~${ra}s before submitting again.`
+              : "Please wait a few seconds before submitting again."
+          );
+          return;
+        }
+        if (errData.code === "MAX_ATTEMPTS") {
+          setSubmissionError("Attempt limit reached for this problem.");
           return;
         }
         if (errData.code === "QUEUE_ERROR") {
@@ -3358,6 +3389,9 @@ export default function ContestPageClient() {
     submissionError,
     hasSession: Boolean(sessionId),
     editorEmpty: isEditorEmpty,
+    judgingPending:
+      submissionsListQId === currentQId &&
+      submissionsList.some((s) => isUiBlockingPending(s.status, s.created_at, Date.now())),
   });
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",
