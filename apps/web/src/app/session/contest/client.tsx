@@ -2401,7 +2401,11 @@ export default function ContestPageClient() {
         }),
       });
       if (!res.ok) {
-        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        const errData = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+          retry_after_secs?: number;
+        };
         if (errData.code === "SESSION_ALREADY_SUBMITTED") {
           setIsRunning(false);
           setRunError("Your session has already been submitted.");
@@ -2410,6 +2414,16 @@ export default function ContestPageClient() {
         if (errData.code === "ALREADY_PENDING") {
           setIsRunning(false);
           setRunError("Your previous attempt is still being judged — please wait.");
+          return;
+        }
+        if (errData.code === "COOLDOWN") {
+          setIsRunning(false);
+          const ra = errData.retry_after_secs;
+          setRunError(
+            ra
+              ? `Please wait ~${ra}s before running again.`
+              : "Please wait a few seconds before running again."
+          );
           return;
         }
         if (errData.code === "QUEUE_ERROR") {
@@ -2665,6 +2679,7 @@ export default function ContestPageClient() {
         const errData = (await response.json().catch(() => ({}))) as {
           error?: string;
           code?: string;
+          retry_after_secs?: number;
         };
         if (errData.code === "SESSION_ALREADY_SUBMITTED") {
           setSubmissionError("Your session has already been submitted.");
@@ -2672,6 +2687,19 @@ export default function ContestPageClient() {
         }
         if (errData.code === "ALREADY_PENDING") {
           setSubmissionError("Your previous attempt is still being judged — please wait.");
+          return;
+        }
+        if (errData.code === "COOLDOWN") {
+          const ra = errData.retry_after_secs;
+          setSubmissionError(
+            ra
+              ? `Please wait ~${ra}s before submitting again.`
+              : "Please wait a few seconds before submitting again."
+          );
+          return;
+        }
+        if (errData.code === "MAX_ATTEMPTS") {
+          setSubmissionError("Attempt limit reached for this problem.");
           return;
         }
         if (errData.code === "QUEUE_ERROR") {
@@ -3358,6 +3386,7 @@ export default function ContestPageClient() {
     submissionError,
     hasSession: Boolean(sessionId),
     editorEmpty: isEditorEmpty,
+    judgingPending: submissionsList.some((s) => isPendingSubmissionStatus(s.status)),
   });
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",
