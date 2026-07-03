@@ -100,6 +100,22 @@ export function normalizeAttemptForRunResult(attempt: SubmissionAttemptRecord): 
   };
 }
 
+/**
+ * Refresh the Output panel's run result from a fetched RAW attempts list
+ * (runs included). STRICTLY id-keyed: returns the normalized row matching
+ * prev.id, else prev unchanged. NO fallback to any other attempt — the old
+ * `?? filtered[0]` fallback displayed the newest SUBMISSION in the run panel
+ * (repro-proven misattribution). See design 2026-07-04-runresult-crosswrite-fix.
+ */
+export function resolveRunResultRefresh(
+  prev: RunAttempt | null,
+  rawAttempts: SubmissionAttemptRecord[]
+): RunAttempt | null {
+  if (!prev) return prev;
+  const match = rawAttempts.find((attempt) => attempt.id === prev.id);
+  return match ? normalizeAttemptForRunResult(match) : prev;
+}
+
 export function isTerminalSubmission(attempt: SubmissionAttemptRecord): boolean {
   return !isPendingSubmissionStatus(attempt.status);
 }
