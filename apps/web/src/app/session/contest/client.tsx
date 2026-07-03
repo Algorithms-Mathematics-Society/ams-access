@@ -114,6 +114,10 @@ function isSampleTestRow(tr: {
 // Autosave delay policy lives in ./autosave-timing (computeAutosaveDelayMs).
 // MAX_SAVE_RETRIES stays here — it caps handleSave's retry counter.
 const MAX_SAVE_RETRIES = 5;
+// Cap the interactive save/submit request so "Saving…" can't hang unbounded.
+// 10s > warm latency (esp. once api min-instances=1 removes the ~15s cold start)
+// and < "hung". On timeout the fetch aborts into handleSave's catch → saveError.
+const SAVE_TIMEOUT_MS = 10_000;
 type ProblemSectionKey = "statement" | "examples" | "constraints";
 
 /**
@@ -2548,7 +2552,8 @@ export default function ContestPageClient() {
             active_file_id: activeFileId,
           }),
         },
-        { headers: authHeaders() }
+        { headers: authHeaders() },
+        { timeoutMs: SAVE_TIMEOUT_MS }
       );
       if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
 
@@ -2620,7 +2625,8 @@ export default function ContestPageClient() {
           source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
           idempotency_key: idempotencyKey,
         },
-        { headers: authHeaders() }
+        { headers: authHeaders() },
+        { timeoutMs: SAVE_TIMEOUT_MS }
       );
 
       if (!response.ok) {
