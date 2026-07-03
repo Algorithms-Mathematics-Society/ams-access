@@ -1557,6 +1557,9 @@ export default function ContestPageClient() {
   // the Output panel. RUN attempts are hidden from the Attempts history, so this
   // is the only place their results surface.
   const [runResultAttemptId, setRunResultAttemptId] = useState<string | null>(null);
+  // Kept synced via effect below so fetchSubmissions (a useCallback NOT keyed on
+  // runResultAttemptId) can read the LIVE value instead of a stale closure.
+  const runResultAttemptIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1659,6 +1662,9 @@ export default function ContestPageClient() {
     terminalCollapsedRef.current = terminalCollapsed;
     if (!terminalCollapsed) setTerminalUnread(false);
   }, [terminalCollapsed]);
+  useEffect(() => {
+    runResultAttemptIdRef.current = runResultAttemptId;
+  }, [runResultAttemptId]);
   // PRIMARY — auto-expand ONCE per NEW attempt result, keyed on the runResultAttemptId
   // transition (a new id), NOT on runResult presence. A candidate who reads the output and
   // deliberately re-collapses stays collapsed until the NEXT run's result. A same-attempt status
@@ -1780,9 +1786,8 @@ export default function ContestPageClient() {
       setRunResult((prev) => resolveRunResultRefresh(prev, rawSubmissions));
       // Late-verdict recovery: once the run's own row is terminal, the
       // "taking longer than expected" timeout notice no longer applies.
-      const runRow = runResultAttemptId
-        ? rawSubmissions.find((a) => a.id === runResultAttemptId)
-        : undefined;
+      const rid = runResultAttemptIdRef.current;
+      const runRow = rid ? rawSubmissions.find((a) => a.id === rid) : undefined;
       if (runRow && !isPendingSubmissionStatus(runRow.status)) setRunTimedOut(false);
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
