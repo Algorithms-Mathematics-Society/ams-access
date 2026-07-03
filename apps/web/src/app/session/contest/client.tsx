@@ -42,6 +42,7 @@ import {
 import { countdownPhase, type CountdownPhase } from "./countdown";
 import { computeAutosaveDelayMs } from "./autosave-timing";
 import { deriveSaveIndicator } from "./save-indicator";
+import { saveErrorAfterEdit } from "./save-edit-state";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -2306,7 +2307,12 @@ export default function ContestPageClient() {
 
   function handleCodeChange(value: string) {
     setHasUnsavedChanges(true);
-    setSaveError(null);
+    // An edit must NOT clear a real save failure — see save-edit-state.ts. A
+    // stale "Not saved" only clears when the next real save attempt runs
+    // (autosave re-fires ~600ms after this edit since hasUnsavedChanges stays
+    // true), and handleSave clears + re-evaluates it from that attempt's
+    // actual outcome.
+    setSaveError((prev) => saveErrorAfterEdit(prev));
     const qId = questions[activeQ]?.id ?? "";
     const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
     setQuestionFiles((prev) => ({
