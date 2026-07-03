@@ -40,6 +40,7 @@ import {
   type SubmissionAttemptRecord,
 } from "./submission-state";
 import { countdownPhase, type CountdownPhase } from "./countdown";
+import { computeAutosaveDelayMs } from "./autosave-timing";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -109,11 +110,8 @@ function isSampleTestRow(tr: {
   // No flag at all (legacy rows) → treat as visible, mirroring the Attempts expansion.
   return true;
 }
-// Autosave backoff: after MAX_SAVE_RETRIES tight retries we stop the ~1.5s loop
-// and fall back to an occasional retry, surfacing a "saved locally" state. Delay
-// grows exponentially with jitter, capped at SAVE_RETRY_MAX_DELAY_MS.
-const SAVE_RETRY_BASE_DELAY_MS = 1500;
-const SAVE_RETRY_MAX_DELAY_MS = 30_000;
+// Autosave delay policy lives in ./autosave-timing (computeAutosaveDelayMs).
+// MAX_SAVE_RETRIES stays here — it caps handleSave's retry counter.
 const MAX_SAVE_RETRIES = 5;
 type ProblemSectionKey = "statement" | "examples" | "constraints";
 
@@ -3273,18 +3271,12 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!hasUnsavedChanges || !sessionId || !currentQId) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    // Exponential backoff with jitter, capped, so a persistent failure can't spin
-    // a tight ~1.5s retry loop. A fresh edit (saveRetryCountRef reset on success)
-    // debounces at the base delay; consecutive failures stretch the interval.
-    const failures = saveRetryCountRef.current;
-    const backoff =
-      failures === 0
-        ? SAVE_RETRY_BASE_DELAY_MS
-        : Math.min(SAVE_RETRY_BASE_DELAY_MS * 2 ** failures, SAVE_RETRY_MAX_DELAY_MS);
-    const jitter = Math.round(Math.random() * 400);
+    // Fresh edit debounces at AUTOSAVE_DEBOUNCE_MS (~600ms); consecutive failures
+    // back off exponentially on the (separate) retry base. See ./autosave-timing.
+    const delayMs = computeAutosaveDelayMs(saveRetryCountRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       void handleSave();
-    }, backoff + jitter);
+    }, delayMs);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
