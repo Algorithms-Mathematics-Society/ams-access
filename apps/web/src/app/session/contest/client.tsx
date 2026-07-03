@@ -4060,18 +4060,18 @@ export default function ContestPageClient() {
                   <button
                     type="button"
                     onClick={handleSubmitConfirmed}
-                    disabled={saving}
+                    disabled={timeUpState === "submitting"}
                     style={{
                       padding: "6px 10px",
                       border: "1px solid #ef4444",
                       background: "rgba(239,68,68,0.16)",
                       color: "#fecaca",
-                      cursor: saving ? "not-allowed" : "pointer",
+                      cursor: timeUpState === "submitting" ? "not-allowed" : "pointer",
                       fontSize: "11px",
                       fontWeight: 700,
                     }}
                   >
-                    {saving ? "Saving..." : "Confirm"}
+                    {timeUpState === "submitting" ? "Submitting…" : "Confirm"}
                   </button>
                 </div>
               </div>
