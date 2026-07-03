@@ -9,10 +9,11 @@ export type SubmitButtonState = {
   submissionError: string | null;
   hasSession: boolean;
   editorEmpty: boolean;
+  judgingPending: boolean;
 };
 
 export type SubmitButtonView = {
-  label: "Submit" | "Submitting" | "Submit Failed";
+  label: "Submit" | "Submitting" | "Judging…" | "Submit Failed";
   disabled: boolean;
   icon: "send" | "spinner";
 };
@@ -20,6 +21,9 @@ export type SubmitButtonView = {
 export function deriveSubmitButton(state: SubmitButtonState): SubmitButtonView {
   if (state.isSubmitting) {
     return { label: "Submitting", disabled: true, icon: "spinner" };
+  }
+  if (state.judgingPending) {
+    return { label: "Judging…", disabled: true, icon: "spinner" };
   }
   const disabled = !state.hasSession || state.editorEmpty;
   if (state.submissionError) {
