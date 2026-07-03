@@ -42,6 +42,7 @@ import {
 import { countdownPhase, type CountdownPhase } from "./countdown";
 import { computeAutosaveDelayMs } from "./autosave-timing";
 import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
+import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
 import { VerdictBadge } from "@/lib/VerdictBadge";
@@ -2643,11 +2644,6 @@ export default function ContestPageClient() {
     setTerminalTab("submissions");
 
     try {
-      const savedOk = await handleSave();
-      if (!savedOk) {
-        throw new Error("Failed to save answer prior to submission.");
-      }
-
       const qId = questions[activeQ].id;
       // Idempotency key for this logical submission. Harmless if ignored today;
       // lets the backend dedupe retries of the same submission once it consumes it.
@@ -3356,6 +3352,13 @@ export default function ContestPageClient() {
   // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
   // surfaced (and the debounced autosave keeps retrying in the background).
   const saveIndicator = deriveSaveIndicator({ saveError, saving, hasUnsavedChanges });
+  // Submit button state = SUBMIT only (never autosave) — see submit-button.ts.
+  const submitButton = deriveSubmitButton({
+    isSubmitting,
+    submissionError,
+    hasSession: Boolean(sessionId),
+    editorEmpty: isEditorEmpty,
+  });
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",
     RUNNING: "Running…",
@@ -4057,18 +4060,18 @@ export default function ContestPageClient() {
                   <button
                     type="button"
                     onClick={handleSubmitConfirmed}
-                    disabled={saving}
+                    disabled={timeUpState === "submitting"}
                     style={{
                       padding: "6px 10px",
                       border: "1px solid #ef4444",
                       background: "rgba(239,68,68,0.16)",
                       color: "#fecaca",
-                      cursor: saving ? "not-allowed" : "pointer",
+                      cursor: timeUpState === "submitting" ? "not-allowed" : "pointer",
                       fontSize: "11px",
                       fontWeight: 700,
                     }}
                   >
-                    {saving ? "Saving..." : "Confirm"}
+                    {timeUpState === "submitting" ? "Submitting…" : "Confirm"}
                   </button>
                 </div>
               </div>
@@ -5008,13 +5011,15 @@ export default function ContestPageClient() {
                     <button
                       type="button"
                       onClick={handleSubmitSolution}
-                      disabled={saving || isSubmitting}
+                      disabled={submitButton.disabled}
                       title={
                         isSubmitting
                           ? "Submitting…"
-                          : saving
-                            ? "Saving your code — submit will be ready in a moment"
-                            : "Submit your solution for scoring"
+                          : !sessionId
+                            ? "Waiting for your session…"
+                            : isEditorEmpty
+                              ? "Write some code to submit"
+                              : "Submit your solution for scoring"
                       }
                       style={{
                         height: "40px",
@@ -5023,24 +5028,23 @@ export default function ContestPageClient() {
                         justifyContent: "center",
                         gap: "8px",
                         padding: "0 22px",
-                        border: `1px solid ${saving || isSubmitting ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
+                        border: `1px solid ${submitButton.disabled ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
                         borderRadius: "var(--radius-md)",
-                        background:
-                          saving || isSubmitting
-                            ? "rgb(var(--accent-rgb) / 0.14)"
-                            : "var(--color-accent-base)",
-                        color: saving || isSubmitting ? "rgba(255,255,255,0.58)" : "#ffffff",
+                        background: submitButton.disabled
+                          ? "rgb(var(--accent-rgb) / 0.14)"
+                          : "var(--color-accent-base)",
+                        color: submitButton.disabled ? "rgba(255,255,255,0.58)" : "#ffffff",
                         fontSize: "13px",
                         fontWeight: 600,
                         fontFamily: "Inter, system-ui, sans-serif",
-                        cursor: saving || isSubmitting ? "not-allowed" : "pointer",
-                        opacity: saving || isSubmitting ? 0.82 : 1,
+                        cursor: submitButton.disabled ? "not-allowed" : "pointer",
+                        opacity: submitButton.disabled ? 0.82 : 1,
                         boxShadow: "none",
                         transition:
                           "background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast)",
                       }}
                       onMouseEnter={(e) => {
-                        if (saving || isSubmitting) return;
+                        if (submitButton.disabled) return;
                         // Dominant: lighten + lift + accent glow so Submit never reads
                         // as a peer of the quiet outline Run button.
                         e.currentTarget.style.background =
@@ -5051,22 +5055,22 @@ export default function ContestPageClient() {
                           "0 4px 14px rgb(var(--accent-rgb) / 0.35)";
                       }}
                       onMouseLeave={(e) => {
-                        if (saving || isSubmitting) return;
+                        if (submitButton.disabled) return;
                         e.currentTarget.style.background = "var(--color-accent-base)";
                         e.currentTarget.style.borderColor = "var(--color-accent-base)";
                         e.currentTarget.style.transform = "translateY(0)";
                         e.currentTarget.style.boxShadow = "none";
                       }}
                       onMouseDown={(e) => {
-                        if (!saving && !isSubmitting)
+                        if (!submitButton.disabled)
                           e.currentTarget.style.transform = "translateY(0) scale(0.98)";
                       }}
                       onMouseUp={(e) => {
-                        if (!saving && !isSubmitting)
+                        if (!submitButton.disabled)
                           e.currentTarget.style.transform = "translateY(-1px) scale(1.02)";
                       }}
                     >
-                      {isSubmitting || saving ? (
+                      {submitButton.icon === "spinner" ? (
                         <Loader2
                           size={15}
                           strokeWidth={2}
@@ -5075,13 +5079,7 @@ export default function ContestPageClient() {
                       ) : (
                         <Send size={15} strokeWidth={2} />
                       )}
-                      {isSubmitting
-                        ? "Submitting"
-                        : saving
-                          ? "Saving"
-                          : submissionError
-                            ? "Submit Failed"
-                            : "Submit"}
+                      {submitButton.label}
                     </button>
                   </div>
                   {/* end primary actions group */}
