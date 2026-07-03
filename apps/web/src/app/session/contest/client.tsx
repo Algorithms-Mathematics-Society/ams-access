@@ -40,6 +40,10 @@ import {
   type SubmissionAttemptRecord,
 } from "./submission-state";
 import { countdownPhase, type CountdownPhase } from "./countdown";
+import { computeAutosaveDelayMs } from "./autosave-timing";
+import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
+import { saveErrorAfterEdit } from "./save-edit-state";
+import { createSaveCoordinator } from "./save-coordinator";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -109,12 +113,13 @@ function isSampleTestRow(tr: {
   // No flag at all (legacy rows) → treat as visible, mirroring the Attempts expansion.
   return true;
 }
-// Autosave backoff: after MAX_SAVE_RETRIES tight retries we stop the ~1.5s loop
-// and fall back to an occasional retry, surfacing a "saved locally" state. Delay
-// grows exponentially with jitter, capped at SAVE_RETRY_MAX_DELAY_MS.
-const SAVE_RETRY_BASE_DELAY_MS = 1500;
-const SAVE_RETRY_MAX_DELAY_MS = 30_000;
+// Autosave delay policy lives in ./autosave-timing (computeAutosaveDelayMs).
+// MAX_SAVE_RETRIES stays here — it caps handleSave's retry counter.
 const MAX_SAVE_RETRIES = 5;
+// Cap the interactive save/submit request so "Saving…" can't hang unbounded.
+// 10s > warm latency (esp. once api min-instances=1 removes the ~15s cold start)
+// and < "hung". On timeout the fetch aborts into handleSave's catch → saveError.
+const SAVE_TIMEOUT_MS = 10_000;
 type ProblemSectionKey = "statement" | "examples" | "constraints";
 
 /**
@@ -1552,7 +1557,6 @@ export default function ContestPageClient() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
@@ -1562,7 +1566,7 @@ export default function ContestPageClient() {
   // effect. Reset to 0 on any successful save.
   const saveRetryCountRef = useRef(0);
   // True once we've blown past MAX_SAVE_RETRIES: the work is buffered locally and
-  // we back off to occasional retries instead of a tight ~1.5s loop.
+  // we back off to occasional retries instead of a tight retry loop.
   const [savedLocallyOnly, setSavedLocallyOnly] = useState(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // In-flight guards so double-clicks / rapid retries can't fire a second POST to
@@ -2281,7 +2285,6 @@ export default function ContestPageClient() {
     const normalizedLanguage = normalizeLanguageLabel(newLanguage);
     setSelectedLanguage(normalizedLanguage);
     setHasUnsavedChanges(true);
-    setSaved(false);
     const q = questions[activeQ];
     if (!q) return;
     setQuestionFiles((prev) => {
@@ -2305,8 +2308,12 @@ export default function ContestPageClient() {
 
   function handleCodeChange(value: string) {
     setHasUnsavedChanges(true);
-    setSaved(false);
-    setSaveError(null);
+    // An edit must NOT clear a real save failure — see save-edit-state.ts. A
+    // stale "Not saved" only clears when the next real save attempt runs
+    // (autosave re-fires ~600ms after this edit since hasUnsavedChanges stays
+    // true), and handleSave clears + re-evaluates it from that attempt's
+    // actual outcome.
+    setSaveError((prev) => saveErrorAfterEdit(prev));
     const qId = questions[activeQ]?.id ?? "";
     const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
     setQuestionFiles((prev) => ({
@@ -2319,7 +2326,6 @@ export default function ContestPageClient() {
 
   function addEditorFile() {
     setHasUnsavedChanges(true);
-    setSaved(false);
     const qId = questions[activeQ]?.id ?? "question";
     setQuestionFiles((prev) => {
       const files = prev[qId] ?? [];
@@ -2336,7 +2342,6 @@ export default function ContestPageClient() {
 
   function removeEditorFile(fileId: string) {
     setHasUnsavedChanges(true);
-    setSaved(false);
     const qId = questions[activeQ]?.id ?? "";
     setQuestionFiles((prev) => {
       const files = (prev[qId] ?? []).filter((f) => f.id !== fileId);
@@ -2525,7 +2530,14 @@ export default function ContestPageClient() {
     }
   }
 
-  async function handleSave(): Promise<boolean> {
+  // The actual network-save body. Recreated fresh every render (a plain
+  // function declaration, same as before this refactor) so it always closes
+  // over THIS render's editorFiles/selectedLanguage/activeFileId/sessionId —
+  // never stale. Never call this directly; go through `handleSave` below, so
+  // overlapping calls are serialized/coalesced by the save coordinator instead
+  // of firing concurrent overlapping POSTs to /answers (see
+  // ./save-coordinator.ts for why that matters).
+  async function doSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) {
       setSaveError("No active session is available. Reopen the contest and try again.");
       return false;
@@ -2549,7 +2561,8 @@ export default function ContestPageClient() {
             active_file_id: activeFileId,
           }),
         },
-        { headers: authHeaders() }
+        { headers: authHeaders() },
+        { timeoutMs: SAVE_TIMEOUT_MS }
       );
       if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
 
@@ -2566,11 +2579,8 @@ export default function ContestPageClient() {
       saveRetryCountRef.current = 0;
       setSavedLocallyOnly(false);
       clearLocalAnswerBuffer(qId);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
       return true;
     } catch {
-      setSaved(false);
       // The buffer write above means the work is safe locally regardless.
       saveRetryCountRef.current += 1;
       if (saveRetryCountRef.current >= MAX_SAVE_RETRIES) {
@@ -2586,6 +2596,36 @@ export default function ContestPageClient() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // doSaveRef always points at THIS render's fresh `doSave` closure. The
+  // coordinator instance below is created exactly once (module-lifetime, via
+  // useRef) and must never call a stale closure from the render it was
+  // created in — it calls through this ref instead, so every invocation
+  // (including a coalesced follow-up that runs renders later) reads live
+  // state.
+  const doSaveRef = useRef(doSave);
+  doSaveRef.current = doSave;
+
+  // One coordinator instance for the lifetime of this component. Serializes
+  // doSave calls (never two overlapping network writes) and coalesces any
+  // requests that arrive while one is in flight into exactly one fresh
+  // follow-up — so the 600ms autosave debounce racing an await-caller
+  // (triggerRun/handleSubmitSolution/attemptFinalSubmit) can never produce a
+  // stale overwrite or a dropped save. See ./save-coordinator.ts.
+  const saveCoordinatorRef = useRef<(() => Promise<boolean>) | null>(null);
+  if (!saveCoordinatorRef.current) {
+    saveCoordinatorRef.current = createSaveCoordinator(() => doSaveRef.current());
+  }
+
+  // Public entry point — unchanged call signature for every existing call
+  // site (autosave timer, triggerRun, handleSubmitSolution,
+  // attemptFinalSubmit). Delegates to the coordinator instead of firing a raw
+  // network write directly, so an await-caller here still gets a truthful
+  // save of current (or later) content even if an autosave is already in
+  // flight.
+  function handleSave(): Promise<boolean> {
+    return saveCoordinatorRef.current!();
   }
 
   async function handleSubmitSolution() {
@@ -2621,7 +2661,8 @@ export default function ContestPageClient() {
           source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
           idempotency_key: idempotencyKey,
         },
-        { headers: authHeaders() }
+        { headers: authHeaders() },
+        { timeoutMs: SAVE_TIMEOUT_MS }
       );
 
       if (!response.ok) {
@@ -3265,7 +3306,7 @@ export default function ContestPageClient() {
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
 
-  // Debounced autosave: persist the active answer ~1.5s after the candidate stops
+  // Debounced autosave: persist the active answer ~600ms after the candidate stops
   // editing, so saving is invisible and they never sit on an "unsaved" warning.
   // Re-arms on every content/language/file change (debounces typing) and on a
   // failed save (retry). Switching question bumps currentQId, whose cleanup clears
@@ -3273,18 +3314,12 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!hasUnsavedChanges || !sessionId || !currentQId) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    // Exponential backoff with jitter, capped, so a persistent failure can't spin
-    // a tight ~1.5s retry loop. A fresh edit (saveRetryCountRef reset on success)
-    // debounces at the base delay; consecutive failures stretch the interval.
-    const failures = saveRetryCountRef.current;
-    const backoff =
-      failures === 0
-        ? SAVE_RETRY_BASE_DELAY_MS
-        : Math.min(SAVE_RETRY_BASE_DELAY_MS * 2 ** failures, SAVE_RETRY_MAX_DELAY_MS);
-    const jitter = Math.round(Math.random() * 400);
+    // Fresh edit debounces at AUTOSAVE_DEBOUNCE_MS (~600ms); consecutive failures
+    // back off exponentially on the (separate) retry base. See ./autosave-timing.
+    const delayMs = computeAutosaveDelayMs(saveRetryCountRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       void handleSave();
-    }, backoff + jitter);
+    }, delayMs);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
@@ -3320,37 +3355,7 @@ export default function ContestPageClient() {
   // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
   // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
   // surfaced (and the debounced autosave keeps retrying in the background).
-  const saveIndicator = saveError
-    ? {
-        label: "Couldn't save — retrying",
-        color: "#fca5a5",
-        bg: "rgba(239,68,68,0.1)",
-        border: "rgba(239,68,68,0.28)",
-        icon: "error" as const,
-      }
-    : saving
-      ? {
-          label: "Saving…",
-          color: "var(--color-accent-light)",
-          bg: "rgb(var(--accent-rgb) / 0.1)",
-          border: "rgb(var(--accent-rgb) / 0.28)",
-          icon: "loading" as const,
-        }
-      : hasUnsavedChanges
-        ? {
-            label: "Saving…",
-            color: "var(--color-accent-light)",
-            bg: "rgb(var(--accent-rgb) / 0.1)",
-            border: "rgb(var(--accent-rgb) / 0.28)",
-            icon: "pending" as const,
-          }
-        : {
-            label: "All changes saved",
-            color: "#86efac",
-            bg: "rgba(34,197,94,0.08)",
-            border: "rgba(34,197,94,0.24)",
-            icon: "saved" as const,
-          };
+  const saveIndicator = deriveSaveIndicator({ saveError, saving, hasUnsavedChanges });
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",
     RUNNING: "Running…",
@@ -6344,7 +6349,10 @@ export default function ContestPageClient() {
           <span className="sr-only">{online ? "Connected" : "Reconnecting…"}</span>
         </div>
 
-        {/* Saved — icon only; mirrors the editor save indicator; content-based live region */}
+        {/* Saved — icon only; mirrors the editor save indicator; content-based live region.
+            State classification is driven off saveIndicator.icon (the same safety-tested
+            deriveSaveIndicator discriminant the main indicator uses above), so this footer
+            can never drift into showing "Saved" when the main indicator wouldn't. */}
         <div
           role="status"
           aria-live="polite"
@@ -6352,16 +6360,12 @@ export default function ContestPageClient() {
             position: "relative",
             display: "flex",
             alignItems: "center",
-            color: saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#f59e0b" : "#71717a",
+            color: footerSaveView(saveIndicator.icon).color,
           }}
         >
           <Save size={15} strokeWidth={2} aria-hidden="true" />
-          {footerStatusDot(
-            saveError ? "#ef4444" : saving || hasUnsavedChanges ? "#e2e8f0" : "var(--verdict-ac)"
-          )}
-          <span className="sr-only">
-            {saveError ? "Not saved" : saving || hasUnsavedChanges ? "Saving…" : "Saved"}
-          </span>
+          {footerStatusDot(footerSaveView(saveIndicator.icon).dotColor)}
+          <span className="sr-only">{footerSaveView(saveIndicator.icon).label}</span>
         </div>
 
         {/* Keyboard intercept — icon only; static state exposed via role=img label */}

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { createAbortTimeout } from "./abort-timeout";
+
 /**
  * Thrown by fetchJson (and surfaces from raw-fetch call sites that inspect the
  * response) when the backend returns 403 with a session-binding error code —
@@ -268,16 +270,26 @@ export function useApiQuery<T>(
   };
 }
 
-export function postJsonKeepalive(url: string, body?: unknown, init: RequestInit = {}) {
+export function postJsonKeepalive(
+  url: string,
+  body?: unknown,
+  init: RequestInit = {},
+  options: { timeoutMs?: number } = {}
+) {
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const keepalive = payload ? payload.length <= 60_000 : true;
-  return fetch(url, {
+  // Opt-in timeout ONLY for interactive save/submit callers — NOT the unload
+  // beacons, which pass no timeoutMs and must survive tab close.
+  const timeout = options.timeoutMs ? createAbortTimeout(options.timeoutMs) : null;
+  const promise = fetch(url, {
     ...init,
     method: init.method ?? "POST",
     headers: payload ? { "Content-Type": "application/json", ...init.headers } : init.headers,
     body: payload,
     keepalive,
+    signal: timeout?.signal ?? init.signal,
   });
+  return timeout ? promise.finally(() => timeout.clear()) : promise;
 }
 
 export function sendJsonBeacon(url: string, body: unknown) {
