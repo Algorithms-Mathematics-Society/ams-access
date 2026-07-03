@@ -35,6 +35,7 @@ import {
   isUiBlockingPending,
   normalizeAttemptForRunResult,
   normalizeSubmissionVerdict,
+  resolveRunResultRefresh,
   shouldAutoExpandAttempt,
   type RunAttempt,
   type RunVerdict,
@@ -1772,13 +1773,17 @@ export default function ContestPageClient() {
       filtered.sort((a, b) => b.attempt_no - a.attempt_no);
       setSubmissionsList(filtered);
       setSubmissionsListQId(qId);
-      setRunResult((prev) => {
-        if (!prev) return prev;
-        const latestForRun =
-          filtered.find((attempt) => attempt.id === prev.id) ?? filtered[0] ?? null;
-        if (!latestForRun) return prev;
-        return normalizeAttemptForRunResult(latestForRun);
-      });
+      // Refresh the Output panel's run result ONLY from the run's own row
+      // (raw list — runs included). Strictly id-keyed; the old fallback to
+      // the newest filtered-list entry adopted the newest SUBMISSION into
+      // the run panel.
+      setRunResult((prev) => resolveRunResultRefresh(prev, rawSubmissions));
+      // Late-verdict recovery: once the run's own row is terminal, the
+      // "taking longer than expected" timeout notice no longer applies.
+      const runRow = runResultAttemptId
+        ? rawSubmissions.find((a) => a.id === runResultAttemptId)
+        : undefined;
+      if (runRow && !isPendingSubmissionStatus(runRow.status)) setRunTimedOut(false);
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
     } finally {
