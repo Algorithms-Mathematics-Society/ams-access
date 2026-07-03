@@ -41,6 +41,7 @@ import {
 } from "./submission-state";
 import { countdownPhase, type CountdownPhase } from "./countdown";
 import { computeAutosaveDelayMs } from "./autosave-timing";
+import { deriveSaveIndicator } from "./save-indicator";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { VerdictCode } from "@/lib/verdict";
 import {
@@ -3312,37 +3313,7 @@ export default function ContestPageClient() {
   // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
   // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
   // surfaced (and the debounced autosave keeps retrying in the background).
-  const saveIndicator = saveError
-    ? {
-        label: "Couldn't save — retrying",
-        color: "#fca5a5",
-        bg: "rgba(239,68,68,0.1)",
-        border: "rgba(239,68,68,0.28)",
-        icon: "error" as const,
-      }
-    : saving
-      ? {
-          label: "Saving…",
-          color: "var(--color-accent-light)",
-          bg: "rgb(var(--accent-rgb) / 0.1)",
-          border: "rgb(var(--accent-rgb) / 0.28)",
-          icon: "loading" as const,
-        }
-      : hasUnsavedChanges
-        ? {
-            label: "Saving…",
-            color: "var(--color-accent-light)",
-            bg: "rgb(var(--accent-rgb) / 0.1)",
-            border: "rgb(var(--accent-rgb) / 0.28)",
-            icon: "pending" as const,
-          }
-        : {
-            label: "All changes saved",
-            color: "#86efac",
-            bg: "rgba(34,197,94,0.08)",
-            border: "rgba(34,197,94,0.24)",
-            icon: "saved" as const,
-          };
+  const saveIndicator = deriveSaveIndicator({ saveError, saving, hasUnsavedChanges });
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",
     RUNNING: "Running…",
