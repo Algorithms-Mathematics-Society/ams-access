@@ -1565,7 +1565,7 @@ export default function ContestPageClient() {
   // effect. Reset to 0 on any successful save.
   const saveRetryCountRef = useRef(0);
   // True once we've blown past MAX_SAVE_RETRIES: the work is buffered locally and
-  // we back off to occasional retries instead of a tight ~1.5s loop.
+  // we back off to occasional retries instead of a tight retry loop.
   const [savedLocallyOnly, setSavedLocallyOnly] = useState(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // In-flight guards so double-clicks / rapid retries can't fire a second POST to
@@ -3270,7 +3270,7 @@ export default function ContestPageClient() {
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
 
-  // Debounced autosave: persist the active answer ~1.5s after the candidate stops
+  // Debounced autosave: persist the active answer ~600ms after the candidate stops
   // editing, so saving is invisible and they never sit on an "unsaved" warning.
   // Re-arms on every content/language/file change (debounces typing) and on a
   // failed save (retry). Switching question bumps currentQId, whose cleanup clears
