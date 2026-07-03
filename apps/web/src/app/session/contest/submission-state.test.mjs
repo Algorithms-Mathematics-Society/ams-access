@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   isPendingSubmissionStatus,
+  isUiBlockingPending,
+  JUDGING_LOCKOUT_MAX_MS,
   normalizeAttemptForRunResult,
   normalizeSubmissionVerdict,
   shouldAutoExpandAttempt,
@@ -49,4 +51,35 @@ test("submission state helpers normalize backend attempts", () => {
     ),
     true
   );
+});
+
+test("isUiBlockingPending age-bounds the Judging… lockout", () => {
+  const NOW = Date.parse("2026-07-04T10:00:00Z");
+
+  // Fresh pending (age 0) blocks.
+  assert.equal(isUiBlockingPending("QUEUED", new Date(NOW).toISOString(), NOW), true);
+  assert.equal(isUiBlockingPending("RUNNING", new Date(NOW).toISOString(), NOW), true);
+
+  // Pending at exactly maxAge does NOT block (strict <).
+  const atMaxAge = new Date(NOW - JUDGING_LOCKOUT_MAX_MS).toISOString();
+  assert.equal(isUiBlockingPending("QUEUED", atMaxAge, NOW), false);
+
+  // Pending older than maxAge does NOT block.
+  const olderThanMax = new Date(NOW - JUDGING_LOCKOUT_MAX_MS - 1).toISOString();
+  assert.equal(isUiBlockingPending("QUEUED", olderThanMax, NOW), false);
+
+  // Just under maxAge still blocks.
+  const justUnderMax = new Date(NOW - JUDGING_LOCKOUT_MAX_MS + 1).toISOString();
+  assert.equal(isUiBlockingPending("QUEUED", justUnderMax, NOW), true);
+
+  // Terminal statuses never block regardless of age, even if "created" is fresh.
+  for (const status of ["DONE", "AC", "WA", "TLE", "MLE", "RE", "CE", "OLE", "IE", "FAILED"]) {
+    assert.equal(isUiBlockingPending(status, new Date(NOW).toISOString(), NOW), false);
+  }
+
+  // Missing/garbage created_at does NOT block (unknown age -> never trap; server backstops).
+  assert.equal(isUiBlockingPending("QUEUED", null, NOW), false);
+  assert.equal(isUiBlockingPending("QUEUED", undefined, NOW), false);
+  assert.equal(isUiBlockingPending("QUEUED", "", NOW), false);
+  assert.equal(isUiBlockingPending("QUEUED", "not-a-date", NOW), false);
 });
