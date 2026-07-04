@@ -35,6 +35,7 @@ import {
   isUiBlockingPending,
   normalizeAttemptForRunResult,
   normalizeSubmissionVerdict,
+  resolveRunResultRefresh,
   shouldAutoExpandAttempt,
   type RunAttempt,
   type RunVerdict,
@@ -1556,6 +1557,9 @@ export default function ContestPageClient() {
   // the Output panel. RUN attempts are hidden from the Attempts history, so this
   // is the only place their results surface.
   const [runResultAttemptId, setRunResultAttemptId] = useState<string | null>(null);
+  // Kept synced via effect below so fetchSubmissions (a useCallback NOT keyed on
+  // runResultAttemptId) can read the LIVE value instead of a stale closure.
+  const runResultAttemptIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1658,6 +1662,9 @@ export default function ContestPageClient() {
     terminalCollapsedRef.current = terminalCollapsed;
     if (!terminalCollapsed) setTerminalUnread(false);
   }, [terminalCollapsed]);
+  useEffect(() => {
+    runResultAttemptIdRef.current = runResultAttemptId;
+  }, [runResultAttemptId]);
   // PRIMARY — auto-expand ONCE per NEW attempt result, keyed on the runResultAttemptId
   // transition (a new id), NOT on runResult presence. A candidate who reads the output and
   // deliberately re-collapses stays collapsed until the NEXT run's result. A same-attempt status
@@ -1772,13 +1779,16 @@ export default function ContestPageClient() {
       filtered.sort((a, b) => b.attempt_no - a.attempt_no);
       setSubmissionsList(filtered);
       setSubmissionsListQId(qId);
-      setRunResult((prev) => {
-        if (!prev) return prev;
-        const latestForRun =
-          filtered.find((attempt) => attempt.id === prev.id) ?? filtered[0] ?? null;
-        if (!latestForRun) return prev;
-        return normalizeAttemptForRunResult(latestForRun);
-      });
+      // Refresh the Output panel's run result ONLY from the run's own row
+      // (raw list — runs included). Strictly id-keyed; the old fallback to
+      // the newest filtered-list entry adopted the newest SUBMISSION into
+      // the run panel.
+      setRunResult((prev) => resolveRunResultRefresh(prev, rawSubmissions));
+      // Late-verdict recovery: once the run's own row is terminal, the
+      // "taking longer than expected" timeout notice no longer applies.
+      const rid = runResultAttemptIdRef.current;
+      const runRow = rid ? rawSubmissions.find((a) => a.id === rid) : undefined;
+      if (runRow && !isPendingSubmissionStatus(runRow.status)) setRunTimedOut(false);
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
     } finally {
@@ -2274,15 +2284,25 @@ export default function ContestPageClient() {
     loadQuestionWithAnswers(q, savedAnswers, language);
   }
 
+  // Every piece of run-panel state tied to the current question's run resets
+  // together. Single source of truth: two call sites (question switch, run
+  // start) each hand-maintained this list and one drifted — switchQuestion
+  // missed runTimedOut, leaving a ghost "Still running…" notice on the next
+  // question after a timed-out run.
+  function resetRunPanelState() {
+    setRunResult(null);
+    setRunResultAttemptId(null);
+    setRunError(null);
+    setRunTimedOut(false);
+  }
+
   function switchQuestion(idx: number) {
     if (questions[activeQ] && sessionId) {
       handleSave();
     }
     setActiveQ(idx);
     loadQuestion(questions[idx], selectedLanguage);
-    setRunResult(null);
-    setRunResultAttemptId(null);
-    setRunError(null);
+    resetRunPanelState();
   }
 
   function handleLanguageChange(newLanguage: string) {
@@ -2366,10 +2386,7 @@ export default function ContestPageClient() {
     runInFlightRef.current = true;
 
     setIsRunning(true);
-    setRunResult(null);
-    setRunResultAttemptId(null);
-    setRunError(null);
-    setRunTimedOut(false);
+    resetRunPanelState();
     setSubmitError(null);
     setTerminalTab("stdout");
 
