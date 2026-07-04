@@ -7,7 +7,7 @@ export function RouteLoadingShell({
   variant,
   label,
 }: {
-  variant: "home" | "onboarding" | "contest";
+  variant: "home" | "onboarding" | "contest" | "results";
   label: string;
 }) {
   return (
