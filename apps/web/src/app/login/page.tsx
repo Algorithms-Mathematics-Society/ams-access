@@ -9,6 +9,8 @@ import { setCandidateToken } from "@/lib/candidate-auth";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrandPane } from "./components/BrandPane";
 import { SsoModal } from "./components/SsoModal";
+import { OtpForm } from "./components/OtpForm";
+import { PasswordForm } from "./components/PasswordForm";
 
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
@@ -179,209 +181,37 @@ export default function LoginPage() {
           <div className="login-rule" />
 
           {mode === "otp" ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (otpStep === "email") void handleSendOtp();
-                else void handleVerifyOtp();
-              }}
-              noValidate
-            >
-              <div className="login-field">
-                <label
-                  htmlFor="login-email-otp"
-                  className={`login-label${emailFocused ? " login-label--focused" : ""}`}
-                >
-                  Email
-                </label>
-                <input
-                  id="login-email-otp"
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setError(null);
-                    setEmail(e.target.value);
-                  }}
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
-                  placeholder="you@institution.edu"
-                  autoComplete="email"
-                  required
-                  disabled={otpStep === "code" || otpState !== "idle"}
-                  aria-describedby={error ? "login-error" : undefined}
-                  aria-invalid={error ? "true" : undefined}
-                  className="login-input"
-                />
-              </div>
-
-              {otpStep === "code" && (
-                <div className="login-field">
-                  <label htmlFor="login-otp-code" className="login-label">
-                    6-digit code
-                  </label>
-                  <input
-                    id="login-otp-code"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={otpCode}
-                    onChange={(e) => {
-                      setError(null);
-                      setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
-                    }}
-                    placeholder="••••••"
-                    autoComplete="one-time-code"
-                    aria-describedby={error ? "login-error" : undefined}
-                    aria-invalid={error ? "true" : undefined}
-                    className="login-input"
-                    style={{ letterSpacing: "0.3em" }}
-                  />
-                  <p className="login-form-note" style={{ marginTop: 8 }}>
-                    We emailed a code to {email.trim() || "your inbox"}. It expires in 10 minutes.
-                  </p>
-                </div>
-              )}
-
-              <div className="login-submit-wrap">
-                <button type="submit" disabled={otpState !== "idle"} className="login-submit">
-                  {otpState === "sending"
-                    ? "Sending code..."
-                    : otpState === "verifying"
-                      ? "Verifying..."
-                      : otpStep === "email"
-                        ? "Send code"
-                        : "Verify & sign in"}
-                </button>
-
-                {error && (
-                  <p id="login-error" role="alert" className="login-error">
-                    {error}
-                  </p>
-                )}
-
-                {otpStep === "code" && (
-                  <button
-                    type="button"
-                    className="login-dev-btn"
-                    disabled={otpState !== "idle"}
-                    onClick={() => {
-                      setOtpStep("email");
-                      setOtpCode("");
-                      setError(null);
-                    }}
-                  >
-                    Use a different email
-                  </button>
-                )}
-              </div>
-            </form>
+            <OtpForm
+              email={email}
+              setEmail={setEmail}
+              emailFocused={emailFocused}
+              setEmailFocused={setEmailFocused}
+              otpStep={otpStep}
+              setOtpStep={setOtpStep}
+              otpCode={otpCode}
+              setOtpCode={setOtpCode}
+              otpState={otpState}
+              error={error}
+              setError={setError}
+              handleSendOtp={handleSendOtp}
+              handleVerifyOtp={handleVerifyOtp}
+            />
           ) : (
-            <form onSubmit={handleSubmit} noValidate>
-              <div className="login-field">
-                <label
-                  htmlFor="login-email"
-                  className={`login-label${emailFocused ? " login-label--focused" : ""}`}
-                >
-                  Email
-                </label>
-                <input
-                  id="login-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setError(null);
-                    setEmail(e.target.value);
-                  }}
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
-                  placeholder="you@institution.edu"
-                  autoComplete="email"
-                  required
-                  disabled={loading}
-                  aria-describedby={error ? "login-error" : undefined}
-                  aria-invalid={error ? "true" : undefined}
-                  className="login-input"
-                />
-              </div>
-
-              <div className="login-field">
-                <label
-                  htmlFor="login-password"
-                  className={`login-label${passFocused ? " login-label--focused" : ""}`}
-                >
-                  Password
-                </label>
-                <input
-                  id="login-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => {
-                    setError(null);
-                    setPassword(e.target.value);
-                  }}
-                  onFocus={() => setPassFocused(true)}
-                  onBlur={() => setPassFocused(false)}
-                  placeholder="••••••••••••"
-                  autoComplete="current-password"
-                  required
-                  disabled={loading}
-                  aria-describedby={error ? "login-error" : undefined}
-                  aria-invalid={error ? "true" : undefined}
-                  className="login-input"
-                />
-              </div>
-
-              <div className="login-submit-wrap">
-                <button type="submit" disabled={loading} className="login-submit">
-                  {loading ? (
-                    <>
-                      <svg
-                        className="login-spinner"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 12 12"
-                        fill="none"
-                        aria-hidden="true"
-                      >
-                        <circle
-                          cx="6"
-                          cy="6"
-                          r="4.5"
-                          stroke="rgb(var(--accent-rgb) / 0.25)"
-                          strokeWidth="1.5"
-                        />
-                        <path
-                          d="M6 1.5A4.5 4.5 0 0 1 10.5 6"
-                          stroke="var(--color-accent-base)"
-                          strokeWidth="1.5"
-                          strokeLinecap="butt"
-                        />
-                      </svg>
-                      Verifying...
-                    </>
-                  ) : (
-                    "Sign in"
-                  )}
-                </button>
-
-                {error && (
-                  <p id="login-error" role="alert" className="login-error">
-                    {error}
-                  </p>
-                )}
-
-                {isGatingRelaxed() && (
-                  <button
-                    type="button"
-                    disabled={loading}
-                    className="login-dev-btn"
-                    onClick={handleDevSignIn}
-                  >
-                    Dev sign in
-                  </button>
-                )}
-              </div>
-            </form>
+            <PasswordForm
+              email={email}
+              setEmail={setEmail}
+              emailFocused={emailFocused}
+              setEmailFocused={setEmailFocused}
+              password={password}
+              setPassword={setPassword}
+              passFocused={passFocused}
+              setPassFocused={setPassFocused}
+              loading={loading}
+              error={error}
+              setError={setError}
+              handleSubmit={handleSubmit}
+              handleDevSignIn={handleDevSignIn}
+            />
           )}
 
           <div
