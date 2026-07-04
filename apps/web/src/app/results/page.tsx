@@ -11,6 +11,8 @@ import { VerdictBadge } from "@/lib/VerdictBadge";
 import type { ResultsData, MySubmission } from "./components/types";
 import { formatPenalty, formatCountdown } from "./components/utils";
 import { ResultsLoading } from "./components/ResultsLoading";
+import { LockedScreen } from "./components/LockedScreen";
+import { ErrorScreen } from "./components/ErrorScreen";
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -110,93 +112,12 @@ function ResultsView() {
   // ── Locked screen ──────────────────────────────────────────────────────────
   if (locked) {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--surface-0)",
-          color: "var(--theme-text)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 20,
-          fontFamily: "system-ui, sans-serif",
-          padding: "40px 20px",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-            color: "var(--theme-text-muted)",
-            textTransform: "uppercase",
-          }}
-        >
-          You&rsquo;re done
-        </div>
-        <div style={{ fontSize: 28, fontWeight: 700, color: "var(--theme-text)" }}>
-          {lockedUntil ? `Results unlock in ${countdown}` : "Results unlock soon"}
-        </div>
-        <div style={{ fontSize: 13, color: "var(--text-dim)", maxWidth: 360, textAlign: "center" }}>
-          {email
-            ? `Your work is safely submitted. We'll email you at ${email} when results are ready.`
-            : "Your work is safely submitted. We'll email you when results are ready."}
-        </div>
-        <button
-          onClick={() => router.push("/home")}
-          className="results-btn results-btn-ghost"
-          style={{ marginTop: 12 }}
-        >
-          Back to Home
-        </button>
-      </div>
+      <LockedScreen lockedUntil={lockedUntil} countdown={countdown} email={email} router={router} />
     );
   }
 
   if (error) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--surface-0)",
-          color: "var(--theme-text)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          fontFamily: "system-ui, sans-serif",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            animation: "slideDown var(--transition-slow) both",
-          }}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"
-              stroke="currentColor"
-              style={{ color: "var(--theme-error-text)" }}
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <span style={{ fontSize: 15, color: "var(--theme-error-text)" }}>{error}</span>
-        </div>
-        <button onClick={() => void fetchResults()} className="results-btn results-btn-primary">
-          Retry
-        </button>
-        <button onClick={() => router.push("/home")} className="results-btn results-btn-ghost">
-          Back to Home
-        </button>
-      </div>
-    );
+    return <ErrorScreen error={error} fetchResults={fetchResults} router={router} />;
   }
 
   if (!results) {
