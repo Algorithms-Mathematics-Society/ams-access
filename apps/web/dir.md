@@ -160,7 +160,7 @@ page.tsx: 4,771 → 1,371 (−71%). Stage state moved WITH its stage (whole-comp
 | F.5 **behavior fix (pre-existing, adversarial-review-found):** failed refetch stranded candidates on a frozen locked screen — failure paths now clear `locked`/`lockedUntil` (403 RESULTS_LOCKED branch untouched); invariant `locked ∧ error` unrepresentable, 12-combo walk verified | `fbe3954`                     | ☑      |
 | F.6 gates + review ×2 + finder re-verify (both fixes CLOSED) + rig: all 4 branches + error→Retry→recovery + locked-expiry-failure→ErrorScreen→Retry→leaderboard                                                                                                                        | —                             | ☑      |
 
-page.tsx: 751 → 259. Suspense wrapper byte-untouched (static-export). Extraction = zero behavior change; the two behavior changes are separate, labeled fix commits for bugs that existed on main.
+page.tsx: 751 → 267. Suspense wrapper byte-untouched (static-export). Extraction = zero behavior change; the two behavior changes are separate, labeled fix commits for bugs that existed on main.
 
 ### PR G login · PR H shared
 
