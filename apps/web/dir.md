@@ -35,9 +35,11 @@ src/app/
 │       ReadinessPanel 266 · ContestsPanel 173 · readiness-context 169 · types 155
 │       SecurityOperationsLog 101 · hooks 58 · SignOutButton 48
 ├── session/
-│   ├── onboarding/  page.tsx 4771 (14 inline StageN_* components) · support.ts 262 · loading.tsx 23
-│   └── contest/     client.tsx ~7400 · editor-pane.tsx 925 · page.tsx 14 · loading.tsx 23
-│                    + 7 frozen pure modules w/ tests (see §1)
+│   ├── onboarding/  page.tsx 1371 (was 4771) · support.ts 262 · loading.tsx 23
+│   │                └ components/ hooks 10 · ui 191 · labels 84 · tauri-globals 17 ·
+│   │                  ProgressBar 106 · DryRunSummary 155 · stages/Stage1…14 (77–1079 ea)
+│   └── contest/     client.tsx 3522 (was ~7400) · editor-pane.tsx 925 · page.tsx 14 · loading.tsx 23
+│                    + 7 frozen pure modules w/ tests (see §1) + components/ (17 files, Blocks 1–4)
 ├── results/page.tsx 751
 └── privacy 159 · terms 146 · licenses 93 · legal-page 194
 src/components/  MarkovEditor 666 · HelpRequestModal 219 · ThemeToggle 53
@@ -138,7 +140,18 @@ client.tsx: 5,762 → 5,241.
 
 client.tsx: 5,241 → 3,522. **CONTEST AREA COMPLETE: 7,400 → 3,522 (−52%), 17 modules/components extracted, behavior-change count across 4 blocks: zero (1 caught pre-merge and fixed).**
 
-### PR E onboarding · PR F results · PR G login · PR H shared
+### PR E — onboarding (`refactor/onboarding-components`)
+
+| Task                                                                                                                                                                                                                                                                                                                                                                                                      | Files                                   | Status               |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------- |
+| E.1 shared modules (hooks/ui/labels/tauri-globals)                                                                                                                                                                                                                                                                                                                                                        | `993fff9`                               | ☑                    |
+| E.2 stages 1–4 · E.3 stages 5–8 · E.4 stage 9 alone · E.5 stages 10–14                                                                                                                                                                                                                                                                                                                                    | `b09cbf2` `64ad39c` `bd8cc66` `154a157` | ☑                    |
+| E.6 ProgressBar + DryRunSummary                                                                                                                                                                                                                                                                                                                                                                           | `6621581`                               | ☑                    |
+| E.7 gates ×6 commits + review ×2 (task: zero findings — OnboardingPage md5-identical, stage-switch zero-byte diff, invoke multiset 22/10 exact; adversarial: 7 angles refuted — every moved body independently byte-diffed, tfjs stays lazy-at-mount, handoff invokes parent-side, no cycles) + browser rig (intro → stages advance → "Step 6 of 6"; full Tauri dry-run w/ webcam = MANUAL GATE, pending) | —                                       | ☑ (manual gate open) |
+
+page.tsx: 4,771 → 1,371 (−71%). Stage state moved WITH its stage (whole-component relocation, not state migration).
+
+### PR F results · PR G login · PR H shared
 
 (expand each table when its block starts)
 
