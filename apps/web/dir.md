@@ -109,7 +109,18 @@ client.tsx: 7,400 → 6,180 lines (−1,220; 1,196 lines across 8 new modules).
 
 client.tsx: 6,180 → 5,762. Conditionals + all state stay in parent; focus-trap refs flow down as props.
 
-### PR C–D — contest Blocks 3–4 · PR E onboarding · PR F results · PR G login · PR H shared
+### PR C — contest Block 3 (`refactor/contest-block3`)
+
+| Task                                                                                                                                                                                                                                                                                                                      | Files     | Status |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------ |
+| C.1 TopBar incl. submit-confirm dialog (dialog conditional moved WITH the header subtree; no focus-trap ref exists for this dialog)                                                                                                                                                                                       | `339446a` | ☑      |
+| C.2 QuestionRail (switchQuestion passed untouched; status maps derived in parent)                                                                                                                                                                                                                                         | `20d853b` | ☑      |
+| C.3 ProblemPane (sanitization stays in parent — child gets pre-built HTML; resize separator stays in client.tsx; FollowUp/Markov ternary branches untouched — they're siblings, not children)                                                                                                                             | `6199c52` | ☑      |
+| C.4 gates + review ×2 (task: zero findings, whitespace-normalized byte-diff; adversarial: 6 angles refuted incl. submit-and-exit flow, countdown expiry semantics, switchQuestion reset, delegation target, layout roots) + rig (dialog open/cancel, A→B→A switching, S1 regression — atomic evaluate, attribution clean) | —         | ☑      |
+
+client.tsx: 5,762 → 5,241.
+
+### PR D — contest Block 4 · PR E onboarding · PR F results · PR G login · PR H shared
 
 (expand each table when its block starts)
 
