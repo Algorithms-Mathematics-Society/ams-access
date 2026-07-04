@@ -89,12 +89,14 @@ session/contest/components/
 
 ### PR A — contest Block 1 (`refactor/contest-components`)
 
-| Task                                                                | Files              | Status |
-| ------------------------------------------------------------------- | ------------------ | ------ |
-| A.0 dir.md created                                                  | apps/web/dir.md    | ☑      |
-| A.1 pure modules (hooks/markdown/verdict-styles/language/questions) | 5 new + client.tsx | ☐      |
-| A.2 inline components (CountdownBadge/FollowUpPane/MarkovPane)      | 3 new + client.tsx | ☐      |
-| A.3 gates + binding review ×2 + rig scenarios                       | —                  | ☐      |
+| Task                                                                                                                                                                                                  | Files                          | Status |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------ |
+| A.0 dir.md created                                                                                                                                                                                    | apps/web/dir.md                | ☑      |
+| A.1 pure modules (hooks/markdown/verdict-styles/language/questions)                                                                                                                                   | 5 new + client.tsx (`2216066`) | ☑      |
+| A.2 inline components (CountdownBadge/FollowUpPane/MarkovPane)                                                                                                                                        | 3 new + client.tsx (`8f66603`) | ☑      |
+| A.3 gates (lint · test 90/90 · build+budget · move-audit · invoke-diff) + review ×2 (spec/quality ✅ · adversarial 7-angle refute survived) + rig (S1 cross-write dead · question-switch reset clean) | —                              | ☑      |
+
+client.tsx: 7,400 → 6,180 lines (−1,220; 1,196 lines across 8 new modules).
 
 ### PR B–D — contest Blocks 2–4 · PR E onboarding · PR F results · PR G login · PR H shared
 
