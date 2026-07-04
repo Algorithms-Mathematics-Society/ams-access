@@ -63,6 +63,7 @@ import {
 import { useFocusTrap } from "./components/hooks";
 import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
+import { KioskBanner } from "./components/KioskBanner";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
 import { TopBar } from "./components/TopBar";
 import { QuestionRail } from "./components/QuestionRail";
@@ -2396,6 +2397,7 @@ export default function ContestPageClient() {
         fontFamily: "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       }}
     >
+      <KioskBanner />
       {/* Floating warning toast during grace period */}
       {lockGraceActive && lockGraceCountdown > 0 && (
         <LockGraceToast lockGraceCountdown={lockGraceCountdown} />

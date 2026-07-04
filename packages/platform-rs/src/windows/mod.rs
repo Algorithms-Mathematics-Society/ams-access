@@ -1629,6 +1629,86 @@ unsafe extern "system" fn clipboard_wndproc(
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+// ── Fullscreen kiosk: Win32 observers / executors (thin, not unit-tested) ──────
+
+/// Inspect the OS foreground window and return the non-Tauri portion of a
+/// `TickInput`: (exam_is_foreground, foreground_is_null, foreground_hwnd,
+/// foreground_is_secure_system, foreground_process). Fail-safe: a null
+/// foreground is reported as such (the caller's NULL_LOCK_TICKS logic decides
+/// transient vs locked); it is NOT coerced to "exam focused".
+pub fn observe_foreground(exam_hwnd: isize) -> (bool, bool, isize, bool, Option<String>) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let exam = HWND(exam_hwnd as *mut _);
+    let fg = unsafe { GetForegroundWindow() };
+    if fg.0.is_null() {
+        return (false, true, 0, false, None);
+    }
+    if fg == exam {
+        return (true, false, exam_hwnd, false, None);
+    }
+    let name = foreground_process_name(fg);
+    let secure = is_secure_or_system_process(name.as_deref());
+    (false, false, fg.0 as isize, secure, name)
+}
+
+/// Lowercased image file name (e.g. "chrome.exe") of the process owning `fg`.
+fn foreground_process_name(fg: windows::Win32::Foundation::HWND) -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(fg, Some(&mut pid));
+    }
+    if pid == 0 {
+        return None;
+    }
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut buf = [0u16; 260];
+    let mut len = buf.len() as u32;
+    let res = unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+    };
+    let _ = unsafe { CloseHandle(handle) };
+    if res.is_err() {
+        return None;
+    }
+
+    let full = String::from_utf16_lossy(&buf[..len as usize]);
+    full.rsplit(['\\', '/'])
+        .next()
+        .map(|s| s.to_ascii_lowercase())
+}
+
+/// Secure-desktop / login-UI / UAC processes we must NEVER fight for focus
+/// (spec §1 + §5 CASE C secure branch).
+fn is_secure_or_system_process(name: Option<&str>) -> bool {
+    matches!(
+        name,
+        Some("winlogon.exe" | "csrss.exe" | "logonui.exe" | "consent.exe")
+    )
+}
+
+/// One gentle attempt to pull the exam window to the foreground.
+pub fn set_exam_foreground(exam_hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    let _ = unsafe { SetForegroundWindow(HWND(exam_hwnd as *mut _)) };
+}
+
 #[cfg(test)]
 mod display_tests {
     use super::resolve_monitor_count;
