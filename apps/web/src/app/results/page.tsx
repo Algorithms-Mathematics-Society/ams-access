@@ -59,6 +59,11 @@ function ResultsView() {
       }
       if (!res.ok) {
         setError("Could not load results. The contest may not exist.");
+        // Lock state is unknown on failure — clear it so the honest error
+        // screen (with a working Retry) renders instead of a frozen locked
+        // screen (locked renders before error, so stale locked hid errors).
+        setLocked(false);
+        setLockedUntil(null);
         return;
       }
       const data = (await res.json()) as ResultsData;
@@ -67,6 +72,9 @@ function ResultsView() {
       setLockedUntil(null);
     } catch {
       setError("Could not connect. Check your network and retry.");
+      // Same as above: don't assert a lock state we don't know.
+      setLocked(false);
+      setLockedUntil(null);
     }
   }, [contestId, email]);
 
