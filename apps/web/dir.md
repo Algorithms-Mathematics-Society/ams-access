@@ -162,9 +162,19 @@ page.tsx: 4,771 → 1,371 (−71%). Stage state moved WITH its stage (whole-comp
 
 page.tsx: 751 → 267. Suspense wrapper byte-untouched (static-export). Extraction = zero behavior change; the two behavior changes are separate, labeled fix commits for bugs that existed on main.
 
-### PR G login · PR H shared
+### PR G — login (`refactor/login-components`)
 
-(expand each table when its block starts)
+| Task                                                                                                                                                    | Files     | Status |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------ |
+| G.1 BrandPane (zero props) + SsoModal                                                                                                                   | `88db2a5` | ☑      |
+| G.2 OtpForm + PasswordForm (13 useState + all handlers + TEST\_ creds stay in LoginPage)                                                                | `3ad9649` | ☑      |
+| G.3 gates + review ×2 + rig (email persists across both toggles, full OTP journey wrong→right code→/home redirect, SSO modal, focus; attribution exact) | —         | ☑      |
+
+page.tsx: 605 → 287. **Documented accepted delta:** the mode toggle now remounts the form subtree (was DOM-patch) — React value/focus survive (rig-proven; single blur-forcing `setMode` site; no mount CSS; error pre-cleared), but native password-manager affordances (autofill highlight/extension overlay) reset on toggle. Cosmetic; the alternative (one merged form component) defeats the extraction. Revisit if a programmatic/keyboard `setMode` path is ever added.
+
+### PR H shared loading shell
+
+(expand when its block starts)
 
 ## 7. Deferred / rejected
 
