@@ -12,9 +12,6 @@ import {
 import { invoke } from "@ams/api-client";
 import MarkovEditor, { type MarkovChain, normalizeChain } from "@/components/MarkovEditor";
 import dynamic from "next/dynamic";
-import { marked } from "marked";
-import katex from "katex";
-import DOMPurify from "dompurify";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
@@ -41,8 +38,34 @@ import {
   type RunVerdict,
   type SubmissionAttemptRecord,
 } from "./submission-state";
-import { countdownPhase, type CountdownPhase } from "./countdown";
+import { type CountdownPhase } from "./countdown";
 import { computeAutosaveDelayMs } from "./autosave-timing";
+import {
+  parseDescription,
+  splitProblemDescription,
+  getAvailableProblemTabs,
+  enhanceSampleBlocks,
+  type ProblemSectionKey,
+} from "./components/markdown";
+import { VERDICT_COLORS, VERDICT_BG, VERDICT_BORDER } from "./components/verdict-styles";
+import {
+  LANGUAGE_ID_MAP,
+  toLanguageId,
+  normalizeLanguageLabel,
+  normalizeAllowedLanguages,
+  defaultCppStarter,
+  defaultStarterFor,
+  isPristineStarter,
+  questionFileName,
+} from "./components/language";
+import {
+  type Question,
+  type ContestMeta,
+  type FollowUpPartState,
+  parseFollowUpParts,
+  normalizeQuestions,
+} from "./components/questions";
+import { useFocusTrap, useCountdown } from "./components/hooks";
 import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
 import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
@@ -123,249 +146,9 @@ const MAX_SAVE_RETRIES = 5;
 // 10s > warm latency (esp. once api min-instances=1 removes the ~15s cold start)
 // and < "hung". On timeout the fetch aborts into handleSave's catch → saveError.
 const SAVE_TIMEOUT_MS = 10_000;
-type ProblemSectionKey = "statement" | "examples" | "constraints";
-
-/**
- * Maps the display label used in the UI and stored in `allowed_languages`
- * to the wire identifier expected by the judge worker.
- * The worker matches by substring so "cpp17" satisfies both the `c++` and `cpp` checks.
- */
-const LANGUAGE_ID_MAP: Record<string, string> = {
-  C: "c",
-  "C++17": "cpp17",
-  "C++20": "cpp20",
-  cpp: "cpp17",
-  cpp17: "cpp17",
-  cpp20: "cpp20",
-  "c++": "cpp17",
-  "c++17": "cpp17",
-  "c++20": "cpp20",
-  Python3: "python3",
-  python: "python3",
-  py: "python3",
-  python3: "python3",
-  PyPy3: "pypy3",
-  pypy: "pypy3",
-  pypy3: "pypy3",
-  Java17: "java17",
-  java: "java17",
-  java17: "java17",
-  Go: "go",
-  go: "go",
-  Rust: "rust",
-  rust: "rust",
-};
-
-// Languages the judge worker actually handles. Go and Rust are not yet
-// implemented in runner.go — filter them from the UI until they are.
-const WORKER_SUPPORTED_LANGUAGES = new Set(["C", "C++17", "C++20", "Python3", "PyPy3", "Java17"]);
-
-function toLanguageId(displayLabel: string): string {
-  return LANGUAGE_ID_MAP[displayLabel] ?? displayLabel.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function normalizeLanguageLabel(label: string): string {
-  const trimmed = label.trim();
-  switch (trimmed.toLowerCase()) {
-    case "cpp":
-    case "cpp17":
-    case "c++":
-    case "c++17":
-      return "C++17";
-    case "cpp20":
-    case "c++20":
-      return "C++20";
-    case "python":
-    case "py":
-    case "python3":
-      return "Python3";
-    case "pypy":
-    case "pypy3":
-      return "PyPy3";
-    case "java":
-    case "java17":
-      return "Java17";
-    case "go":
-      return "Go";
-    case "rust":
-      return "Rust";
-    default:
-      return trimmed;
-  }
-}
-
-function normalizeAllowedLanguages(languages?: string[] | null): string[] {
-  const source = languages?.length ? languages : ["C++17"];
-  const normalized = source
-    .map((language) => normalizeLanguageLabel(language))
-    .filter((language, index, list) => list.indexOf(language) === index);
-  return normalized.length > 0 ? normalized : ["C++17"];
-}
 
 function isContestEditorTheme(value: string | null): value is ContestEditorThemeId {
   return Boolean(value && CONTEST_EDITOR_THEMES.some((theme) => theme.id === value));
-}
-
-// Configure marked once at module level — pays cost on first import, never again.
-marked.use({ breaks: true, gfm: true });
-
-// Opaque sentinels used to lift code and math out of the markdown before marked
-// runs, then re-inject them after sanitization. They contain no markdown-active
-// (_ * ` [ ] $) or HTML-active characters, so marked and DOMPurify pass them
-// through verbatim. (HTML comments would be stripped by DOMPurify — don't use them.)
-const MATH_TOKEN = (n: number) => `@@AMSMATH${n}@@`;
-const CODE_TOKEN = (n: number) => `@@AMSCODE${n}@@`;
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-// Render a single LaTeX fragment to HTML with KaTeX, then sanitize it in
-// isolation. KaTeX HTML is injected AFTER the main DOMPurify pass, so it must be
-// scrubbed here: with output:"html" KaTeX emits only <span> elements carrying
-// class/style, so a tampered LaTeX payload can never produce a script, an event
-// handler, or a javascript: URL that could reach window.__TAURI__.
-function renderMath(tex: string, displayMode: boolean): string {
-  let html: string;
-  try {
-    html = katex.renderToString(tex, {
-      displayMode,
-      throwOnError: false,
-      output: "html",
-      strict: "ignore",
-    });
-  } catch {
-    // throwOnError:false already renders parse errors inline; this guards only
-    // against unexpected exceptions so a bad statement never blanks the view.
-    return `<code class="pb-math-error">${escapeHtml(tex)}</code>`;
-  }
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ["span"],
-    ALLOWED_ATTR: ["class", "style", "aria-hidden"],
-  });
-}
-
-function parseDescription(md: string): string {
-  // SECURITY: problem statements are untrusted (backend / contest-authored, and
-  // could be tampered with in transit) and are rendered into the privileged
-  // Tauri webview via dangerouslySetInnerHTML. Sanitize the marked() output —
-  // stripping <script>, inline event handlers, and javascript:/data: URLs —
-  // before it can reach the DOM, so injected markup cannot reach window.__TAURI__.
-  // DOMPurify needs a DOM; during static prerender (Node) there is none, but
-  // contest content is only ever fetched and rendered in the browser, so the
-  // prerender path only ever sees empty placeholder strings.
-  if (typeof window === "undefined") return "";
-
-  const codeFragments: string[] = [];
-  const mathFragments: string[] = [];
-
-  // 1. Lift code out first so a `$` inside code/`...` is never treated as math.
-  //    Fenced blocks before inline spans. The original raw text is preserved and
-  //    re-emitted (escaped) as standard <pre><code>/<code> after sanitization.
-  let working = md.replace(
-    /```[ \t]*([\w-]*)[ \t]*\r?\n([\s\S]*?)```/g,
-    (_m, _lang: string, body: string) => {
-      const i = codeFragments.length;
-      codeFragments.push(`<pre><code>${escapeHtml(String(body).replace(/\n$/, ""))}</code></pre>`);
-      return `\n\n${CODE_TOKEN(i)}\n\n`;
-    }
-  );
-  working = working.replace(/`([^`\n]+?)`/g, (_m, body: string) => {
-    const i = codeFragments.length;
-    codeFragments.push(`<code>${escapeHtml(body)}</code>`);
-    return CODE_TOKEN(i);
-  });
-
-  // 2. Extract math — display $$...$$ before inline $...$ so a $$ pair is not
-  //    misread as two empty inline delimiters. Each fragment is pre-rendered to
-  //    sanitized KaTeX HTML and replaced with an inert token.
-  working = working.replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex: string) => {
-    const i = mathFragments.length;
-    mathFragments.push(renderMath(tex.trim(), true));
-    return MATH_TOKEN(i);
-  });
-  working = working.replace(/\$((?:[^$\\]|\\.)+?)\$/g, (_m, tex: string) => {
-    const i = mathFragments.length;
-    mathFragments.push(renderMath(tex.trim(), false));
-    return MATH_TOKEN(i);
-  });
-
-  // 3. Markdown -> HTML on the now code-free, math-free text.
-  const rawHtml = marked.parse(working) as string;
-
-  // 4. Sanitize the markdown-derived body with the standard untrusted-content
-  //    profile (unchanged). Tokens are inert plain text and survive intact.
-  let safeHtml = DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
-
-  // 5. Re-inject the (independently sanitized / escaped) code and math fragments.
-  safeHtml = safeHtml
-    .replace(/@@AMSCODE(\d+)@@/g, (_m, n: string) => codeFragments[Number(n)] ?? "")
-    .replace(/@@AMSMATH(\d+)@@/g, (_m, n: string) => mathFragments[Number(n)] ?? "");
-
-  return safeHtml;
-}
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
-function escapeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function enhanceSampleBlocks(html: string, copiedSampleKey: string | null): string {
-  let index = 0;
-  return html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (_match, attrs, code) => {
-    const key = `sample-${index++}`;
-    const plain = decodeHtmlEntities(code).replace(/\n$/, "");
-    const label = copiedSampleKey === key ? "Copied" : "Copy";
-    return `<div class="pb-sample-block"><button type="button" class="pb-copy-button" data-copy-key="${key}" data-copy-sample="${escapeHtmlAttribute(plain)}">${label}</button><pre><code${attrs}>${code}</code></pre></div>`;
-  });
-}
-
-function splitProblemDescription(md: string): Record<ProblemSectionKey, string> {
-  const sections: Record<ProblemSectionKey, string[]> = {
-    statement: [],
-    examples: [],
-    constraints: [],
-  };
-  let current: ProblemSectionKey = "statement";
-
-  for (const line of md.split("\n")) {
-    const heading = /^#{1,4}\s+(.+)$/.exec(line.trim());
-    if (heading) {
-      const title = heading[1].toLowerCase();
-      if (/examples?|samples?/.test(title)) current = "examples";
-      else if (/constraints?|limits?/.test(title)) current = "constraints";
-      else current = "statement";
-    }
-    sections[current].push(line);
-  }
-
-  return {
-    statement: sections.statement.join("\n").trim() || md,
-    examples: sections.examples.join("\n").trim(),
-    constraints: sections.constraints.join("\n").trim(),
-  };
-}
-
-function getAvailableProblemTabs(sections: Record<ProblemSectionKey, string>): ProblemSectionKey[] {
-  return (["statement", "examples", "constraints"] as const).filter(
-    (key) => key === "statement" || sections[key].trim().length > 0
-  );
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -377,306 +160,11 @@ const EditorPane = dynamic(() => import("./editor-pane"), {
   loading: () => <div style={{ flex: 1, background: "#0F0F0F", borderTop: "1px solid #1F1F1F" }} />,
 });
 
-type Question = {
-  id: string;
-  title: string;
-  description: string | null;
-  starter_code: string | null;
-  order_index: number;
-  question_type: string;
-};
-
-type ClientFollowUpPart = {
-  id?: string;
-  statement: string;
-  points: number;
-};
-
-type FollowUpPartState = {
-  inputText: string;
-  loading: boolean;
-  submitted: boolean;
-  correct: boolean;
-};
-
-function parseFollowUpParts(desc: string): ClientFollowUpPart[] {
-  try {
-    const parsed = JSON.parse(desc);
-    if (Array.isArray(parsed)) return parsed as ClientFollowUpPart[];
-  } catch {
-    /* empty */
-  }
-  return [];
-}
-
 type EditorFile = {
   id: string;
   name: string;
   content: string;
 };
-
-// Verdict dot/text colour resolves to the canonical --verdict-* tokens so a
-// verdict reads identically here, in the trust strip, and on the results page.
-// (CE is a distinct violet, not WA-red; RUNNING is blue so purple stays the
-// primary-action accent.) The BG/BORDER tints are DERIVED from those same tokens
-// via color-mix — re-hueing a verdict in globals.css updates every surface at
-// once, with no second hardcoded copy to drift out of sync.
-const VERDICT_COLORS: Record<string, string> = {
-  AC: "var(--verdict-ac)",
-  WA: "var(--verdict-wa)",
-  TLE: "var(--verdict-tle)",
-  MLE: "var(--verdict-mle)",
-  RE: "var(--verdict-re)",
-  CE: "var(--verdict-ce)",
-  OLE: "var(--verdict-mle)",
-  IE: "var(--verdict-ie)",
-  QUEUED: "var(--verdict-running)",
-  RUNNING: "var(--verdict-running)",
-};
-// A verdict hue at `pct`% opacity over the dark surface (equivalent to the old
-// rgba(...,pct/100) tints, but sourced from the one canonical token).
-const tint = (token: string, pct: number) =>
-  `color-mix(in srgb, var(${token}) ${pct}%, transparent)`;
-const VERDICT_BG: Record<string, string> = {
-  AC: tint("--verdict-ac", 10),
-  QUEUED: tint("--verdict-running", 10),
-  RUNNING: tint("--verdict-running", 10),
-  WA: tint("--verdict-wa", 10),
-  RE: tint("--verdict-re", 10),
-  CE: tint("--verdict-ce", 12),
-  IE: tint("--verdict-ie", 12),
-  TLE: tint("--verdict-tle", 10),
-  MLE: tint("--verdict-mle", 10),
-  OLE: tint("--verdict-mle", 10),
-};
-const VERDICT_BORDER: Record<string, string> = {
-  AC: tint("--verdict-ac", 28),
-  QUEUED: tint("--verdict-running", 28),
-  RUNNING: tint("--verdict-running", 28),
-  WA: tint("--verdict-wa", 28),
-  RE: tint("--verdict-re", 28),
-  CE: tint("--verdict-ce", 30),
-  IE: tint("--verdict-ie", 30),
-  TLE: tint("--verdict-tle", 28),
-  MLE: tint("--verdict-mle", 28),
-  OLE: tint("--verdict-mle", 28),
-};
-
-type ContestMeta = {
-  id: string;
-  title: string;
-  start_at?: string;
-  end_at: string;
-  status: string;
-  allowed_languages?: string[];
-};
-
-type QuestionPayload = Partial<Question> & {
-  problem_id?: string;
-  name?: string;
-  statement?: string | null;
-  prompt?: string | null;
-  body?: string | null;
-  code?: string | null;
-  cpp?: string | null;
-  starter_code?: string | null;
-  cpp_starter?: string | null;
-  html?: string | null;
-  css?: string | null;
-  js?: string | null;
-  html_starter?: string | null;
-  css_starter?: string | null;
-  js_starter?: string | null;
-  starter_html?: string | null;
-  starter_css?: string | null;
-  starter_js?: string | null;
-  starter?: {
-    code?: string | null;
-    cpp?: string | null;
-    html?: string | null;
-    css?: string | null;
-    js?: string | null;
-  } | null;
-  order?: number;
-  position?: number;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function pickString(...values: unknown[]): string | null {
-  for (const value of values) {
-    if (typeof value === "string") return value;
-  }
-  return null;
-}
-
-function pickNumber(...values: unknown[]): number | null {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-  }
-  return null;
-}
-
-function looksLikeCpp(code: string | null | undefined): code is string {
-  if (!code) return false;
-  return /#include\s*<|using\s+namespace\s+std|int\s+main\s*\(/.test(code);
-}
-
-function defaultCppStarter(): string {
-  return [
-    "#include <bits/stdc++.h>",
-    "using namespace std;",
-    "",
-    "int main() {",
-    "  ios::sync_with_stdio(false);",
-    "  cin.tie(nullptr);",
-    "",
-    "  return 0;",
-    "}",
-  ].join("\n");
-}
-
-function defaultPythonStarter(): string {
-  return [
-    "import sys",
-    "input = sys.stdin.readline",
-    "",
-    "def solve():",
-    "    pass",
-    "",
-    "solve()",
-  ].join("\n");
-}
-
-function defaultJavaStarter(): string {
-  return [
-    "import java.util.*;",
-    "import java.io.*;",
-    "",
-    "public class Main {",
-    "    public static void main(String[] args) throws IOException {",
-    "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));",
-    "        ",
-    "    }",
-    "}",
-  ].join("\n");
-}
-
-function defaultStarterFor(language: string): string {
-  if (language === "Python3") return defaultPythonStarter();
-  if (language === "Java17") return defaultJavaStarter();
-  return defaultCppStarter();
-}
-
-/**
- * Returns true if content has never been meaningfully edited — i.e. it still
- * matches any of the known default starters or is empty. Safe to replace when
- * the user switches languages.
- */
-function isPristineStarter(content: string): boolean {
-  return (
-    content === "" ||
-    content === defaultCppStarter() ||
-    content === defaultPythonStarter() ||
-    content === defaultJavaStarter()
-  );
-}
-
-const LANGUAGE_EXTENSIONS: Record<string, string> = {
-  "C++17": "cpp",
-  "C++20": "cpp",
-  Python3: "py",
-  Java17: "java",
-  Go: "go",
-  Rust: "rs",
-};
-
-/**
- * Derives the editor filename for a question's main file.
- * Java is a hard special-case: the worker compiles `javac Main.java` and runs
- * `java -cp . Main`, so the class name — and therefore the filename — must be
- * `Main.java` regardless of the question title.
- */
-function questionFileName(question: Question, language: string): string {
-  if (language === "Java17") return "Main.java";
-
-  const ext = LANGUAGE_EXTENSIONS[language] ?? "cpp";
-  const fallbackLetter = String.fromCharCode(65 + Math.max(0, question.order_index));
-
-  const letterMatch = /^([A-Z])(?:[.)\]:-]|\s+-|\s)/i.exec(question.title.trim());
-  if (letterMatch) return `${letterMatch[1].toUpperCase()}.${ext}`;
-
-  const slug = question.title
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `${slug || fallbackLetter}.${ext}`;
-}
-
-function unwrapQuestionList(payload: unknown): unknown[] {
-  if (Array.isArray(payload)) return payload;
-  if (!isRecord(payload)) return [];
-
-  const candidates = [
-    payload.questions,
-    payload.problems,
-    payload.items,
-    payload.data,
-    payload.results,
-    isRecord(payload.contest) ? payload.contest.questions : null,
-    isRecord(payload.contest) ? payload.contest.problems : null,
-    isRecord(payload.bundle) ? payload.bundle.questions : null,
-    isRecord(payload.bundle) ? payload.bundle.problems : null,
-  ];
-
-  for (const candidate of candidates) {
-    const nested = unwrapQuestionList(candidate);
-    if (nested.length > 0) return nested;
-  }
-
-  return [];
-}
-
-function normalizeQuestion(value: unknown, index: number): Question | null {
-  if (!isRecord(value)) return null;
-  const payload = value as QuestionPayload;
-  const starter = isRecord(payload.starter) ? payload.starter : null;
-  const id = pickString(payload.id, payload.problem_id);
-  const title = pickString(payload.title, payload.name);
-  const orderIndex = pickNumber(payload.order_index, payload.order, payload.position) ?? index;
-
-  return {
-    id: id ?? `question-${orderIndex + 1}`,
-    title: title ?? `Question ${orderIndex + 1}`,
-    description: pickString(payload.description, payload.statement, payload.prompt, payload.body),
-    starter_code:
-      pickString(
-        payload.starter_code,
-        payload.cpp_starter,
-        payload.code,
-        payload.cpp,
-        starter?.code,
-        starter?.cpp
-      ) ??
-      (looksLikeCpp(payload.html_starter) ? payload.html_starter : null) ??
-      (looksLikeCpp(payload.starter_html) ? payload.starter_html : null) ??
-      (looksLikeCpp(starter?.html) ? starter.html : null) ??
-      (looksLikeCpp(payload.html) ? payload.html : null),
-    order_index: orderIndex,
-    question_type:
-      typeof (payload as any).question_type === "string" ? (payload as any).question_type : "code",
-  };
-}
-
-function normalizeQuestions(payload: unknown): Question[] {
-  return unwrapQuestionList(payload)
-    .map((item, index) => normalizeQuestion(item, index))
-    .filter((item): item is Question => item !== null)
-    .sort((a, b) => a.order_index - b.order_index);
-}
 
 async function fetchJsonOrNull(url: string): Promise<unknown | null> {
   try {
@@ -765,61 +253,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
-function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void) {
-  const ref = useRef<T>(null);
-
-  useEffect(() => {
-    if (!active) return;
-    const rootEl = ref.current;
-    if (!rootEl) return;
-    const trappedRoot: T = rootEl;
-
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const selector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-    const focusable = Array.from(trappedRoot.querySelectorAll<HTMLElement>(selector)).filter(
-      (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
-    );
-    (focusable[0] ?? trappedRoot).focus({ preventScroll: true });
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && onEscape) {
-        event.preventDefault();
-        onEscape();
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const currentFocusable = Array.from(
-        trappedRoot.querySelectorAll<HTMLElement>(selector)
-      ).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
-      if (currentFocusable.length === 0) {
-        event.preventDefault();
-        trappedRoot.focus({ preventScroll: true });
-        return;
-      }
-
-      const first = currentFocusable[0];
-      const last = currentFocusable[currentFocusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
-      previousFocus?.focus({ preventScroll: true });
-    };
-  }, [active, onEscape]);
-
-  return ref;
-}
-
 function isVideoRendering(video: HTMLVideoElement): boolean {
   return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0;
 }
@@ -862,62 +295,6 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
     await video.play();
   } catch {}
   return isVideoRendering(video);
-}
-
-function useCountdown(endAt: string, onExpiry?: () => void) {
-  const totalMsRef = useRef<number | null>(null);
-  const firedExpiryRef = useRef(false);
-  const [state, setState] = useState<{
-    remaining: string;
-    phase: CountdownPhase;
-    percentLeft: number;
-  }>({
-    remaining: "",
-    phase: "nominal",
-    percentLeft: 1,
-  });
-
-  useEffect(() => {
-    totalMsRef.current = null;
-    firedExpiryRef.current = false;
-    let id: ReturnType<typeof setInterval> | null = null;
-    function tick() {
-      const diff = new Date(endAt).getTime() - Date.now();
-      if (totalMsRef.current === null) totalMsRef.current = Math.max(diff, 0);
-      const percentLeft =
-        totalMsRef.current > 0 ? Math.max(0, Math.min(1, diff / totalMsRef.current)) : 0;
-      if (diff <= 0) {
-        setState((prev) =>
-          prev.remaining === "00:00:00" && prev.phase === "expired"
-            ? prev
-            : { remaining: "00:00:00", phase: "expired", percentLeft: 0 }
-        );
-        if (!firedExpiryRef.current && onExpiry) {
-          firedExpiryRef.current = true;
-          onExpiry();
-        }
-        if (id) clearInterval(id);
-        return;
-      }
-      const h = Math.floor(diff / 3600000);
-      const m = Math.floor((diff % 3600000) / 60000);
-      const s = Math.floor((diff % 60000) / 1000);
-      const remaining = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-      const phase = countdownPhase(diff);
-      setState((prev) =>
-        prev.remaining === remaining && prev.phase === phase
-          ? prev
-          : { remaining, phase, percentLeft }
-      );
-    }
-    tick();
-    id = setInterval(tick, 1000);
-    return () => {
-      if (id) clearInterval(id);
-    };
-  }, [endAt]);
-
-  return state;
 }
 
 const CountdownBadge = memo(function CountdownBadge({
