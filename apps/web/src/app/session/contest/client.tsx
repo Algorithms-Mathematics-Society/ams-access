@@ -76,31 +76,7 @@ import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
 import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
-import { VerdictBadge } from "@/lib/VerdictBadge";
-import type { VerdictCode } from "@/lib/verdict";
-import {
-  Play,
-  Loader2,
-  Send,
-  Video,
-  VideoOff,
-  AlertTriangle,
-  Mic,
-  MicOff,
-  ChevronUp,
-  ChevronDown,
-  AlertCircle,
-  Check,
-  Info,
-  Plus,
-  X,
-  Settings2,
-  ShieldCheck,
-  Shield,
-  Wifi,
-  WifiOff,
-  Save,
-} from "lucide-react";
+import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;

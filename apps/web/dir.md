@@ -51,7 +51,7 @@ Contest breakdown executes now on `refactor/contest-components`. **Finals freeze
 
 ## 4. Contest breakdown — `session/contest/` target
 
-`client.tsx` keeps: all ContestPageClient state/effects/handlers/refs, the `dynamic()` EditorPane wrapper, fetch helpers (`fetchJsonOrNull`/`fetchContestQuestions`/`createContestSession` — they read module-scope `API_URL`), the trailing `<style>` block, region composition. Target ~3,000 lines.
+`client.tsx` keeps: all ContestPageClient state/effects/handlers/refs, fetch helpers (`fetchJsonOrNull`/`fetchContestQuestions`/`createContestSession` — they read module-scope `API_URL`), the trailing `<style>` block, region composition. (The `dynamic()` EditorPane wrapper moved to EditorPanel.tsx module scope in Block 4 — superseding the earlier keep-in-client plan; chunk split verified.) Target ~3,000 lines.
 
 ```
 session/contest/components/
@@ -70,9 +70,15 @@ session/contest/components/
 ├── QuestionRail.tsx    Block 3
 ├── ProblemPane.tsx     Block 3
 ├── EditorPanel.tsx     Block 4 — ONE file (tab strip + close-confirm + settings + Run/Submit);
-│                                  EditorPane passed as prop (keeps dynamic() instance singular)
-├── TerminalPanel.tsx   Block 4
-└── CameraTile.tsx      Block 4 — keep-mounted <video>: conditional structure STAYS in client.tsx
+│                                  OWNS the module-scope dynamic() EditorPane wrapper (single
+│                                  instance; chunk split verified identical vs pre-move build);
+│                                  exports EditorFile (re-imported by client.tsx)
+├── TerminalPanel.tsx   Block 4 — LANGUAGE_META + isSampleTestRow relocated to its module scope
+│                                  (their only call sites; verified dead in client.tsx otherwise)
+└── CameraTile.tsx      Block 4 — ALWAYS-mounted <video>: the display-CSS visibility expression
+│                                  ((cameraStream ?? cameraError) && !sidebarCollapsed) moved
+│                                  verbatim INSIDE the tile; <CameraTile/> renders unconditionally
+│                                  — never a mount conditional
 ```
 
 **Contest gates per block:** gate block (§1) + invoke-diff + behavioral rig scenarios before any merge (run/submit round-trip; PR #27 cross-write check; autosave/save-indicator honesty; question switching; camera-live-through-collapse; countdown expiry) + screenshot pass vs `contest-redesign-visual-checklist.md` for JSX blocks (2–4). PR #13 (kiosk) is open and adds 2 lines to client.tsx — re-check its merge-time runtime verification after each contest block lands.
