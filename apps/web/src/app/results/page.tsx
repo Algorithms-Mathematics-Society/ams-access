@@ -8,101 +8,11 @@ const API_URL = resolveApiBase();
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { verdictColor, verdictLabel, type VerdictCode } from "@/lib/verdict";
 import { VerdictBadge } from "@/lib/VerdictBadge";
-
-// ── Types ────────────────────────────────────────────────────────────────────
-
-type ProblemState = {
-  question_id: string;
-  attempts: number;
-  best_score: number;
-  verdict: string;
-  last_submission_at: string | null;
-};
-
-type LeaderboardEntry = {
-  rank: number;
-  session_id: string;
-  candidate_name: string;
-  candidate_email: string;
-  total_score: number;
-  solved_count: number;
-  penalty_seconds: number;
-  problems: ProblemState[];
-};
-
-type Question = { id: string; title: string; points: number; order_index: number };
-
-type ResultsData = {
-  contest_id: string;
-  status: string;
-  scoring_type: string;
-  results_visible_at: string;
-  questions: Question[];
-  entries: LeaderboardEntry[];
-  my_session_id: string;
-};
-
-type MySubmission = {
-  id: string;
-  problem_id: string;
-  problem_title: string;
-  attempt_no: number;
-  language: string;
-  status: string;
-  final_verdict: string | null;
-  score: number;
-  runtime_ms: number | null;
-  memory_kb: number | null;
-  created_at: string;
-};
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatPenalty(secs: number): string {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-function formatCountdown(targetIso: string): string {
-  const diff = new Date(targetIso).getTime() - Date.now();
-  if (diff <= 0) return "now";
-  const h = Math.floor(diff / 3600000);
-  const m = Math.floor((diff % 3600000) / 60000);
-  const s = Math.floor((diff % 60000) / 1000);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
+import type { ResultsData, MySubmission } from "./components/types";
+import { formatPenalty, formatCountdown } from "./components/utils";
+import { ResultsLoading } from "./components/ResultsLoading";
 
 // ── Page ─────────────────────────────────────────────────────────────────────
-
-// Shared loading screen — used both as the data-fetch placeholder and as the
-// Suspense fallback for useSearchParams(), so the UI is identical in both cases.
-function ResultsLoading() {
-  return (
-    <main className="route-loading-shell route-loading-shell--results">
-      <svg className="route-loading-spinner" viewBox="0 0 30 30" fill="none" aria-hidden="true">
-        <circle
-          cx="15"
-          cy="15"
-          r="12.5"
-          stroke="currentColor"
-          strokeOpacity="0.2"
-          strokeWidth="2.5"
-        />
-        <path
-          d="M15 2.5 A12.5 12.5 0 0 1 27.5 15"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-        />
-      </svg>
-      <div className="route-loading-label">Loading results…</div>
-    </main>
-  );
-}
 
 function ResultsView() {
   const router = useRouter();
