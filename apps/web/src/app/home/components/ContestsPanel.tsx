@@ -25,23 +25,27 @@ export function ContestsPanel({
   function statusColor(s: string) {
     if (s === "ACTIVE")
       return {
-        dot: theme === "light" ? "#10b981" : "#22c55e",
-        bg: "rgba(34,197,94,0.08)",
-        border: "rgba(34,197,94,0.2)",
+        dot: "var(--theme-dot)",
+        bg: "var(--home-status-ok-bg)",
+        border: "var(--home-status-ok-border)",
       };
     if (s === "SCHEDULED")
       return {
-        dot: theme === "light" ? "var(--color-accent-deep)" : "var(--color-accent-base)",
-        bg: theme === "light" ? "rgb(var(--accent-rgb) / 0.08)" : "rgb(var(--accent-rgb) / 0.08)",
-        border: theme === "light" ? "rgb(var(--accent-rgb) / 0.2)" : "rgb(var(--accent-rgb) / 0.2)",
+        dot: "var(--home-accent-dot)",
+        bg: "rgb(var(--accent-rgb) / 0.08)",
+        border: "rgb(var(--accent-rgb) / 0.2)",
       };
     if (s === "ENDED")
       return {
-        dot: theme === "light" ? "#7c7467" : "rgba(255,255,255,0.25)",
-        bg: theme === "light" ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)",
-        border: theme === "light" ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.1)",
+        dot: "var(--home-dot-ended)",
+        bg: "var(--home-overlay-ended)",
+        border: "var(--home-border-ended)",
       };
-    return { dot: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)" };
+    return {
+      dot: "var(--home-status-warn-dot)",
+      bg: "var(--home-status-warn-bg)",
+      border: "var(--home-status-warn-border-20)",
+    };
   }
 
   if (loading) {
@@ -50,7 +54,7 @@ export function ContestsPanel({
         <p
           style={{
             fontSize: "11px",
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             marginBottom: "16px",
@@ -66,8 +70,8 @@ export function ContestsPanel({
             style={{
               height: "90px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(255,255,255,0.015)",
-              border: "1px solid rgba(255,255,255,0.04)",
+              background: "var(--home-overlay-whisper)",
+              border: "1px solid var(--theme-border)",
               marginBottom: "12px",
               animation: "pulse-dot 2.5s ease-in-out infinite",
             }}
@@ -95,7 +99,7 @@ export function ContestsPanel({
             width: "40px",
             height: "40px",
             borderRadius: "var(--radius-sm)",
-            background: "rgba(255,255,255,0.01)",
+            background: "var(--home-overlay-whisper)",
             border: `1px solid ${themeColors.border}`,
             display: "flex",
             alignItems: "center",
@@ -139,14 +143,15 @@ export function ContestsPanel({
       <p
         style={{
           fontSize: "11px",
-          color: "rgba(255,255,255,0.45)",
+          color: "var(--theme-text-muted)",
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           marginBottom: "16px",
           fontWeight: 600,
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         }}
       >
-        Contests ({contests.length})
+        CONTESTS ({contests.length})
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         {contests.map((c) => {

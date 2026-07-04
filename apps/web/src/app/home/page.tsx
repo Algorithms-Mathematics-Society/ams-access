@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, LayoutGrid, Settings as SettingsIcon, Pin } from "lucide-react";
+import { Activity, LayoutGrid, Settings as SettingsIcon } from "lucide-react";
 import {
   applyOrganizerOverrides,
   fetchOrganizerOverrides,
@@ -11,6 +11,8 @@ import {
   sessionPolicy,
 } from "@ams/api-client";
 import { fetchJson, useApiQuery } from "@/lib/api-client";
+import { useTheme } from "@/lib/theme";
+import { useDarkLocked } from "@/lib/theme-dark-lock"; // step-0 (shipped on main via PR #17)
 import { authHeaders } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
@@ -48,7 +50,6 @@ import {
 } from "./components/utils";
 
 // ── Components ─────────────────────────────────────────────────
-import { SignOutButton } from "./components/SignOutButton";
 import { ContestsPanel } from "./components/ContestsPanel";
 import { SessionActionsPanel } from "./components/SessionActionsPanel";
 import { ReadinessWidget } from "./components/ReadinessPanel";
@@ -79,7 +80,12 @@ const NAV_ITEMS = [
 
 export default function HomePage() {
   const router = useRouter();
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const { theme: canonicalTheme } = useTheme(); // canonical single source
+  const darkLocked = useDarkLocked(); // step-0 JS facet: true while /home is dark-locked (it is, through step 3)
+  // Home is dark-locked through Phase 2a step 3. Its colors are JS ternaries until step 2, which a
+  // CSS lock can't constrain — so clamp the READ to dark while locked. Read-time derivation, NOT a
+  // writer: canonical stays the sole theme state. At the step-3 flip, delete the clamp.
+  const theme = darkLocked ? "dark" : canonicalTheme;
   const [activeNav, setActiveNav] = useState("overview");
   const [signingOut, setSigningOut] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
@@ -227,12 +233,6 @@ export default function HomePage() {
     },
     [appendSecurityEvent]
   );
-
-  useEffect(() => {
-    setTheme("dark");
-    localStorage.setItem(STORAGE_KEYS.THEME, "dark");
-    document.documentElement.className = "dark";
-  }, []);
 
   const c = useMemo(() => getThemeColors(theme), [theme]);
 
@@ -898,11 +898,18 @@ export default function HomePage() {
     setTimeout(() => router.push("/"), 600);
   }
 
+  // suppress unused-var lint for state vars kept per brief (rendering uses always-open rail)
+  void sidebarOpen;
+  void setSidebarExpanded;
+  void setSidebarHovered;
+  void closeFailedApps;
+
   return (
     <div
       className="theme-transition"
       style={{
         display: "flex",
+        flexDirection: "column",
         height: "100vh",
         overflow: "hidden",
         fontFamily: "'Geist', 'Inter', system-ui, sans-serif",
@@ -910,418 +917,444 @@ export default function HomePage() {
         color: c.text,
       }}
     >
-      {/* ── Sidebar ── */}
-      <aside
-        onMouseEnter={() => setSidebarHovered(true)}
-        onMouseLeave={() => setSidebarHovered(false)}
+      {/* ── Top Bar — full-width: brand · search · profile ── */}
+      <div
         style={{
-          width: sidebarOpen ? "240px" : "60px",
-          flexShrink: 0,
           display: "flex",
-          flexDirection: "column",
-          borderRight: `1px solid ${c.border}`,
+          alignItems: "center",
+          height: "56px",
+          flexShrink: 0,
+          borderBottom: `1px solid ${c.border}`,
           background: c.sidebarBg,
-          padding: "16px 0 0",
-          transition:
-            "width var(--transition-standard), border-color var(--transition-standard), background var(--transition-standard)",
-          overflow: "hidden",
-          willChange: "width",
         }}
       >
-        {/* ── Logo + pin toggle ── */}
-        <button
-          onClick={() => setSidebarExpanded((v) => !v)}
-          title={sidebarExpanded ? "Unpin sidebar" : "Pin sidebar open"}
+        {/* Brand — logo + wordmark, width-matched to the static rail */}
+        <div
           style={{
+            width: "200px",
+            flexShrink: 0,
             display: "flex",
             alignItems: "center",
-            width: "100%",
-            height: "48px",
-            padding: 0,
-            marginBottom: "16px",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            flexShrink: 0,
+            padding: "0 20px",
+            gap: "10px",
+            borderRight: `1px solid ${c.border}`,
+            height: "100%",
           }}
         >
-          {/* Icon lives in a fixed 60px column — never moves */}
-          <span
-            style={{
-              width: "60px",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              flexShrink: 0,
-            }}
-          >
-            <svg width="22" height="20" viewBox="0 0 172 164" fill="none">
-              <path
-                d="M2 162L87 2L172 162"
-                stroke="url(#logo-grad-s)"
-                strokeWidth="6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <defs>
-                <linearGradient
-                  id="logo-grad-s"
-                  x1="2"
-                  y1="82"
-                  x2="172"
-                  y2="82"
-                  gradientUnits="userSpaceOnUse"
-                >
-                  <stop stopColor="var(--color-accent-deep)" />
-                  <stop offset="0.5" stopColor="var(--color-accent-base)" />
-                  <stop offset="1" stopColor="#A78BFA" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </span>
-          {/* Text fades in/out — always in DOM, never repositions icon */}
+          <svg width="22" height="20" viewBox="0 0 172 164" fill="none">
+            <path
+              d="M2 162L87 2L172 162"
+              stroke="url(#logo-grad-topbar)"
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <defs>
+              <linearGradient
+                id="logo-grad-topbar"
+                x1="2"
+                y1="82"
+                x2="172"
+                y2="82"
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop stopColor="var(--color-accent-deep)" />
+                <stop offset="0.5" stopColor="var(--color-accent-base)" />
+                <stop offset="1" stopColor="rgb(var(--accent-light-rgb))" />
+              </linearGradient>
+            </defs>
+          </svg>
           <span
             style={{
               fontSize: "12px",
               fontWeight: 500,
               letterSpacing: "0.4em",
-              color: "rgba(255,255,255,0.85)",
+              color: "var(--theme-text-muted-strong)",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
-              pointerEvents: "none",
-              userSelect: "none",
-              opacity: sidebarOpen ? 1 : 0,
-              transition: sidebarOpen
-                ? "opacity var(--transition-standard) 160ms"
-                : "opacity var(--transition-fast)",
             }}
           >
             ACCESS
           </span>
-          {/* Pin indicator — accent when pinned, muted otherwise; only shown when open */}
-          <span
-            style={{
-              marginLeft: "auto",
-              marginRight: "18px",
-              display: "flex",
-              alignItems: "center",
-              color: sidebarExpanded ? c.accent : c.textMuted,
-              opacity: sidebarOpen ? 1 : 0,
-              pointerEvents: "none",
-              transition: "opacity var(--transition-fast), color var(--transition-fast)",
-            }}
-          >
-            <Pin size={14} strokeWidth={1.8} fill={sidebarExpanded ? "currentColor" : "none"} />
-          </span>
-        </button>
+        </div>
 
-        {/* ── Nav list ── */}
-        <nav
+        {/* Decorative search — read-only, no handler, no state */}
+        <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 24px" }}>
+          <input
+            readOnly
+            tabIndex={-1}
+            placeholder="Search"
+            style={{
+              width: "100%",
+              maxWidth: "280px",
+              background: "var(--surface-2)",
+              border: `1px solid ${c.border}`,
+              borderRadius: "var(--radius-md)",
+              color: c.textMuted,
+              fontSize: "13px",
+              padding: "6px 14px",
+              outline: "none",
+              cursor: "default",
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          />
+        </div>
+
+        {/* Profile + sign-out (avatar button wired to existing handleSignOut) */}
+        <div
           style={{
-            flex: 1,
-            padding: "0 8px",
             display: "flex",
-            flexDirection: "column",
-            gap: "6px",
+            alignItems: "center",
+            gap: "12px",
+            paddingRight: "20px",
+            flexShrink: 0,
           }}
         >
-          {NAV_ITEMS.map((item) => {
-            const active = activeNav === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveNav(item.id)}
-                title={item.label}
-                className="home-nav-btn"
-                data-active={String(active)}
-                style={{
-                  position: "relative",
-                  display: "flex",
-                  alignItems: "center",
-                  width: "100%",
-                  height: "40px",
-                  padding: 0,
-                  borderRadius: "var(--radius-md)",
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  overflow: "hidden",
-                  flexShrink: 0,
-                }}
-              >
-                {/* Active bar — fades, never causes layout shift */}
-                <div
-                  style={{
-                    position: "absolute",
-                    left: "0",
-                    top: "8px",
-                    bottom: "8px",
-                    width: "4px",
-                    background: c.accent,
-                    borderRadius: "var(--radius-pill)",
-                    opacity: active ? 1 : 0,
-                    transition: "opacity var(--transition-fast)",
-                  }}
-                />
-                {/* Icon — fixed 44px column, always centered */}
-                <span
-                  style={{
-                    width: "44px",
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    flexShrink: 0,
-                    color: active ? c.accent : c.textMuted,
-                    transition: "color var(--transition-fast)",
-                  }}
-                >
-                  {item.icon}
-                </span>
-                {/* Label — fades, never moves the icon */}
-                <span
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 400,
-                    color: active ? c.accentText : c.textMuted,
-                    whiteSpace: "nowrap",
-                    pointerEvents: "none",
-                    userSelect: "none",
-                    opacity: sidebarOpen ? 1 : 0,
-                    transition: sidebarOpen
-                      ? "opacity var(--transition-standard) 160ms"
-                      : "opacity var(--transition-fast)",
-                  }}
-                >
-                  {item.label}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* ── Profile / sign-out ── */}
-        <div style={{ padding: "12px 8px 20px", flexShrink: 0 }}>
-          {/* Avatar row — one layout, text fades */}
-          <div
+          <p
             style={{
-              display: "flex",
-              alignItems: "center",
-              height: "44px",
-              borderRadius: "var(--radius-md)",
-              border: "1px solid transparent",
-              borderColor: sidebarOpen ? c.border : "transparent",
-              background: sidebarOpen ? "rgba(255,255,255,0.01)" : "transparent",
-              marginBottom: "6px",
-              overflow: "hidden",
-              transition:
-                "border-color var(--transition-standard), background var(--transition-standard)",
+              fontSize: "11px",
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              color: c.textMuted,
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
             }}
           >
-            {/* Avatar — fixed column, always visible */}
-            <span
+            {userDisplayEmail || userEmail}
+          </p>
+          <button
+            onClick={handleSignOut}
+            title="Sign out"
+            disabled={signingOut}
+            style={{
+              width: "34px",
+              height: "34px",
+              borderRadius: "var(--radius-pill)",
+              background:
+                "linear-gradient(135deg, rgb(var(--accent-rgb)), rgb(var(--accent-light-rgb)))",
+              border: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "13px",
+              fontWeight: 700,
+              color: "white",
+              cursor: signingOut ? "not-allowed" : "pointer",
+              opacity: signingOut ? 0.6 : 1,
+              flexShrink: 0,
+              transition: "opacity var(--transition-fast)",
+            }}
+          >
+            {userEmail[0].toUpperCase()}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Body: static rail + content ── */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {/* ── Static Rail — always expanded, labels always visible ── */}
+        <aside
+          style={{
+            width: "200px",
+            flexShrink: 0,
+            display: "flex",
+            flexDirection: "column",
+            borderRight: `1px solid ${c.border}`,
+            background: c.sidebarBg,
+            padding: "16px 0 0",
+            overflow: "hidden",
+          }}
+        >
+          {/* ── Nav list ── */}
+          <nav
+            style={{
+              flex: 1,
+              padding: "0 8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            }}
+          >
+            {NAV_ITEMS.map((item) => {
+              const active = activeNav === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveNav(item.id)}
+                  title={item.label}
+                  className="home-nav-btn"
+                  data-active={String(active)}
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "center",
+                    width: "100%",
+                    height: "40px",
+                    padding: 0,
+                    borderRadius: "var(--radius-md)",
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    overflow: "hidden",
+                    flexShrink: 0,
+                  }}
+                >
+                  {/* Active bar */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "0",
+                      top: "8px",
+                      bottom: "8px",
+                      width: "4px",
+                      background: c.accent,
+                      borderRadius: "var(--radius-pill)",
+                      opacity: active ? 1 : 0,
+                      transition: "opacity var(--transition-fast)",
+                    }}
+                  />
+                  {/* Icon — fixed 44px column */}
+                  <span
+                    style={{
+                      width: "44px",
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      flexShrink: 0,
+                      color: active ? c.accent : c.textMuted,
+                      transition: "color var(--transition-fast)",
+                    }}
+                  >
+                    {item.icon}
+                  </span>
+                  {/* Label — always visible in static rail */}
+                  <span
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 400,
+                      color: active ? c.accentText : c.textMuted,
+                      whiteSpace: "nowrap",
+                      pointerEvents: "none",
+                      userSelect: "none",
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* ── Rail bottom — avatar circle + pill placeholder ── */}
+          <div style={{ padding: "12px 8px 20px", flexShrink: 0 }}>
+            <div
               style={{
-                width: "44px",
                 display: "flex",
-                justifyContent: "center",
                 alignItems: "center",
-                flexShrink: 0,
+                height: "44px",
+                gap: "10px",
+                padding: "0 8px",
               }}
             >
+              {/* Avatar */}
               <div
                 style={{
-                  width: "28px",
-                  height: "28px",
-                  borderRadius: "var(--radius-sm)",
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "var(--radius-pill)",
                   background:
                     "linear-gradient(135deg, rgb(var(--accent-rgb)), rgb(var(--accent-light-rgb)))",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: "12px",
-                  fontWeight: 600,
+                  fontSize: "13px",
+                  fontWeight: 700,
                   color: "white",
                   flexShrink: 0,
                 }}
               >
                 {userEmail[0].toUpperCase()}
               </div>
-            </span>
-            {/* Email + role — fades */}
-            <div
+              {/* Pill placeholder */}
+              <div
+                style={{
+                  flex: 1,
+                  height: "18px",
+                  borderRadius: "var(--radius-pill)",
+                  background: c.border,
+                  opacity: 0.7,
+                }}
+              />
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Main content panels ── */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Header — settings + diagnostics views only */}
+          {activeNav !== "overview" && (
+            <header
+              className="home-header"
               style={{
-                flex: 1,
-                minWidth: 0,
-                paddingRight: "8px",
-                pointerEvents: "none",
-                userSelect: "none",
-                opacity: sidebarOpen ? 1 : 0,
-                transition: sidebarOpen
-                  ? "opacity var(--transition-standard) 160ms"
-                  : "opacity var(--transition-fast)",
+                background: "var(--surface-0)",
+                borderBottom: "1px solid var(--home-overlay-strong)",
+                flexShrink: 0,
+                transition: "border-color var(--transition-standard)",
               }}
             >
-              <p
+              <div
                 style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: c.text,
-                  lineHeight: 1.2,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "16px",
                 }}
               >
-                {userEmail}
-              </p>
-              <p
-                style={{
-                  fontSize: "11px",
-                  color: c.textMuted,
-                  marginTop: "2px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Contestant Profile
-              </p>
-            </div>
-          </div>
-          {/* Sign-out — collapses via maxHeight */}
-          <div
-            style={{
-              overflow: "hidden",
-              maxHeight: sidebarOpen ? "44px" : "0px",
-              opacity: sidebarOpen ? 1 : 0,
-              transition: sidebarOpen
-                ? "max-height var(--transition-standard) 60ms, opacity var(--transition-standard) 140ms"
-                : "opacity var(--transition-fast), max-height var(--transition-standard) 60ms",
-            }}
-          >
-            <SignOutButton onClick={handleSignOut} loading={signingOut} theme={theme} />
-          </div>
-        </div>
-      </aside>
-
-      {/* ── Main content panels ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* Header */}
-        <header
-          className="home-header"
-          style={{
-            background: "var(--surface-0)",
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
-            flexShrink: 0,
-            transition: "border-color var(--transition-standard)",
-          }}
-        >
-          <h1
-            style={{
-              fontSize: "24px",
-              fontWeight: 700,
-              color: c.text,
-              letterSpacing: "0",
-            }}
-          >
-            {activeNav === "overview" && "Contest Home"}
-            {activeNav === "settings" && "Settings"}
-            {activeNav === "diagnostics" && "Diagnostics"}
-          </h1>
-          <p style={{ fontSize: "13px", color: c.textMuted, marginTop: "4px" }}>
-            {activeNav === "overview" && (
-              <>
-                Signed in as{" "}
-                <span
+                <h1
                   style={{
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    fontSize: "24px",
+                    fontWeight: 700,
                     color: c.text,
-                    fontWeight: 500,
+                    letterSpacing: "0",
                   }}
                 >
-                  {userDisplayEmail || userEmail}
-                </span>
-              </>
+                  {activeNav === "settings" && "Settings"}
+                  {activeNav === "diagnostics" && "Diagnostics"}
+                </h1>
+                {activeNav === "settings" && (
+                  <button
+                    onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
+                    disabled={telemetryQuery.isLoading}
+                    style={{
+                      flexShrink: 0,
+                      padding: "0 20px",
+                      minHeight: 40,
+                      background: c.accent,
+                      border: "none",
+                      borderRadius: "var(--radius-sm)",
+                      color: "white",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      cursor: telemetryQuery.isLoading ? "not-allowed" : "pointer",
+                      opacity: telemetryQuery.isLoading ? 0.7 : 1,
+                      transition: "opacity var(--transition-fast)",
+                    }}
+                  >
+                    {telemetryQuery.isLoading ? "Running..." : "Run Full Diagnostic"}
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: "13px", color: c.textMuted, marginTop: "4px" }}>
+                {activeNav === "settings" &&
+                  "Camera, microphone, security policies, and device settings"}
+                {activeNav === "diagnostics" &&
+                  "Network diagnostics, platform telemetry, and security event log"}
+              </p>
+            </header>
+          )}
+
+          {/* Scrollable content views */}
+          <div className="home-content" style={{ flex: 1, overflowY: "auto" }}>
+            {activeNav === "overview" && (
+              <div
+                className="grid grid-cols-1 xl:grid-cols-[1fr_360px]"
+                style={{ gap: "36px", alignItems: "stretch" }}
+              >
+                {/* ── Center column ── */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "36px" }}>
+                  {/* Overview title + subtitle (replaces old header for this view) */}
+                  <div>
+                    <h1
+                      style={{
+                        fontSize: "24px",
+                        fontWeight: 700,
+                        color: c.text,
+                        letterSpacing: "0",
+                      }}
+                    >
+                      Contestant Command Hub
+                    </h1>
+                    <p style={{ fontSize: "13px", color: c.textMuted, marginTop: "4px" }}>
+                      Authenticated Profile:{" "}
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                          color: c.text,
+                          fontWeight: 500,
+                        }}
+                      >
+                        {userDisplayEmail || userEmail}
+                      </span>
+                    </p>
+                  </div>
+
+                  <ContestsPanel
+                    contests={contests}
+                    loading={contestsLoading}
+                    theme={theme}
+                    onPreflight={(contestId, type) => {
+                      setPreflightContestId(contestId);
+                      setPreflightSessionType(type);
+                    }}
+                    readinessContext={contestantReadiness}
+                  />
+                  <SessionActionsPanel
+                    activeSession={activeSession}
+                    inviteCode={inviteCode}
+                    inviteCodeBusy={inviteCodeBusy}
+                    inviteCodeStatus={inviteCodeStatus}
+                    inviteSuccessMsg={inviteSuccessMsg}
+                    onDismissInviteSuccess={() => setInviteSuccessMsg(null)}
+                    onInviteCodeChange={setInviteCode}
+                    onInviteCodeSubmit={handleInviteCodeSubmit}
+                    onRefresh={() => loadContests(userEmail)}
+                    onResume={handleResumeActiveSession}
+                    resumeBusy={resumeBusy}
+                    resumeStatus={resumeStatus}
+                    resumeVerification={resumeVerification}
+                    sessionsError={sessionsError}
+                    sessionsRefreshing={sessionsRefreshing}
+                    theme={theme}
+                  />
+                </div>
+
+                {/* ── Right rail — ReadinessWidget ── */}
+                <div style={{ alignSelf: "start" }}>
+                  <ReadinessWidget
+                    readiness={readiness}
+                    onSettingsRedirect={() => setActiveNav("settings")}
+                    theme={theme}
+                    onResolve={(key) => setActiveResolveModal(key)}
+                    context={contestantReadiness}
+                    onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
+                  />
+                </div>
+              </div>
             )}
-            {activeNav === "settings" &&
-              "Camera, microphone, security policies, and device settings"}
-            {activeNav === "diagnostics" &&
-              "Network diagnostics, platform telemetry, and security event log"}
-          </p>
-        </header>
 
-        {/* Scrollable content views */}
-        <div className="home-content" style={{ flex: 1, overflowY: "auto" }}>
-          {activeNav === "overview" && (
-            <div
-              className="grid grid-cols-1 xl:grid-cols-[1fr_360px]"
-              style={{ gap: "36px", alignItems: "stretch" }}
-            >
-              <div style={{ display: "flex", flexDirection: "column", gap: "36px" }}>
-                <ContestsPanel
-                  contests={contests}
-                  loading={contestsLoading}
-                  theme={theme}
-                  onPreflight={(contestId, type) => {
-                    setPreflightContestId(contestId);
-                    setPreflightSessionType(type);
-                  }}
-                  readinessContext={contestantReadiness}
-                />
-                <SessionActionsPanel
-                  activeSession={activeSession}
-                  inviteCode={inviteCode}
-                  inviteCodeBusy={inviteCodeBusy}
-                  inviteCodeStatus={inviteCodeStatus}
-                  inviteSuccessMsg={inviteSuccessMsg}
-                  onDismissInviteSuccess={() => setInviteSuccessMsg(null)}
-                  onInviteCodeChange={setInviteCode}
-                  onInviteCodeSubmit={handleInviteCodeSubmit}
-                  onRefresh={() => loadContests(userEmail)}
-                  onResume={handleResumeActiveSession}
-                  resumeBusy={resumeBusy}
-                  resumeStatus={resumeStatus}
-                  resumeVerification={resumeVerification}
-                  sessionsError={sessionsError}
-                  sessionsRefreshing={sessionsRefreshing}
-                  theme={theme}
-                />
-              </div>
-
-              <div style={{ alignSelf: "start" }}>
-                <ReadinessWidget
-                  readiness={readiness}
-                  onSettingsRedirect={() => setActiveNav("settings")}
-                  theme={theme}
-                  onResolve={(key) => setActiveResolveModal(key)}
-                  context={contestantReadiness}
-                  onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
-                />
-              </div>
-            </div>
-          )}
-
-          {activeNav === "settings" && (
-            <SettingsPanel
-              readiness={readiness}
-              setReadiness={setReadiness}
-              theme={theme}
-              setTheme={setTheme}
-              onSecurityEvent={appendSecurityEvent}
-              telemetry={telemetryQuery}
-              refreshTelemetry={refreshTelemetry}
-            />
-          )}
-
-          {activeNav === "diagnostics" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
-              <DiagnosticsPanel
+            {activeNav === "settings" && (
+              <SettingsPanel
                 readiness={readiness}
+                setReadiness={setReadiness}
                 theme={theme}
+                onSecurityEvent={appendSecurityEvent}
                 telemetry={telemetryQuery}
                 refreshTelemetry={refreshTelemetry}
               />
-              <SecurityOperationsLog theme={theme} logs={securityLogs} />
-            </div>
-          )}
+            )}
+
+            {activeNav === "diagnostics" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
+                <DiagnosticsPanel
+                  readiness={readiness}
+                  theme={theme}
+                  telemetry={telemetryQuery}
+                  refreshTelemetry={refreshTelemetry}
+                />
+                <SecurityOperationsLog theme={theme} logs={securityLogs} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

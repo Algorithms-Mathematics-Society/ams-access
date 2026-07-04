@@ -1,0 +1,82 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { deriveSaveIndicator, footerSaveView } from "./save-indicator.ts";
+
+const S = (over = {}) => ({ saveError: null, saving: false, hasUnsavedChanges: false, ...over });
+
+test("SAFETY: 'All changes saved' ONLY when no error, not saving, nothing unsaved", () => {
+  // The one and only state that may claim saved.
+  const saved = deriveSaveIndicator(S());
+  assert.equal(saved.label, "All changes saved");
+  assert.equal(saved.icon, "saved");
+
+  // Every state with ANY of error/saving/unsaved set must NOT read as saved.
+  for (const over of [
+    { saveError: "boom" },
+    { saving: true },
+    { hasUnsavedChanges: true },
+    { saveError: "boom", saving: true },
+    { saveError: "boom", hasUnsavedChanges: true },
+    { saving: true, hasUnsavedChanges: true },
+    { saveError: "boom", saving: true, hasUnsavedChanges: true },
+  ]) {
+    const ind = deriveSaveIndicator(S(over));
+    assert.notEqual(ind.icon, "saved", `icon must not be 'saved' for ${JSON.stringify(over)}`);
+    assert.notEqual(
+      ind.label,
+      "All changes saved",
+      `label must not be saved for ${JSON.stringify(over)}`
+    );
+  }
+});
+
+test("a failed/timed-out save surfaces a distinct NOT-saved state (error wins over everything)", () => {
+  const ind = deriveSaveIndicator(
+    S({ saveError: "Save failed", saving: true, hasUnsavedChanges: true })
+  );
+  assert.equal(ind.label, "Couldn't save — retrying");
+  assert.equal(ind.icon, "error");
+});
+
+test("precedence: saving beats unsaved; each maps to its icon", () => {
+  assert.equal(deriveSaveIndicator(S({ saving: true })).icon, "loading");
+  assert.equal(deriveSaveIndicator(S({ saving: true })).label, "Saving…");
+  assert.equal(deriveSaveIndicator(S({ hasUnsavedChanges: true })).icon, "pending");
+  assert.equal(deriveSaveIndicator(S({ hasUnsavedChanges: true })).label, "Saving…");
+});
+
+test("SAFETY: footerSaveView — the footer's own presentation must not drift from the tested discriminant", () => {
+  // "Saved" may appear ONLY for icon "saved" — every other icon must read as not-saved.
+  for (const icon of ["error", "loading", "pending"]) {
+    assert.notEqual(
+      footerSaveView(icon).label,
+      "Saved",
+      `footer must not claim Saved for icon '${icon}'`
+    );
+  }
+  assert.equal(footerSaveView("saved").label, "Saved");
+});
+
+test("footerSaveView preserves the footer's exact existing presentation (colors + dot + labels)", () => {
+  assert.deepEqual(footerSaveView("error"), {
+    color: "#ef4444",
+    dotColor: "#ef4444",
+    label: "Not saved",
+  });
+  assert.deepEqual(footerSaveView("loading"), {
+    color: "#f59e0b",
+    dotColor: "#e2e8f0",
+    label: "Saving…",
+  });
+  assert.deepEqual(footerSaveView("pending"), {
+    color: "#f59e0b",
+    dotColor: "#e2e8f0",
+    label: "Saving…",
+  });
+  assert.deepEqual(footerSaveView("saved"), {
+    color: "#71717a",
+    dotColor: "var(--verdict-ac)",
+    label: "Saved",
+  });
+});

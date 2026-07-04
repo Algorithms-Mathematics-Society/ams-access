@@ -3,7 +3,7 @@
 import { memo, useMemo } from "react";
 import { Info } from "lucide-react";
 import { getThemeColors } from "./utils";
-import { Button, ChecklistItem } from "./ui-primitives";
+import { Button, toneForStatus, toneStyles } from "./ui-primitives";
 import type { ReadinessState, ContestantReadinessContext } from "./types";
 
 export const ReadinessWidget = memo(function ReadinessWidget({
@@ -27,7 +27,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
     <div
       style={{
         background: themeColors.cardBg,
-        border: "1px solid #27272a",
+        border: "1px solid var(--theme-border)",
         borderRadius: "var(--radius-md)",
         padding: "24px",
         boxShadow: "none",
@@ -39,54 +39,54 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           style={{
             fontSize: "11px",
             fontWeight: 600,
-            color: "rgba(255,255,255,0.45)",
+            color: "var(--theme-text-muted)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
           }}
         >
-          Device Readiness
+          System Integrity Hub
         </h3>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: "24px" }}>
         <ReadinessItem
-          label="Internet connection"
+          label="Network Connection"
           status={readiness.network}
           theme={theme}
           onResolve={onResolve ? () => onResolve("network") : undefined}
         />
         <ReadinessItem
-          label="Camera"
+          label="Video Capture"
           status={readiness.camera}
           theme={theme}
           onResolve={onResolve ? () => onResolve("camera") : undefined}
         />
         <ReadinessItem
-          label="Microphone"
+          label="Audio Input"
           status={readiness.mic}
           theme={theme}
           onResolve={onResolve ? () => onResolve("mic") : undefined}
         />
         <ReadinessItem
-          label="Real device"
+          label="Secure VM Shield"
           status={readiness.vm}
           theme={theme}
           onResolve={onResolve ? () => onResolve("vm") : undefined}
         />
         <ReadinessItem
-          label="Keyboard"
+          label="Keyboard Lockdown"
           status={readiness.keyboard}
           theme={theme}
           onResolve={onResolve ? () => onResolve("keyboard") : undefined}
         />
         <ReadinessItem
-          label="Supported system"
+          label="Platform Support"
           status={readiness.platform}
           theme={theme}
           onResolve={onResolve ? () => onResolve("platform") : undefined}
         />
         <ReadinessItem
-          label="Other apps closed"
+          label="Restricted Processes"
           status={readiness.restrictedApps}
           theme={theme}
           onResolve={onResolve ? () => onResolve("restrictedApps") : undefined}
@@ -99,12 +99,12 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           // a bracketed monospace tag, coloured by state (electric amber for WARN).
           const log =
             context.status === "ready"
-              ? { tag: "OK", color: "#22c55e" }
+              ? { tag: "OK", color: "var(--home-status-ok)" }
               : context.status === "advisory_warning"
-                ? { tag: "WARN", color: "#fbbf24" }
+                ? { tag: "WARN", color: "var(--home-status-warn)" }
                 : context.status === "checking"
-                  ? { tag: "SCAN", color: "#c084fc" }
-                  : { tag: "FAIL", color: "#ef4444" };
+                  ? { tag: "SCAN", color: "var(--theme-accent-text)" }
+                  : { tag: "FAIL", color: "var(--home-status-error)" };
           return (
             <div
               style={{
@@ -134,7 +134,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
         variant="primary"
         style={{
           width: "100%",
-          borderRadius: "var(--radius-md)",
+          borderRadius: "9999px",
           fontWeight: 700,
           letterSpacing: "0.14em",
           textTransform: "uppercase",
@@ -151,21 +151,21 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           style={{
             width: "100%",
             marginTop: "10px",
-            borderRadius: "var(--radius-md)",
+            borderRadius: "9999px",
             background: "transparent",
-            border: "1px solid #3f3f46",
-            color: "#a1a1aa",
+            border: "1px solid var(--home-border-control)",
+            color: "var(--text-dim)",
             fontWeight: 700,
             letterSpacing: "0.14em",
             textTransform: "uppercase",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "#ffffff";
-            e.currentTarget.style.borderColor = "#52525b";
+            e.currentTarget.style.color = "var(--theme-text)";
+            e.currentTarget.style.borderColor = "var(--home-border-hover)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "#a1a1aa";
-            e.currentTarget.style.borderColor = "#3f3f46";
+            e.currentTarget.style.color = "var(--text-dim)";
+            e.currentTarget.style.borderColor = "var(--home-border-control)";
           }}
         >
           Test setup
@@ -186,13 +186,55 @@ export const ReadinessItem = memo(function ReadinessItem({
   theme: "dark" | "light";
   onResolve?: () => void;
 }) {
+  const c = getThemeColors(theme);
+  const tone = toneForStatus(status);
+  const t = toneStyles(tone, theme);
+  // Dot LED palette — indicator tokens (AA-checked), not raw hex
+  const dotColor =
+    status === "ok"
+      ? "var(--theme-dot)"
+      : status === "fail"
+        ? "var(--color-indicator-error)"
+        : "var(--color-indicator-warn)";
+  const stateWord = status === "ok" ? "SECURE" : status === "fail" ? "NEEDS ACTION" : "SCANNING";
+  const statusLabel = status === "ok" ? "Secure" : status === "fail" ? "Needs action" : "Scanning";
+
   return (
-    <ChecklistItem
-      label={label}
-      status={status}
-      theme={theme}
-      action={
-        status === "fail" && onResolve ? (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr auto auto",
+        alignItems: "center",
+        gap: "12px",
+        minHeight: "48px",
+        borderBottom: `1px solid ${c.border}`,
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+        <span
+          style={{
+            fontSize: "12px",
+            fontWeight: 500,
+            color: c.textMutedStrong,
+            letterSpacing: 0,
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: "10px",
+            fontWeight: 700,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: t.text,
+          }}
+        >
+          {stateWord}
+        </span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        {status === "fail" && onResolve ? (
           <Button
             type="button"
             theme={theme}
@@ -205,8 +247,20 @@ export const ReadinessItem = memo(function ReadinessItem({
           >
             Resolve
           </Button>
-        ) : null
-      }
-    />
+        ) : null}
+      </div>
+      <span
+        role="img"
+        aria-label={statusLabel}
+        title={statusLabel}
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: dotColor,
+          flexShrink: 0,
+        }}
+      />
+    </div>
   );
 });

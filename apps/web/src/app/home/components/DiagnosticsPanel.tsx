@@ -20,14 +20,10 @@ function TelemetryStat({
   const c = useMemo(() => getThemeColors(theme), [theme]);
   const dotColor =
     status === "ok"
-      ? theme === "light"
-        ? "#10b981"
-        : "#22c55e"
+      ? "var(--theme-dot)"
       : status === "fail"
-        ? "#ef4444"
-        : theme === "light"
-          ? "#a8a29e"
-          : "rgba(255,255,255,0.32)";
+        ? "var(--home-status-error-dot)"
+        : "var(--home-dot-muted)";
   return (
     <div
       style={{
@@ -290,10 +286,8 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 style={{
                   color:
                     networkQuality === "unreachable" || networkQuality === "unavailable"
-                      ? "#ef4444"
-                      : theme === "light"
-                        ? "#10b981"
-                        : "#22c55e",
+                      ? "var(--home-status-error)"
+                      : "var(--home-status-ok)",
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -369,7 +363,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             marginBottom: "16px",
             lineHeight: 1.5,
             padding: "10px 12px",
-            background: "rgba(255,255,255,0.02)",
+            background: "var(--home-overlay-faintest)",
             border: `1px solid ${c.border}`,
             borderRadius: "var(--radius-sm)",
           }}
@@ -382,10 +376,10 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             onClick={copySupportSummary}
             style={{
               padding: "9px 16px",
-              background: copied ? "rgba(34,197,94,0.1)" : c.accentLight,
-              border: `1px solid ${copied ? "rgba(34,197,94,0.25)" : c.accentBorder}`,
+              background: copied ? "var(--home-status-ok-bg-10)" : c.accentLight,
+              border: `1px solid ${copied ? "var(--home-status-ok-border-25)" : c.accentBorder}`,
               borderRadius: "var(--radius-sm)",
-              color: copied ? "#4ade80" : c.accentText,
+              color: copied ? "var(--home-status-ok)" : c.accentText,
               fontSize: "13px",
               fontWeight: 500,
               fontFamily: "inherit",
@@ -400,7 +394,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             onClick={exportReport}
             style={{
               padding: "9px 16px",
-              background: theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)",
+              background: "var(--home-overlay-btn)",
               border: `1px solid ${c.border}`,
               borderRadius: "var(--radius-sm)",
               color: c.textMutedStrong,
@@ -412,14 +406,12 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 "background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background =
-                theme === "light" ? "rgba(0,0,0,0.055)" : "rgba(255,255,255,0.075)";
+              e.currentTarget.style.background = "var(--home-overlay-btn-hover)";
               e.currentTarget.style.borderColor = c.borderStrong;
               e.currentTarget.style.color = c.text;
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background =
-                theme === "light" ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.045)";
+              e.currentTarget.style.background = "var(--home-overlay-btn)";
               e.currentTarget.style.borderColor = c.border;
               e.currentTarget.style.color = c.textMutedStrong;
             }}

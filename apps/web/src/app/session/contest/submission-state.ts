@@ -44,6 +44,27 @@ export function isPendingSubmissionStatus(status: string | null | undefined): bo
   return status === "QUEUED" || status === "RUNNING";
 }
 
+/**
+ * Max age for a pending submission to lock the Submit button ("Judging…").
+ * Older pendings (stuck judge / orphaned row) must NOT trap the candidate in a
+ * disabled button — the server's ALREADY_PENDING guard remains the backstop if
+ * the attempt is genuinely still being judged.
+ */
+export const JUDGING_LOCKOUT_MAX_MS = 3 * 60_000;
+
+/** True when a submission should lock the Submit UI: pending AND recent. */
+export function isUiBlockingPending(
+  status: string | null | undefined,
+  createdAt: string | null | undefined,
+  nowMs: number,
+  maxAgeMs: number = JUDGING_LOCKOUT_MAX_MS
+): boolean {
+  if (!isPendingSubmissionStatus(status)) return false;
+  const created = Date.parse(createdAt ?? "");
+  if (Number.isNaN(created)) return false; // unknown age → never trap; server backstops
+  return nowMs - created < maxAgeMs;
+}
+
 export function normalizeSubmissionVerdict(attempt: SubmissionAttemptRecord): RunVerdict {
   if (attempt.status === "QUEUED" || attempt.status === "RUNNING") {
     return attempt.status as RunVerdict;
@@ -77,6 +98,22 @@ export function normalizeAttemptForRunResult(attempt: SubmissionAttemptRecord): 
     compile_output: status === "CE" || status === "IE" ? compileOutput : null,
     stderr,
   };
+}
+
+/**
+ * Refresh the Output panel's run result from a fetched RAW attempts list
+ * (runs included). STRICTLY id-keyed: returns the normalized row matching
+ * prev.id, else prev unchanged. NO fallback to any other attempt — the old
+ * `?? filtered[0]` fallback displayed the newest SUBMISSION in the run panel
+ * (repro-proven misattribution). See design 2026-07-04-runresult-crosswrite-fix.
+ */
+export function resolveRunResultRefresh(
+  prev: RunAttempt | null,
+  rawAttempts: SubmissionAttemptRecord[]
+): RunAttempt | null {
+  if (!prev) return prev;
+  const match = rawAttempts.find((attempt) => attempt.id === prev.id);
+  return match ? normalizeAttemptForRunResult(match) : prev;
 }
 
 export function isTerminalSubmission(attempt: SubmissionAttemptRecord): boolean {

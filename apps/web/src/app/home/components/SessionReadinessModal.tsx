@@ -28,8 +28,10 @@ function PreflightCheckItem({
   variant?: "required" | "optional";
 }) {
   const c = getThemeColors(theme);
-  const failColor = variant === "optional" ? "#f59e0b" : "#ef4444";
-  const dotColor = status === "ok" ? "#22c55e" : status === "fail" ? failColor : c.accent;
+  const failColor =
+    variant === "optional" ? "var(--home-status-warn-dot)" : "var(--home-status-error-dot)";
+  const dotColor =
+    status === "ok" ? "var(--home-status-ok-dot)" : status === "fail" ? failColor : c.accent;
   const dotAriaLabel =
     status === "ok"
       ? "pass"
@@ -53,7 +55,7 @@ function PreflightCheckItem({
         style={{
           fontSize: "11px",
           fontFamily: "'JetBrains Mono', monospace",
-          color: "#a1a1aa",
+          color: "var(--text-dim)",
           letterSpacing: "0.02em",
         }}
       >
@@ -102,7 +104,6 @@ export function SessionReadinessModal({
 }: SessionReadinessModalProps) {
   const router = useRouter();
   const c = getThemeColors(theme);
-  const isLight = theme === "light";
   const [isRescanning, setIsRescanning] = useState(false);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -187,11 +188,19 @@ export function SessionReadinessModal({
 
   const decisionTone =
     context.status === "ready" || context.status === "advisory_warning"
-      ? { color: c.dot, bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.24)" }
+      ? { color: c.dot, bg: "var(--home-status-ok-bg)", border: "var(--home-status-ok-border-24)" }
       : context.status === "needs_action"
-        ? { color: "#f59e0b", bg: "rgba(245,158,11,0.09)", border: "rgba(245,158,11,0.28)" }
+        ? {
+            color: "var(--home-status-warn)",
+            bg: "var(--home-status-warn-bg-09)",
+            border: "var(--home-status-warn-border-28)",
+          }
         : context.status === "blocked_by_policy"
-          ? { color: "#fca5a5", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.26)" }
+          ? {
+              color: "var(--theme-error-text)",
+              bg: "var(--home-status-error-bg)",
+              border: "var(--home-status-error-border-26)",
+            }
           : { color: c.accentText, bg: c.accentLight, border: c.accentBorder };
 
   const requiredPolicyChecks = requiredReportChecks;
@@ -340,7 +349,7 @@ export function SessionReadinessModal({
           maxWidth: "680px",
           minHeight: "540px",
           maxHeight: "calc(100vh - 48px)",
-          background: isLight ? "#ffffff" : c.cardBg,
+          background: "var(--theme-card-bg)",
           border: `1px solid ${c.borderStrong}`,
           borderRadius: "var(--radius-lg)",
           padding: "36px",
@@ -362,7 +371,7 @@ export function SessionReadinessModal({
             left: "-20%",
             width: "300px",
             height: "300px",
-            background: `radial-gradient(circle, ${score === 100 ? "rgba(16, 185, 129, 0.08)" : "rgba(245, 158, 11, 0.08)"} 0%, transparent 70%)`,
+            background: `radial-gradient(circle, ${score === 100 ? "var(--home-status-ok-emerald-bg)" : "var(--home-status-warn-bg)"} 0%, transparent 70%)`,
             pointerEvents: "none",
           }}
         />
@@ -416,7 +425,7 @@ export function SessionReadinessModal({
               textAlign: "right",
             }}
           >
-            <div style={{ color: "#22c55e", fontSize: "24px", fontWeight: 800 }}>
+            <div style={{ color: "var(--home-status-ok)", fontSize: "24px", fontWeight: 800 }}>
               {Math.round(currentProgress)}%
             </div>
             <div
@@ -438,7 +447,7 @@ export function SessionReadinessModal({
           <section
             style={{
               border: `1px solid ${c.border}`,
-              background: isLight ? "#ffffff" : c.innerBg,
+              background: "var(--theme-inner-bg)",
               borderRadius: "var(--radius-md)",
               padding: "16px 18px",
             }}
@@ -458,7 +467,7 @@ export function SessionReadinessModal({
               {/* §2 — sub-header: plain muted text, no pill */}
               <span
                 style={{
-                  color: "#71717a",
+                  color: "var(--text-dim)",
                   fontSize: "11px",
                   fontWeight: 600,
                 }}
@@ -488,13 +497,11 @@ export function SessionReadinessModal({
 
           <section
             style={{
-              border: `1px solid ${optionalWarningCount > 0 ? "rgba(245,158,11,0.24)" : c.border}`,
+              border: `1px solid ${optionalWarningCount > 0 ? "var(--home-status-warn-border-24)" : c.border}`,
               background:
                 optionalWarningCount > 0
-                  ? "rgba(245,158,11,0.055)"
-                  : isLight
-                    ? "#ffffff"
-                    : c.innerBg,
+                  ? "var(--home-status-warn-bg-055)"
+                  : "var(--theme-inner-bg)",
               borderRadius: "var(--radius-md)",
               padding: "16px 18px",
             }}
@@ -514,7 +521,7 @@ export function SessionReadinessModal({
               {/* §2 — sub-header: plain muted text, no pill */}
               <span
                 style={{
-                  color: "#71717a",
+                  color: "var(--text-dim)",
                   fontSize: "11px",
                   fontWeight: 600,
                 }}
@@ -553,8 +560,8 @@ export function SessionReadinessModal({
         {showAccessibilityRecovery && (
           <section
             style={{
-              border: "1px solid rgba(239,68,68,0.36)",
-              background: "rgba(239,68,68,0.07)",
+              border: "1px solid var(--home-status-error-border-36)",
+              background: "var(--home-status-error-bg-07)",
               borderRadius: "var(--radius-md)",
               padding: "16px 18px",
               display: "flex",
@@ -568,14 +575,14 @@ export function SessionReadinessModal({
                   width: "7px",
                   height: "7px",
                   borderRadius: "50%",
-                  background: "#ef4444",
+                  background: "var(--home-status-error-dot)",
                   flexShrink: 0,
-                  boxShadow: "0 0 6px #ef4444",
+                  boxShadow: "0 0 6px var(--home-status-error-dot)",
                 }}
               />
               <h4
                 style={{
-                  color: "#fca5a5",
+                  color: "var(--theme-error-text)",
                   fontSize: "13px",
                   fontWeight: 750,
                   margin: 0,
@@ -603,9 +610,9 @@ export function SessionReadinessModal({
                 style={{
                   height: "36px",
                   borderRadius: "var(--radius-md)",
-                  border: "1px solid rgba(239,68,68,0.5)",
-                  background: "rgba(239,68,68,0.14)",
-                  color: "#fca5a5",
+                  border: "1px solid var(--home-status-error-border-50)",
+                  background: "var(--home-status-error-bg-14)",
+                  color: "var(--theme-error-text)",
                   padding: "0 14px",
                   fontSize: "12px",
                   fontWeight: 700,
@@ -643,7 +650,7 @@ export function SessionReadinessModal({
         <div
           style={{
             border: `1px solid ${c.border}`,
-            background: isLight ? "#f8fafc" : c.innerBg,
+            background: "var(--theme-inner-bg)",
             borderRadius: "var(--radius-md)",
             overflow: "hidden",
           }}
@@ -690,7 +697,7 @@ export function SessionReadinessModal({
                 overflowY: "auto",
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: "11px",
-                color: "#A8A8A8",
+                color: "var(--text-dim)",
                 display: "flex",
                 flexDirection: "column",
                 gap: "4px",
@@ -845,7 +852,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: 600,
@@ -858,7 +865,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Run checks again
@@ -871,7 +878,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: 600,
@@ -883,7 +890,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Open settings
@@ -896,7 +903,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 16px",
                 fontSize: "13px",
                 fontWeight: 500,
@@ -908,7 +915,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Back to contests
@@ -921,7 +928,7 @@ export function SessionReadinessModal({
                 height: "42px",
                 background: "transparent",
                 border: "none",
-                color: "#a1a1aa",
+                color: "var(--text-dim)",
                 padding: "0 16px",
                 fontSize: "13px",
                 fontWeight: 600,
@@ -933,7 +940,7 @@ export function SessionReadinessModal({
                 (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
+                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
               }}
             >
               Get help

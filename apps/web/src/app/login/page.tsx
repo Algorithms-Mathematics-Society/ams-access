@@ -1,11 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { setCandidateToken } from "@/lib/candidate-auth";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { BrandPane } from "./components/BrandPane";
+import { SsoModal } from "./components/SsoModal";
+import { OtpForm } from "./components/OtpForm";
+import { PasswordForm } from "./components/PasswordForm";
 
 const TEST_EMAIL = "tester@ams.local";
 const TEST_PASSWORD = "access2025";
@@ -106,10 +111,6 @@ export default function LoginPage() {
     setResetState("sent");
   }
 
-  useEffect(() => {
-    localStorage.setItem("ams_theme", "dark");
-  }, []);
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading) return;
@@ -167,349 +168,50 @@ export default function LoginPage() {
   return (
     <div className="login-root">
       {/* ══════════════════ LEFT PANE ══════════════════ */}
-      <div className="login-left">
-        <div className="login-logo">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 172 162"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              d="M2.00043 162L87.0004 2L172 162"
-              stroke="var(--color-accent-base)"
-              strokeWidth="6"
-              strokeLinecap="square"
-              strokeLinejoin="miter"
-            />
-          </svg>
-          <div className="login-logo-label">
-            <span className="login-logo-name">AMS Access</span>
-            <span className="login-logo-sub">Exam workspace</span>
-          </div>
-        </div>
-
-        <div className="login-brand">
-          <div className="login-brand-mark">
-            <svg
-              width="56"
-              height="53"
-              viewBox="0 0 172 162"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <path
-                d="M2.00043 162L87.0004 2L172 162"
-                stroke="var(--color-accent-base)"
-                strokeWidth="6"
-                strokeLinecap="square"
-                strokeLinejoin="miter"
-              />
-            </svg>
-          </div>
-
-          <h2 className="login-brand-headline">
-            Your contest.
-            <br />
-            <em>Made fair.</em>
-          </h2>
-          <p className="login-brand-sub">
-            A calm, fair space for your coding contest, so your work is the only thing that counts.
-          </p>
-
-          <div className="login-brand-features">
-            <div className="login-brand-feature">
-              <div className="login-brand-feature-icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--color-accent-base)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
-              </div>
-              <div className="login-brand-feature-text">
-                <span className="login-brand-feature-label">Distraction-free</span>
-                <span className="login-brand-feature-desc">
-                  Other apps and shortcuts pause during the exam, so everyone competes on equal
-                  footing.
-                </span>
-              </div>
-            </div>
-
-            <div className="login-brand-feature">
-              <div className="login-brand-feature-icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--color-accent-base)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="8" r="4" />
-                  <path d="M6 20v-2a6 6 0 0 1 12 0v2" />
-                </svg>
-              </div>
-              <div className="login-brand-feature-text">
-                <span className="login-brand-feature-label">Fair for everyone</span>
-                <span className="login-brand-feature-desc">
-                  A quick camera check confirms you&rsquo;re present during the exam.
-                </span>
-              </div>
-            </div>
-
-            <div className="login-brand-feature">
-              <div className="login-brand-feature-icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--color-accent-base)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                </svg>
-              </div>
-              <div className="login-brand-feature-text">
-                <span className="login-brand-feature-label">Instant feedback</span>
-                <span className="login-brand-feature-desc">
-                  Your code is checked the moment you submit.
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="login-brand-footer">AMS Access · Fair, secure exams</div>
-        </div>
-      </div>
+      <BrandPane />
 
       {/* ══════════════════ RIGHT PANE ══════════════════ */}
-      <div className="login-right">
+      <div className="login-right" style={{ position: "relative" }}>
+        <div style={{ position: "absolute", top: 16, right: 16, zIndex: 1 }}>
+          <ThemeToggle />
+        </div>
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
           <div className="login-form-sub">AMS Access &middot; A calm, proctored exam space</div>
           <div className="login-rule" />
 
           {mode === "otp" ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (otpStep === "email") void handleSendOtp();
-                else void handleVerifyOtp();
-              }}
-              noValidate
-            >
-              <div className="login-field">
-                <label
-                  htmlFor="login-email-otp"
-                  className={`login-label${emailFocused ? " login-label--focused" : ""}`}
-                >
-                  Email
-                </label>
-                <input
-                  id="login-email-otp"
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setError(null);
-                    setEmail(e.target.value);
-                  }}
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
-                  placeholder="you@institution.edu"
-                  autoComplete="email"
-                  required
-                  disabled={otpStep === "code" || otpState !== "idle"}
-                  aria-describedby={error ? "login-error" : undefined}
-                  aria-invalid={error ? "true" : undefined}
-                  className="login-input"
-                />
-              </div>
-
-              {otpStep === "code" && (
-                <div className="login-field">
-                  <label htmlFor="login-otp-code" className="login-label">
-                    6-digit code
-                  </label>
-                  <input
-                    id="login-otp-code"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={otpCode}
-                    onChange={(e) => {
-                      setError(null);
-                      setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
-                    }}
-                    placeholder="••••••"
-                    autoComplete="one-time-code"
-                    aria-describedby={error ? "login-error" : undefined}
-                    aria-invalid={error ? "true" : undefined}
-                    className="login-input"
-                    style={{ letterSpacing: "0.3em" }}
-                  />
-                  <p className="login-form-note" style={{ marginTop: 8 }}>
-                    We emailed a code to {email.trim() || "your inbox"}. It expires in 10 minutes.
-                  </p>
-                </div>
-              )}
-
-              <div className="login-submit-wrap">
-                <button type="submit" disabled={otpState !== "idle"} className="login-submit">
-                  {otpState === "sending"
-                    ? "Sending code..."
-                    : otpState === "verifying"
-                      ? "Verifying..."
-                      : otpStep === "email"
-                        ? "Send code"
-                        : "Verify & sign in"}
-                </button>
-
-                {error && (
-                  <p id="login-error" role="alert" className="login-error">
-                    {error}
-                  </p>
-                )}
-
-                {otpStep === "code" && (
-                  <button
-                    type="button"
-                    className="login-dev-btn"
-                    disabled={otpState !== "idle"}
-                    onClick={() => {
-                      setOtpStep("email");
-                      setOtpCode("");
-                      setError(null);
-                    }}
-                  >
-                    Use a different email
-                  </button>
-                )}
-              </div>
-            </form>
+            <OtpForm
+              email={email}
+              setEmail={setEmail}
+              emailFocused={emailFocused}
+              setEmailFocused={setEmailFocused}
+              otpStep={otpStep}
+              setOtpStep={setOtpStep}
+              otpCode={otpCode}
+              setOtpCode={setOtpCode}
+              otpState={otpState}
+              error={error}
+              setError={setError}
+              handleSendOtp={handleSendOtp}
+              handleVerifyOtp={handleVerifyOtp}
+            />
           ) : (
-            <form onSubmit={handleSubmit} noValidate>
-              <div className="login-field">
-                <label
-                  htmlFor="login-email"
-                  className={`login-label${emailFocused ? " login-label--focused" : ""}`}
-                >
-                  Email
-                </label>
-                <input
-                  id="login-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setError(null);
-                    setEmail(e.target.value);
-                  }}
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
-                  placeholder="you@institution.edu"
-                  autoComplete="email"
-                  required
-                  disabled={loading}
-                  aria-describedby={error ? "login-error" : undefined}
-                  aria-invalid={error ? "true" : undefined}
-                  className="login-input"
-                />
-              </div>
-
-              <div className="login-field">
-                <label
-                  htmlFor="login-password"
-                  className={`login-label${passFocused ? " login-label--focused" : ""}`}
-                >
-                  Password
-                </label>
-                <input
-                  id="login-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => {
-                    setError(null);
-                    setPassword(e.target.value);
-                  }}
-                  onFocus={() => setPassFocused(true)}
-                  onBlur={() => setPassFocused(false)}
-                  placeholder="••••••••••••"
-                  autoComplete="current-password"
-                  required
-                  disabled={loading}
-                  aria-describedby={error ? "login-error" : undefined}
-                  aria-invalid={error ? "true" : undefined}
-                  className="login-input"
-                />
-              </div>
-
-              <div className="login-submit-wrap">
-                <button type="submit" disabled={loading} className="login-submit">
-                  {loading ? (
-                    <>
-                      <svg
-                        className="login-spinner"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 12 12"
-                        fill="none"
-                        aria-hidden="true"
-                      >
-                        <circle
-                          cx="6"
-                          cy="6"
-                          r="4.5"
-                          stroke="rgb(var(--accent-rgb) / 0.25)"
-                          strokeWidth="1.5"
-                        />
-                        <path
-                          d="M6 1.5A4.5 4.5 0 0 1 10.5 6"
-                          stroke="var(--color-accent-base)"
-                          strokeWidth="1.5"
-                          strokeLinecap="butt"
-                        />
-                      </svg>
-                      Verifying...
-                    </>
-                  ) : (
-                    "Sign in"
-                  )}
-                </button>
-
-                {error && (
-                  <p id="login-error" role="alert" className="login-error">
-                    {error}
-                  </p>
-                )}
-
-                {isGatingRelaxed() && (
-                  <button
-                    type="button"
-                    disabled={loading}
-                    className="login-dev-btn"
-                    onClick={handleDevSignIn}
-                  >
-                    Dev sign in
-                  </button>
-                )}
-              </div>
-            </form>
+            <PasswordForm
+              email={email}
+              setEmail={setEmail}
+              emailFocused={emailFocused}
+              setEmailFocused={setEmailFocused}
+              password={password}
+              setPassword={setPassword}
+              passFocused={passFocused}
+              setPassFocused={setPassFocused}
+              loading={loading}
+              error={error}
+              setError={setError}
+              handleSubmit={handleSubmit}
+              handleDevSignIn={handleDevSignIn}
+            />
           )}
 
           <div
@@ -579,27 +281,7 @@ export default function LoginPage() {
       />
 
       {/* ══════════════════ SSO Modal ══════════════════ */}
-      {showSSOModal && (
-        <div role="dialog" aria-modal="true" aria-labelledby="sso-title" className="login-modal-bg">
-          <div className="login-modal">
-            <div className="login-modal-tag">Limited availability</div>
-            <h3 id="sso-title" className="login-modal-title">
-              Institution SSO is not enabled
-            </h3>
-            <p className="login-modal-body">
-              Institution Single Sign-On is not available for this contest. Use the email and
-              password assigned to you by your contest organizer to sign in.
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowSSOModal(false)}
-              className="login-modal-close"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
+      {showSSOModal && <SsoModal setShowSSOModal={setShowSSOModal} />}
     </div>
   );
 }

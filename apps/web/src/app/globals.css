@@ -200,6 +200,13 @@ summary:focus-visible,
     0.06
   ); /* NEW: neutral interactive overlay (row/button hover) */
 
+  /* Login-slice (Phase 1) theme-aware tokens — dark = byte-identical to the
+     originals; light = cream-safe. Ledger: apps/web/login-theme-migration-ledger.md */
+  --theme-error-bg: rgba(239, 68, 68, 0.06);
+  --theme-border-error: rgba(239, 68, 68, 0.25);
+  --theme-warn-text: #fbbf24;
+  --theme-text-faintest: rgba(255, 255, 255, 0.12);
+
   --density-compact: 12px;
   --density-standard: 18px;
   --density-relaxed: 24px;
@@ -258,9 +265,60 @@ summary:focus-visible,
 
   /* ── Accessible focus ring (used everywhere) ── */
   --focus-ring: 0 0 0 2px rgb(var(--accent-rgb) / 0.7);
+
+  /* ── Home 3a: semantic-status decorative tints
+     Theme-independent: translucent tints composite correctly over dark OR cream;
+     solid status dots/rails/glows read fine on both. Dark-preserving — EXACT literal
+     values, NO value changed. α-tag suffix = α×100 (e.g. -24 for 0.24); base name =
+     canonical α (most-used site count). ok-bg/border/border-strong covered by
+     existing step-2 tokens in .dark/.light blocks and skipped here. ── */
+
+  /* ok / green */
+  --home-status-ok-dot: #22c55e;
+  --home-status-ok-bg-10: rgba(34, 197, 94, 0.1);
+  --home-status-ok-bg-12: rgba(34, 197, 94, 0.12);
+  --home-status-ok-border-22: rgba(34, 197, 94, 0.22);
+  --home-status-ok-border-24: rgba(34, 197, 94, 0.24);
+  --home-status-ok-border-25: rgba(34, 197, 94, 0.25);
+  --home-status-ok-emerald-bg: rgba(16, 185, 129, 0.08); /* emerald-500 score=100 spotlight */
+
+  /* error / red */
+  --home-status-error-dot: #ef4444;
+  --home-status-error-bg-07: rgba(239, 68, 68, 0.07);
+  --home-status-error-bg: rgba(239, 68, 68, 0.08);
+  --home-status-error-bg-10: rgba(239, 68, 68, 0.1);
+  --home-status-error-bg-12: rgba(239, 68, 68, 0.12);
+  --home-status-error-bg-14: rgba(239, 68, 68, 0.14);
+  --home-status-error-border-20: rgba(239, 68, 68, 0.2);
+  --home-status-error-border-24: rgba(239, 68, 68, 0.24);
+  --home-status-error-border-26: rgba(239, 68, 68, 0.26);
+  --home-status-error-border-28: rgba(239, 68, 68, 0.28);
+  --home-status-error-border: rgba(239, 68, 68, 0.3);
+  --home-status-error-border-35: rgba(239, 68, 68, 0.35);
+  --home-status-error-border-36: rgba(239, 68, 68, 0.36);
+  --home-status-error-border-50: rgba(239, 68, 68, 0.5);
+
+  /* warn / amber (+ yellow-400 toneToken variants) */
+  --home-status-warn-dot: #f59e0b;
+  --home-status-warn-tone-bg: rgba(234, 179, 8, 0.1); /* yellow-400 warning toneToken bg */
+  --home-status-warn-tone-border: rgba(234, 179, 8, 0.3); /* yellow-400 warning toneToken border */
+  --home-status-warn-bg-055: rgba(245, 158, 11, 0.055);
+  --home-status-warn-bg: rgba(245, 158, 11, 0.08);
+  --home-status-warn-bg-09: rgba(245, 158, 11, 0.09);
+  --home-status-warn-bg-10: rgba(245, 158, 11, 0.1);
+  --home-status-warn-bg-12: rgba(245, 158, 11, 0.12);
+  --home-status-warn-bg-14: rgba(245, 158, 11, 0.14);
+  --home-status-warn-border-20: rgba(245, 158, 11, 0.2);
+  --home-status-warn-border-24: rgba(245, 158, 11, 0.24);
+  --home-status-warn-border-28: rgba(245, 158, 11, 0.28);
+  --home-status-warn-border: rgba(245, 158, 11, 0.3);
+  --home-status-warn-border-32: rgba(245, 158, 11, 0.32);
+  --home-status-warn-border-35: rgba(245, 158, 11, 0.35);
+  --home-status-warn-border-36: rgba(245, 158, 11, 0.36);
 }
 
-.dark {
+.dark,
+html.theme-dark-locked {
   color-scheme: dark;
   --theme-bg: #0f0f0f;
   --theme-sidebar-bg: #1f1f1f;
@@ -293,16 +351,60 @@ summary:focus-visible,
     255,
     0.06
   ); /* NEW: neutral interactive overlay (row/button hover) */
+
+  /* ── Home step-2 tokens (Phase 2a): dark = each site's exact pre-tokenize dark (byte-identical) ── */
+  --home-status-ok: #22c55e;
+  --home-status-ok-bg: rgba(34, 197, 94, 0.08);
+  --home-status-ok-border: rgba(34, 197, 94, 0.2);
+  --home-status-ok-border-strong: rgba(34, 197, 94, 0.3);
+  --home-clear-border: rgba(
+    34,
+    197,
+    94,
+    0.15
+  ); /* asymmetric: light is neutral — preserved, revisit at a home light design pass (ledger §C) */
+  --home-accent-dot: var(--color-accent-base);
+  --home-overlay-strong: rgba(255, 255, 255, 0.08);
+  --home-overlay-btn: rgba(255, 255, 255, 0.045);
+  --home-overlay-btn-hover: rgba(255, 255, 255, 0.075);
+  --home-overlay-disabled: rgba(255, 255, 255, 0.055);
+  --home-overlay-faint: rgba(255, 255, 255, 0.04);
+  --home-overlay-ended: rgba(255, 255, 255, 0.04);
+  --home-overlay-whisper: rgba(255, 255, 255, 0.01);
+  --home-border-ended: rgba(255, 255, 255, 0.1);
+  --home-border-disabled: rgba(255, 255, 255, 0.1);
+  --home-overlay-faintest: rgba(255, 255, 255, 0.02);
+  --home-overlay-rail: rgba(255, 255, 255, 0.24);
+  --home-border-control: #3f3f46;
+  --home-border-hover: #52525b;
+  --home-modal-surface: rgba(15, 23, 42, 0.96);
+  --home-modal-inner: rgba(255, 255, 255, 0.025);
+  --home-activecard-bg: linear-gradient(135deg, #090d16 0%, #05070b 100%);
+  --home-dot-ended: rgba(255, 255, 255, 0.25);
+  --home-dot-muted: rgba(255, 255, 255, 0.32);
+  --home-text-disabled: rgba(255, 255, 255, 0.38);
+  --home-shadow-panel: 0 24px 80px rgba(0, 0, 0, 0.55);
+  --home-shadow-card: var(--elevation-2);
+  --home-shadow-cta: 0 8px 24px rgb(var(--accent-rgb) / 0.3);
+
+  /* ── Home 3a readable tokens (Phase 3a) ── */
+  --home-status-error: #ef4444; /* danger STRONG (FAIL/insecure/flagged/destructive) */
+  --home-status-warn: #f59e0b; /* warning (fold target: majority + strongest amber) */
 }
 
 /* ─────────────────────────────────────────────────────────────
    LIGHT THEME — cream surfaces + rich purple pastel accents.
-   Applied when <html class="light">. Only screens that consume the
-   --theme-* / --surface-* / --text-* / --verdict-* token layer flip;
-   dark values above are untouched, so dark-pinned screens are unaffected.
+   Applied when <html class="light"> — EXCEPT on a dark-locked route
+   (`:not(.theme-dark-locked)`). The exclusion is load-bearing: light values here
+   span BOTH the :root-based tokens (--accent-rgb / --accent-light-rgb / --surface-*
+   / --text-* / --verdict-*) AND the --theme-* tokens, but the `.theme-dark-locked`
+   co-selector on `.dark` only re-pins the --theme-* subset. Excluding the whole
+   .light block when locked is complete-by-construction: every token falls back to
+   :root + .dark = an exact dark render (no light leaks the way the accents/surfaces/
+   text tiers did before this guard). Guarded by theme-dark-lock-coverage.test.mjs.
    Slice 1 consumer: results. Contrast values verified (see ui-upgrade-plan.md).
    ───────────────────────────────────────────────────────────── */
-.light {
+html.light:not(.theme-dark-locked) {
   color-scheme: light;
 
   /* Brand reads richer/darker on cream so it survives AA */
@@ -321,6 +423,10 @@ summary:focus-visible,
   --theme-row-bg: rgba(35, 27, 48, 0.03);
   --theme-error-text: #b91c1c; /* 5.79:1 */
   --theme-hover: rgba(35, 27, 48, 0.05); /* NEW: neutral interactive overlay — darkens on cream */
+  --theme-error-bg: rgba(220, 38, 38, 0.07);
+  --theme-border-error: rgba(185, 28, 28, 0.3);
+  --theme-warn-text: #b45309; /* amber-700 — 4.5:1 cream / 5.02:1 card */
+  --theme-text-faintest: rgba(35, 27, 48, 0.2);
   --theme-accent: #7c3aed;
   --theme-accent-light: rgb(124 58 237 / 0.1);
   --theme-accent-border: rgb(124 58 237 / 0.28);
@@ -350,6 +456,40 @@ summary:focus-visible,
   --verdict-ie: #475569; /* 6.79:1 */
   --verdict-running: #1d4ed8; /* 6.00:1 */
   --verdict-none: #52525b; /* 6.92:1 */
+
+  /* ── Home step-2 tokens (Phase 2a): measured/authored light ── */
+  --home-status-ok: #166534; /* MEASURED 5.95:1 on #f0eadd (darkest home-light surface) → AA; corrects #10b981 (2.28:1) */
+  --home-status-ok-bg: rgba(16, 185, 129, 0.08);
+  --home-status-ok-border: rgba(16, 185, 129, 0.2);
+  --home-status-ok-border-strong: rgba(16, 185, 129, 0.25);
+  --home-clear-border: rgba(0, 0, 0, 0.1);
+  --home-accent-dot: var(--color-accent-deep);
+  --home-overlay-strong: rgba(0, 0, 0, 0.08);
+  --home-overlay-btn: rgba(0, 0, 0, 0.035);
+  --home-overlay-btn-hover: rgba(0, 0, 0, 0.055);
+  --home-overlay-disabled: rgba(0, 0, 0, 0.045);
+  --home-overlay-faint: rgba(0, 0, 0, 0.03);
+  --home-overlay-ended: rgba(0, 0, 0, 0.04);
+  --home-overlay-whisper: rgba(0, 0, 0, 0.01);
+  --home-border-ended: rgba(0, 0, 0, 0.08);
+  --home-border-disabled: rgba(0, 0, 0, 0.09);
+  --home-overlay-faintest: rgba(0, 0, 0, 0.02);
+  --home-overlay-rail: rgba(0, 0, 0, 0.24);
+  --home-border-control: rgba(60, 42, 90, 0.3);
+  --home-border-hover: rgba(60, 42, 90, 0.45);
+  --home-modal-surface: #ffffff;
+  --home-modal-inner: #f8fafc;
+  --home-activecard-bg: linear-gradient(135deg, #ffffff 0%, #faf8f5 100%);
+  --home-dot-ended: #7c7467;
+  --home-dot-muted: #a8a29e;
+  --home-text-disabled: rgba(0, 0, 0, 0.38);
+  --home-shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.18);
+  --home-shadow-card: 0 20px 40px rgba(124, 58, 237, 0.08);
+  --home-shadow-cta: 0 8px 20px rgba(124, 58, 237, 0.2);
+
+  /* ── Home 3a readable tokens (Phase 3a) ── */
+  --home-status-error: #b91c1c; /* 5.40:1 on #f0eadd — reuses measured danger light */
+  --home-status-warn: #92400e; /* MEASURED 5.91:1 on #f0eadd — darker than free-screen #b45309 (4.20, failed) */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -406,14 +546,14 @@ summary:focus-visible,
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-mono);
-  background: var(--color-obsidian-base);
-  color: var(--color-text-primary);
+  background: var(--theme-bg);
+  color: var(--theme-text);
 }
 
 /* ── Left pane ── */
 .login-left {
   background: var(--surface-1);
-  border-right: 1px solid var(--color-border-base);
+  border-right: 1px solid var(--theme-border);
   display: flex;
   flex-direction: column;
   padding: 44px 52px;
@@ -438,7 +578,7 @@ summary:focus-visible,
   font-weight: 700;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--color-text-dim);
+  color: var(--theme-text-muted-strong);
 }
 
 .login-logo-sub {
@@ -468,7 +608,7 @@ summary:focus-visible,
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--color-text-dim);
+  color: var(--theme-text-muted-strong);
   line-height: 1.2;
   margin-bottom: 12px;
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
@@ -482,7 +622,7 @@ summary:focus-visible,
 .login-brand-sub {
   font-size: 13px;
   line-height: 1.6;
-  color: var(--color-text-faint);
+  color: var(--theme-text-muted);
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   margin-bottom: 40px;
   max-width: 240px;
@@ -524,7 +664,7 @@ summary:focus-visible,
 .login-brand-feature-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-dim);
+  color: var(--theme-text-muted-strong);
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
 }
 
@@ -540,7 +680,7 @@ summary:focus-visible,
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.12);
+  color: var(--theme-text-faintest);
   text-transform: uppercase;
 }
 
@@ -561,7 +701,7 @@ summary:focus-visible,
 .login-form-title {
   font-size: 14px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--theme-text);
   margin-bottom: 6px;
 }
 
@@ -573,7 +713,7 @@ summary:focus-visible,
 
 .login-rule {
   height: 1px;
-  background: var(--color-border-base);
+  background: var(--theme-border);
   margin-bottom: 28px;
 }
 
@@ -600,10 +740,10 @@ summary:focus-visible,
 .login-input {
   display: block;
   width: 100%;
-  background: var(--color-obsidian-inner);
-  border: 1px solid var(--color-border-input);
+  background: var(--theme-inner-bg);
+  border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
-  color: var(--color-text-primary);
+  color: var(--theme-text);
   font-size: 13px;
   padding: 12px 14px;
   outline: none;
@@ -615,7 +755,7 @@ summary:focus-visible,
 
 .login-input:focus {
   border-color: rgb(var(--accent-rgb) / 0.45);
-  background: #0d0d0d;
+  background: var(--theme-bg);
 }
 .login-input:focus-visible {
   outline: 2px solid var(--color-border-focus);
@@ -668,7 +808,7 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 .login-submit:disabled {
-  background: var(--color-obsidian-raised);
+  background: var(--theme-card-bg);
   border-color: rgb(var(--accent-rgb) / 0.22);
   color: var(--text-faint);
   cursor: not-allowed;
@@ -695,7 +835,7 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 .login-textlink--quiet {
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 .login-textlink--quiet:hover {
   color: var(--color-accent-light);
@@ -705,12 +845,12 @@ summary:focus-visible,
 .login-error {
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid var(--color-border-error);
-  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid var(--theme-border-error);
+  background: var(--theme-error-bg);
   border-radius: var(--radius-md);
   font-size: 12px;
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
-  color: #fca5a5;
+  color: var(--theme-error-text);
   line-height: 1.5;
 }
 
@@ -720,9 +860,9 @@ summary:focus-visible,
   width: 100%;
   margin-top: 10px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-family: inherit;
   font-size: var(--text-2xs);
   font-weight: 700;
@@ -736,20 +876,20 @@ summary:focus-visible,
   text-align: center;
 }
 .login-dev-btn:hover {
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--theme-border-strong);
   color: var(--text-dim);
 }
 
 /* SSO */
 .login-sso-wrap {
   padding-top: 20px;
-  border-top: 1px solid var(--color-border-base);
+  border-top: 1px solid var(--theme-border);
 }
 
 .login-sso-btn {
   width: 100%;
   background: transparent;
-  border: 1px solid var(--color-border-input);
+  border: 1px solid var(--theme-border);
   border-radius: var(--radius-md);
   color: var(--text-dim);
   font-family: inherit;
@@ -763,7 +903,7 @@ summary:focus-visible,
     color var(--transition-fast);
 }
 .login-sso-btn:hover {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: var(--theme-border-strong);
   color: var(--text-soft);
 }
 .login-sso-btn:focus-visible {
@@ -809,7 +949,7 @@ summary:focus-visible,
 
 .login-modal {
   background: var(--surface-1);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--theme-border-strong);
   border-radius: var(--radius-md);
   padding: 32px 36px;
   max-width: 440px;
@@ -820,7 +960,7 @@ summary:focus-visible,
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  color: #fbbf24;
+  color: var(--theme-warn-text);
   text-transform: uppercase;
   margin-bottom: 12px;
 }
@@ -828,7 +968,7 @@ summary:focus-visible,
 .login-modal-title {
   font-size: 13px;
   font-weight: 700;
-  color: var(--color-text-primary);
+  color: var(--theme-text);
   margin-bottom: 16px;
 }
 
@@ -836,15 +976,15 @@ summary:focus-visible,
   font-family: var(--font-sans, "Inter", system-ui, sans-serif);
   font-size: 13px;
   line-height: 1.65;
-  color: #888;
+  color: var(--text-dim);
   margin-bottom: 28px;
 }
 
 .login-modal-close {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--theme-border-strong);
   border-radius: var(--radius-md);
-  color: #d8b4fe;
+  color: var(--theme-accent-text);
   font-family: inherit;
   font-size: 11px;
   font-weight: 600;
@@ -856,8 +996,8 @@ summary:focus-visible,
     color var(--transition-fast);
 }
 .login-modal-close:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #aaa;
+  border-color: var(--theme-accent-border);
+  color: var(--theme-text-muted-strong);
 }
 .login-modal-close:focus-visible {
   outline: 2px solid var(--color-border-focus);
@@ -1225,11 +1365,11 @@ summary:focus-visible,
 }
 .help-input {
   width: 100%;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--theme-inner-bg);
+  border: 1px solid var(--theme-border-strong);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
-  color: #e2e8f0;
+  color: var(--theme-text);
   font-size: 13px;
   font-family: var(--font-mono);
   box-sizing: border-box;
@@ -1240,14 +1380,14 @@ summary:focus-visible,
 .help-input:focus {
   outline: none;
   border-color: rgb(var(--accent-rgb) / 0.45);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--theme-card-bg);
 }
 .help-input:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
 }
 .help-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .help-btn {
@@ -1284,13 +1424,13 @@ summary:focus-visible,
   flex: 0 1 auto;
   padding: 10px 18px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--theme-border-strong);
   color: var(--text-soft);
 }
 .help-btn-ghost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
+  background: var(--theme-hover);
+  border-color: var(--theme-accent-border);
+  color: var(--theme-text);
 }
 .help-btn-ghost:focus-visible {
   outline: 2px solid var(--color-border-focus);
@@ -1415,7 +1555,7 @@ summary:focus-visible,
   height: 100vh;
   overflow: hidden;
   /* §Technical-Terminal: near-black canvas; the vignette adds the center lift */
-  background: #0a0a0a;
+  background: var(--theme-bg);
 }
 
 /* ── Background — neutral monitor vignette (no glow) ── */
@@ -1461,10 +1601,10 @@ summary:focus-visible,
   height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #22c55e;
+  background: var(--theme-dot);
   box-shadow:
     0 0 7px rgba(34, 197, 94, 0.9),
-    0 0 2px #22c55e;
+    0 0 2px var(--theme-dot);
   animation: welcome-dot-pulse 2.8s ease-in-out infinite;
 }
 
@@ -1474,7 +1614,7 @@ summary:focus-visible,
     opacity: 1;
     box-shadow:
       0 0 7px rgba(34, 197, 94, 0.9),
-      0 0 2px #22c55e;
+      0 0 2px var(--theme-dot);
   }
   50% {
     opacity: 0.4;
@@ -1487,12 +1627,12 @@ summary:focus-visible,
   font-size: 8.5px;
   font-weight: 700;
   letter-spacing: 0.22em;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-dim);
   text-transform: uppercase;
 }
 
 .welcome-mono-tag--accent {
-  color: #71717a;
+  color: var(--text-dim);
   letter-spacing: 0.26em;
 }
 
@@ -1529,8 +1669,14 @@ summary:focus-visible,
 .welcome-wordmark-svg {
   display: block;
   height: 30px;
-  width: auto;
+  width: 176px; /* viewBox 492×84 → aspect 5.857 at 30px tall */
   margin: 0 0 11px;
+  /* Mask (not <img>) so the wordmark takes the theme text colour and flips:
+     near-white #fff in dark, plum-ink #231b30 in light. The asset's baked
+     #EDF0F7 fill is irrelevant under a mask. */
+  background: var(--theme-text);
+  -webkit-mask: url(/ACCESS_WORDMARK.svg) no-repeat center / contain;
+  mask: url(/ACCESS_WORDMARK.svg) no-repeat center / contain;
 }
 
 .welcome-wordmark {
@@ -1540,7 +1686,7 @@ summary:focus-visible,
   letter-spacing: 0.14em;
   /* compensate so the word is truly centred despite trailing tracking */
   padding-left: 0.14em;
-  color: #f4f4f6;
+  color: var(--theme-text);
   text-transform: uppercase;
   margin: 0 0 7px;
   line-height: 1;
@@ -1552,7 +1698,7 @@ summary:focus-visible,
   font-weight: 500;
   letter-spacing: 0.42em;
   padding-left: 0.42em;
-  color: #475569;
+  color: var(--text-dim);
   text-transform: uppercase;
   margin: 0 0 30px;
   line-height: 1;
@@ -1567,7 +1713,7 @@ summary:focus-visible,
   font-weight: 500;
   letter-spacing: 0.28em;
   padding-left: 0.28em;
-  color: #64748b;
+  color: var(--text-dim);
   text-transform: uppercase;
   margin: 0 0 32px;
 }
@@ -1579,7 +1725,7 @@ summary:focus-visible,
   font-size: 8px;
   font-weight: 500;
   letter-spacing: 0.24em;
-  color: #6b7280;
+  color: var(--text-dim);
   text-transform: uppercase;
   margin: 18px 0 0;
 }
@@ -1620,7 +1766,7 @@ summary:focus-visible,
 .welcome-legal {
   font-size: 8px;
   font-weight: 300;
-  color: rgba(255, 255, 255, 0.13);
+  color: var(--theme-text-faintest);
   letter-spacing: 0.05em;
   text-align: center;
   margin: 0;
