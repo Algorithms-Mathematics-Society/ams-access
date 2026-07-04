@@ -98,7 +98,18 @@ session/contest/components/
 
 client.tsx: 7,400 → 6,180 lines (−1,220; 1,196 lines across 8 new modules).
 
-### PR B–D — contest Blocks 2–4 · PR E onboarding · PR F results · PR G login · PR H shared
+### PR B — contest Block 2 (`refactor/contest-block2`)
+
+| Task                                                                                                                                                                                                                                                                                                 | Files                     | Status |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ------ |
+| B.1 GateScreens (BootScreen securing/loading + ContestLoadErrorScreen)                                                                                                                                                                                                                               | `89314e4` + fix `995f331` | ☑      |
+| B.2 BlockedOverlay (LockGraceToast + BlockedAppsOverlay)                                                                                                                                                                                                                                             | `f3e0d15`                 | ☑      |
+| B.3 FooterTrustStrip                                                                                                                                                                                                                                                                                 | `29b1606`                 | ☑      |
+| B.4 gates (lint · test 90/90 · build · move-audit incl. 6 verified prettier reflows · invoke-diff) + review ×2 + adversarial finding #6 (reconciliation-identity remount securing→loading) FIXED via single BootScreen + fix re-verified closed + rig (boot path, footer live-update, S1 regression) | —                         | ☑      |
+
+client.tsx: 6,180 → 5,762. Conditionals + all state stay in parent; focus-trap refs flow down as props.
+
+### PR C–D — contest Blocks 3–4 · PR E onboarding · PR F results · PR G login · PR H shared
 
 (expand each table when its block starts)
 
