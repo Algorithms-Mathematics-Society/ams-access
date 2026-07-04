@@ -21,28 +21,31 @@ git diff --color-moved=blocks --color-moved-ws=allow-indentation-change   # pure
 grep -rhoE 'invoke\("[a-z_]+"' <area files> | sort | uniq -c              # identical before/after
 ```
 
-## 2. Current directory map — stamped 2026-07-04 @ `0fc3d82` (main, post-PR#27)
+## 2. Current directory map — stamped 2026-07-04 @ `ed75920` (main, MIGRATION COMPLETE)
 
 ```
 src/app/
 ├── layout.tsx 48 · page.tsx 7 · WelcomeScreen.tsx 58 · globals.css 1916
-├── login/page.tsx 605
+├── login/       page.tsx 287 (was 605)
+│                └ components/ BrandPane 135 · OtpForm 132 · PasswordForm 143 · SsoModal 25
 ├── home/
-│   ├── page.tsx 1410 · loading.tsx 23
-│   └── components/  (THE MODEL — already decomposed)
+│   ├── page.tsx 1410 · loading.tsx 5 (→ RouteLoadingShell)
+│   └── components/  (THE MODEL — already decomposed; untouched by migration)
 │       SettingsPanel 1594 · SessionReadinessModal 977 · ContestCards 672 · ResolveModal 648
 │       utils.ts 557 · DiagnosticsPanel 425 · SessionActionsPanel 404 · ui-primitives 391
 │       ReadinessPanel 266 · ContestsPanel 173 · readiness-context 169 · types 155
 │       SecurityOperationsLog 101 · hooks 58 · SignOutButton 48
 ├── session/
-│   ├── onboarding/  page.tsx 1371 (was 4771) · support.ts 262 · loading.tsx 23
+│   ├── onboarding/  page.tsx 1371 (was 4771) · support.ts 262 · loading.tsx 5
 │   │                └ components/ hooks 10 · ui 191 · labels 84 · tauri-globals 17 ·
 │   │                  ProgressBar 106 · DryRunSummary 155 · stages/Stage1…14 (77–1079 ea)
-│   └── contest/     client.tsx 3522 (was ~7400) · editor-pane.tsx 925 · page.tsx 14 · loading.tsx 23
+│   └── contest/     client.tsx 3522 (was ~7400) · editor-pane.tsx 925 · page.tsx 14 · loading.tsx 5
 │                    + 7 frozen pure modules w/ tests (see §1) + components/ (17 files, Blocks 1–4)
-├── results/page.tsx 751
+├── results/     page.tsx 267 (was 751)
+│                └ components/ types 44 · utils 17 · ResultsLoading 7 (→ shell) · LockedScreen 54 ·
+│                  ErrorScreen 52 · LeaderboardSection 151 · MySubmissionsSection 214
 └── privacy 159 · terms 146 · licenses 93 · legal-page 194
-src/components/  MarkovEditor 666 · HelpRequestModal 219 · ThemeToggle 53
+src/components/  MarkovEditor 666 · HelpRequestModal 219 · ThemeToggle 53 · RouteLoadingShell 34
 src/lib/         api-client 308 · presence-monitor 114 · VerdictBadge 117 · theme* · verdict ·
                  candidate-auth · gating · abort-timeout (+ guard tests)
 ```
@@ -172,9 +175,29 @@ page.tsx: 751 → 267. Suspense wrapper byte-untouched (static-export). Extracti
 
 page.tsx: 605 → 287. **Documented accepted delta:** the mode toggle now remounts the form subtree (was DOM-patch) — React value/focus survive (rig-proven; single blur-forcing `setMode` site; no mount CSS; error pre-cleared), but native password-manager affordances (autofill highlight/extension overlay) reset on toggle. Cosmetic; the alternative (one merged form component) defeats the extraction. Revisit if a programmatic/keyboard `setMode` path is ever added.
 
-### PR H shared loading shell
+### PR H — shared loading shell (`refactor/route-loading-shell`)
 
-(expand when its block starts)
+| Task                                                                                                                                                                                                                              | Files     | Status |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------ |
+| H.1 RouteLoadingShell + 3 loading.tsx one-liners (server-component-safe, no directive)                                                                                                                                            | `d6e4ed8` | ☑      |
+| H.2 review-found 4th duplicate folded in: ResultsLoading → variant "results" (union extended; dual Suspense/placeholder role intact)                                                                                              | `a517fb5` | ☑      |
+| H.3 gates + combined review (controller wrote inline — disclosed; review was first independent eyes and caught H.2) + finder re-verify CLOSED + rig (delayed mock → shell rendered live on /results, then swapped to leaderboard) | —         | ☑      |
+
+Exactly one copy of the shell markup now exists (grep-confirmed). 4 copies → 1.
+
+## MIGRATION COMPLETE — 2026-07-04 @ `ed75920`
+
+| Area                | Before   | After       | PRs                             |
+| ------------------- | -------- | ----------- | ------------------------------- |
+| contest client.tsx  | 7,400    | 3,522       | #28 #29 #30 #31                 |
+| onboarding page.tsx | 4,771    | 1,371       | #32                             |
+| results page.tsx    | 751      | 267         | #33 (+2 pre-existing bug fixes) |
+| login page.tsx      | 605      | 287         | #34                             |
+| loading fallbacks   | 4 copies | 1 component | #35                             |
+
+Zero unreviewed behavior changes. Regressions caught pre-merge: 1 (Block 2 BootScreen remount). Pre-existing production bugs found & fixed root-cause: 2 (dead results Retry; frozen locked screen on failed refetch). Accepted documented deltas: 1 (login toggle remount — password-manager affordances reset).
+
+**Open post-migration debts:** onboarding full Tauri dry-run with webcam (pre-finals gate, 2026-07-11) · PR #13 kiosk rebase + Windows runtime KioskBanner verification (client.tsx anchor moved across 4 refactor blocks).
 
 ## 7. Deferred / rejected
 
