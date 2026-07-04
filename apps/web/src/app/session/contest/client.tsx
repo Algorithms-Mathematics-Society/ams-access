@@ -65,7 +65,9 @@ import { useFocusTrap } from "./components/hooks";
 import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
-import { CountdownBadge } from "./components/CountdownBadge";
+import { TopBar } from "./components/TopBar";
+import { QuestionRail } from "./components/QuestionRail";
+import { ProblemPane } from "./components/ProblemPane";
 import { FollowUpPane } from "./components/FollowUpPane";
 import { MarkovPane } from "./components/MarkovPane";
 import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
@@ -78,15 +80,11 @@ import {
   Play,
   Loader2,
   Send,
-  LifeBuoy,
-  LogOut,
   Video,
   VideoOff,
   AlertTriangle,
   Mic,
   MicOff,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   ChevronDown,
   AlertCircle,
@@ -2537,182 +2535,18 @@ export default function ContestPageClient() {
       )}
 
       {/* ── Top bar ── */}
-      <header
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr auto 1fr",
-          alignItems: "center",
-          padding: "0 20px",
-          height: "48px",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
-          background: "#0F0F0F",
-          flexShrink: 0,
-          boxShadow: "none",
-        }}
-      >
-        {/* Left: Logo + contest title */}
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", minWidth: 0 }}>
-          <svg width="28" height="24" viewBox="0 0 172 164" fill="none">
-            <path
-              d="M2 162L87 2L172 162"
-              stroke="url(#tg)"
-              strokeWidth="5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <defs>
-              <linearGradient
-                id="tg"
-                x1="2"
-                y1="82"
-                x2="172"
-                y2="82"
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop stopColor="#7B00FF" />
-                <stop offset="0.5" stopColor="#C649F0" />
-                <stop offset="1" stopColor="#E365FF" />
-              </linearGradient>
-            </defs>
-          </svg>
-          <div style={{ width: "1px", height: "20px", background: "rgba(255,255,255,0.1)" }} />
-          <span
-            style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              color: "#ffffff",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              maxWidth: "260px",
-            }}
-          >
-            {contest?.title ?? "Contest"}
-          </span>
-        </div>
-
-        {/* Center: Timer */}
-        <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} onExpiry={handleContestExpiry} />
-
-        {/* Right: Support + exit */}
-        <div
-          style={{ display: "flex", alignItems: "center", gap: "10px", justifyContent: "flex-end" }}
-        >
-          <button
-            type="button"
-            onClick={() => setShowSupportModal(true)}
-            className="ic-btn"
-            title="Request support"
-            aria-label="Request support"
-            style={{ color: "#71717a" }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "#71717a";
-            }}
-          >
-            <LifeBuoy size={18} strokeWidth={1.75} />
-          </button>
-
-          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={() => setSubmitConfirm(true)}
-              className="ic-btn"
-              title="Submit & exit contest"
-              aria-label="Submit and exit contest"
-              style={{ color: "#71717a" }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#71717a";
-              }}
-            >
-              <LogOut size={18} strokeWidth={1.75} />
-            </button>
-            {submitConfirm && (
-              <div
-                role="dialog"
-                aria-modal="false"
-                aria-label="Confirm contest submission"
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 8px)",
-                  right: 0,
-                  zIndex: "var(--modal-z-base)",
-                  width: "260px",
-                  padding: "12px",
-                  border: "1px solid rgba(239,68,68,0.45)",
-                  background: "#160b0b",
-                  boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
-                }}
-              >
-                <p
-                  style={{
-                    margin: "0 0 10px",
-                    color: "#fecaca",
-                    fontSize: "12px",
-                    lineHeight: 1.45,
-                  }}
-                >
-                  Submit final answers and exit the contest? This cannot be undone.
-                </p>
-                {submitError && (
-                  <p
-                    style={{
-                      margin: "0 0 10px",
-                      color: "#fca5a5",
-                      fontSize: "11px",
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    {submitError}
-                  </p>
-                )}
-                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSubmitConfirm(false);
-                      setSubmitError(null);
-                    }}
-                    style={{
-                      padding: "6px 10px",
-                      border: "1px solid #334155",
-                      background: "transparent",
-                      color: "#cbd5e1",
-                      cursor: "pointer",
-                      fontSize: "11px",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSubmitConfirmed}
-                    disabled={timeUpState === "submitting"}
-                    style={{
-                      padding: "6px 10px",
-                      border: "1px solid #ef4444",
-                      background: "rgba(239,68,68,0.16)",
-                      color: "#fecaca",
-                      cursor: timeUpState === "submitting" ? "not-allowed" : "pointer",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {timeUpState === "submitting" ? "Submitting…" : "Confirm"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      <TopBar
+        contest={contest}
+        fallbackEndAt={fallbackEndAt}
+        handleContestExpiry={handleContestExpiry}
+        setShowSupportModal={setShowSupportModal}
+        submitConfirm={submitConfirm}
+        setSubmitConfirm={setSubmitConfirm}
+        submitError={submitError}
+        setSubmitError={setSubmitError}
+        handleSubmitConfirmed={handleSubmitConfirmed}
+        timeUpState={timeUpState}
+      />
 
       {/* ── Body ── */}
       <div
@@ -2725,238 +2559,15 @@ export default function ContestPageClient() {
         }}
       >
         {/* Question list sidebar */}
-        <aside
-          style={{
-            width: sidebarCollapsed ? "52px" : "220px",
-            flexShrink: 0,
-            // Visible divider + subtle elevation so the collapsed strip reads as a container
-            // (the badge no longer floats on the bare canvas now the camera left the rail).
-            borderRight: "1px solid #1F1F1F",
-            display: "flex",
-            flexDirection: "column",
-            background: sidebarCollapsed ? "#111111" : "#0F0F0F",
-            boxShadow: "none",
-            overflow: "hidden",
-            transition: "width 250ms, background-color 250ms",
-          }}
-        >
-          <div
-            style={{
-              padding: sidebarCollapsed ? "12px 0" : "12px 14px 10px",
-              borderBottom: "1px solid #1F1F1F",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: sidebarCollapsed ? "center" : "space-between",
-              gap: "8px",
-            }}
-          >
-            {!sidebarCollapsed && (
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <p
-                  style={{
-                    fontSize: "10px",
-                    color: "#64748b",
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                    fontWeight: 600,
-                    fontFamily: "Inter, system-ui, sans-serif",
-                    margin: 0,
-                  }}
-                >
-                  Questions ({questions.length})
-                </p>
-                <p
-                  style={{
-                    margin: "3px 0 0",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    color: "var(--color-accent-light)",
-                    fontFamily: "Inter, system-ui, sans-serif",
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {acceptedQuestionCount} / {questions.length} Solved
-                </p>
-                {/* Segmented progress bar */}
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "2px",
-                    marginTop: "6px",
-                  }}
-                >
-                  {questions.map((q) => {
-                    const qStatus = questionStatusMap[q.id];
-                    return (
-                      <div
-                        key={q.id}
-                        style={{
-                          flex: 1,
-                          height: "3px",
-                          borderRadius: "var(--radius-pill)",
-                          // Binary: solved (accepted) = green, everything else = gray. The
-                          // saved/attempted nuance stays on the row dots, not the summary bar.
-                          background:
-                            qStatus.label === "Accepted" ? "var(--verdict-ac)" : "var(--text-dim)",
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#64748b",
-                cursor: "pointer",
-                padding: "2px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-              title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight size={14} strokeWidth={2} />
-              ) : (
-                <ChevronLeft size={14} strokeWidth={2} />
-              )}
-            </button>
-          </div>
-          <div
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              // Clear the docked camera tile at the rail bottom (expanded only; hidden collapsed).
-              padding: sidebarCollapsed ? "8px" : "8px 8px 162px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "4px",
-            }}
-          >
-            {questions.length === 0 && !sidebarCollapsed && (
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#475569",
-                  textAlign: "center",
-                  marginTop: "24px",
-                  fontFamily: "Inter, system-ui, sans-serif",
-                }}
-              >
-                No questions
-              </p>
-            )}
-            {questions.map((q, i) => {
-              const qStatus = questionStatusMap[q.id];
-              return (
-                <button
-                  key={q.id}
-                  type="button"
-                  onClick={() => switchQuestion(i)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                    width: "100%",
-                    padding: sidebarCollapsed ? "6px 0" : "10px 12px",
-                    borderRadius: "var(--radius-md)",
-                    // Collapsed: the badge itself is the single active pill — no outer box, so it
-                    // doesn't read as a pill-inside-a-pill. Expanded keeps the row highlight.
-                    border: `1px solid ${!sidebarCollapsed && activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
-                    background:
-                      !sidebarCollapsed && activeQ === i
-                        ? "rgb(var(--accent-rgb) / 0.08)"
-                        : "transparent",
-                    cursor: "pointer",
-                    fontFamily: "Inter, system-ui, sans-serif",
-                    textAlign: "left",
-                    color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
-                    transition:
-                      "background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
-                    position: "relative",
-                  }}
-                  title={`${q.title} · ${qStatus.label}`}
-                >
-                  {sidebarCollapsed ? (
-                    <span
-                      style={{
-                        width: "34px",
-                        height: "30px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: "var(--radius-md)",
-                        // Active = a single clean pill; others = plain status-coloured letter
-                        // (solved green / unsolved gray), matching the collapsed mockup.
-                        border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
-                        background: activeQ === i ? "rgb(var(--accent-rgb) / 0.12)" : "transparent",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                        color: activeQ === i ? "var(--color-accent-light)" : qStatus.color,
-                      }}
-                    >
-                      {String.fromCharCode(65 + i)}
-                    </span>
-                  ) : (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        width: "100%",
-                        minWidth: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {String.fromCharCode(65 + i)}.
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "12px",
-                          fontWeight: 500,
-                          color: activeQ === i ? "#ffffff" : "var(--text-soft)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          flex: 1,
-                          minWidth: 0,
-                        }}
-                      >
-                        {q.title}
-                      </span>
-                      <span
-                        style={{
-                          width: "7px",
-                          height: "7px",
-                          borderRadius: "var(--radius-pill)",
-                          // Active-first: the viewed question reads purple even if solved;
-                          // non-active falls back to its status colour (solved=green, etc.).
-                          background: activeQ === i ? "var(--color-accent-base)" : qStatus.color,
-                          flexShrink: 0,
-                        }}
-                      />
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+        <QuestionRail
+          questions={questions}
+          activeQ={activeQ}
+          switchQuestion={switchQuestion}
+          sidebarCollapsed={sidebarCollapsed}
+          setSidebarCollapsed={setSidebarCollapsed}
+          questionStatusMap={questionStatusMap}
+          acceptedQuestionCount={acceptedQuestionCount}
+        />
 
         {questions[activeQ]?.question_type === "follow_up" ? (
           <FollowUpPane
@@ -2979,148 +2590,16 @@ export default function ContestPageClient() {
         ) : (
           <>
             {/* Middle pane: Problem Description */}
-            <div
-              style={{
-                width: `${problemPaneWidth}%`,
-                minWidth: "320px",
-                maxWidth: "680px",
-                display: "flex",
-                flexDirection: "column",
-                borderRight: "1px solid rgba(255, 255, 255, 0.05)",
-                background: "#0F0F0F",
-                boxShadow: "none",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderBottom: "1px solid #1F1F1F",
-                  background: "#0F0F0F",
-                  padding: "0 18px",
-                  flexShrink: 0,
-                  height: "44px",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "11px",
-                    color: "var(--text-dim)",
-                    letterSpacing: "0.06em",
-                    fontFamily: "Inter, system-ui, sans-serif",
-                    fontWeight: 700,
-                  }}
-                >
-                  Problem
-                </span>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    color: "var(--text-dim)",
-                    fontFamily: "Inter, system-ui, sans-serif",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {Math.round(problemPaneWidth)}%
-                </span>
-              </div>
-
-              <div
-                style={{
-                  flex: 1,
-                  overflowY: "auto",
-                  color: "#e2e8f0",
-                  fontFamily: "system-ui, sans-serif",
-                }}
-              >
-                {availableProblemTabs.length > 1 && (
-                  <div
-                    style={{
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 5,
-                      display: "flex",
-                      alignItems: "center",
-                      height: "44px",
-                      padding: "0 18px",
-                      borderBottom: "1px solid rgba(255,255,255,0.05)",
-                      background: "rgba(15,15,15,0.96)",
-                      backdropFilter: "blur(12px)",
-                    }}
-                  >
-                    {availableProblemTabs.map((tab) => {
-                      const active = activeProblemTab === tab;
-                      const label =
-                        tab === "statement"
-                          ? "Statement"
-                          : tab === "examples"
-                            ? "Examples"
-                            : "Constraints";
-                      return (
-                        <button
-                          key={tab}
-                          type="button"
-                          onClick={() => setProblemTab(tab)}
-                          style={{
-                            height: "100%",
-                            padding: "0 14px",
-                            borderRadius: 0,
-                            border: "none",
-                            borderBottom: `2px solid ${active ? "var(--color-accent-base)" : "transparent"}`,
-                            background: "transparent",
-                            color: active ? "var(--color-accent-light)" : "var(--text-dim)",
-                            fontSize: "13px",
-                            fontWeight: 600,
-                            fontFamily: "Inter, system-ui, sans-serif",
-                            cursor: "pointer",
-                            transition:
-                              "color var(--transition-fast), border-color var(--transition-fast)",
-                          }}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* Bottom padding reserves the fixed camera tile's footprint so statement
-                    text never scrolls under it (esp. with the rail collapsed). */}
-                <article style={{ padding: "28px 28px 178px", maxWidth: "760px" }}>
-                  <p
-                    style={{
-                      margin: "0 0 8px",
-                      fontSize: "12px",
-                      color: "var(--color-accent-base)",
-                      fontWeight: 700,
-                      fontFamily: "Inter, system-ui, sans-serif",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    Problem {String.fromCharCode(65 + (questions[activeQ]?.order_index ?? activeQ))}
-                  </p>
-                  <h1
-                    style={{
-                      margin: "0 0 22px",
-                      color: "#f8fafc",
-                      fontSize: "var(--text-xl)",
-                      lineHeight: 1.3,
-                      fontWeight: 700,
-                      fontFamily: "Inter, system-ui, sans-serif",
-                      letterSpacing: 0,
-                    }}
-                  >
-                    {questions[activeQ]?.title}
-                  </h1>
-                  <div
-                    className="pb-body pb-body-editorial"
-                    onClick={handleProblemBodyClick}
-                    dangerouslySetInnerHTML={{ __html: problemBodyHtml }}
-                  />
-                </article>
-              </div>
-            </div>
+            <ProblemPane
+              problemPaneWidth={problemPaneWidth}
+              availableProblemTabs={availableProblemTabs}
+              activeProblemTab={activeProblemTab}
+              setProblemTab={setProblemTab}
+              questions={questions}
+              activeQ={activeQ}
+              problemBodyHtml={problemBodyHtml}
+              handleProblemBodyClick={handleProblemBodyClick}
+            />
 
             <div
               role="separator"
