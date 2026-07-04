@@ -76,9 +76,9 @@ session/contest/components/
 ├── TerminalPanel.tsx   Block 4 — LANGUAGE_META + isSampleTestRow relocated to its module scope
 │                                  (their only call sites; verified dead in client.tsx otherwise)
 └── CameraTile.tsx      Block 4 — ALWAYS-mounted <video>: the display-CSS visibility expression
-│                                  ((cameraStream ?? cameraError) && !sidebarCollapsed) moved
-│                                  verbatim INSIDE the tile; <CameraTile/> renders unconditionally
-│                                  — never a mount conditional
+                                   ((cameraStream ?? cameraError) && !sidebarCollapsed) moved
+                                   verbatim INSIDE the tile; <CameraTile/> renders unconditionally
+                                   — never a mount conditional
 ```
 
 **Contest gates per block:** gate block (§1) + invoke-diff + behavioral rig scenarios before any merge (run/submit round-trip; PR #27 cross-write check; autosave/save-indicator honesty; question switching; camera-live-through-collapse; countdown expiry) + screenshot pass vs `contest-redesign-visual-checklist.md` for JSX blocks (2–4). PR #13 (kiosk) is open and adds 2 lines to client.tsx — re-check its merge-time runtime verification after each contest block lands.
@@ -126,7 +126,19 @@ client.tsx: 6,180 → 5,762. Conditionals + all state stay in parent; focus-trap
 
 client.tsx: 5,762 → 5,241.
 
-### PR D — contest Block 4 · PR E onboarding · PR F results · PR G login · PR H shared
+### PR D — contest Block 4 (`refactor/contest-block4`) — FINAL contest block
+
+| Task                                                                                                                                                                                                                                                                                                                                                                                                                              | Files     | Status |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------ |
+| D.1 EditorPanel (tabs, close-confirm dialog, settings, Run/Submit, owns dynamic() EditorPane — chunk-verified vs pre-move worktree build)                                                                                                                                                                                                                                                                                         | `a16eb53` | ☑      |
+| D.2 TerminalPanel (tabs/output/attempts; LANGUAGE_META + isSampleTestRow relocated; all derivations stay parent-side)                                                                                                                                                                                                                                                                                                             | `31237a3` | ☑      |
+| D.3 CameraTile (always-mounted; display-CSS invariant verbatim)                                                                                                                                                                                                                                                                                                                                                                   | `2f502e1` | ☑      |
+| D.4 review fix: 17 Block-4-emptied imports dropped + dir.md as-built sync                                                                                                                                                                                                                                                                                                                                                         | `79e6e8a` | ☑      |
+| D.5 gates + review ×2 (task: ✅✅, 2 Important import findings → fixed; adversarial: 7 angles refuted incl. dynamic() single-instantiation, CodeMirror remount guards, derivation placement, whole-tree composition) + rig (CodeMirror mounts from relocated chunk, type→Saving…→All changes saved, terminal tabs + collapse round-trip, **camera keep-mounted proven: same video DOM node across rail collapse**, S1 regression) | —         | ☑      |
+
+client.tsx: 5,241 → 3,522. **CONTEST AREA COMPLETE: 7,400 → 3,522 (−52%), 17 modules/components extracted, behavior-change count across 4 blocks: zero (1 caught pre-merge and fixed).**
+
+### PR E onboarding · PR F results · PR G login · PR H shared
 
 (expand each table when its block starts)
 
