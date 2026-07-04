@@ -20,7 +20,10 @@ jobs:
             target: x86_64-pc-windows-msvc
           - platform: macos-latest
             target: aarch64-apple-darwin
-          - platform: macos-13
+          # Intel build cross-compiles on the arm64 runner — GitHub retired the
+          # macos-13 (Intel) runners; a job pinned to that label queues for 24h
+          # and gets the whole run cancelled (this killed v1.0.3 and v1.0.4).
+          - platform: macos-latest
             target: x86_64-apple-darwin
 
     runs-on: ${{ matrix.platform }}
