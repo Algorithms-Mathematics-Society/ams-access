@@ -2284,15 +2284,25 @@ export default function ContestPageClient() {
     loadQuestionWithAnswers(q, savedAnswers, language);
   }
 
+  // Every piece of run-panel state tied to the current question's run resets
+  // together. Single source of truth: two call sites (question switch, run
+  // start) each hand-maintained this list and one drifted — switchQuestion
+  // missed runTimedOut, leaving a ghost "Still running…" notice on the next
+  // question after a timed-out run.
+  function resetRunPanelState() {
+    setRunResult(null);
+    setRunResultAttemptId(null);
+    setRunError(null);
+    setRunTimedOut(false);
+  }
+
   function switchQuestion(idx: number) {
     if (questions[activeQ] && sessionId) {
       handleSave();
     }
     setActiveQ(idx);
     loadQuestion(questions[idx], selectedLanguage);
-    setRunResult(null);
-    setRunResultAttemptId(null);
-    setRunError(null);
+    resetRunPanelState();
   }
 
   function handleLanguageChange(newLanguage: string) {
@@ -2376,10 +2386,7 @@ export default function ContestPageClient() {
     runInFlightRef.current = true;
 
     setIsRunning(true);
-    setRunResult(null);
-    setRunResultAttemptId(null);
-    setRunError(null);
-    setRunTimedOut(false);
+    resetRunPanelState();
     setSubmitError(null);
     setTerminalTab("stdout");
 
