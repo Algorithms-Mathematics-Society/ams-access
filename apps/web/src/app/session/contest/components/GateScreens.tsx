@@ -1,6 +1,11 @@
 import { type useRouter } from "next/navigation";
 
-export function SecuringScreen() {
+// ONE component for both the securing and loading gates (label is the only
+// difference): keeping a single element type preserves React reconciliation
+// identity across the securing→loading transition, so the spinner animation
+// is patched in place instead of unmounted/remounted (no restart flicker) —
+// matching the pre-extraction behavior where both branches shared a root div.
+export function BootScreen({ label }: { label: string }) {
   return (
     <div
       style={{
@@ -32,47 +37,7 @@ export function SecuringScreen() {
             fontFamily: "Inter, system-ui, sans-serif",
           }}
         >
-          Securing session…
-        </p>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
-}
-
-export function ContestLoadingScreen() {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100vh",
-        background: "#0F0F0F",
-      }}
-    >
-      <div style={{ textAlign: "center" }}>
-        <div
-          style={{
-            width: "40px",
-            height: "40px",
-            borderTop: "2px solid var(--color-accent-base)",
-            borderRight: "2px solid rgb(var(--accent-rgb) / 0.3)",
-            borderBottom: "2px solid rgb(var(--accent-rgb) / 0.3)",
-            borderLeft: "2px solid rgb(var(--accent-rgb) / 0.3)",
-            borderRadius: "50%",
-            animation: "spin 0.9s linear infinite",
-            margin: "0 auto 16px",
-          }}
-        />
-        <p
-          style={{
-            fontSize: "13px",
-            color: "#64748b",
-            fontFamily: "Inter, system-ui, sans-serif",
-          }}
-        >
-          Loading contest...
+          {label}
         </p>
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

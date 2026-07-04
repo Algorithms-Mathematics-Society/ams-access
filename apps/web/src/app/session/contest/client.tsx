@@ -62,11 +62,7 @@ import {
   normalizeQuestions,
 } from "./components/questions";
 import { useFocusTrap } from "./components/hooks";
-import {
-  SecuringScreen,
-  ContestLoadingScreen,
-  ContestLoadErrorScreen,
-} from "./components/GateScreens";
+import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
 import { CountdownBadge } from "./components/CountdownBadge";
@@ -2505,11 +2501,11 @@ export default function ContestPageClient() {
   // unlocked direct-entry back to onboarding — render a neutral securing screen.
   // Never flash the contest UI before lockdown is confirmed engaged.
   if (lockGate !== "ok") {
-    return <SecuringScreen />;
+    return <BootScreen label="Securing session…" />;
   }
 
   if (loading) {
-    return <ContestLoadingScreen />;
+    return <BootScreen label="Loading contest..." />;
   }
 
   if (loadError) {
