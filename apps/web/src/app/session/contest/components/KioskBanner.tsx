@@ -55,7 +55,10 @@ export function KioskBanner() {
       aria-live="polite"
       style={{
         position: "fixed",
-        top: 16,
+        // Below the 48px TopBar: at top:16 the banner fully covered the
+        // redesign's centered countdown badge for its whole 8s life — the one
+        // moment (post-lock resume) a candidate most needs the remaining time.
+        top: 56,
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 1000,
