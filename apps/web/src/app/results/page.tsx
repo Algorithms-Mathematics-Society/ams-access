@@ -37,6 +37,10 @@ function ResultsView() {
   const fetchResults = useCallback(async () => {
     if (!contestId) return;
     try {
+      // Clear any stale error when a new attempt begins — error was previously
+      // write-only, so once set the error branch rendered forever and Retry
+      // could never recover even when the re-fetch succeeded.
+      setError(null);
       const res = await fetch(
         `${API_URL}/contests/${contestId}/results?email=${encodeURIComponent(email)}`
       );
