@@ -1,9 +1,8 @@
 import { type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { Play, Loader2, Send, AlertCircle, Check, Plus, X, Settings2 } from "lucide-react";
+import { Play, Loader2, Send, Check, Plus, X, Settings2 } from "lucide-react";
 import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "../editor-pane";
 import { type ContestMeta } from "./questions";
-import { type SaveIndicator } from "../save-indicator";
 import { type SubmitButtonView } from "../submit-button";
 
 // Module-scope so identity + the lazy chunk stay stable across renders (same
@@ -31,7 +30,6 @@ export interface EditorPanelProps {
   selectedLanguage: string;
   handleLanguageChange: (newLanguage: string) => void;
   contest: ContestMeta | null;
-  saveIndicator: SaveIndicator;
   themeMenuOpen: boolean;
   setThemeMenuOpen: Dispatch<SetStateAction<boolean>>;
   editorTheme: ContestEditorThemeId;
@@ -63,7 +61,6 @@ export function EditorPanel({
   selectedLanguage,
   handleLanguageChange,
   contest,
-  saveIndicator,
   themeMenuOpen,
   setThemeMenuOpen,
   editorTheme,
@@ -107,12 +104,13 @@ export function EditorPanel({
       >
         <span
           style={{
-            fontSize: "11px",
+            fontSize: "10px",
             color: "#64748b",
-            letterSpacing: "0.06em",
-            fontFamily: "Inter, system-ui, sans-serif",
-            fontWeight: 700,
-            marginRight: "12px",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+            fontWeight: 600,
+            marginRight: "14px",
           }}
         >
           Editor
@@ -299,16 +297,37 @@ export function EditorPanel({
         >
           <Plus size={14} strokeWidth={2} />
         </button>
+        <div style={{ flex: 1 }} />
+        {/* Save state intentionally lives ONLY in the footer trust strip (save icon
+            + LED + live region) — no duplicate indicator crowding the Submit area. */}
+      </div>
+
+      {/* Execution control strip */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 12px",
+          gap: "0",
+          height: "44px",
+          background: "#0F0F0F",
+          borderBottom: "1px solid #1F1F1F",
+          flexShrink: 0,
+        }}
+      >
+        {/* Language sits at the start of the execution row — opposite Run/Submit,
+            not stacked above them — since it's an input to what those buttons do. */}
         <label
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "8px",
-            marginLeft: "10px",
-            color: "var(--text-dim)",
-            fontSize: "12px",
+            gap: "10px",
+            color: "#64748b",
+            fontSize: "10px",
             fontWeight: 600,
-            fontFamily: "Inter, system-ui, sans-serif",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
             whiteSpace: "nowrap",
           }}
         >
@@ -339,53 +358,6 @@ export function EditorPanel({
             )}
           </select>
         </label>
-        <div style={{ flex: 1 }} />
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            color: saveIndicator.color,
-            fontSize: "11px",
-            fontWeight: 600,
-            fontFamily: "Inter, system-ui, sans-serif",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {saveIndicator.icon === "loading" ? (
-            <Loader2 size={12} strokeWidth={2} style={{ animation: "spin 0.8s linear infinite" }} />
-          ) : saveIndicator.icon === "error" ? (
-            <AlertCircle size={12} strokeWidth={2} />
-          ) : (
-            <span
-              style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "currentColor",
-                flexShrink: 0,
-              }}
-            />
-          )}
-          {saveIndicator.label}
-        </div>
-      </div>
-
-      {/* Execution control strip */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 12px",
-          gap: "0",
-          height: "44px",
-          background: "#0F0F0F",
-          borderBottom: "1px solid #1F1F1F",
-          flexShrink: 0,
-        }}
-      >
         <div style={{ flex: 1 }} />
         {/* Settings group */}
         <div style={{ position: "relative" }}>

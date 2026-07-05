@@ -55,6 +55,14 @@ export function CameraTile({
           display: "flex",
           alignItems: "center",
           gap: "6px",
+          // Scrim behind the toggles: the live feed behind them can be any
+          // color (a bright wall, a light shirt), so the red/white icons
+          // need guaranteed contrast independent of what's on camera.
+          padding: "3px",
+          borderRadius: "var(--radius-md)",
+          background: "rgba(0,0,0,0.55)",
+          backdropFilter: "blur(6px)",
+          border: "1px solid rgba(255,255,255,0.08)",
         }}
       >
         <button

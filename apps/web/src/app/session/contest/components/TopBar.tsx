@@ -1,5 +1,5 @@
 import { type Dispatch, type SetStateAction } from "react";
-import { LifeBuoy, LogOut } from "lucide-react";
+import { Headset, LogOut } from "lucide-react";
 import { CountdownBadge } from "./CountdownBadge";
 import { type ContestMeta } from "./questions";
 
@@ -60,7 +60,6 @@ export function TopBar({
             </linearGradient>
           </defs>
         </svg>
-        <div style={{ width: "1px", height: "20px", background: "rgba(255,255,255,0.1)" }} />
         <span
           style={{
             fontSize: "12px",
@@ -99,7 +98,7 @@ export function TopBar({
             (e.currentTarget as HTMLButtonElement).style.color = "#71717a";
           }}
         >
-          <LifeBuoy size={18} strokeWidth={1.75} />
+          <Headset size={18} strokeWidth={1.75} />
         </button>
 
         <div style={{ position: "relative", display: "flex", alignItems: "center" }}>

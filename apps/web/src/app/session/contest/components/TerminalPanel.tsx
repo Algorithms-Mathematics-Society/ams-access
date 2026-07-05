@@ -175,6 +175,15 @@ export function TerminalPanel({
   runProgressPhase,
   terminalUnread,
 }: TerminalPanelProps) {
+  // Attempts-list filter (ALL / FAILED / PASSED). Judged attempts split on the
+  // final verdict; still-judging attempts only appear under ALL.
+  const attemptMatchesFilter = (sub: SubmissionAttemptRecord) => {
+    if (testResultFilter === "all") return true;
+    if (sub.status === "QUEUED" || sub.status === "RUNNING") return false;
+    const verdict = sub.final_verdict ?? sub.status;
+    return testResultFilter === "passed" ? verdict === "AC" : verdict !== "AC";
+  };
+
   return (
     <div
       style={{
@@ -545,7 +554,6 @@ export function TerminalPanel({
                           <span style={{ fontWeight: 700 }}>
                             {isSample ? "Sample" : "Test"} {testNumber}:
                           </span>{" "}
-                          <span>{isAC ? "✓" : "✗"}</span>{" "}
                           <span style={{ color: isAC ? "#86efac" : "#fca5a5" }}>
                             {tr.verdict ?? (isAC ? "AC" : "Failed")}
                           </span>
@@ -561,6 +569,23 @@ export function TerminalPanel({
                             <span style={{ color: "#94a3b8" }}>
                               {` — expected ${JSON.stringify(String(expected ?? ""))} got ${JSON.stringify(String(got ?? ""))}`}
                             </span>
+                          )}
+                          {/* Passing runs show the program's stdout too — candidates
+                              expect to see their prints, not just a verdict. Sample
+                              tests only; hidden tests stay masked. */}
+                          {isAC && isSample && got != null && String(got).length > 0 && (
+                            <div
+                              style={{
+                                color: "#94a3b8",
+                                whiteSpace: "pre-wrap",
+                                padding: "4px 0 2px 14px",
+                                borderLeft: "2px solid rgba(148,163,184,0.15)",
+                                marginTop: "4px",
+                                marginLeft: "2px",
+                              }}
+                            >
+                              {String(got).replace(/\n$/, "")}
+                            </div>
                           )}
                         </div>
                       );
@@ -678,11 +703,13 @@ export function TerminalPanel({
                   color: "#64748b",
                   fontSize: "10px",
                   letterSpacing: "0.08em",
+                  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                  textTransform: "uppercase",
                 }}
               >
                 Attempts
               </span>
-              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
                 {(["all", "failed", "passed"] as const).map((filter) => {
                   const active = testResultFilter === filter;
                   return (
@@ -690,18 +717,25 @@ export function TerminalPanel({
                       key={filter}
                       type="button"
                       onClick={() => setTestResultFilter(filter)}
+                      onMouseEnter={(e) => {
+                        if (testResultFilter !== filter) e.currentTarget.style.color = "#cbd5e1";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (testResultFilter !== filter) e.currentTarget.style.color = "#64748b";
+                      }}
                       style={{
-                        height: "28px",
-                        padding: "0 12px",
-                        borderRadius: "999px",
-                        border: `1px solid ${active ? "rgb(var(--accent-rgb) / 0.5)" : "rgba(148,163,184,0.14)"}`,
-                        background: active ? "rgb(var(--accent-rgb) / 0.14)" : "transparent",
-                        color: active ? "var(--color-accent-light)" : "#64748b",
-                        fontSize: "11px",
+                        padding: "4px 2px 3px",
+                        border: "none",
+                        borderBottom: `2px solid ${active ? "var(--color-accent-base)" : "transparent"}`,
+                        background: "transparent",
+                        color: active ? "#ffffff" : "#64748b",
+                        fontSize: "10px",
                         fontWeight: 600,
-                        fontFamily: "Inter, system-ui, sans-serif",
+                        fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
                         cursor: "pointer",
-                        textTransform: "capitalize",
+                        transition: "color 120ms ease, border-color 120ms ease",
                       }}
                     >
                       {filter}
@@ -863,7 +897,12 @@ export function TerminalPanel({
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {submissionsList.map((sub) => {
+                {submissionsList.filter(attemptMatchesFilter).length === 0 && (
+                  <div style={{ color: "#64748b", fontSize: "11px", padding: "4px 0" }}>
+                    No {testResultFilter} attempts yet.
+                  </div>
+                )}
+                {submissionsList.filter(attemptMatchesFilter).map((sub) => {
                   const isExpanded = expandedAttemptId === sub.id;
                   const status = sub.status;
                   const isPending = status === "QUEUED" || status === "RUNNING";

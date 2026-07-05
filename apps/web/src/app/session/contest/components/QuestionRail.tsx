@@ -47,7 +47,7 @@ export function QuestionRail({
     >
       <div
         style={{
-          padding: sidebarCollapsed ? "12px 0" : "12px 14px 10px",
+          padding: sidebarCollapsed ? "12px 0" : "16px 14px 14px",
           borderBottom: "1px solid #1F1F1F",
           display: "flex",
           alignItems: "center",
@@ -57,39 +57,52 @@ export function QuestionRail({
       >
         {!sidebarCollapsed && (
           <div style={{ minWidth: 0, flex: 1 }}>
-            <p
+            {/* One quiet line: label left, solved-counter right. The loud purple
+                "N / M SOLVED" line is gone — the counter + segmented bar carry it. */}
+            <div
               style={{
-                fontSize: "10px",
-                color: "#64748b",
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                fontWeight: 600,
-                fontFamily: "Inter, system-ui, sans-serif",
-                margin: 0,
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: "8px",
               }}
             >
-              Questions ({questions.length})
-            </p>
-            <p
-              style={{
-                margin: "3px 0 0",
-                fontSize: "11px",
-                fontWeight: 700,
-                color: "var(--color-accent-light)",
-                fontFamily: "Inter, system-ui, sans-serif",
-                letterSpacing: "0.06em",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {acceptedQuestionCount} / {questions.length} Solved
-            </p>
+              <p
+                style={{
+                  fontSize: "10px",
+                  color: "#64748b",
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  fontWeight: 600,
+                  fontFamily: "Inter, system-ui, sans-serif",
+                  margin: 0,
+                }}
+              >
+                Questions
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color:
+                    questions.length > 0 && acceptedQuestionCount === questions.length
+                      ? "var(--verdict-ac)"
+                      : "#64748b",
+                  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {acceptedQuestionCount}/{questions.length}
+              </p>
+            </div>
             {/* Segmented progress bar */}
             <div
               style={{
                 display: "flex",
-                gap: "2px",
-                marginTop: "6px",
+                gap: "3px",
+                marginTop: "10px",
               }}
             >
               {questions.map((q) => {
@@ -140,10 +153,10 @@ export function QuestionRail({
           flex: 1,
           overflowY: "auto",
           // Clear the docked camera tile at the rail bottom (expanded only; hidden collapsed).
-          padding: sidebarCollapsed ? "8px" : "8px 8px 162px",
+          padding: sidebarCollapsed ? "8px" : "12px 8px 162px",
           display: "flex",
           flexDirection: "column",
-          gap: "4px",
+          gap: "6px",
         }}
       >
         {questions.length === 0 && !sidebarCollapsed && (
@@ -161,6 +174,10 @@ export function QuestionRail({
         )}
         {questions.map((q, i) => {
           const qStatus = questionStatusMap[q.id];
+          const letter = String.fromCharCode(65 + i);
+          // Don't print the letter twice: organizers often title problems
+          // "A. Foo" — the row already renders its own letter chip.
+          const displayTitle = q.title.replace(new RegExp(`^${letter}[.)]\\s+`), "");
           return (
             <button
               key={q.id}
@@ -171,7 +188,7 @@ export function QuestionRail({
                 alignItems: "center",
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 width: "100%",
-                padding: sidebarCollapsed ? "6px 0" : "10px 12px",
+                padding: sidebarCollapsed ? "6px 0" : "11px 12px",
                 borderRadius: "var(--radius-md)",
                 // Collapsed: the badge itself is the single active pill — no outer box, so it
                 // doesn't read as a pill-inside-a-pill. Expanded keeps the row highlight.
@@ -215,20 +232,21 @@ export function QuestionRail({
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: "8px",
+                    gap: "10px",
                     width: "100%",
                     minWidth: 0,
                   }}
                 >
                   <span
                     style={{
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                      color: activeQ === i ? "var(--color-accent-light)" : "#64748b",
                       flexShrink: 0,
                     }}
                   >
-                    {String.fromCharCode(65 + i)}.
+                    {letter}
                   </span>
                   <span
                     style={{
@@ -242,7 +260,7 @@ export function QuestionRail({
                       minWidth: 0,
                     }}
                   >
-                    {q.title}
+                    {displayTitle}
                   </span>
                   <span
                     style={{

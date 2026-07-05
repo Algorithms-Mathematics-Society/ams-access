@@ -320,7 +320,14 @@ export default function ContestPageClient() {
   const [submitWarning, setSubmitWarning] = useState<string | null>(null);
   const [submitConfirm, setSubmitConfirm] = useState(false);
   const [proctoringOk, setProctoringOk] = useState(true);
+  // Drives the full-screen soft-block/grace-period ONLY — a cheap, fast (1s)
+  // camera-stream-health check, NOT real face detection. Left untouched here.
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
+  // The footer's "Face detected" indicator — real BlazeFace presence, not
+  // camera health. Deliberately does NOT feed the block/grace-period above;
+  // it only reflects the existing audit-tick's result (see the presence
+  // monitor effect), so there is zero added inference cost.
+  const [presenceDetected, setPresenceDetected] = useState<"ok" | "away" | "unknown">("unknown");
   // Ambient connection signal for the trust strip. Defaults online; the effect
   // syncs the real value on mount (navigator is unavailable during SSR).
   const [online, setOnline] = useState(true);
@@ -1739,10 +1746,14 @@ export default function ContestPageClient() {
   // face_missing / multiple_faces proctoring events (thumbnails only on
   // anomalies — see lib/presence-monitor.ts for the retention notes). Uses a
   // detached <video> bound to the stream so sampling is independent of the
-  // camera panel being collapsed. Deliberately does NOT drive faceStatus or
-  // any UI — evidence collection only.
+  // camera panel being collapsed. Deliberately does NOT drive faceStatus (the
+  // block/grace-period signal) — only the footer's presenceDetected, on this
+  // same tick, at zero added inference cost.
   useEffect(() => {
-    if (!cameraStream) return;
+    if (!cameraStream) {
+      setPresenceDetected("unknown");
+      return;
+    }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let detectorFailed = false;
@@ -1777,6 +1788,7 @@ export default function ContestPageClient() {
             "presence check skipped: camera disabled by contestant",
             {}
           );
+          setPresenceDetected("unknown");
         } else {
           if (!detector && !detectorFailed) {
             try {
@@ -1788,6 +1800,7 @@ export default function ContestPageClient() {
                 "face detector failed to initialise; periodic presence checks disabled",
                 {}
               );
+              setPresenceDetected("unknown");
             }
           }
           if (detector && !cancelled) {
@@ -1797,6 +1810,9 @@ export default function ContestPageClient() {
                 faces: sample.faces,
                 thumbnail: sample.thumbnail,
               });
+              // presence_ok = exactly one face confirmed by BlazeFace; anything
+              // else (none, or multiple) is not a clean confirmed presence.
+              setPresenceDetected(sample.status === "presence_ok" ? "ok" : "away");
             }
           }
         }
@@ -2548,7 +2564,6 @@ export default function ContestPageClient() {
                 selectedLanguage={selectedLanguage}
                 handleLanguageChange={handleLanguageChange}
                 contest={contest}
-                saveIndicator={saveIndicator}
                 themeMenuOpen={themeMenuOpen}
                 setThemeMenuOpen={setThemeMenuOpen}
                 editorTheme={editorTheme}
@@ -2623,7 +2638,7 @@ export default function ContestPageClient() {
       <FooterTrustStrip
         proctoringOk={proctoringOk}
         footerStatusDot={footerStatusDot}
-        faceStatus={faceStatus}
+        faceStatus={presenceDetected}
         online={online}
         saveIndicator={saveIndicator}
         activeQ={activeQ}
