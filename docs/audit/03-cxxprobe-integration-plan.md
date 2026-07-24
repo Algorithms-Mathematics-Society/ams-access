@@ -5,11 +5,10 @@ Baseline: `cxxprobe` v0.8.1 at `3fe00c4`; `ams-access` local `main` at `3769026`
 Scope: integrate cxxprobe as the authoritative C++ problem/evaluation engine behind the existing Go control plane, with one remote contract for Windows, Linux, and macOS clients. This document is a plan, not evidence that the integration has shipped.
 
 Implementation status (2026-07-24): Phase 0, the cxxprobe-owned portion of
-Phase 1, Phase 2a, Phase 2b, and Phase 2c are committed on the three repositories'
-`main` branches. The server-side Phase 2d candidate projection, Phase 2e
-ams-access client switch, and Phase 2f disposable PostgreSQL qualification are
-implemented in the current uncommitted working trees. Evidence and remaining
-gates are in
+Phase 1, and Phases 2a through 2f are committed on the three repositories'
+`main` branches. Phase 2g's exact-major PostgreSQL qualification with a distinct
+migration role without prohibited direct cluster attributes is complete.
+Evidence and remaining gates are in the records below:
 [`04-phase-0-1-cxxprobe-completion.md`](04-phase-0-1-cxxprobe-completion.md),
 [`05-phase-2a-go-foundation-completion.md`](05-phase-2a-go-foundation-completion.md),
 [`06-phase-2b-bundle-import-completion.md`](06-phase-2b-bundle-import-completion.md),
@@ -17,15 +16,20 @@ gates are in
 [`08-phase-2d-candidate-projection-completion.md`](08-phase-2d-candidate-projection-completion.md),
 [`09-phase-2e-candidate-client-completion.md`](09-phase-2e-candidate-client-completion.md),
 and
-[`10-phase-2f-postgresql-qualification-completion.md`](10-phase-2f-postgresql-qualification-completion.md).
+[`10-phase-2f-postgresql-qualification-completion.md`](10-phase-2f-postgresql-qualification-completion.md),
+with the exact-major follow-up in
+[`11-phase-2g-exact-postgresql-role-qualification.md`](11-phase-2g-exact-postgresql-role-qualification.md).
 Go now verifies, persists, snapshots, and serves only schema-v2 public bytes
 through strict session-owner APIs. ams-access now consumes that projection only
 after session binding, strictly verifies metadata/content/assets, and presents a
 C++23 editor while keeping Phase 3 judging visibly disabled. Migrations 001–042
-now pass real PostgreSQL 16.14 fresh, rollback, constraint, immutability, and
-concurrency tests. Phase 2 still needs qualification on the exact deployed
-PostgreSQL major, staging GCS, and cross-platform desktop qualification. Phase 3
-scored cxxprobe routing remains unimplemented.
+now pass fresh, rollback, constraint, immutability, and concurrency tests on
+exact upstream PostgreSQL 15.17 using a distinct migration role without
+prohibited direct cluster attributes.
+Phase 2 still needs authorized capture and faithful replay of the deployed
+Cloud SQL role/schema/extension metadata, staging GCS qualification, and
+cross-platform desktop qualification. Phase 3 scored cxxprobe routing remains
+unimplemented.
 
 ## Decision summary
 
