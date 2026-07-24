@@ -5,18 +5,27 @@ Baseline: `cxxprobe` v0.8.1 at `3fe00c4`; `ams-access` local `main` at `3769026`
 Scope: integrate cxxprobe as the authoritative C++ problem/evaluation engine behind the existing Go control plane, with one remote contract for Windows, Linux, and macOS clients. This document is a plan, not evidence that the integration has shipped.
 
 Implementation status (2026-07-24): Phase 0, the cxxprobe-owned portion of
-Phase 1, Phase 2a, the Phase 2b organizer import pipeline, and the Phase 2c
-public-contract and immutable-identity foundation have been implemented in
-uncommitted working trees. Evidence and remaining gates are in
+Phase 1, Phase 2a, Phase 2b, and Phase 2c are committed on the three repositories'
+`main` branches. The server-side Phase 2d candidate projection, Phase 2e
+ams-access client switch, and Phase 2f disposable PostgreSQL qualification are
+implemented in the current uncommitted working trees. Evidence and remaining
+gates are in
 [`04-phase-0-1-cxxprobe-completion.md`](04-phase-0-1-cxxprobe-completion.md),
 [`05-phase-2a-go-foundation-completion.md`](05-phase-2a-go-foundation-completion.md),
 [`06-phase-2b-bundle-import-completion.md`](06-phase-2b-bundle-import-completion.md),
+[`07-phase-2c-public-contract-snapshot-completion.md`](07-phase-2c-public-contract-snapshot-completion.md),
+[`08-phase-2d-candidate-projection-completion.md`](08-phase-2d-candidate-projection-completion.md),
+[`09-phase-2e-candidate-client-completion.md`](09-phase-2e-candidate-client-completion.md),
 and
-[`07-phase-2c-public-contract-snapshot-completion.md`](07-phase-2c-public-contract-snapshot-completion.md).
-Phase 2 is still not complete. Schema v2 defines the digest-covered public
-allowlist, but Go does not yet fetch, sanitize, persist, or expose those public
-bytes through a candidate session API. Phase 3 scored cxxprobe routing and all
-Windows/Linux/macOS client integration also remain unimplemented.
+[`10-phase-2f-postgresql-qualification-completion.md`](10-phase-2f-postgresql-qualification-completion.md).
+Go now verifies, persists, snapshots, and serves only schema-v2 public bytes
+through strict session-owner APIs. ams-access now consumes that projection only
+after session binding, strictly verifies metadata/content/assets, and presents a
+C++23 editor while keeping Phase 3 judging visibly disabled. Migrations 001–042
+now pass real PostgreSQL 16.14 fresh, rollback, constraint, immutability, and
+concurrency tests. Phase 2 still needs qualification on the exact deployed
+PostgreSQL major, staging GCS, and cross-platform desktop qualification. Phase 3
+scored cxxprobe routing remains unimplemented.
 
 ## Decision summary
 
@@ -31,6 +40,7 @@ Windows/Linux/macOS client integration also remain unimplemented.
    ```
 
    The Go implementation must use an argument-vector API such as `exec.CommandContext`, never construct a shell command from a slug or path.
+
 3. **Keep Go as the single control plane.** Go continues to own authentication, contest/session state, attempt idempotency, Pub/Sub delivery, retries, durable results, scoring, and client APIs.
 4. **Use `cxxprobe serve` initially for problem-authoring/prejudge experiments, not as a second production queue.** v0.8.1's REST API and CLI share the same canonical `JudgeReport` JSON (`cxxprobe/docs/content/architecture/http-service.mdx:95-98`). That makes HTTP a future transport option without changing the result parser.
 5. **Make problem and engine identity immutable.** Every published contest question and attempt records a content digest, contract version, cxxprobe version/commit, binary or image digest, and resolved toolchain identity.
@@ -39,11 +49,11 @@ Windows/Linux/macOS client integration also remain unimplemented.
 
 ## Why CLI first
 
-| Option | What it gives us | Production issue today | Decision |
-|---|---|---|---|
-| Go worker invokes CLI | One existing durable queue/database; process boundary; exact canonical JSON; easiest attempt-level timeout and cleanup. | Per-attempt process startup; Go must manage bundle materialization and parsing. | **First production path.** |
-| Go calls `cxxprobe serve` | Built-in bounded worker pool, health, metrics, REST/SSE, and the same judge pipeline. | v0.8.1 has no auth; defaults to `0.0.0.0`; uses an in-memory queue/local event bus plus SQLite; creates its own submission ID; and does not store Go attempt idempotency, engine digest, or problem digest (`cxxprobe/docs/content/architecture/http-service.mdx:29-36`, `cxxprobe/docs/content/architecture/http-service.mdx:71-75`, `cxxprobe/docs/content/architecture/http-service.mdx:149-165`, `cxxprobe/server/repository/sqlite_submission_repository.cpp:22-31`). | Authoring/dev now; reassess after the sidecar gate below. |
-| Go links libcxxprobe through cgo | Avoids process/HTTP overhead. | C++ ABI/lifetime/crash handling crosses into the Go worker; a library fault can take down the consumer; packaging is more complex. | Do not use for the first integration. |
+| Option                           | What it gives us                                                                                                        | Production issue today                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Decision                                                  |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Go worker invokes CLI            | One existing durable queue/database; process boundary; exact canonical JSON; easiest attempt-level timeout and cleanup. | Per-attempt process startup; Go must manage bundle materialization and parsing.                                                                                                                                                                                                                                                                                                                                                                                            | **First production path.**                                |
+| Go calls `cxxprobe serve`        | Built-in bounded worker pool, health, metrics, REST/SSE, and the same judge pipeline.                                   | v0.8.1 has no auth; defaults to `0.0.0.0`; uses an in-memory queue/local event bus plus SQLite; creates its own submission ID; and does not store Go attempt idempotency, engine digest, or problem digest (`cxxprobe/docs/content/architecture/http-service.mdx:29-36`, `cxxprobe/docs/content/architecture/http-service.mdx:71-75`, `cxxprobe/docs/content/architecture/http-service.mdx:149-165`, `cxxprobe/server/repository/sqlite_submission_repository.cpp:22-31`). | Authoring/dev now; reassess after the sidecar gate below. |
+| Go links libcxxprobe through cgo | Avoids process/HTTP overhead.                                                                                           | C++ ABI/lifetime/crash handling crosses into the Go worker; a library fault can take down the consumer; packaging is more complex.                                                                                                                                                                                                                                                                                                                                         | Do not use for the first integration.                     |
 
 If `serve` is exercised before its production gate, bind it to `127.0.0.1`, keep the developer UI off, place it behind the trusted Go worker, and never expose it to a candidate network. v0.8.1 otherwise defaults to a public bind and permissive CORS (`cxxprobe/cli/commands/serve_cmd.hpp:21-28`, `cxxprobe/server/middleware/cors_middleware.cpp:5-9`).
 
@@ -82,14 +92,14 @@ There must be no direct client-to-cxxprobe route and no secret test/checker/solu
 
 ## Responsibility boundary
 
-| Concern | Authoritative owner | Required rule |
-|---|---|---|
-| Executable coding semantics | `cxxprobe` | `problem.yaml`, compiler standard/flags, limits, manual tests/answers, checker, symbolic rules, behavior checker, statement/starter/reference files. |
-| Contest metadata | `ams-golang` | Question UUID, order, points, visibility, schedule, invites, session state, and mapping to one published cxxprobe bundle digest. Go must not independently restate judge limits or tests for a cxxprobe question. |
-| Candidate experience | `ams-access` | Render the public projection, edit source, submit/save, and display returned structured results. It never evaluates locally. |
-| Attempts and delivery | `ams-golang` | Attempt ID, idempotency key, status transition, durable queue, retry/reaper, final score, and audit trail. |
-| Resource measurement | `cxxprobe` | Per-case CPU time from cgroups, monotonic wall time, peak memory, exit code, and case verdict. Go stores these values without synthetic adjustment. |
-| Hostile-code boundary | judge deployment | No credentials/metadata/egress, minimal mounts, seccomp/capability policy, resource quotas, and complete per-job destruction in addition to cxxprobe's inner sandbox. |
+| Concern                     | Authoritative owner | Required rule                                                                                                                                                                                                     |
+| --------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Executable coding semantics | `cxxprobe`          | `problem.yaml`, compiler standard/flags, limits, manual tests/answers, checker, symbolic rules, behavior checker, statement/starter/reference files.                                                              |
+| Contest metadata            | `ams-golang`        | Question UUID, order, points, visibility, schedule, invites, session state, and mapping to one published cxxprobe bundle digest. Go must not independently restate judge limits or tests for a cxxprobe question. |
+| Candidate experience        | `ams-access`        | Render the public projection, edit source, submit/save, and display returned structured results. It never evaluates locally.                                                                                      |
+| Attempts and delivery       | `ams-golang`        | Attempt ID, idempotency key, status transition, durable queue, retry/reaper, final score, and audit trail.                                                                                                        |
+| Resource measurement        | `cxxprobe`          | Per-case CPU time from cgroups, monotonic wall time, peak memory, exit code, and case verdict. Go stores these values without synthetic adjustment.                                                               |
+| Hostile-code boundary       | judge deployment    | No credentials/metadata/egress, minimal mounts, seccomp/capability policy, resource quotas, and complete per-job destruction in addition to cxxprobe's inner sandbox.                                             |
 
 ## Contract 1: published problem bundle
 
@@ -102,9 +112,7 @@ Add a versioned publication manifest generated by cxxprobe, tentatively `bundle-
   "contract_version": 1,
   "problem_slug": "two-sum",
   "cxxprobe_schema_version": 1,
-  "files": [
-    {"path": "problems/two-sum/problem.yaml", "size": 421, "sha256": "..."}
-  ],
+  "files": [{ "path": "problems/two-sum/problem.yaml", "size": 421, "sha256": "..." }],
   "bundle_sha256": "..."
 }
 ```
@@ -191,16 +199,16 @@ cxxprobe v0.8.1 already emits manual cases with `verdict`, `exit_code`, `cpu_tim
 
 Mapping order is deterministic and tested with golden reports:
 
-| cxxprobe outcome | Go public verdict | Structured detail |
-|---|---|---|
-| Solution compile ran and `ok=false` | `CE` | `failure_kind=SUBMISSION_COMPILE`; retain bounded compiler diagnostics. |
-| cxxprobe `overall=ERROR`, invalid/missing bundle, behavior-checker compile failure, malformed report, or worker/tool failure | `IE` | Distinguish `PROBLEM_CONFIG`, `CHECKER_COMPILE`, `ENGINE_PROTOCOL`, `WORKER_TIMEOUT`, `BUNDLE_DIGEST`, and other operational causes. Never blame the candidate for an infrastructure error. |
-| Manual case `TLE`, `MLE`, `OLE`, or `RE` | Same public verdict | Preserve every case, applying cxxprobe's result order rather than recomputing it in Go. |
-| Manual case `WA` | `WA` | `failure_kind=MANUAL_CHECK`. |
-| Symbolic status `FAIL` | `WA` for scoring/API compatibility | `failure_kind=SYMBOLIC_CHECK`; expose safe check messages, not hidden patterns unless explicitly public. |
-| Behavior status `FAIL` | `WA` for scoring/API compatibility | `failure_kind=BEHAVIOR_CHECK`; expose safe GTest case names/messages according to problem policy. |
-| All enabled checks pass | `AC` | Full report retained. |
-| `SKIPPED` because nothing meaningful ran | `IE` during judging; publication should have rejected it | `failure_kind=EMPTY_PROBLEM`. |
+| cxxprobe outcome                                                                                                             | Go public verdict                                        | Structured detail                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Solution compile ran and `ok=false`                                                                                          | `CE`                                                     | `failure_kind=SUBMISSION_COMPILE`; retain bounded compiler diagnostics.                                                                                                                     |
+| cxxprobe `overall=ERROR`, invalid/missing bundle, behavior-checker compile failure, malformed report, or worker/tool failure | `IE`                                                     | Distinguish `PROBLEM_CONFIG`, `CHECKER_COMPILE`, `ENGINE_PROTOCOL`, `WORKER_TIMEOUT`, `BUNDLE_DIGEST`, and other operational causes. Never blame the candidate for an infrastructure error. |
+| Manual case `TLE`, `MLE`, `OLE`, or `RE`                                                                                     | Same public verdict                                      | Preserve every case, applying cxxprobe's result order rather than recomputing it in Go.                                                                                                     |
+| Manual case `WA`                                                                                                             | `WA`                                                     | `failure_kind=MANUAL_CHECK`.                                                                                                                                                                |
+| Symbolic status `FAIL`                                                                                                       | `WA` for scoring/API compatibility                       | `failure_kind=SYMBOLIC_CHECK`; expose safe check messages, not hidden patterns unless explicitly public.                                                                                    |
+| Behavior status `FAIL`                                                                                                       | `WA` for scoring/API compatibility                       | `failure_kind=BEHAVIOR_CHECK`; expose safe GTest case names/messages according to problem policy.                                                                                           |
+| All enabled checks pass                                                                                                      | `AC`                                                     | Full report retained.                                                                                                                                                                       |
+| `SKIPPED` because nothing meaningful ran                                                                                     | `IE` during judging; publication should have rejected it | `failure_kind=EMPTY_PROBLEM`.                                                                                                                                                               |
 
 For multiple manual failures, keep every per-case verdict and use an explicitly tested aggregate precedence compatible with cxxprobe's own case semantics. Do not make SQL query order choose the final verdict accidentally.
 
@@ -301,13 +309,13 @@ Adversarial tests must attempt metadata/cloud credentials, DNS/Internet, localho
 
 All three desktop clients use the same Go endpoints and payload types. They show the same statement/starter revision and bundle digest, accept only advertised languages, and render the same verdict/check/timing structure. Shared TypeScript fixtures must deserialize the exact Go response on every OS. No candidate OS receives a compiler, private tests, checker, reference solution, or cxxprobe binary.
 
-| Area | Windows | Linux | macOS |
-|---|---|---|---|
-| Candidate judging | Remote Go API only; no WSL requirement. | Remote Go API only; do not run cxxprobe on the candidate host even though Linux could. | Remote Go API only; no local Linux VM requirement. |
-| Author problem testing | WSL2 or a supported Linux VM/container; never define canonical results from native Windows. | Native supported route with cgroup v2/user namespaces. | Supported Linux VM/container; never define canonical results from native macOS. |
-| Desktop release | Signed MSI/NSIS, WebView2 and firewall/CSP API reachability, clean Win10/11 E2E. | AppImage/deb/rpm as supported, X11/Wayland and privileged-helper/network-lockdown E2E. | Signed/notarized DMG, ATS/TLS and camera/screen permission E2E. |
-| Judge UI | Display public verdict, check category, CPU/wall/memory labels; redact private details. | Identical. | Identical. |
-| Compatibility gate | Preflight rejects an API/contract version mismatch before lockdown. | Same. | Same. |
+| Area                   | Windows                                                                                     | Linux                                                                                  | macOS                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Candidate judging      | Remote Go API only; no WSL requirement.                                                     | Remote Go API only; do not run cxxprobe on the candidate host even though Linux could. | Remote Go API only; no local Linux VM requirement.                              |
+| Author problem testing | WSL2 or a supported Linux VM/container; never define canonical results from native Windows. | Native supported route with cgroup v2/user namespaces.                                 | Supported Linux VM/container; never define canonical results from native macOS. |
+| Desktop release        | Signed MSI/NSIS, WebView2 and firewall/CSP API reachability, clean Win10/11 E2E.            | AppImage/deb/rpm as supported, X11/Wayland and privileged-helper/network-lockdown E2E. | Signed/notarized DMG, ATS/TLS and camera/screen permission E2E.                 |
+| Judge UI               | Display public verdict, check category, CPU/wall/memory labels; redact private details.     | Identical.                                                                             | Identical.                                                                      |
+| Compatibility gate     | Preflight rejects an API/contract version mismatch before lockdown.                         | Same.                                                                                  | Same.                                                                           |
 
 Platform-specific lockdown code must allow the Go API and object endpoints the API actually uses; it must never allow a direct cxxprobe host. The Windows firewall/CSP work remains a separate P0 because a correct server judge is useless if the desktop blocks save/submit or permits unintended egress.
 
@@ -336,10 +344,19 @@ Each phase is separately reviewable and must meet its exit gate before the next 
 ### Phase 2 — Go import and persistence
 
 - Add migrations, configuration, quarantine validation, content-addressed storage, publication snapshot, and APIs.
-- Status: Phase 2a/2b import and immutable bundle binding are implemented, and
-  Phase 2c freezes judge identity at session and attempt boundaries. The
-  sanitized public-byte projection, its durable publication record, and the
-  candidate session API are still required before this phase can close.
+- Status: Phase 2a/2b import and immutable bundle binding are implemented;
+  Phase 2c freezes judge identity at session and attempt boundaries; and the
+  Phase 2d work independently rehashes the public allowlist, persists
+  immutable statement/starter/asset bytes, freezes projection identity and
+  display metadata per session, and exposes strict authenticated question and
+  asset APIs. Phase 2e switches ams-access to those session-bound APIs, verifies
+  the exact projection and every raster asset before rendering, and locks the
+  cxxprobe editor to C++23. Phase 2f executes the complete migration chain and
+  its failure/concurrency paths on disposable PostgreSQL 16.14, and closes the
+  database races and incomplete-projection states found by that qualification.
+  Qualification on the exact deployed PostgreSQL major, staging object storage,
+  and Windows/Linux/macOS desktop validation remain before this phase can close
+  operationally.
 - Exit: a post-publication edit produces a new digest and cannot affect an existing session or attempt.
 
 ### Phase 3 — Go worker adapter
@@ -373,16 +390,16 @@ Each phase is separately reviewable and must meet its exit gate before the next 
 
 ## Test matrix
 
-| Layer | Required tests |
-|---|---|
-| cxxprobe unit/contract | Problem schema, canonical manifest/digest, JSON schema version, every verdict/check type, diagnostics bounds, CLI exit-code/report combinations. |
-| Go unit | Strict JSON decoder, verdict/failure mapping, timing/memory projection, redaction, unknown version/status, slug/digest mismatch. |
-| Go integration | Upload→validate→publish→session snapshot→submit→Pub/Sub→CLI→transaction→candidate response. |
-| Delivery faults | Duplicate message, process crash during compile/case/report/DB commit, timeout, nack/redelivery, reaper race, stale worker version. |
-| Security | Traversal/symlink/archive bombs, metadata/credential/network access, cross-problem/cross-attempt reads, fork/output/disk bombs, lingering processes. |
-| Fairness/capacity | Repeated calibrated runs, cold/warm compiler cache, idle/contention, each worker class, burst queue, max-size source/bundle/report. |
-| Client contract | Shared TypeScript fixtures plus Windows/Linux/macOS save, submit, polling/resume, result rendering, incompatibility preflight, offline/reconnect. |
-| Release | Worker image and cxxprobe binary hash verification; exact problem digest; Windows signing, macOS signing/notarization, Linux package smoke; end-to-end staging contest. |
+| Layer                  | Required tests                                                                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cxxprobe unit/contract | Problem schema, canonical manifest/digest, JSON schema version, every verdict/check type, diagnostics bounds, CLI exit-code/report combinations.                        |
+| Go unit                | Strict JSON decoder, verdict/failure mapping, timing/memory projection, redaction, unknown version/status, slug/digest mismatch.                                        |
+| Go integration         | Upload→validate→publish→session snapshot→submit→Pub/Sub→CLI→transaction→candidate response.                                                                             |
+| Delivery faults        | Duplicate message, process crash during compile/case/report/DB commit, timeout, nack/redelivery, reaper race, stale worker version.                                     |
+| Security               | Traversal/symlink/archive bombs, metadata/credential/network access, cross-problem/cross-attempt reads, fork/output/disk bombs, lingering processes.                    |
+| Fairness/capacity      | Repeated calibrated runs, cold/warm compiler cache, idle/contention, each worker class, burst queue, max-size source/bundle/report.                                     |
+| Client contract        | Shared TypeScript fixtures plus Windows/Linux/macOS save, submit, polling/resume, result rendering, incompatibility preflight, offline/reconnect.                       |
+| Release                | Worker image and cxxprobe binary hash verification; exact problem digest; Windows signing, macOS signing/notarization, Linux package smoke; end-to-end staging contest. |
 
 ## Observability and operations
 

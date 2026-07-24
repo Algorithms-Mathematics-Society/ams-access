@@ -29,6 +29,9 @@ export const LANGUAGE_ID_MAP: Record<string, string> = {
   go: "go",
   Rust: "rust",
   rust: "rust",
+  "C++23": "cpp",
+  cpp23: "cpp",
+  "c++23": "cpp",
 };
 
 // Languages the judge worker actually handles. Go and Rust are not yet
@@ -37,6 +40,7 @@ export const WORKER_SUPPORTED_LANGUAGES = new Set([
   "C",
   "C++17",
   "C++20",
+  "C++23",
   "Python3",
   "PyPy3",
   "Java17",
@@ -57,6 +61,9 @@ export function normalizeLanguageLabel(label: string): string {
     case "cpp20":
     case "c++20":
       return "C++20";
+    case "cpp23":
+    case "c++23":
+      return "C++23";
     case "python":
     case "py":
     case "python3":
@@ -152,6 +159,7 @@ export function isPristineStarter(content: string): boolean {
 export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   "C++17": "cpp",
   "C++20": "cpp",
+  "C++23": "cpp",
   Python3: "py",
   Java17: "java",
   Go: "go",

@@ -1,8 +1,13 @@
 import { marked } from "marked";
 import katex from "katex";
 import DOMPurify from "dompurify";
+import { resolveCandidateAssetURL } from "../candidate-question-projection";
 
 export type ProblemSectionKey = "statement" | "examples" | "constraints";
+export type ProblemAssetContext = {
+  statementPath: string;
+  assets: ReadonlyArray<{ path: string; object_url: string }>;
+};
 
 // Configure marked once at module level — pays cost on first import, never again.
 marked.use({ breaks: true, gfm: true });
@@ -48,7 +53,38 @@ export function renderMath(tex: string, displayMode: boolean): string {
   });
 }
 
-export function parseDescription(md: string): string {
+export function resolveProblemAssetURL(
+  source: string,
+  context: ProblemAssetContext
+): string | null {
+  return resolveCandidateAssetURL(source, context.statementPath, context.assets);
+}
+
+function bindProjectionAssets(html: string, context: ProblemAssetContext): string {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  template.content.querySelectorAll("img").forEach((image) => {
+    const source = image.getAttribute("src") ?? "";
+    const objectURL = resolveProblemAssetURL(source, context);
+    image.removeAttribute("srcset");
+    image.removeAttribute("sizes");
+    if (objectURL) {
+      image.setAttribute("src", objectURL);
+    } else {
+      image.replaceWith(
+        document.createTextNode(image.getAttribute("alt") || "[image unavailable]")
+      );
+    }
+  });
+  template.content.querySelectorAll("a").forEach((anchor) => {
+    anchor.removeAttribute("href");
+    anchor.removeAttribute("target");
+    anchor.removeAttribute("rel");
+  });
+  return template.innerHTML;
+}
+
+export function parseDescription(md: string, assetContext?: ProblemAssetContext): string {
   // SECURITY: problem statements are untrusted (backend / contest-authored, and
   // could be tampered with in transit) and are rendered into the privileged
   // Tauri webview via dangerouslySetInnerHTML. Sanitize the marked() output —
@@ -104,6 +140,10 @@ export function parseDescription(md: string): string {
   safeHtml = safeHtml
     .replace(/@@AMSCODE(\d+)@@/g, (_m, n: string) => codeFragments[Number(n)] ?? "")
     .replace(/@@AMSMATH(\d+)@@/g, (_m, n: string) => mathFragments[Number(n)] ?? "");
+
+  if (assetContext) {
+    safeHtml = bindProjectionAssets(safeHtml, assetContext);
+  }
 
   return safeHtml;
 }

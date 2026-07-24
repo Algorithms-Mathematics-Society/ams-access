@@ -1,4 +1,5 @@
 import { looksLikeCpp } from "./language";
+import type { CXXProbeQuestionProjection } from "../candidate-question-projection";
 
 export type Question = {
   id: string;
@@ -7,6 +8,12 @@ export type Question = {
   starter_code: string | null;
   order_index: number;
   question_type: string;
+  starter_filename?: string | null;
+  points?: number;
+  judge_engine?: "legacy" | "cxxprobe";
+  time_limit_ms?: number | null;
+  memory_limit_mb?: number | null;
+  cxxprobe?: CXXProbeQuestionProjection | null;
 };
 
 export type ClientFollowUpPart = {

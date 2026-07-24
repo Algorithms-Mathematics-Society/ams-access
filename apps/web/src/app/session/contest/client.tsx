@@ -12,7 +12,8 @@ import { invoke } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
-import { authHeaders } from "@/lib/candidate-auth";
+import { authHeaders, getCandidateToken } from "@/lib/candidate-auth";
+import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
   samplePresence,
@@ -54,12 +55,11 @@ import {
   isPristineStarter,
   questionFileName,
 } from "./components/language";
+import { type Question, type ContestMeta, type FollowUpPartState } from "./components/questions";
 import {
-  type Question,
-  type ContestMeta,
-  type FollowUpPartState,
-  normalizeQuestions,
-} from "./components/questions";
+  loadCandidateQuestions,
+  releaseCandidateQuestionAssets,
+} from "./candidate-question-projection";
 import { useFocusTrap } from "./components/hooks";
 import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
@@ -125,19 +125,21 @@ async function fetchJsonOrNull(url: string): Promise<unknown | null> {
   }
 }
 
-async function fetchContestQuestions(contestId: string): Promise<Question[]> {
-  const paths = [
-    `/contests/${contestId}/questions`,
-    `/contests/${contestId}/problems`,
-    `/contests/${contestId}/bundle`,
-  ];
-
-  for (const path of paths) {
-    const questions = normalizeQuestions(await fetchJsonOrNull(`${API_URL}${path}`));
-    if (questions.length > 0) return questions;
-  }
-
-  return [];
+async function fetchSessionQuestions(sessionId: string, signal: AbortSignal) {
+  const payload = await fetchJson<unknown>(
+    `${API_URL}/sessions/${sessionId}/questions`,
+    {
+      headers: authHeaders({ Accept: "application/json" }),
+      cache: "no-store",
+    },
+    { dedupeKey: `session:questions:${sessionId}`, retries: 2 }
+  );
+  return loadCandidateQuestions(payload, {
+    expectedSessionId: sessionId,
+    apiBase: API_URL,
+    headers: authHeaders({ Accept: "image/png,image/jpeg,image/webp" }),
+    signal,
+  });
 }
 
 async function createContestSession(contestId: string, contestTitle?: string) {
@@ -342,6 +344,7 @@ export default function ContestPageClient() {
   const lastFocusLossRef = useRef(0);
   const lastStatementCopyRef = useRef(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const candidateAssetURLsRef = useRef<string[]>([]);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
   const [customIssueDetail, setCustomIssueDetail] = useState("");
@@ -840,7 +843,11 @@ export default function ContestPageClient() {
       return;
     }
 
-    if (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") {
+    if (
+      (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") &&
+      isDryRun &&
+      isGatingRelaxed()
+    ) {
       const mockEnd = new Date(Date.now() + 5400000).toISOString();
       const titles: Record<string, string> = {
         "mock-contest-dev": "AMS Internal — Dev Test",
@@ -882,17 +889,31 @@ export default function ContestPageClient() {
       return;
     }
 
-    const contestRequest = fetchJsonOrNull(`${API_URL}/contests/${contestId}`);
-    const questionsRequest = fetchContestQuestions(contestId);
-    const sessionRequest = createContestSession(contestId).catch((err) => {
-      if (err instanceof SessionBindingError) {
-        router.push("/home");
-      }
-      return null;
-    });
+    if (!getCandidateToken()) {
+      setLoadError("Your sign-in has expired. Please sign in again.");
+      setLoading(false);
+      router.push("/login");
+      return;
+    }
 
-    Promise.all([contestRequest, questionsRequest, sessionRequest])
-      .then(async ([c, questions, session]) => {
+    const abortController = new AbortController();
+    let disposed = false;
+    const contestRequest = fetchJsonOrNull(`${API_URL}/contests/${contestId}`);
+    const sessionRequest = createContestSession(contestId);
+
+    Promise.all([contestRequest, sessionRequest])
+      .then(async ([c, session]) => {
+        if (!session.id) {
+          throw new Error("Session creation returned no session ID");
+        }
+        const loadedQuestions = await fetchSessionQuestions(session.id, abortController.signal);
+        if (disposed) {
+          releaseCandidateQuestionAssets(loadedQuestions.objectUrls);
+          return;
+        }
+        releaseCandidateQuestionAssets(candidateAssetURLsRef.current);
+        candidateAssetURLsRef.current = loadedQuestions.objectUrls;
+        const questions: Question[] = loadedQuestions.questions;
         const contestMeta = c ? (c as ContestMeta) : null;
         const normalizedLanguages = normalizeAllowedLanguages(contestMeta?.allowed_languages);
         const firstLang = normalizedLanguages[0] ?? "C++17";
@@ -974,10 +995,21 @@ export default function ContestPageClient() {
 
         setLoading(false);
       })
-      .catch(() => {
+      .catch((error) => {
+        if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
+        if (error instanceof SessionBindingError) {
+          router.push("/home");
+        }
         setLoadError("Unable to load contest. Check connection and retry.");
         setLoading(false);
       });
+
+    return () => {
+      disposed = true;
+      abortController.abort();
+      releaseCandidateQuestionAssets(candidateAssetURLsRef.current);
+      candidateAssetURLsRef.current = [];
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestId]);
 
@@ -986,8 +1018,11 @@ export default function ContestPageClient() {
     answersMap: Record<string, { language: string; content: string }>,
     language: string
   ) {
-    const saved = answersMap[q.id];
-    let lang = language;
+    const cxxprobeQuestion = q.judge_engine === "cxxprobe";
+    const candidateSaved = answersMap[q.id];
+    const saved =
+      !cxxprobeQuestion || candidateSaved?.language === "cpp" ? candidateSaved : undefined;
+    let lang = cxxprobeQuestion ? "C++23" : language;
     let content: string;
 
     if (saved) {
@@ -1000,13 +1035,14 @@ export default function ContestPageClient() {
       setSelectedLanguage(lang);
     } else {
       content = q.starter_code ?? defaultStarterFor(lang);
+      if (cxxprobeQuestion) setSelectedLanguage("C++23");
     }
 
     setQuestionFiles((prev) => {
       if (prev[q.id]) return prev;
       const file: EditorFile = {
         id: `${q.id}:main`,
-        name: questionFileName(q, lang),
+        name: q.starter_filename ?? questionFileName(q, lang),
         content,
       };
       return { ...prev, [q.id]: [file] };
@@ -1044,6 +1080,9 @@ export default function ContestPageClient() {
 
   function handleLanguageChange(newLanguage: string) {
     const normalizedLanguage = normalizeLanguageLabel(newLanguage);
+    if (questions[activeQ]?.judge_engine === "cxxprobe" && normalizedLanguage !== "C++23") {
+      return;
+    }
     setSelectedLanguage(normalizedLanguage);
     setHasUnsavedChanges(true);
     const q = questions[activeQ];
@@ -1117,6 +1156,10 @@ export default function ContestPageClient() {
 
   async function triggerRun() {
     if (!questions[activeQ] || !sessionId || isRunning) return;
+    if (questions[activeQ].judge_engine === "cxxprobe") {
+      setRunError("C++23 judging is not available in this release.");
+      return;
+    }
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (runInFlightRef.current) return;
@@ -1403,6 +1446,10 @@ export default function ContestPageClient() {
   async function handleSubmitSolution() {
     if (!questions[activeQ] || !sessionId) {
       setSubmissionError("No active session is available.");
+      return;
+    }
+    if (questions[activeQ].judge_engine === "cxxprobe") {
+      setSubmissionError("C++23 judging is not available in this release.");
       return;
     }
     // In-flight guard: block a second POST while one is pending so rapid
@@ -2089,7 +2136,8 @@ export default function ContestPageClient() {
     };
   }, []);
 
-  const currentQId = questions[activeQ]?.id ?? "";
+  const currentQuestion = questions[activeQ];
+  const currentQId = currentQuestion?.id ?? "";
   const editorFiles = questionFiles[currentQId] ?? [];
   const activeFileId = questionActiveFile[currentQId] ?? editorFiles[0]?.id ?? "";
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
@@ -2123,7 +2171,7 @@ export default function ContestPageClient() {
     sessionId,
     saveRetryNonce,
   ]);
-  const currentDescriptionMd = questions[activeQ]?.description ?? "*No description provided.*";
+  const currentDescriptionMd = currentQuestion?.description ?? "*No description provided.*";
   const problemSections = useMemo(
     () => splitProblemDescription(currentDescriptionMd),
     [currentDescriptionMd]
@@ -2136,11 +2184,31 @@ export default function ContestPageClient() {
   const problemBodyHtml = useMemo(
     () =>
       enhanceSampleBlocks(
-        parseDescription(problemSections[activeProblemTab] || currentDescriptionMd),
+        parseDescription(
+          problemSections[activeProblemTab] || currentDescriptionMd,
+          currentQuestion?.cxxprobe
+            ? {
+                statementPath: currentQuestion.cxxprobe.statement.path,
+                assets: currentQuestion.cxxprobe.assets,
+              }
+            : undefined
+        ),
         copiedSampleKey
       ),
-    [activeProblemTab, copiedSampleKey, currentDescriptionMd, problemSections]
+    [activeProblemTab, copiedSampleKey, currentDescriptionMd, currentQuestion, problemSections]
   );
+  const editorContest = useMemo(
+    () =>
+      currentQuestion?.judge_engine === "cxxprobe" && contest
+        ? { ...contest, allowed_languages: ["C++23"] }
+        : contest,
+    [contest, currentQuestion?.judge_engine]
+  );
+  const judgingUnavailableReason =
+    currentQuestion?.judge_engine === "cxxprobe"
+      ? "C++23 judging is not available in this release. You can review and edit the starter code."
+      : null;
+
   // One trustworthy, invisible-saving model (Google-Docs style): the candidate
   // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
   // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
@@ -2563,7 +2631,7 @@ export default function ContestPageClient() {
                 addEditorFile={addEditorFile}
                 selectedLanguage={selectedLanguage}
                 handleLanguageChange={handleLanguageChange}
-                contest={contest}
+                contest={editorContest}
                 themeMenuOpen={themeMenuOpen}
                 setThemeMenuOpen={setThemeMenuOpen}
                 editorTheme={editorTheme}
@@ -2571,6 +2639,7 @@ export default function ContestPageClient() {
                 isRunning={isRunning}
                 sessionId={sessionId}
                 triggerRun={triggerRun}
+                judgingUnavailableReason={judgingUnavailableReason}
                 submitButton={submitButton}
                 isSubmitting={isSubmitting}
                 isEditorEmpty={isEditorEmpty}

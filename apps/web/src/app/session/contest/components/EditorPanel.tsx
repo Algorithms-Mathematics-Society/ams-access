@@ -37,6 +37,7 @@ export interface EditorPanelProps {
   isRunning: boolean;
   sessionId: string | null;
   triggerRun: () => Promise<void>;
+  judgingUnavailableReason: string | null;
   submitButton: SubmitButtonView;
   isSubmitting: boolean;
   isEditorEmpty: boolean;
@@ -68,6 +69,7 @@ export function EditorPanel({
   isRunning,
   sessionId,
   triggerRun,
+  judgingUnavailableReason,
   submitButton,
   isSubmitting,
   isEditorEmpty,
@@ -79,6 +81,9 @@ export function EditorPanel({
   currentCode,
   handleCodeChange,
 }: EditorPanelProps) {
+  const runDisabled = isRunning || !sessionId || Boolean(judgingUnavailableReason);
+  const submitDisabled = submitButton.disabled || Boolean(judgingUnavailableReason);
+
   return (
     <div
       style={{
@@ -459,8 +464,11 @@ export function EditorPanel({
           <button
             type="button"
             onClick={() => void triggerRun()}
-            disabled={isRunning || !sessionId}
-            title="Runs your code against the sample tests only — does not count toward your score."
+            disabled={runDisabled}
+            title={
+              judgingUnavailableReason ??
+              "Runs your code against the sample tests only — does not count toward your score."
+            }
             aria-label="Run on judge"
             style={{
               width: "34px",
@@ -469,29 +477,29 @@ export function EditorPanel({
               alignItems: "center",
               justifyContent: "center",
               padding: "0",
-              border: `1px solid ${isRunning || !sessionId ? "rgba(148,163,184,0.14)" : "rgba(148,163,184,0.22)"}`,
+              border: `1px solid ${runDisabled ? "rgba(148,163,184,0.14)" : "rgba(148,163,184,0.22)"}`,
               borderRadius: "var(--radius-sm)",
               background: "transparent",
-              color: isRunning || !sessionId ? "rgba(203,213,225,0.48)" : "#cbd5e1",
-              cursor: isRunning || !sessionId ? "not-allowed" : "pointer",
-              opacity: isRunning || !sessionId ? 0.75 : 1,
+              color: runDisabled ? "rgba(203,213,225,0.48)" : "#cbd5e1",
+              cursor: runDisabled ? "not-allowed" : "pointer",
+              opacity: runDisabled ? 0.75 : 1,
               transition:
                 "background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease",
               flexShrink: 0,
             }}
             onMouseEnter={(e) => {
-              if (isRunning || !sessionId) return;
+              if (runDisabled) return;
               e.currentTarget.style.background = "rgba(148,163,184,0.16)";
               e.currentTarget.style.borderColor = "rgba(203,213,225,0.34)";
             }}
             onMouseLeave={(e) => {
-              if (isRunning || !sessionId) return;
+              if (runDisabled) return;
               e.currentTarget.style.background = "transparent";
               e.currentTarget.style.borderColor = "rgba(148,163,184,0.22)";
               e.currentTarget.style.transform = "scale(1)";
             }}
             onMouseDown={(e) => {
-              if (!isRunning && sessionId) e.currentTarget.style.transform = "scale(0.98)";
+              if (!runDisabled) e.currentTarget.style.transform = "scale(0.98)";
             }}
             onMouseUp={(e) => {
               e.currentTarget.style.transform = "scale(1)";
@@ -510,15 +518,16 @@ export function EditorPanel({
           <button
             type="button"
             onClick={handleSubmitSolution}
-            disabled={submitButton.disabled}
+            disabled={submitDisabled}
             title={
-              isSubmitting
+              judgingUnavailableReason ??
+              (isSubmitting
                 ? "Submitting…"
                 : !sessionId
                   ? "Waiting for your session…"
                   : isEditorEmpty
                     ? "Write some code to submit"
-                    : "Submit your solution for scoring"
+                    : "Submit your solution for scoring")
             }
             style={{
               height: "40px",
@@ -527,23 +536,23 @@ export function EditorPanel({
               justifyContent: "center",
               gap: "8px",
               padding: "0 22px",
-              border: `1px solid ${submitButton.disabled ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
+              border: `1px solid ${submitDisabled ? "rgb(var(--accent-rgb) / 0.24)" : "var(--color-accent-base)"}`,
               borderRadius: "var(--radius-md)",
-              background: submitButton.disabled
+              background: submitDisabled
                 ? "rgb(var(--accent-rgb) / 0.14)"
                 : "var(--color-accent-base)",
-              color: submitButton.disabled ? "rgba(255,255,255,0.58)" : "#ffffff",
+              color: submitDisabled ? "rgba(255,255,255,0.58)" : "#ffffff",
               fontSize: "13px",
               fontWeight: 600,
               fontFamily: "Inter, system-ui, sans-serif",
-              cursor: submitButton.disabled ? "not-allowed" : "pointer",
-              opacity: submitButton.disabled ? 0.82 : 1,
+              cursor: submitDisabled ? "not-allowed" : "pointer",
+              opacity: submitDisabled ? 0.82 : 1,
               boxShadow: "none",
               transition:
                 "background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast)",
             }}
             onMouseEnter={(e) => {
-              if (submitButton.disabled) return;
+              if (submitDisabled) return;
               // Dominant: lighten + lift + accent glow so Submit never reads
               // as a peer of the quiet outline Run button.
               e.currentTarget.style.background =
@@ -553,19 +562,17 @@ export function EditorPanel({
               e.currentTarget.style.boxShadow = "0 4px 14px rgb(var(--accent-rgb) / 0.35)";
             }}
             onMouseLeave={(e) => {
-              if (submitButton.disabled) return;
+              if (submitDisabled) return;
               e.currentTarget.style.background = "var(--color-accent-base)";
               e.currentTarget.style.borderColor = "var(--color-accent-base)";
               e.currentTarget.style.transform = "translateY(0)";
               e.currentTarget.style.boxShadow = "none";
             }}
             onMouseDown={(e) => {
-              if (!submitButton.disabled)
-                e.currentTarget.style.transform = "translateY(0) scale(0.98)";
+              if (!submitDisabled) e.currentTarget.style.transform = "translateY(0) scale(0.98)";
             }}
             onMouseUp={(e) => {
-              if (!submitButton.disabled)
-                e.currentTarget.style.transform = "translateY(-1px) scale(1.02)";
+              if (!submitDisabled) e.currentTarget.style.transform = "translateY(-1px) scale(1.02)";
             }}
           >
             {submitButton.icon === "spinner" ? (
@@ -582,6 +589,22 @@ export function EditorPanel({
         </div>
         {/* end primary actions group */}
       </div>
+
+      {judgingUnavailableReason && (
+        <div
+          role="status"
+          style={{
+            padding: "6px 12px",
+            borderBottom: "1px solid rgba(245,158,11,0.2)",
+            color: "#fcd34d",
+            background: "rgba(245,158,11,0.06)",
+            fontSize: "11px",
+            fontFamily: "Inter, system-ui, sans-serif",
+          }}
+        >
+          {judgingUnavailableReason}
+        </div>
+      )}
 
       {submissionError && (
         <div
