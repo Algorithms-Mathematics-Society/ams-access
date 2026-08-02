@@ -15,12 +15,24 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 
 /// Pinned TLS trust anchors (PEM) for every Rust-side HTTPS call to the backend.
-/// These are the Google Trust Services roots that all Cloud Run (`*.run.app`)
-/// certificates chain to. Pinning to them (built-in OS roots OFF) defeats a
-/// locally-installed MITM root (mitmproxy/Burp/corporate TLS inspection) while
-/// surviving Google's routine leaf-cert rotation. Blank this string to disable
-/// pinning in an emergency (kill-switch). See remediation F4.
-const PINNED_ROOTS_PEM: &str = include_str!("../assets/tls/gts-roots.pem");
+/// These are the Let's Encrypt roots — ISRG Root X1 and X2 — that the API
+/// origin's certificate chains to. Pinning to them (built-in OS roots OFF)
+/// defeats a locally-installed MITM root (mitmproxy/Burp/corporate TLS
+/// inspection) while surviving routine leaf rotation, since the roots outlive
+/// every leaf by a decade.
+///
+/// This replaced the Google Trust Services set that was pinned when the
+/// backend ran on Cloud Run. That backend is gone; keeping its roots would
+/// have rejected every call to the current API — a pin against a CA you no
+/// longer use is not security, it is an outage.
+///
+/// Because pinning bypasses the OS trust store, `api.amsaccess.com` must
+/// resolve straight to the origin (Cloudflare DNS-only). Putting the orange
+/// cloud in front would present Cloudflare's edge certificate, which does not
+/// chain to ISRG, and every request from this app would fail.
+///
+/// Blank this string to disable pinning in an emergency (kill-switch).
+const PINNED_ROOTS_PEM: &str = include_str!("../assets/tls/isrg-roots.pem");
 
 const MAX_FACE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FACE_IMAGE_PIXELS: u64 = 2_000_000;
@@ -248,14 +260,14 @@ fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, e
 // callers add their own timeout and `.build()`, preserving the per-site timeouts
 // that already existed.
 //
-// MECHANISM: trust-anchor pinning. We parse the embedded Google Trust Services
-// roots (`PINNED_ROOTS_PEM`) and hand them to reqwest's `tls_certs_only`, which
+// MECHANISM: trust-anchor pinning. We parse the embedded Let's Encrypt roots
+// (`PINNED_ROOTS_PEM`) and hand them to reqwest's `tls_certs_only`, which
 // trusts ONLY those roots — the OS/built-in root store is turned OFF. Because
-// every Cloud Run (`*.run.app`) leaf chains to these long-lived Google roots,
+// the API origin's Let's Encrypt leaf chains to these long-lived ISRG roots,
 // the backend continues to validate, but a locally-installed MITM root
 // (mitmproxy/Burp/corporate TLS inspection) — which chains to the user's own
-// root, not GTS — is rejected. Pinning the long-lived roots (not the leaf) means
-// Google's routine leaf-cert rotation does not break us.
+// root, not ISRG — is rejected. Pinning the long-lived roots (not the leaf)
+// means routine 90-day renewal does not break us.
 //
 // KILL-SWITCH: if `PINNED_ROOTS_PEM` is blanked, we log a one-time warning and
 // fall back to an un-pinned, system-root client. This is intentional and is the
@@ -291,15 +303,15 @@ fn pinned_http_client_builder() -> reqwest::ClientBuilder {
     // and validate by the orchestrator; a failure here means a corrupted build,
     // so fail fast rather than silently downgrade to an un-pinned client.
     let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
-        .expect("embedded GTS roots PEM must parse");
+        .expect("embedded ISRG roots PEM must parse");
     // Guard the fail-closed footgun: a non-blank bundle that parses to ZERO certs
     // (e.g. comments/whitespace only) would yield an empty root store that rejects
     // EVERY connection. That can only happen if the asset is gutted, so treat it
     // as a build error and fail fast rather than ship a client that can't talk to
-    // the backend at all. (Real asset = 4 GTS roots, so this never fires.)
+    // the backend at all. (Real asset = 2 ISRG roots, so this never fires.)
     assert!(
         !certs.is_empty(),
-        "PINNED_ROOTS_PEM is non-empty but contained no certificates — corrupted gts-roots.pem"
+        "PINNED_ROOTS_PEM is non-empty but contained no certificates — corrupted isrg-roots.pem"
     );
     reqwest::Client::builder().tls_certs_only(certs)
 }
@@ -2461,4 +2473,46 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error running AMS Access");
+}
+
+#[cfg(test)]
+mod pinning_tests {
+    use super::PINNED_ROOTS_PEM;
+
+    /// A corrupted or emptied bundle silently disables pinning via the
+    /// kill-switch, which is exactly the failure nobody notices until an exam
+    /// is being intercepted. Catch it at build time instead.
+    #[test]
+    fn pinned_bundle_contains_both_isrg_roots() {
+        let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
+            .expect("embedded roots must parse");
+        assert_eq!(
+            certs.len(),
+            2,
+            "expected ISRG Root X1 and X2; a shrunken bundle means some \
+             Let's Encrypt chains would be rejected mid-contest"
+        );
+    }
+
+    /// The Cloud Run backend is gone. Pinning its CA would reject every call
+    /// to the current API — an outage dressed as a security control.
+    #[test]
+    fn pinned_bundle_is_not_the_retired_google_set() {
+        assert!(
+            !PINNED_ROOTS_PEM.contains("GTS Root"),
+            "Google Trust Services roots are for the retired Cloud Run backend"
+        );
+        assert!(PINNED_ROOTS_PEM.contains("ISRG Root X1"));
+        assert!(PINNED_ROOTS_PEM.contains("ISRG Root X2"));
+    }
+
+    /// The kill-switch is deliberate, but it must require blanking the file —
+    /// never fire because of a stray edit that leaves whitespace behind.
+    #[test]
+    fn pinning_is_enabled_in_this_build() {
+        assert!(
+            !PINNED_ROOTS_PEM.trim().is_empty(),
+            "pinning is disabled; this must never ship"
+        );
+    }
 }

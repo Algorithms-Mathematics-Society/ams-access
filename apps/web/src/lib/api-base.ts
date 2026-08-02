@@ -1,4 +1,10 @@
-const PROD_API_URL = "https://ams-api-test-758052243069.us-central1.run.app";
+// Where the proctor talks to the platform.
+//
+// The Cloud Run backend this used to point at no longer exists. Everything
+// now goes to api.amsaccess.com, which the desktop app reaches with TLS
+// pinned to the Let's Encrypt roots — so this host must resolve straight to
+// the origin (Cloudflare DNS-only), not through the orange cloud.
+const PROD_API_URL = "https://api.amsaccess.com";
 
 function normalize(url: string): string {
   return url.replace(/\/+$/, "");
