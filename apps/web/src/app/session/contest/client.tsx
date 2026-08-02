@@ -435,7 +435,6 @@ export default function ContestPageClient() {
     Record<string, { language: string; content: string }>
   >({});
 
-
   // SECURITY (defense-in-depth): verify the desktop lockdown is engaged before
   // the contest is usable. Practice (dry-run) is intentionally unlocked, so it
   // is exempt. Outside the Tauri shell (dev/browser preview) there is no real
@@ -1742,7 +1741,7 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!sessionId) return;
     void window.__TAURI__?.core
-      .invoke("configure_event_stream", { apiUrl: API_URL, sessionId })
+      .invoke("configure_event_stream", { apiUrl: API_URL, sessionId, token: getCandidateToken() })
       .catch(() => {});
   }, [sessionId]);
 
@@ -2491,141 +2490,140 @@ export default function ContestPageClient() {
         {/* Contest problems. The follow-up and Markov question types
             belonged to the retired assessment platform; cxxprobe judges
             code, and nothing produces those question types any more. */}
-          {/* Middle pane: Problem Description */}
-          <ProblemPane
-            problemPaneWidth={problemPaneWidth}
-            availableProblemTabs={availableProblemTabs}
-            activeProblemTab={activeProblemTab}
-            setProblemTab={setProblemTab}
-            questions={questions}
+        {/* Middle pane: Problem Description */}
+        <ProblemPane
+          problemPaneWidth={problemPaneWidth}
+          availableProblemTabs={availableProblemTabs}
+          activeProblemTab={activeProblemTab}
+          setProblemTab={setProblemTab}
+          questions={questions}
+          activeQ={activeQ}
+          problemBodyHtml={problemBodyHtml}
+          handleProblemBodyClick={handleProblemBodyClick}
+        />
+
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize problem and editor panes"
+          title="Drag to resize"
+          onMouseDown={handleProblemSplitMouseDown}
+          onMouseEnter={(e) => {
+            const bar = e.currentTarget.querySelector<HTMLDivElement>("[data-split-bar]");
+            if (bar) {
+              bar.style.width = "3px";
+              bar.style.background = "rgb(var(--accent-rgb) / 0.6)";
+            }
+          }}
+          onMouseLeave={(e) => {
+            const bar = e.currentTarget.querySelector<HTMLDivElement>("[data-split-bar]");
+            if (bar) {
+              bar.style.width = "2px";
+              bar.style.background = "rgba(255,255,255,0.14)";
+            }
+          }}
+          style={{
+            width: "10px",
+            flexShrink: 0,
+            cursor: "col-resize",
+            background: "#0F0F0F",
+            borderRight: "1px solid rgba(255,255,255,0.05)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {/* A single 2px·16px grab bar that thickens + brightens on hover,
+                replacing the near-invisible 5-dot column. */}
+          <div
+            data-split-bar
+            style={{
+              width: "2px",
+              height: "16px",
+              borderRadius: "var(--radius-pill)",
+              background: "rgba(255,255,255,0.14)",
+              pointerEvents: "none",
+              transition: "width var(--transition-fast), background-color var(--transition-fast)",
+            }}
+          />
+        </div>
+
+        {/* Right panel: Editor (Top) + Terminal (Bottom) */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            background: "#0F0F0F",
+            minWidth: 0,
+          }}
+        >
+          {/* Top Right: Code Editor */}
+          <EditorPanel
+            editorFiles={editorFiles}
+            activeFileId={activeFileId}
+            pendingCloseFileId={pendingCloseFileId}
+            setPendingCloseFileId={setPendingCloseFileId}
+            setQuestionActiveFile={setQuestionActiveFile}
+            currentQId={currentQId}
+            removeEditorFile={removeEditorFile}
+            addEditorFile={addEditorFile}
+            selectedLanguage={selectedLanguage}
+            handleLanguageChange={handleLanguageChange}
+            contest={editorContest}
+            themeMenuOpen={themeMenuOpen}
+            setThemeMenuOpen={setThemeMenuOpen}
+            editorTheme={editorTheme}
+            handleEditorThemeChange={handleEditorThemeChange}
+            isRunning={isRunning}
+            sessionId={sessionId}
+            triggerRun={triggerRun}
+            judgingUnavailableReason={judgingUnavailableReason}
+            submitButton={submitButton}
+            isSubmitting={isSubmitting}
+            isEditorEmpty={isEditorEmpty}
+            handleSubmitSolution={handleSubmitSolution}
+            submissionError={submissionError}
+            saveError={saveError}
             activeQ={activeQ}
-            problemBodyHtml={problemBodyHtml}
-            handleProblemBodyClick={handleProblemBodyClick}
+            activeFile={activeFile}
+            currentCode={currentCode}
+            handleCodeChange={handleCodeChange}
           />
 
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize problem and editor panes"
-            title="Drag to resize"
-            onMouseDown={handleProblemSplitMouseDown}
-            onMouseEnter={(e) => {
-              const bar = e.currentTarget.querySelector<HTMLDivElement>("[data-split-bar]");
-              if (bar) {
-                bar.style.width = "3px";
-                bar.style.background = "rgb(var(--accent-rgb) / 0.6)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              const bar = e.currentTarget.querySelector<HTMLDivElement>("[data-split-bar]");
-              if (bar) {
-                bar.style.width = "2px";
-                bar.style.background = "rgba(255,255,255,0.14)";
-              }
-            }}
-            style={{
-              width: "10px",
-              flexShrink: 0,
-              cursor: "col-resize",
-              background: "#0F0F0F",
-              borderRight: "1px solid rgba(255,255,255,0.05)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {/* A single 2px·16px grab bar that thickens + brightens on hover,
-                replacing the near-invisible 5-dot column. */}
-            <div
-              data-split-bar
-              style={{
-                width: "2px",
-                height: "16px",
-                borderRadius: "var(--radius-pill)",
-                background: "rgba(255,255,255,0.14)",
-                pointerEvents: "none",
-                transition:
-                  "width var(--transition-fast), background-color var(--transition-fast)",
-              }}
-            />
-          </div>
-
-          {/* Right panel: Editor (Top) + Terminal (Bottom) */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              background: "#0F0F0F",
-              minWidth: 0,
-            }}
-          >
-            {/* Top Right: Code Editor */}
-            <EditorPanel
-              editorFiles={editorFiles}
-              activeFileId={activeFileId}
-              pendingCloseFileId={pendingCloseFileId}
-              setPendingCloseFileId={setPendingCloseFileId}
-              setQuestionActiveFile={setQuestionActiveFile}
-              currentQId={currentQId}
-              removeEditorFile={removeEditorFile}
-              addEditorFile={addEditorFile}
-              selectedLanguage={selectedLanguage}
-              handleLanguageChange={handleLanguageChange}
-              contest={editorContest}
-              themeMenuOpen={themeMenuOpen}
-              setThemeMenuOpen={setThemeMenuOpen}
-              editorTheme={editorTheme}
-              handleEditorThemeChange={handleEditorThemeChange}
-              isRunning={isRunning}
-              sessionId={sessionId}
-              triggerRun={triggerRun}
-              judgingUnavailableReason={judgingUnavailableReason}
-              submitButton={submitButton}
-              isSubmitting={isSubmitting}
-              isEditorEmpty={isEditorEmpty}
-              handleSubmitSolution={handleSubmitSolution}
-              submissionError={submissionError}
-              saveError={saveError}
-              activeQ={activeQ}
-              activeFile={activeFile}
-              currentCode={currentCode}
-              handleCodeChange={handleCodeChange}
-            />
-
-            {/* Bottom Right: Terminal — collapses to just the tab strip; editor reclaims. */}
-            <TerminalPanel
-              terminalCollapsed={terminalCollapsed}
-              setTerminalCollapsed={setTerminalCollapsed}
-              shouldShowRunProgress={shouldShowRunProgress}
-              terminalTab={terminalTab}
-              setTerminalTab={setTerminalTab}
-              runResult={runResult}
-              isRunning={isRunning}
-              runTimedOut={runTimedOut}
-              runResultAttemptId={runResultAttemptId}
-              runSampleTests={runSampleTests}
-              runError={runError}
-              isEditorEmpty={isEditorEmpty}
-              submissionsList={submissionsList}
-              loadingSubmissions={loadingSubmissions}
-              expandedAttemptId={expandedAttemptId}
-              toggleExpandAttempt={toggleExpandAttempt}
-              testResults={testResults}
-              testResultFilter={testResultFilter}
-              setTestResultFilter={setTestResultFilter}
-              latestAttempt={latestAttempt}
-              latestAttemptTests={latestAttemptTests}
-              latestAttemptPending={latestAttemptPending}
-              latestAttemptPassed={latestAttemptPassed}
-              latestAttemptFirstFailed={latestAttemptFirstFailed}
-              runStatus={runStatus}
-              runMetrics={runMetrics}
-              runProgressSteps={runProgressSteps}
-              runProgressPhase={runProgressPhase}
-              terminalUnread={terminalUnread}
-            />
-          </div>
+          {/* Bottom Right: Terminal — collapses to just the tab strip; editor reclaims. */}
+          <TerminalPanel
+            terminalCollapsed={terminalCollapsed}
+            setTerminalCollapsed={setTerminalCollapsed}
+            shouldShowRunProgress={shouldShowRunProgress}
+            terminalTab={terminalTab}
+            setTerminalTab={setTerminalTab}
+            runResult={runResult}
+            isRunning={isRunning}
+            runTimedOut={runTimedOut}
+            runResultAttemptId={runResultAttemptId}
+            runSampleTests={runSampleTests}
+            runError={runError}
+            isEditorEmpty={isEditorEmpty}
+            submissionsList={submissionsList}
+            loadingSubmissions={loadingSubmissions}
+            expandedAttemptId={expandedAttemptId}
+            toggleExpandAttempt={toggleExpandAttempt}
+            testResults={testResults}
+            testResultFilter={testResultFilter}
+            setTestResultFilter={setTestResultFilter}
+            latestAttempt={latestAttempt}
+            latestAttemptTests={latestAttemptTests}
+            latestAttemptPending={latestAttemptPending}
+            latestAttemptPassed={latestAttemptPassed}
+            latestAttemptFirstFailed={latestAttemptFirstFailed}
+            runStatus={runStatus}
+            runMetrics={runMetrics}
+            runProgressSteps={runProgressSteps}
+            runProgressPhase={runProgressPhase}
+            terminalUnread={terminalUnread}
+          />
+        </div>
         {/* Docked Camera feed — v1.2: a self-contained video box with the cam/mic toggles
             overlaid top-right (no separate bar, no wrapping label). Health is conveyed by the
             border tint + title/aria-label, not a truncating text chip. */}

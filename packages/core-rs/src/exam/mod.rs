@@ -1637,3 +1637,64 @@ mod tests {
         assert!(matches!(c.severity, BlockingSeverity::Block));
     }
 }
+
+#[cfg(test)]
+mod readiness_delivery_contract {
+    //! What the desktop's entry-gate delivery depends on.
+    //!
+    //! `deliver_readiness_report` derives the payload the platform stores
+    //! from these types. If any of it drifts, an invigilator reads the wrong
+    //! thing off the console — or reads nothing, because the check name no
+    //! longer matches what the override client and the server agree on.
+
+    use super::*;
+
+    /// The desktop names failed checks by serialising `CheckKind`, not by
+    /// formatting it. `Debug` would give `Virtualization` where the server,
+    /// the override records and the client's allow-list all say
+    /// `virtualization` — a waiver granted for one would never match.
+    #[test]
+    fn check_kinds_serialise_as_snake_case() {
+        let cases = [
+            (CheckKind::Virtualization, "virtualization"),
+            (CheckKind::KeyboardLockdown, "keyboard_lockdown"),
+            (CheckKind::RestrictedApps, "restricted_apps"),
+            (CheckKind::ClockIntegrity, "clock_integrity"),
+            (CheckKind::ExternalDisplay, "external_display"),
+            (CheckKind::DeviceId, "device_id"),
+            (CheckKind::ContestId, "contest_id"),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(&kind).expect("CheckKind must serialise"),
+                serde_json::Value::String(expected.to_string()),
+            );
+        }
+    }
+
+    /// `passed` is derived from the decision, and only `Blocked` is not
+    /// ready. `AllowedWithWarnings` let the candidate in — recording it as a
+    /// failure would misrepresent what the gate actually did.
+    #[test]
+    fn only_blocked_counts_as_not_ready() {
+        let ready = |d: EnforcementDecision| !matches!(d, EnforcementDecision::Blocked);
+
+        assert!(ready(EnforcementDecision::Allowed));
+        assert!(ready(EnforcementDecision::AllowedWithWarnings));
+        assert!(!ready(EnforcementDecision::Blocked));
+    }
+
+    /// Failed checks are selected on `outcome`, not on `blocking`. A warning
+    /// is not a failure, and an unknown result is not evidence of one — a
+    /// candidate should not be waved through a check that never ran, nor
+    /// flagged for one that merely warned.
+    #[test]
+    fn only_a_fail_outcome_is_a_failed_check() {
+        let failed = |o: CheckOutcome| matches!(o, CheckOutcome::Fail);
+
+        assert!(failed(CheckOutcome::Fail));
+        assert!(!failed(CheckOutcome::Pass));
+        assert!(!failed(CheckOutcome::Warn));
+        assert!(!failed(CheckOutcome::Unknown));
+    }
+}

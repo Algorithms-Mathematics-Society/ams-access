@@ -319,9 +319,13 @@ export async function startSecureSession(options: {
   deviceId?: string | null;
   deviceState: DeviceState;
   /** Contest API base URL — the entry-gate readiness report is delivered
-   *  there (`POST /contests/:id/readiness-reports`) so the server has a
-   *  durable record of what this device claimed. */
+   *  there (`POST /participant/contests/:id/readiness-reports`) so the
+   *  server has a durable record of what this device claimed, including
+   *  when the gate blocked. */
   apiUrl?: string | null;
+  /** Participant bearer token. The endpoint is authenticated; without it
+   *  nothing is delivered and the report exists only on this machine. */
+  token?: string | null;
 }): Promise<ReadinessReport> {
   return invoke<ReadinessReport>("start_secure_session", {
     policy: options.policy ?? strictContestPolicy(),
@@ -329,6 +333,7 @@ export async function startSecureSession(options: {
     deviceId: options.deviceId ?? null,
     deviceState: options.deviceState,
     apiUrl: options.apiUrl ?? null,
+    token: options.token ?? null,
   });
 }
 
@@ -356,18 +361,17 @@ const KNOWN_CHECK_KINDS = new Set<string>(POLICY_CHECKS);
 export async function fetchOrganizerOverrides(
   apiUrl: string,
   contestId: string,
-  deviceId: string
+  deviceId: string,
+  token: string
 ): Promise<OrganizerOverride[]> {
-  if (typeof window !== "undefined") {
-    const target = new URL(apiUrl, window.location.href);
-    if (target.origin !== window.location.origin) {
-      // The public overrides endpoint is not deployed on the remote judge API.
-      return [];
-    }
-  }
+  // Under `/participant` because the staff routers own `/contests/{uid}` —
+  // the two collided, and the collision surfaced as a 403 from staff auth,
+  // which is a confusing way to discover a routing bug.
+  if (!token) return [];
   try {
     const res = await fetch(
-      `${apiUrl}/contests/${encodeURIComponent(contestId)}/overrides?device_id=${encodeURIComponent(deviceId)}`
+      `${apiUrl}/participant/contests/${encodeURIComponent(contestId)}/overrides?device_id=${encodeURIComponent(deviceId)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
     );
     if (!res.ok) return [];
     const body: unknown = await res.json();
@@ -383,13 +387,16 @@ export async function fetchOrganizerOverrides(
         !!candidate &&
         typeof candidate.check_kind === "string" &&
         KNOWN_CHECK_KINDS.has(candidate.check_kind) &&
+        // Belt and braces: the server refuses to grant these, and the client
+        // refuses to honour them. An identity check that could be waived is
+        // not a check.
         !NON_OVERRIDABLE_CHECKS.includes(candidate.check_kind as CheckKind) &&
         typeof candidate.expires_at_ms === "number" &&
         candidate.expires_at_ms > now
       );
     });
   } catch {
-    // No overrides endpoint / offline — readiness proceeds with base policy.
+    // Offline, or no overrides endpoint — readiness proceeds on base policy.
     return [];
   }
 }

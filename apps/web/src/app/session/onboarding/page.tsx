@@ -11,7 +11,7 @@ import {
   type OrganizerOverride,
 } from "@ams/api-client";
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
-import { authHeaders } from "@/lib/candidate-auth";
+import { authHeaders, getCandidateToken } from "@/lib/candidate-auth";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { useTheme } from "./components/hooks";
 import { PHASE_FRIENDLY_NAME, readinessBlockMessage } from "./components/labels";
@@ -137,7 +137,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestId) return;
     let cancelled = false;
-    fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId())
+    fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId(), getCandidateToken() ?? "")
       .then((list) => {
         if (!cancelled) setOverrides(list);
       })
@@ -514,6 +514,9 @@ export default function OnboardingPage() {
           await invoke("configure_event_stream", {
             apiUrl: API_URL,
             sessionId: body.id,
+            // Session endpoints are authenticated; without the token the
+            // uploader would 401 for ever and the spool would grow unbounded.
+            token: getCandidateToken(),
           }).catch(() => {});
           // Now that the session exists and the event stream is armed, durably
           // record a face-check fallback so the proctor sees it server-side.
@@ -609,7 +612,12 @@ export default function OnboardingPage() {
       // a transient overrides-endpoint error.
       let liveOverrides: OrganizerOverride[] = overrides;
       try {
-        liveOverrides = await fetchOrganizerOverrides(API_URL, contestId, deviceId);
+        liveOverrides = await fetchOrganizerOverrides(
+          API_URL,
+          contestId,
+          deviceId,
+          getCandidateToken() ?? ""
+        );
         setOverrides(liveOverrides);
       } catch {
         liveOverrides = overrides;
@@ -621,11 +629,13 @@ export default function OnboardingPage() {
         deviceId,
         policy,
         deviceState,
-        // Entry-gate attestation: the evaluated readiness report is delivered
-        // to the backend so the server has a durable record of what this
-        // device claimed (best-effort; the server decides whether to gate
-        // session activation on it).
+        // Entry-gate attestation: the evaluated readiness report is
+        // delivered to the backend so the server has a durable record of
+        // what this device claimed — including when the gate blocked, which
+        // is the report an invigilator actually needs. Best-effort: the
+        // client, not the server, decides whether to proceed.
         apiUrl: API_URL,
+        token: getCandidateToken(),
       });
 
       if (windowMeta && !isTestAccount) {

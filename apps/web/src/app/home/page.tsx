@@ -13,7 +13,7 @@ import {
 import { fetchJson, useApiQuery } from "@/lib/api-client";
 import { useTheme } from "@/lib/theme";
 import { useDarkLocked } from "@/lib/theme-dark-lock"; // step-0 (shipped on main via PR #17)
-import { authHeaders } from "@/lib/candidate-auth";
+import { authHeaders, getCandidateToken } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -362,7 +362,7 @@ export default function HomePage() {
       // loosen specific checks for this device. Fetch is best-effort — no
       // endpoint / offline simply means the base policy applies.
       const overrides = contestId
-        ? await fetchOrganizerOverrides(API_URL, contestId, deviceId)
+        ? await fetchOrganizerOverrides(API_URL, contestId, deviceId, getCandidateToken() ?? "")
         : [];
       if (isCancelled()) return;
       // Pass the OS so platform-conditioned policy applies — without it the gate

@@ -1,7 +1,8 @@
 use base64::Engine as _;
 use core_rs::exam::{
-    evaluate_readiness, CloseAppsResult, DeviceState, EnforcementDecision, KeyboardInterceptResult,
-    NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy, VirtDetectionResult,
+    evaluate_readiness, CheckOutcome, CloseAppsResult, DeviceState, EnforcementDecision,
+    KeyboardInterceptResult, NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy,
+    VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -339,6 +340,11 @@ fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
 struct EventSyncConfig {
     api_url: String,
     session_id: String,
+    /// Participant bearer token. Every session endpoint requires it — this
+    /// app cannot hold the platform's internal secret, because it runs on a
+    /// machine the candidate controls and anything shipped inside it is
+    /// theirs.
+    token: String,
 }
 
 static EVENT_SYNC_CONFIG: OnceLock<Mutex<Option<EventSyncConfig>>> = OnceLock::new();
@@ -360,13 +366,21 @@ const EVENT_SYNC_MAX_BATCH: usize = 200;
 /// Arm (or disarm, with `session_id: None`) the violation/proctoring event
 /// uploader. Called by the frontend as soon as a server session id exists.
 #[tauri::command]
-fn configure_event_stream(api_url: String, session_id: Option<String>) {
+fn configure_event_stream(api_url: String, session_id: Option<String>, token: Option<String>) {
     if let Ok(mut config) = event_sync_config().lock() {
+        let token = token.unwrap_or_default();
         *config = match session_id {
-            Some(session_id) if !session_id.trim().is_empty() && !api_url.trim().is_empty() => {
+            // Without a token the uploads would 401 for ever and the spool
+            // would grow unbounded, so an unarmed stream is the honest state.
+            Some(session_id)
+                if !session_id.trim().is_empty()
+                    && !api_url.trim().is_empty()
+                    && !token.trim().is_empty() =>
+            {
                 Some(EventSyncConfig {
                     api_url: api_url.trim().trim_end_matches('/').to_string(),
                     session_id: session_id.trim().to_string(),
+                    token: token.trim().to_string(),
                 })
             }
             _ => None,
@@ -476,6 +490,7 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
             let url = format!("{}/sessions/{}/events", config.api_url, config.session_id);
             let delivered = client
                 .post(&url)
+                .bearer_auth(&config.token)
                 .json(&serde_json::json!({ "events": events }))
                 .send()
                 .await
@@ -756,15 +771,23 @@ async fn start_secure_session(
     device_id: Option<String>,
     device_state: DeviceState,
     api_url: Option<String>,
+    token: Option<String>,
 ) -> Result<ReadinessReport, String> {
     let policy = policy.unwrap_or_default();
     let report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
+
+    // Delivered before the block check, not after. A blocked report is the
+    // one an invigilator actually needs — it is what they read off the
+    // console to decide whether to waive a check. Returning early first
+    // meant the only reports the platform ever saw were the ones where
+    // nothing had gone wrong.
+    deliver_readiness_report(&app, &report, api_url, token).await;
+
     if report.decision == EnforcementDecision::Blocked {
         return Err(
             serde_json::to_string(&report).unwrap_or_else(|_| "readiness blocked".to_string())
         );
     }
-    deliver_readiness_report(&app, &report, api_url).await;
     let _ = lock_desktop(app).await;
     Ok(report)
 }
@@ -781,6 +804,7 @@ async fn deliver_readiness_report(
     app: &tauri::AppHandle,
     report: &ReadinessReport,
     api_url: Option<String>,
+    token: Option<String>,
 ) {
     let Some(api) = api_url
         .as_deref()
@@ -792,16 +816,46 @@ async fn deliver_readiness_report(
     let Some(contest_id) = report.contest_id.as_deref() else {
         return;
     };
+    // The endpoint is authenticated, so without a token there is nothing to
+    // deliver. Reporting it as a failure would be misleading — nobody tried.
+    let Some(token) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
+        return;
+    };
 
-    let url = format!("{api}/contests/{contest_id}/readiness-reports");
+    // Under `/participant`: the staff routers own `/contests/{uid}`, and the
+    // two paths collided.
+    let url = format!("{api}/participant/contests/{contest_id}/readiness-reports");
+
+    // The checks the client itself judged failing. This is what an
+    // invigilator reads off the console before granting a waiver, so it has
+    // to name the check rather than just say "not ready".
+    //
+    // The kind is serialised rather than formatted: `CheckKind` is
+    // `rename_all = "snake_case"`, so serde produces exactly the identifier
+    // the server stores and the override client matches on. `Debug` would
+    // give `Virtualization` where every other layer says `virtualization`.
+    let failed_checks: Vec<serde_json::Value> = report
+        .checks
+        .iter()
+        .filter(|check| matches!(check.outcome, CheckOutcome::Fail))
+        .filter_map(|check| serde_json::to_value(&check.kind).ok())
+        .collect();
+
     let delivered = match pinned_http_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
     {
         Ok(client) => client
             .post(&url)
+            .bearer_auth(token)
             .json(&serde_json::json!({
-                "device_id": report.device_id,
+                "contest_uid": contest_id,
+                "device_fingerprint": report.device_id,
+                // Blocked is the only decision that is not "ready".
+                // AllowedWithWarnings still let the candidate in, and
+                // recording it as a failure would misrepresent the gate.
+                "passed": !matches!(report.decision, EnforcementDecision::Blocked),
+                "failed_checks": failed_checks,
                 "report": report,
             }))
             .send()

@@ -4,6 +4,7 @@ import { Button } from "@/app/home/components/ui-primitives";
 import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { API_URL, getOrCreateDeviceId, tauriWindow, type MonitorInfo } from "../../support";
+import { getCandidateToken } from "@/lib/candidate-auth";
 
 export function Stage3_MonitorDetection({
   onPass,
@@ -107,7 +108,12 @@ export function Stage3_MonitorDetection({
     let cancelled = false;
     const id = setInterval(async () => {
       try {
-        const grants = await fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId());
+        const grants = await fetchOrganizerOverrides(
+          API_URL,
+          contestId,
+          getOrCreateDeviceId(),
+          getCandidateToken() ?? ""
+        );
         if (!cancelled && grants.some((g) => g.check_kind === "external_display")) {
           clearInterval(id);
           onPass(); // override is a waiver -> advance past Stage 3
