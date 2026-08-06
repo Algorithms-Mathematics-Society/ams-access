@@ -2533,31 +2533,87 @@ pub fn run() {
 mod pinning_tests {
     use super::PINNED_ROOTS_PEM;
 
+    /// SHA-256 fingerprints of ISRG Root X1 and X2 — the roots Let's Encrypt
+    /// chains to, and the only ones this app trusts.
+    ///
+    /// Fingerprints rather than a substring search. An earlier version of
+    /// this test looked for "ISRG Root X1" in the file text, which only
+    /// worked while the bundle carried a comment header naming it; once the
+    /// header was stripped the assertion tested nothing but the comment.
+    /// A certificate's identity is its bytes, so that is what is checked.
+    const ISRG_ROOT_X1_SHA256: &str =
+        "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6";
+    const ISRG_ROOT_X2_SHA256: &str =
+        "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470";
+
+    fn der_certificates() -> Vec<Vec<u8>> {
+        use base64::Engine as _;
+
+        let mut out = Vec::new();
+        let mut current: Option<String> = None;
+        for line in PINNED_ROOTS_PEM.lines() {
+            let line = line.trim();
+            if line == "-----BEGIN CERTIFICATE-----" {
+                current = Some(String::new());
+            } else if line == "-----END CERTIFICATE-----" {
+                if let Some(body) = current.take() {
+                    let der = base64::engine::general_purpose::STANDARD
+                        .decode(body)
+                        .expect("embedded certificate must be valid base64");
+                    out.push(der);
+                }
+            } else if let Some(buf) = current.as_mut() {
+                buf.push_str(line);
+            }
+        }
+        out
+    }
+
+    fn fingerprint(der: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(der);
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
     /// A corrupted or emptied bundle silently disables pinning via the
     /// kill-switch, which is exactly the failure nobody notices until an exam
     /// is being intercepted. Catch it at build time instead.
     #[test]
     fn pinned_bundle_contains_both_isrg_roots() {
-        let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
-            .expect("embedded roots must parse");
+        let prints: Vec<String> = der_certificates().iter().map(|d| fingerprint(d)).collect();
+
         assert_eq!(
-            certs.len(),
+            prints.len(),
             2,
             "expected ISRG Root X1 and X2; a shrunken bundle means some \
              Let's Encrypt chains would be rejected mid-contest"
+        );
+        assert!(
+            prints.iter().any(|p| p == ISRG_ROOT_X1_SHA256),
+            "ISRG Root X1 is missing from the pinned bundle"
+        );
+        assert!(
+            prints.iter().any(|p| p == ISRG_ROOT_X2_SHA256),
+            "ISRG Root X2 is missing from the pinned bundle"
         );
     }
 
     /// The Cloud Run backend is gone. Pinning its CA would reject every call
     /// to the current API — an outage dressed as a security control.
     #[test]
-    fn pinned_bundle_is_not_the_retired_google_set() {
-        assert!(
-            !PINNED_ROOTS_PEM.contains("GTS Root"),
-            "Google Trust Services roots are for the retired Cloud Run backend"
-        );
-        assert!(PINNED_ROOTS_PEM.contains("ISRG Root X1"));
-        assert!(PINNED_ROOTS_PEM.contains("ISRG Root X2"));
+    fn pinned_bundle_holds_nothing_but_those_two_roots() {
+        for der in der_certificates() {
+            let print = fingerprint(&der);
+            assert!(
+                print == ISRG_ROOT_X1_SHA256 || print == ISRG_ROOT_X2_SHA256,
+                "unexpected certificate pinned: {print}"
+            );
+        }
     }
 
     /// The kill-switch is deliberate, but it must require blanking the file —
@@ -2568,5 +2624,15 @@ mod pinning_tests {
             !PINNED_ROOTS_PEM.trim().is_empty(),
             "pinning is disabled; this must never ship"
         );
+    }
+
+    /// The bundle must be something reqwest can actually load; a file that
+    /// parses here but not there would pass CI and fail on a candidate's
+    /// machine.
+    #[test]
+    fn reqwest_accepts_the_bundle() {
+        let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
+            .expect("embedded roots must parse");
+        assert_eq!(certs.len(), 2);
     }
 }
