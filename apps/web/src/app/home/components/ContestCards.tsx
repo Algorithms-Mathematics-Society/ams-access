@@ -543,10 +543,10 @@ export const ActiveContestCard = memo(
             onClick={() => {
               if (entering) return;
               if (resultsReady) {
-                const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "";
-                router.push(
-                  `/results?contestId=${encodeURIComponent(c.id)}&email=${encodeURIComponent(email)}`
-                );
+                // No identity in the URL. Results are own-only and the
+                // participant token says whose they are; an `?email=` param
+                // was both redundant and an invitation to change it.
+                router.push(`/results?contestId=${encodeURIComponent(c.id)}`);
               } else if (canEnter) {
                 setEntering(true);
                 try {

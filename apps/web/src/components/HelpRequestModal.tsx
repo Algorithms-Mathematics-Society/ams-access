@@ -39,10 +39,10 @@ export function HelpRequestModal({
   contestId,
   defaultEmail,
 }: HelpRequestModalProps) {
-  const [email, setEmail] = useState(
-    defaultEmail ||
-      (typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "")
-  );
+  // Blank unless the caller supplies one. Candidates sign in with a printed
+  // slip and the platform has no address for them — pre-filling a guess would
+  // send the reply nowhere.
+  const [email, setEmail] = useState(defaultEmail ?? "");
   const [note, setNote] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [reference, setReference] = useState<string | null>(null);

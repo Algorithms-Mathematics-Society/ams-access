@@ -1,265 +1,116 @@
 "use client";
+
+/**
+ * Sign-in, by printed slip.
+ *
+ * This replaces an email + one-time-code flow that assumed candidates have
+ * mailboxes the platform can reach. They do not: a roster of exam candidates
+ * arrives as names, credentials are provisioned in bulk, and each person is
+ * handed a piece of paper. There is no reset link to click and no inbox to
+ * check, so there is nothing for an OTP to be delivered to.
+ *
+ * Credentials are contest-scoped, so a successful sign-in already says which
+ * contest this is. Nothing here asks for a session code.
+ */
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { resolveApiBase } from "@/lib/api-base";
-import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
-import { setCandidateToken } from "@/lib/candidate-auth";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
 import { BrandPane } from "./components/BrandPane";
-import { SsoModal } from "./components/SsoModal";
-import { OtpForm } from "./components/OtpForm";
-import { PasswordForm } from "./components/PasswordForm";
-
-const TEST_EMAIL = "tester@ams.local";
-const TEST_PASSWORD = "access2025";
+import { SlipForm } from "./components/SlipForm";
 
 export default function LoginPage() {
   const router = useRouter();
 
-  const [email, setEmail] = useState("");
+  const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
-  const [emailFocused, setEmailFocused] = useState(false);
-  const [passFocused, setPassFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showSSOModal, setShowSSOModal] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [resetState, setResetState] = useState<"idle" | "sending" | "sent">("idle");
 
-  // Passwordless email-code sign-in (primary). Password path stays as secondary.
-  const [mode, setMode] = useState<"password" | "otp">("otp");
-  const [otpStep, setOtpStep] = useState<"email" | "code">("email");
-  const [otpCode, setOtpCode] = useState("");
-  const [otpState, setOtpState] = useState<"idle" | "sending" | "verifying">("idle");
-
-  async function handleSendOtp() {
-    if (otpState === "sending") return;
-    if (!email.trim()) {
-      setError("Enter your email to receive a code.");
-      return;
-    }
-    setError(null);
-    setOtpState("sending");
-    try {
-      await fetch(`${resolveApiBase()}/students/request-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
-      });
-    } catch {
-      // request-otp always responds 200; ignore transport errors for neutral UX.
-    }
-    setOtpState("idle");
-    setOtpStep("code");
-  }
-
-  async function handleVerifyOtp() {
-    if (otpState === "verifying") return;
-    if (otpCode.trim().length < 6) {
-      setError("Enter the 6-digit code from your email.");
-      return;
-    }
-    setError(null);
-    setOtpState("verifying");
-    try {
-      const res = await fetch(`${resolveApiBase()}/students/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), code: otpCode.trim() }),
-      });
-      if (!res.ok) {
-        setOtpState("idle");
-        setError("That code didn't match. Request a new one.");
-        return;
-      }
-      const data = (await res.json().catch(() => ({}))) as {
-        email?: string;
-        display_email?: string;
-        token?: string;
-      };
-      localStorage.setItem(STORAGE_KEYS.USER_EMAIL, data.email ?? email.trim());
-      localStorage.setItem(
-        STORAGE_KEYS.USER_DISPLAY_EMAIL,
-        data.display_email ?? data.email ?? email.trim()
-      );
-      if (data.token) setCandidateToken(data.token);
-      setTimeout(() => router.push("/home"), 400);
-    } catch {
-      setOtpState("idle");
-      setError("Couldn't verify the code. Check your connection and try again.");
-    }
-  }
-
-  async function handlePasswordReset() {
-    if (resetState === "sending") return;
-    if (!email.trim()) {
-      setError("Enter your email above first, then tap “Forgot password?”.");
-      return;
-    }
-    setResetState("sending");
-    try {
-      await fetch(`${resolveApiBase()}/students/password-reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
-      });
-    } catch {
-      // Endpoint always responds 200; ignore transport errors for the neutral UX.
-    }
-    setResetState("sent");
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     if (loading) return;
     setError(null);
     setLoading(true);
 
-    if (isGatingRelaxed() && email === TEST_EMAIL && password === TEST_PASSWORD) {
-      warnGatingRelaxed("login test-account backdoor used");
-      localStorage.setItem(STORAGE_KEYS.USER_EMAIL, email);
-      setTimeout(() => router.push("/home"), 850);
-      return;
-    }
-
     try {
-      const apiUrl = resolveApiBase();
-      const res = await fetch(`${apiUrl}/students/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      const result = await studentLogin(loginId, password);
 
-      if (res.status === 401 || res.status === 403) {
-        setError("Email or password did not match.");
-        setLoading(false);
-        return;
+      // The contest is remembered so the rest of the app never has to ask
+      // which one this is. It is the server's answer, not the candidate's.
+      if (result.contest) {
+        localStorage.setItem(STORAGE_KEYS.ACTIVE_CONTEST, result.contest.uid);
+        localStorage.setItem(STORAGE_KEYS.ACTIVE_CONTEST_TITLE, result.contest.title);
       }
+      localStorage.setItem(STORAGE_KEYS.DISPLAY_NAME, result.user.display_name);
 
-      if (!res.ok) {
-        setError("Sign-in failed. Please try again.");
-        setLoading(false);
-        return;
-      }
-
-      const loginData = (await res.json().catch(() => ({}))) as { token?: string };
-      localStorage.setItem(STORAGE_KEYS.USER_EMAIL, email);
-      if (loginData.token) setCandidateToken(loginData.token);
-      setTimeout(() => router.push("/home"), 850);
-    } catch {
-      setError("Cannot reach AMS Access. Check your internet connection and try again.");
+      router.push("/home");
+    } catch (caught) {
       setLoading(false);
-    }
-  }
+      if (!(caught instanceof ProctorApiError)) {
+        setError("Something went wrong signing in. Try again, or ask an invigilator.");
+        return;
+      }
 
-  function handleDevSignIn() {
-    if (!isGatingRelaxed()) return;
-    if (loading) return;
-    warnGatingRelaxed("login test-account backdoor used");
-    setError(null);
-    setEmail(TEST_EMAIL);
-    setPassword(TEST_PASSWORD);
-    localStorage.setItem(STORAGE_KEYS.USER_EMAIL, TEST_EMAIL);
-    setTimeout(() => router.push("/home"), 250);
+      if (caught.needsUpgrade) {
+        // The one error where telling them exactly what to do is the whole
+        // point: a version mismatch is unfixable from inside the app.
+        setError(caught.message);
+        return;
+      }
+      if (caught.status === 0) {
+        setError("Cannot reach the exam server. Check the network, or ask an invigilator.");
+        return;
+      }
+      // The server's own wording. It already distinguishes "incorrect",
+      // "revoked" and "too many attempts" carefully, and paraphrasing it here
+      // would lose the difference at exactly the moment it matters.
+      setError(caught.message);
+    }
   }
 
   return (
     <div className="login-root">
-      {/* ══════════════════ LEFT PANE ══════════════════ */}
       <BrandPane />
 
-      {/* ══════════════════ RIGHT PANE ══════════════════ */}
       <div className="login-right" style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: 16, right: 16, zIndex: 1 }}>
           <ThemeToggle />
         </div>
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
-          <div className="login-form-sub">AMS Access &middot; A calm, proctored exam space</div>
+          <div className="login-form-sub">Use the login ID and password on your printed slip.</div>
           <div className="login-rule" />
 
-          {mode === "otp" ? (
-            <OtpForm
-              email={email}
-              setEmail={setEmail}
-              emailFocused={emailFocused}
-              setEmailFocused={setEmailFocused}
-              otpStep={otpStep}
-              setOtpStep={setOtpStep}
-              otpCode={otpCode}
-              setOtpCode={setOtpCode}
-              otpState={otpState}
-              error={error}
-              setError={setError}
-              handleSendOtp={handleSendOtp}
-              handleVerifyOtp={handleVerifyOtp}
-            />
-          ) : (
-            <PasswordForm
-              email={email}
-              setEmail={setEmail}
-              emailFocused={emailFocused}
-              setEmailFocused={setEmailFocused}
-              password={password}
-              setPassword={setPassword}
-              passFocused={passFocused}
-              setPassFocused={setPassFocused}
-              loading={loading}
-              error={error}
-              setError={setError}
-              handleSubmit={handleSubmit}
-              handleDevSignIn={handleDevSignIn}
-            />
-          )}
-
-          <div
-            className="login-sso-wrap"
-            style={{ display: "flex", flexDirection: "column", gap: 10 }}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setMode((m) => (m === "otp" ? "password" : "otp"));
-                setError(null);
-                setOtpStep("email");
-                setOtpCode("");
-                setOtpState("idle");
-                setLoading(false);
-              }}
-              className="login-sso-btn"
-            >
-              {mode === "otp" ? "Sign in with password instead" : "Use an email code instead"}
-            </button>
-            <button type="button" onClick={() => setShowSSOModal(true)} className="login-sso-btn">
-              Institution SSO
-            </button>
-          </div>
+          <SlipForm
+            loginId={loginId}
+            setLoginId={setLoginId}
+            password={password}
+            setPassword={setPassword}
+            loading={loading}
+            error={error}
+            onSubmit={handleSubmit}
+          />
 
           <p className="login-form-note">
             This exam is proctored to keep it fair. After you sign in, we&rsquo;ll set up your
             camera and check your device.
           </p>
+
           <div
             className="login-form-support"
             style={{ display: "flex", gap: 16, flexWrap: "wrap" }}
           >
-            {resetState === "sent" ? (
-              <span>
-                If that email is registered, we&apos;ve sent reset instructions. Check your inbox
-                and spam.
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handlePasswordReset()}
-                disabled={resetState === "sending"}
-                className="login-textlink"
-              >
-                {resetState === "sending" ? "Sending…" : "Forgot password?"}
-              </button>
-            )}
+            {/* No password reset. A slip cannot be recovered, only reissued —
+                the server stores a hash and genuinely cannot tell anyone what
+                the password was. An invigilator issues a new one. */}
+            <span className="login-form-hint">
+              Lost your slip? An invigilator can issue a new one.
+            </span>
             <button
               type="button"
               onClick={() => setHelpOpen(true)}
@@ -276,12 +127,15 @@ export default function LoginPage() {
         onClose={() => setHelpOpen(false)}
         kind="LOGIN"
         summary="I can't sign in to AMS Access."
-        defaultEmail={email.trim()}
-        details={{ source: "login", attempted_email: email.trim() || undefined, last_error: error }}
+        details={{
+          source: "login",
+          // The login id is on a slip and is not a secret; it is the one thing
+          // that lets an invigilator find the right candidate. The password is
+          // never included.
+          attempted_login_id: loginId.trim() || undefined,
+          last_error: error,
+        }}
       />
-
-      {/* ══════════════════ SSO Modal ══════════════════ */}
-      {showSSOModal && <SsoModal setShowSSOModal={setShowSSOModal} />}
     </div>
   );
 }

@@ -141,7 +141,9 @@ async function fetchSessionQuestions(sessionId: string, signal: AbortSignal) {
 }
 
 async function createContestSession(contestId: string, contestTitle?: string) {
-  const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "candidate@ams.local";
+  // Identity comes from the participant token now; the name is only here for
+  // the dedupe key and the legacy body below.
+  const candidateName = localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "candidate";
   const response = await fetchJson<{ id?: string }>(
     `${API_URL}/sessions`,
     {
@@ -149,11 +151,10 @@ async function createContestSession(contestId: string, contestTitle?: string) {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         contest_id: contestId,
-        candidate_email: email,
-        candidate_name: email.split("@")[0],
+        candidate_name: candidateName,
       }),
     },
-    { dedupeKey: `session:create:${contestId}:${email}`, retries: 2 }
+    { dedupeKey: `session:create:${contestId}:${candidateName}`, retries: 2 }
   );
 
   if (response.id) {
@@ -2354,14 +2355,10 @@ export default function ContestPageClient() {
   const engagedQuestionCount = questions.filter(
     (q) => (submissionsByQuestion[q.id] ?? []).length > 0 || Boolean(savedAnswers[q.id])
   ).length;
-  const candidateEmail =
-    typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "";
-  // Real contact address for display (where results actually go). The synthetic
-  // login identity above stays the keying value for &email= lookups.
-  const candidateDisplayEmail =
-    typeof window !== "undefined"
-      ? (localStorage.getItem(STORAGE_KEYS.USER_DISPLAY_EMAIL) ?? candidateEmail)
-      : candidateEmail;
+  // Who is sitting this exam, for display only. There is no email: candidates
+  // sign in with a printed slip and the platform has no address for them.
+  const candidateName =
+    typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "") : "";
   useEffect(() => {
     if (!availableProblemTabs.includes(problemTab)) setProblemTab("statement");
     setCopiedSampleKey(null);
@@ -2911,13 +2908,7 @@ export default function ContestPageClient() {
                   Back to home
                 </button>
                 <button
-                  onClick={() =>
-                    router.push(
-                      `/results?contestId=${encodeURIComponent(
-                        contestId
-                      )}&email=${encodeURIComponent(candidateEmail)}`
-                    )
-                  }
+                  onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)}
                   style={{
                     padding: "10px 0",
                     background: "none",
@@ -2986,15 +2977,15 @@ export default function ContestPageClient() {
                 }}
               >
                 Results unlock in 48 hours.
-                {candidateDisplayEmail ? (
+                {candidateName ? (
                   <>
                     {" "}
-                    We&rsquo;ll email you at{" "}
-                    <span style={{ color: "#94a3b8" }}>{candidateDisplayEmail}</span> when
-                    they&rsquo;re ready.
+                    They&rsquo;ll be here under{" "}
+                    <span style={{ color: "#94a3b8" }}>{candidateName}</span> when they&rsquo;re
+                    ready.
                   </>
                 ) : (
-                  <> We&rsquo;ll email you when they&rsquo;re ready.</>
+                  <> Sign back in to see them when they&rsquo;re ready.</>
                 )}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 12 }}>
@@ -3021,13 +3012,7 @@ export default function ContestPageClient() {
                   Back to home
                 </button>
                 <button
-                  onClick={() =>
-                    router.push(
-                      `/results?contestId=${encodeURIComponent(
-                        contestId
-                      )}&email=${encodeURIComponent(candidateEmail)}`
-                    )
-                  }
+                  onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)}
                   style={{
                     padding: "10px 0",
                     background: "none",
@@ -3107,13 +3092,7 @@ export default function ContestPageClient() {
                   Back to home
                 </button>
                 <button
-                  onClick={() =>
-                    router.push(
-                      `/results?contestId=${encodeURIComponent(
-                        contestId
-                      )}&email=${encodeURIComponent(candidateEmail)}`
-                    )
-                  }
+                  onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)}
                   style={{
                     padding: "10px 0",
                     background: "none",

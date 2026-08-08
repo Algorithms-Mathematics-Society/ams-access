@@ -20,6 +20,10 @@ function ResultsView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contestId = searchParams?.get("contestId") ?? "";
+  // TODO(proctor-v2): this page still calls the retired /contests/:id/results
+  // and /my-submissions endpoints. It moves to
+  // GET /participant/sessions/:uid/submissions — own-only, no leaderboard —
+  // when the contest room does.
   const emailParam = searchParams?.get("email") ?? "";
   const email =
     emailParam ||
