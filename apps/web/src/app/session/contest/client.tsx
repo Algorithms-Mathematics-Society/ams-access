@@ -56,10 +56,7 @@ import {
   questionFileName,
 } from "./components/language";
 import { type Question, type ContestMeta } from "./components/questions";
-import {
-  loadCandidateQuestions,
-  releaseCandidateQuestionAssets,
-} from "./candidate-question-projection";
+import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { useFocusTrap } from "./components/hooks";
 import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
@@ -75,6 +72,16 @@ import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
 import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
+import { loadContestProblems } from "./load-contest-problems";
+import {
+  ProctorApiError,
+  getDrafts,
+  getRun,
+  listMySubmissions,
+  putDraft,
+  run as runAgainstSamples,
+  submit as submitSolution,
+} from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
 
 const API_URL = resolveApiBase();
@@ -123,21 +130,12 @@ async function fetchJsonOrNull(url: string): Promise<unknown | null> {
   }
 }
 
-async function fetchSessionQuestions(sessionId: string, signal: AbortSignal) {
-  const payload = await fetchJson<unknown>(
-    `${API_URL}/sessions/${sessionId}/questions`,
-    {
-      headers: authHeaders({ Accept: "application/json" }),
-      cache: "no-store",
-    },
-    { dedupeKey: `session:questions:${sessionId}`, retries: 2 }
-  );
-  return loadCandidateQuestions(payload, {
-    expectedSessionId: sessionId,
-    apiBase: API_URL,
-    headers: authHeaders({ Accept: "image/png,image/jpeg,image/webp" }),
-    signal,
-  });
+async function fetchSessionQuestions(contestUid: string) {
+  // The paper comes from the contest, not the session: a statement is a
+  // property of the round, and routing it through the session was what made
+  // it impossible to read one before checking in.
+  const questions = await loadContestProblems(contestUid);
+  return { questions, objectUrls: [] as string[] };
 }
 
 async function createContestSession(contestId: string, contestTitle?: string) {
@@ -145,7 +143,7 @@ async function createContestSession(contestId: string, contestTitle?: string) {
   // the dedupe key and the legacy body below.
   const candidateName = localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "candidate";
   const response = await fetchJson<{ id?: string }>(
-    `${API_URL}/sessions`,
+    `${API_URL}/participant/sessions`,
     {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -309,6 +307,9 @@ export default function ContestPageClient() {
   // In-flight guards so double-clicks / rapid retries can't fire a second POST to
   // /submissions while one is already pending (prevents duplicate QUEUED rows).
   const runInFlightRef = useRef(false);
+  // Per-problem autosave revision. A ref rather than state: it is read and
+  // bumped inside the save path and must never trigger a render.
+  const draftRevisionsRef = useRef<Record<string, number>>({});
   const submitInFlightRef = useRef(false);
   // Guards the exit/teardown path so a manual "Submit & Exit" and the timer-driven
   // expiry can't both run (double unlock / double /submit). Never reset: once exit
@@ -472,18 +473,12 @@ export default function ContestPageClient() {
     if (!sessionId || !questions[activeQ]) return;
     setLoadingSubmissions(true);
     try {
-      const response = await fetch(
-        `${API_URL}/sessions/${sessionId}/submissions?_t=${Date.now()}`,
-        {
-          cache: "no-store",
-          headers: authHeaders(),
-        }
-      );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const rawSubmissions = (await response.json()) as SubmissionAttemptRecord[];
-      // Exclude RUN attempts everywhere the Attempts history is derived: the
-      // visible list, the per-question status map, and the "evaluated attempt"
-      // summary all read from these. Runs surface only in the Output panel.
+      // The API excludes runs from this list itself — `mode` is filtered
+      // server-side — so the client-side filter below is now belt and braces
+      // rather than the only thing keeping unscored attempts out of history.
+      const rawSubmissions = (await listMySubmissions(
+        sessionId
+      )) as unknown as SubmissionAttemptRecord[];
       const allSubmissions = rawSubmissions.filter((sub) => !isRunSubmission(sub));
       setAllSubmissionsList(allSubmissions);
       const qId = questions[activeQ].id;
@@ -526,15 +521,15 @@ export default function ContestPageClient() {
   const fetchTestResults = async (attemptId: string) => {
     if (!sessionId) return;
     try {
-      const response = await fetch(
-        `${API_URL}/sessions/${sessionId}/submissions/${attemptId}/test-results?_t=${Date.now()}`,
-        { cache: "no-store", headers: authHeaders() }
-      );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = (await response.json()) as any[];
+      // The per-case breakdown arrives on the submission itself. There is no
+      // separate test-results endpoint any more: two sources for one judging
+      // pass could disagree, and the one that renders is the one the
+      // candidate would believe.
+      const submissions = await listMySubmissions(sessionId);
+      const match = submissions.find((submission) => submission.uid === attemptId);
       setTestResults((prev) => ({
         ...prev,
-        [attemptId]: data || [],
+        [attemptId]: (match?.testcases ?? []) as unknown as any[],
       }));
     } catch (err) {
       console.error("Failed to fetch test results:", err);
@@ -572,7 +567,7 @@ export default function ContestPageClient() {
     // Use keepalive fetch (not beacon) so the Authorization + X-Device-Id headers
     // are sent; media toggles are user-initiated so we're not on the unload path.
     void postJsonKeepalive(
-      `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+      `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
       {
         category: enabled ? "media_toggle_on" : "media_toggle_off",
         detail,
@@ -784,7 +779,7 @@ export default function ContestPageClient() {
     setIsSendingReport(true);
     try {
       await postJsonKeepalive(
-        `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+        `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
         {
           category: supportCategory,
           detail: supportCategory === "other" ? customIssueDetail : "",
@@ -878,7 +873,7 @@ export default function ContestPageClient() {
         if (!session.id) {
           throw new Error("Session creation returned no session ID");
         }
-        const loadedQuestions = await fetchSessionQuestions(session.id, abortController.signal);
+        const loadedQuestions = await fetchSessionQuestions(contestId);
         if (disposed) {
           releaseCandidateQuestionAssets(loadedQuestions.objectUrls);
           return;
@@ -911,32 +906,18 @@ export default function ContestPageClient() {
           );
 
           try {
-            const answersData = await fetchJson<any[]>(
-              `${API_URL}/sessions/${session.id}/answers`,
-              {
-                headers: authHeaders(),
-              }
-            );
-            if (answersData && Array.isArray(answersData)) {
-              for (const ans of answersData) {
-                try {
-                  const parsed = JSON.parse(ans.answer_text);
-                  const files = parsed.files || [];
-                  const activeFile =
-                    files.find((f: any) => f.id === parsed.active_file_id) || files[0];
-                  answersMap[ans.question_id] = {
-                    language: parsed.language || "cpp17",
-                    content: activeFile ? activeFile.content : "",
-                  };
-                } catch {
-                  answersMap[ans.question_id] = {
-                    language: "cpp17",
-                    content: ans.answer_text,
-                  };
-                }
-              }
-              setSavedAnswers(answersMap);
+            // One draft per problem, keyed by label. The old shape stuffed the
+            // whole editor workspace into a single `answer_text` string, so two
+            // problems' autosaves contended for one row and recovering "what
+            // did they have for C" meant parsing a blob.
+            for (const draft of await getDrafts(session.id)) {
+              answersMap[draft.problem_label] = {
+                language: draft.language,
+                content: draft.source,
+              };
+              draftRevisionsRef.current[draft.problem_label] = draft.client_revision;
             }
+            setSavedAnswers(answersMap);
           } catch (err) {
             console.error("Failed to load saved answers:", err);
           }
@@ -1114,10 +1095,6 @@ export default function ContestPageClient() {
 
   async function triggerRun() {
     if (!questions[activeQ] || !sessionId || isRunning) return;
-    if (questions[activeQ].judge_engine === "cxxprobe") {
-      setRunError("C++23 judging is not available in this release.");
-      return;
-    }
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (runInFlightRef.current) return;
@@ -1137,75 +1114,37 @@ export default function ContestPageClient() {
       return;
     }
 
-    // Idempotency key for this logical run. Harmless if the backend ignores it
-    // today; lets it dedupe retries of the same attempt once it consumes the key.
-    const idempotencyKey =
-      crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-    // Create the submission attempt.
+    // Dispatch the run. Unscored, judged against the samples only, and at a
+    // higher priority than submissions — feedback that arrives after the
+    // contest is not feedback.
     let attemptId: string;
     try {
-      const res = await fetch(`${API_URL}/sessions/${sessionId}/submissions`, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          problem_id: questions[activeQ].id,
-          language: toLanguageId(selectedLanguage),
-          source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-          idempotency_key: idempotencyKey,
-          // Sample-only run: judged against sample tests, never scored, excluded
-          // from the Attempts history. Submit omits this and defaults to submit.
-          mode: "run",
-        }),
+      const created = await runAgainstSamples(sessionId, {
+        problemLabel: questions[activeQ].id,
+        language: toLanguageId(selectedLanguage),
+        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
       });
-      if (!res.ok) {
-        const errData = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-          retry_after_secs?: number;
-        };
-        if (errData.code === "SESSION_ALREADY_SUBMITTED") {
-          setIsRunning(false);
-          setRunError("Your session has already been submitted.");
-          return;
-        }
-        if (errData.code === "ALREADY_PENDING") {
-          setIsRunning(false);
-          setRunError("Your previous attempt is still being judged — please wait.");
-          return;
-        }
-        if (errData.code === "COOLDOWN") {
-          setIsRunning(false);
-          const ra = errData.retry_after_secs;
-          setRunError(
-            ra
-              ? `Please wait ~${ra}s before running again.`
-              : "Please wait a few seconds before running again."
-          );
-          return;
-        }
-        if (errData.code === "QUEUE_ERROR") {
-          setIsRunning(false);
-          setRunError("Failed to queue submission — please retry.");
-          return;
-        }
-        throw new Error(errData.error || `HTTP ${res.status}`);
-      }
-      const created = (await res.json()) as {
-        id?: string;
-        attempt_id?: string;
-        attempt_no: number;
-      };
-      const resolvedId = created.id ?? created.attempt_id ?? "";
+      const resolvedId = created.uid;
       attemptId = resolvedId;
-      setRunResult({ id: resolvedId, attempt_no: created.attempt_no, status: "QUEUED" });
+      setRunResult({ id: resolvedId, attempt_no: 0, status: "QUEUED" });
       setRunResultAttemptId(resolvedId);
       // Keep results in the Output panel — runs never appear under Attempts.
       setTerminalTab("stdout");
       void fetchSubmissions();
-    } catch {
+    } catch (caught) {
       setIsRunning(false);
-      setRunError("Could not reach the judge. Check your connection and retry.");
+      if (caught instanceof ProctorApiError && caught.status === 429) {
+        const wait = caught.retryAfterSeconds;
+        setRunError(
+          wait
+            ? `Please wait ~${wait}s before running again.`
+            : "Please wait a few seconds before running again."
+        );
+      } else if (caught instanceof ProctorApiError && caught.status === 409) {
+        setRunError(caught.message);
+      } else {
+        setRunError("Could not reach the judge. Check your connection and retry.");
+      }
       return;
     } finally {
       // The duplicate-POST window closes once the attempt request has resolved;
@@ -1218,27 +1157,16 @@ export default function ContestPageClient() {
     for (const ms of delays) {
       await new Promise<void>((r) => setTimeout(r, ms));
       try {
-        const pollRes = await fetch(
-          `${API_URL}/sessions/${sessionId}/submissions?_t=${Date.now()}`,
-          {
-            cache: "no-store",
-            headers: authHeaders(),
-          }
-        );
-        if (!pollRes.ok) continue; // transient — keep polling
-        const attempts = (await pollRes.json()) as SubmissionAttemptRecord[];
-        // The current RUN attempt is found from the raw list below; the Attempts
-        // history lists exclude RUN rows (this run included).
-        const visibleAttempts = attempts.filter((a) => !isRunSubmission(a));
-        const qId = questions[activeQ]?.id;
-        if (qId) {
-          const filtered = visibleAttempts
-            .filter((attempt) => attempt.problem_id === qId)
-            .sort((a, b) => b.attempt_no - a.attempt_no);
-          setAllSubmissionsList(visibleAttempts);
-          setSubmissionsList(filtered);
-        }
-        const attempt = attempts.find((a) => a.id === attemptId);
+        // The run is polled by its own uid, not by scanning the submission
+        // list: the list deliberately excludes runs, so it never contained
+        // the thing being waited for.
+        const polled = await getRun(sessionId, attemptId);
+        const attempt = {
+          id: polled.uid,
+          attempt_no: 0,
+          status: polled.verdict ?? polled.status.toUpperCase(),
+          problem_id: polled.problem_label,
+        } as unknown as SubmissionAttemptRecord;
         if (attempt) {
           const normalized = normalizeAttemptForRunResult(attempt);
           setRunResult(normalized);
@@ -1324,21 +1252,18 @@ export default function ContestPageClient() {
     setSaving(true);
     setSaveError(null);
     try {
-      const response = await postJsonKeepalive(
-        `${API_URL}/sessions/${sessionId}/answers`,
-        {
-          question_id: qId,
-          answer_text: JSON.stringify({
-            language: toLanguageId(selectedLanguage),
-            files: editorFiles,
-            active_file_id: activeFileId,
-          }),
-        },
-        { headers: authHeaders() },
-        { timeoutMs: SAVE_TIMEOUT_MS }
-      );
-      if (!response.ok) throw new Error(`Save failed with HTTP ${response.status}`);
+      // Monotonic per problem. An autosave retried on a flaky connection can
+      // arrive after a newer one, and without a revision the later-arriving
+      // older write silently wins — which in an exam is indistinguishable
+      // from losing work. The server drops anything at or below what it holds.
+      const revision = (draftRevisionsRef.current[qId] ?? 0) + 1;
+      draftRevisionsRef.current[qId] = revision;
 
+      await putDraft(sessionId, qId, {
+        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        language: toLanguageId(selectedLanguage),
+        clientRevision: revision,
+      });
       setSavedAnswers((prev) => ({
         ...prev,
         [qId]: {
@@ -1406,10 +1331,6 @@ export default function ContestPageClient() {
       setSubmissionError("No active session is available.");
       return;
     }
-    if (questions[activeQ].judge_engine === "cxxprobe") {
-      setSubmissionError("C++23 judging is not available in this release.");
-      return;
-    }
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (submitInFlightRef.current) return;
@@ -1421,54 +1342,22 @@ export default function ContestPageClient() {
 
     try {
       const qId = questions[activeQ].id;
-      // Idempotency key for this logical submission. Harmless if ignored today;
-      // lets the backend dedupe retries of the same submission once it consumes it.
-      const idempotencyKey =
-        crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const response = await postJsonKeepalive(
-        `${API_URL}/sessions/${sessionId}/submissions`,
-        {
-          problem_id: qId,
+      let created;
+      try {
+        created = await submitSolution(sessionId, {
+          problemLabel: qId,
           language: toLanguageId(selectedLanguage),
-          source_code: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-          idempotency_key: idempotencyKey,
-        },
-        { headers: authHeaders() },
-        { timeoutMs: SAVE_TIMEOUT_MS }
-      );
-
-      if (!response.ok) {
-        const errData = (await response.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-          retry_after_secs?: number;
-        };
-        if (errData.code === "SESSION_ALREADY_SUBMITTED") {
-          setSubmissionError("Your session has already been submitted.");
+          source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        });
+      } catch (caught) {
+        if (caught instanceof ProctorApiError) {
+          // 409 is a closed session, 429 a rate limit; both already carry a
+          // sentence written for a candidate, so pass it through rather than
+          // mapping it to a worse one here.
+          setSubmissionError(caught.message);
           return;
         }
-        if (errData.code === "ALREADY_PENDING") {
-          setSubmissionError("Your previous attempt is still being judged — please wait.");
-          return;
-        }
-        if (errData.code === "COOLDOWN") {
-          const ra = errData.retry_after_secs;
-          setSubmissionError(
-            ra
-              ? `Please wait ~${ra}s before submitting again.`
-              : "Please wait a few seconds before submitting again."
-          );
-          return;
-        }
-        if (errData.code === "MAX_ATTEMPTS") {
-          setSubmissionError("Attempt limit reached for this problem.");
-          return;
-        }
-        if (errData.code === "QUEUE_ERROR") {
-          setSubmissionError("Failed to queue submission — please retry.");
-          return;
-        }
-        throw new Error(errData.error || `Submission failed with HTTP ${response.status}`);
+        throw caught;
       }
 
       await fetchSubmissions();
@@ -1518,7 +1407,7 @@ export default function ContestPageClient() {
       try {
         await handleSave();
         const response = await postJsonKeepalive(
-          `${API_URL}/sessions/${sessionId}/submit`,
+          `${API_URL}/participant/sessions/${sessionId}/finish`,
           undefined,
           { headers: authHeaders() }
         );
@@ -1713,7 +1602,7 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!sessionId) return;
     const sendHeartbeat = () => {
-      fetch(`${API_URL}/sessions/${sessionId}/heartbeat`, {
+      fetch(`${API_URL}/participant/sessions/${sessionId}/heartbeat`, {
         method: "POST",
         keepalive: true,
         headers: authHeaders(),
@@ -1919,7 +1808,7 @@ export default function ContestPageClient() {
             if (previousDetail) {
               // Use keepalive fetch (not beacon) so the auth header is sent.
               void postJsonKeepalive(
-                `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+                `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
                 {
                   category: "blocked_app_resolved",
                   detail: previousDetail,
@@ -1940,7 +1829,7 @@ export default function ContestPageClient() {
             activeViolationDetailRef.current = detail;
             // Use keepalive fetch (not beacon) so the auth header is sent.
             void postJsonKeepalive(
-              `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+              `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
               {
                 category: "blocked_app_started",
                 detail: result.found.join(", "),
@@ -1963,7 +1852,7 @@ export default function ContestPageClient() {
             activeViolationDetailRef.current = "";
             // Use keepalive fetch (not beacon) so the auth header is sent.
             void postJsonKeepalive(
-              `${API_URL}/sessions/${sessionId ?? "unregistered"}/incidents`,
+              `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
               {
                 category: "blocked_app_resolved",
                 detail: previousDetail,

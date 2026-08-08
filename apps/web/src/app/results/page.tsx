@@ -12,7 +12,6 @@ import { ResultsLoading } from "./components/ResultsLoading";
 import { LockedScreen } from "./components/LockedScreen";
 import { ErrorScreen } from "./components/ErrorScreen";
 import { MySubmissionsSection } from "./components/MySubmissionsSection";
-import { LeaderboardSection } from "./components/LeaderboardSection";
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -117,6 +116,9 @@ function ResultsView() {
     }
   }
 
+  // No leaderboard. Candidates see their own results and nobody else's — the
+  // API has no participant-facing standings endpoint at all, deliberately, so
+  // there is nothing to render even if this page asked.
   const myEntry = results?.entries.find((e) => e.session_id === results.my_session_id);
   const myProblems = mySubmissions
     ? results?.questions.map((q) => ({
@@ -253,7 +255,6 @@ function ResultsView() {
         />
 
         {/* Full leaderboard */}
-        <LeaderboardSection results={results} />
       </div>
     </div>
   );

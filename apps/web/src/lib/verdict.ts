@@ -11,6 +11,11 @@ export type VerdictCode =
   | "RE"
   | "CE"
   | "OLE"
+  // The judge emits SE for "judging never completed". `IE` was this codebase's
+  // own name for the same thing and is kept as an alias so a stored verdict
+  // from before the rename still renders rather than falling through to the
+  // unknown branch.
+  | "SE"
   | "IE"
   | "RUNNING"
   | "QUEUED"
@@ -34,6 +39,7 @@ export function verdictColor(v: VerdictCode): string {
       return "var(--verdict-re)";
     case "CE":
       return "var(--verdict-ce)";
+    case "SE":
     case "IE":
       return "var(--verdict-ie)";
     case "RUNNING":
@@ -64,6 +70,7 @@ export function verdictLabel(v: VerdictCode): string {
       return "Compilation Error";
     case "OLE":
       return "Output Limit Exceeded";
+    case "SE":
     case "IE":
       return "Internal Error";
     case "RUNNING":
@@ -94,6 +101,7 @@ export function isTerminalVerdict(v: VerdictCode): boolean {
     case "RE":
     case "CE":
     case "OLE":
+    case "SE":
     case "IE":
       return true;
     default:
