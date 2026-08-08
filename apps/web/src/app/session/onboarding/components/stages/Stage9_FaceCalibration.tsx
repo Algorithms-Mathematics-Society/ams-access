@@ -334,12 +334,17 @@ export function Stage9_FaceCalibration({
   }, [captured]);
 
   useEffect(() => {
-    // Test-account face auto-pass — build-time relax flag required (see the
-    // onboarding fast-path note); never honor the localStorage email alone.
+    // Skip the face scan while working on onboarding itself. Build-time relax
+    // flag required, so a shipping build ignores the key entirely.
+    //
+    // Keyed on the same `ams_dev_skip_onboarding` flag the orchestrator uses.
+    // It was keyed on finding "tester@ams.local" in `ams_user_email` — a key
+    // nothing has written since sign-in moved to printed slips — so it was
+    // dead code that read as live, in the one stage where a stray devtools
+    // value would have skipped face detection outright.
     if (!isGatingRelaxed()) return;
-    const email = (localStorage.getItem("ams_user_email") ?? "").trim().toLowerCase();
-    if (email !== "tester@ams.local") return;
-    warnGatingRelaxed("tester@ams.local face scan auto-passed");
+    if (localStorage.getItem("ams_dev_skip_onboarding") !== "1") return;
+    warnGatingRelaxed("face scan skipped (ams_dev_skip_onboarding)");
 
     setDetectorReady(true);
     setPhaseIdx(0);
@@ -356,10 +361,10 @@ export function Stage9_FaceCalibration({
 
   // ── Init: camera + TensorFlow.js BlazeFace ───────────────────
   useEffect(() => {
-    // Skip the real BlazeFace init only when the relaxed test account is active;
-    // a production build always runs the real face scan regardless of localStorage.
-    const email = (localStorage.getItem("ams_user_email") ?? "").trim().toLowerCase();
-    if (isGatingRelaxed() && email === "tester@ams.local") return;
+    // Don't spin up BlazeFace when the dev skip above already passed the
+    // stage. A production build always runs the real scan: `isGatingRelaxed`
+    // is build-time, so no localStorage value can reach this on its own.
+    if (isGatingRelaxed() && localStorage.getItem("ams_dev_skip_onboarding") === "1") return;
 
     let cancelled = false;
 

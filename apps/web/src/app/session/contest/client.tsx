@@ -12,7 +12,7 @@ import { invoke } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
-import { authHeaders, getCandidateToken } from "@/lib/candidate-auth";
+import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -856,7 +856,7 @@ export default function ContestPageClient() {
       return;
     }
 
-    if (!getCandidateToken()) {
+    if (!participantToken()) {
       setLoadError("Your sign-in has expired. Please sign in again.");
       setLoading(false);
       router.push("/login");
@@ -1631,7 +1631,7 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!sessionId) return;
     void window.__TAURI__?.core
-      .invoke("configure_event_stream", { apiUrl: API_URL, sessionId, token: getCandidateToken() })
+      .invoke("configure_event_stream", { apiUrl: API_URL, sessionId, token: participantToken() })
       .catch(() => {});
   }, [sessionId]);
 

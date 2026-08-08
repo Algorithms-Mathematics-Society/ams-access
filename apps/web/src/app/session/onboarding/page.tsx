@@ -11,7 +11,7 @@ import {
   type OrganizerOverride,
 } from "@ams/api-client";
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
-import { authHeaders, getCandidateToken } from "@/lib/candidate-auth";
+import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { useTheme } from "./components/hooks";
 import { PHASE_FRIENDLY_NAME, readinessBlockMessage } from "./components/labels";
@@ -137,7 +137,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestId) return;
     let cancelled = false;
-    fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId(), getCandidateToken() ?? "")
+    fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId(), participantToken() ?? "")
       .then((list) => {
         if (!cancelled) setOverrides(list);
       })
@@ -516,7 +516,7 @@ export default function OnboardingPage() {
             sessionId: body.uid,
             // Session endpoints are authenticated; without the token the
             // uploader would 401 for ever and the spool would grow unbounded.
-            token: getCandidateToken(),
+            token: participantToken(),
           }).catch(() => {});
           // Now that the session exists and the event stream is armed, durably
           // record a face-check fallback so the proctor sees it server-side.
@@ -616,7 +616,7 @@ export default function OnboardingPage() {
           API_URL,
           contestId,
           deviceId,
-          getCandidateToken() ?? ""
+          participantToken() ?? ""
         );
         setOverrides(liveOverrides);
       } catch {
@@ -635,7 +635,7 @@ export default function OnboardingPage() {
         // is the report an invigilator actually needs. Best-effort: the
         // client, not the server, decides whether to proceed.
         apiUrl: API_URL,
-        token: getCandidateToken(),
+        token: participantToken(),
       });
 
       if (windowMeta && !isTestAccount) {

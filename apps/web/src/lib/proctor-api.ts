@@ -14,7 +14,7 @@
  * the server, scoped to one user, and useless for staff endpoints.
  */
 
-import { resolveApiBase } from "./api-base";
+import { resolveApiBase } from "./api-base.ts";
 
 const API = resolveApiBase();
 
@@ -28,13 +28,26 @@ const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 export class ProctorApiError extends Error {
+  // Declared and assigned rather than written as constructor parameter
+  // properties. Node's `--experimental-strip-types` — which is how this
+  // repo's tests run — rejects parameter properties outright, so using them
+  // here made every module that imports this one impossible to test. That is
+  // how `candidate-auth` came to have a passing suite for a token key nothing
+  // wrote. Same trap documented in `violation-queue-core.ts`.
+  readonly status: number;
+  readonly code: string;
+  readonly detail: Record<string, unknown> | null;
+
   constructor(
     message: string,
-    readonly status: number,
-    readonly code = "",
-    readonly detail: Record<string, unknown> | null = null
+    status: number,
+    code = "",
+    detail: Record<string, unknown> | null = null
   ) {
     super(message);
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
   }
 
   /** The installed build is older than the server accepts. */
@@ -146,6 +159,22 @@ export function hasToken(): boolean {
   return token !== null;
 }
 
+/** The participant token, restoring it from storage on first reach.
+ *
+ * This module is the only owner of the token. `candidate-auth.ts` used to
+ * keep its own copy under a different key — one that nothing had written
+ * since sign-in moved to printed slips — so every `authHeaders()` call went
+ * out unauthenticated and every authenticated route answered 401. Two
+ * modules storing one secret is how that happened, so there is now one.
+ *
+ * Restores lazily because a hard reload of a deep route (the crash case the
+ * resume flow exists for) starts with empty module state.
+ */
+export function currentToken(): string | null {
+  if (token === null) restoreToken();
+  return token;
+}
+
 // ── transport ────────────────────────────────────────────────────────────
 
 async function request<T>(
@@ -156,7 +185,11 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = { "X-AMS-Client-Version": CLIENT_VERSION };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (token) headers.Authorization = `Bearer ${token}`;
+  // `currentToken()`, not the module variable: after a hard reload of a deep
+  // route the variable is null but the token is still in storage, and reading
+  // it directly would send this request unauthenticated.
+  const bearer = currentToken();
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

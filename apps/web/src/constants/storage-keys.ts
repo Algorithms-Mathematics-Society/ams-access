@@ -17,5 +17,4 @@ export const STORAGE_KEYS = {
   USER_EMAIL: "ams_user_email",
   USER_DISPLAY_EMAIL: "ams_user_display_email",
   THEME: "ams_theme",
-  CANDIDATE_TOKEN: "ams_candidate_token",
 } as const;
