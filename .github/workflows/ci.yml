@@ -127,3 +127,120 @@ jobs:
       # how the Rust and TypeScript policy builders were free to drift.
       - name: Guard tests
         run: pnpm test
+
+      - name: Versions agree
+        run: pnpm check:versions
+
+  bundle-smoke:
+    # Packaging breakage only ever surfaced after a tag was pushed, which is
+    # how v1.0.3, v1.0.4 and v1.1.0 all shipped broken: CI ran tests and never
+    # once ran `tauri build`. This runs the real bundler and asserts an
+    # installer came out, uploading nothing.
+    #
+    # macOS is here even though it is dropped from the release matrix — it is
+    # the only thing that compiles platform-rs/src/macos/mod.rs, and dropping
+    # it from both would let that code rot until the Apple agreement lands.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            artifact: "target/release/bundle/deb/*.deb"
+          - platform: windows-latest
+            artifact: "target/release/bundle/msi/*.msi"
+          - platform: macos-latest
+            artifact: "target/release/bundle/macos/*.app"
+
+    runs-on: ${{ matrix.platform }}
+    name: Bundle smoke (${{ matrix.platform }})
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Configure sccache
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ matrix.platform }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ matrix.platform }}-cargo-
+
+      - name: Install Linux system deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Turbo cache restore
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ matrix.platform }}-turbo-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ matrix.platform }}-turbo-
+
+      - name: Build frontend
+        run: pnpm turbo run build --filter=@ams/web
+
+      # A bundle resource. Without it `tauri build` fails on a missing file,
+      # which is a packaging failure worth catching here rather than at a tag.
+      - name: Build & stage network helper
+        shell: bash
+        run: |
+          cargo build --release -p network-helper
+          bin=target/release/ams-access-networkhelper
+          [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
+          cp "$bin" apps/desktop/src-tauri/helpers/ams-access-networkhelper
+
+      - name: Build Tauri bundle
+        working-directory: apps/desktop
+        run: pnpm tauri build
+
+      - name: An installer actually came out
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=(${{ matrix.artifact }})
+          if [ ${#found[@]} -eq 0 ]; then
+            echo "::error::tauri build produced no ${{ matrix.artifact }}"
+            ls -R target/release/bundle || true
+            exit 1
+          fi
+          printf 'OK %s\n' "${found[@]}"

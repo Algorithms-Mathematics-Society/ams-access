@@ -18,13 +18,18 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-          # Intel build cross-compiles on the arm64 runner — GitHub retired the
-          # macos-13 (Intel) runners; a job pinned to that label queues for 24h
-          # and gets the whole run cancelled (this killed v1.0.3 and v1.0.4).
-          - platform: macos-latest
-            target: x86_64-apple-darwin
+          # macOS is deliberately absent. Notarization fails with a 403
+          # ("A required agreement is missing or has expired") and an
+          # unnotarized .dmg is worse than no .dmg — Gatekeeper refuses it and
+          # the candidate cannot open the app at all. The macOS targets and
+          # the certificate-import step come back in one commit when the
+          # Apple developer agreement is accepted; `bundle.targets` still
+          # lists dmg/macOS, and Tauri filters by host, so a local
+          # `pnpm build:mac-dev` is unaffected.
+          #
+          # (Both macOS targets built on macos-latest: GitHub retired the
+          # macos-13 Intel runners, and a job pinned to that label queues for
+          # 24h and cancels the whole run — that killed v1.0.3 and v1.0.4.)
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.target }})
@@ -39,7 +44,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Must match ci.yml and the root `engines.node` (>=22.6.0). This was
+          # pinned to 20, which cannot run the test suite at all
+          # (--experimental-strip-types arrived in 22.6).
+          node-version: 24
           cache: pnpm
 
       - name: Setup Rust
@@ -99,27 +107,6 @@ jobs:
       - name: Check frontend size budgets
         run: pnpm --filter @ams/web size:check
 
-      - name: Import Apple certificate (macOS)
-        if: runner.os == 'macOS'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/ams-signing.keychain-db"
-          KEYCHAIN_PASS=$(openssl rand -hex 16)
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
-          security import "$RUNNER_TEMP/cert.p12" \
-            -k "$KEYCHAIN_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -f pkcs12
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
-          rm "$RUNNER_TEMP/cert.p12"
-
       - name: Build & stage network helper (required Tauri bundle resource)
         shell: bash
         run: |
@@ -132,14 +119,12 @@ jobs:
         working-directory: apps/desktop
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # No TAURI_SIGNING_PRIVATE_KEY: there is no `plugins.updater` block in
+        # tauri.conf.json, so no signature was ever produced and the key was
+        # decoration. There is deliberately no updater either — a proctored
+        # client that can silently change itself between the readiness check
+        # and the contest is a liability. The API version-gates old builds
+        # instead, with a 426 naming the download.
         run: pnpm tauri build --target ${{ matrix.target }}
 
       - name: Collect artifact paths
@@ -148,30 +133,74 @@ jobs:
           TARGET="${{ matrix.target }}"
           BASE="target/${TARGET}/release/bundle"
           FILES=""
-          # Linux
-          for f in "${BASE}"/appimage/*.AppImage "${BASE}"/appimage/*.AppImage.sig \
-                   "${BASE}"/deb/*.deb "${BASE}"/deb/*.deb.sig; do
+          # No *.sig globs: without an updater config Tauri never produces
+          # one, so they matched nothing while looking like they did.
+          #
+          # Linux. `rpm` is in bundle.targets and was built on every release
+          # and then discarded, because it was never collected here.
+          for f in "${BASE}"/appimage/*.AppImage \
+                   "${BASE}"/deb/*.deb \
+                   "${BASE}"/rpm/*.rpm; do
             [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
           done
           # Windows
-          for f in "${BASE}"/msi/*.msi "${BASE}"/msi/*.msi.sig \
-                   "${BASE}"/nsis/*-setup.exe "${BASE}"/nsis/*-setup.exe.sig; do
-            [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
-          done
-          # macOS
-          for f in "${BASE}"/dmg/*.dmg \
-                   "${BASE}"/macos/*.app.tar.gz "${BASE}"/macos/*.app.tar.gz.sig; do
+          for f in "${BASE}"/msi/*.msi \
+                   "${BASE}"/nsis/*-setup.exe; do
             [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
           done
           echo "RELEASE_FILES<<EOF" >> "$GITHUB_ENV"
           echo "$FILES" >> "$GITHUB_ENV"
           echo "EOF" >> "$GITHUB_ENV"
 
+      # Windows installers are unsigned, so SmartScreen will warn and the exe
+      # asks for administrator (build.rs sets requireAdministrator). A
+      # candidate has no way to tell that apart from malware except by
+      # checking the hash, so publish it.
+      # Windows installers are unsigned, so SmartScreen will warn and the exe
+      # asks for administrator (build.rs sets requireAdministrator). A
+      # candidate has no way to tell that apart from malware except by
+      # checking the hash, so publish it.
+      #
+      # Only Linux and Windows runners reach this, and both have sha256sum in
+      # bash. (macOS would need `shasum -a 256`; revisit when it returns.)
+      - name: Checksums
+        shell: bash
+        run: |
+          {
+            echo "SHA256SUMS<<CHECKSUM_EOF"
+            while IFS= read -r file; do
+              [ -n "$file" ] || continue
+              printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$(basename "$file")"
+            done <<< "${RELEASE_FILES}"
+            echo "CHECKSUM_EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           name: "AMS Access ${{ github.ref_name }}"
-          body: "See CHANGELOG for details."
+          body: |
+            AMS Access ${{ github.ref_name }} — Windows and Linux.
+
+            **macOS is not in this release.** Notarization is blocked on an
+            Apple developer agreement that needs accepting; an unnotarized
+            build is worse than none, because Gatekeeper refuses to open it.
+
+            **Windows installers are not code-signed.** SmartScreen will show
+            "Windows protected your PC" and the installer asks for
+            administrator — both are expected, and both are exactly what
+            malware looks like, so verify the SHA-256 below before running it.
+            Signing is a follow-up.
+
+            This build requires the v2 exam backend and will not work against
+            an older one; the server refuses mismatched clients with a message
+            saying so.
+
+            ```
+            ${{ env.SHA256SUMS }}
+            ```
+
+            See CHANGELOG for details.
           fail_on_unmatched_files: false
           files: ${{ env.RELEASE_FILES }}
