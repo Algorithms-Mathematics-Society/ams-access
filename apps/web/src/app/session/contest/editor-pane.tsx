@@ -51,6 +51,9 @@ type EditorPaneProps = {
   editorTheme: ContestEditorThemeId;
   selectedLanguage: string;
   problemId?: string;
+  /** Read-only once the bell has rung. The candidate keeps their code on
+   * screen; they just cannot change it any more. */
+  readOnly?: boolean;
 };
 
 export const CONTEST_EDITOR_THEMES: Array<{ id: ContestEditorThemeId; label: string }> = [
@@ -443,6 +446,10 @@ const contestEditorThemes: Record<ContestEditorThemeId, ContestEditorTheme> = {
 };
 
 const editorThemeCompartment = new Compartment();
+// Reconfigured at the bell. A compartment rather than recreating the view,
+// like the theme and language above — rebuilding the editor at the moment the
+// contest ends would blow away scroll position, selection and undo history.
+const editableCompartment = new Compartment();
 const languageCompartment = new Compartment();
 
 /**
@@ -753,6 +760,7 @@ function createEditorExtensions(
     ]),
     EditorView.lineWrapping,
     editorThemeCompartment.of(createContestEditorTheme(editorTheme)),
+    editableCompartment.of(EditorView.editable.of(true)),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) onCodeChange(update.state.doc.toString());
     }),
@@ -767,6 +775,7 @@ export default function EditorPane({
   editorTheme,
   selectedLanguage,
   problemId,
+  readOnly = false,
 }: EditorPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -861,6 +870,15 @@ export default function EditorPane({
       effects: editorThemeCompartment.reconfigure(createContestEditorTheme(editorTheme)),
     });
   }, [editorTheme]);
+
+  // Lock the editor at the bell without recreating it.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: editableCompartment.reconfigure(EditorView.editable.of(!readOnly)),
+    });
+  }, [readOnly]);
 
   // Reconfigure language (+ its autocomplete) without recreating the editor.
   useEffect(() => {

@@ -14,7 +14,12 @@
  * interface did not.
  */
 
-import { getContest, getProblem, type ProblemProjection } from "@/lib/proctor-api";
+import {
+  getContest,
+  getProblem,
+  type ContestIndex,
+  type ProblemProjection,
+} from "@/lib/proctor-api";
 import type { CandidateQuestion } from "./candidate-question-projection";
 
 /** One megabyte, for the limits the editor reports in bytes. */
@@ -81,7 +86,13 @@ export function toCandidateQuestion(
   };
 }
 
-/** Every problem in the contest, in label order.
+/** The whole paper: the contest index, and every problem in label order.
+ *
+ * The index is returned rather than discarded because it carries `ends_at`,
+ * `remaining_ms`, `phase` and `server_time` — everything the room needs to
+ * run a clock the candidate cannot move. It used to be thrown away here while
+ * the room asked a *staff* route for the same thing, unauthenticated, which
+ * 403'd, which is why every candidate got a fabricated one-hour timer.
  *
  * All statements are fetched concurrently and awaited together. A contest is
  * a handful of problems, so the round trips overlap into roughly one, and the
@@ -89,10 +100,12 @@ export function toCandidateQuestion(
  * arriving progressively would only let a candidate click a tab that has no
  * statement behind it yet.
  */
-export async function loadContestProblems(contestUid: string): Promise<CandidateQuestion[]> {
+export async function loadContestPaper(
+  contestUid: string
+): Promise<{ index: ContestIndex; questions: CandidateQuestion[] }> {
   const index = await getContest(contestUid);
   const projections = await Promise.all(
     index.problems.map((problem) => getProblem(contestUid, problem.label))
   );
-  return projections.map(toCandidateQuestion);
+  return { index, questions: projections.map(toCandidateQuestion) };
 }

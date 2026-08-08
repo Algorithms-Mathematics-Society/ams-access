@@ -49,14 +49,12 @@ import {
   LANGUAGE_ID_MAP,
   toLanguageId,
   normalizeLanguageLabel,
-  normalizeAllowedLanguages,
   defaultCppStarter,
   defaultStarterFor,
   isPristineStarter,
   questionFileName,
 } from "./components/language";
 import { type Question, type ContestMeta } from "./components/questions";
-import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { useFocusTrap } from "./components/hooks";
 import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
@@ -72,14 +70,17 @@ import { deriveSaveIndicator, footerSaveView } from "./save-indicator";
 import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
-import { loadContestProblems } from "./load-contest-problems";
+import { loadContestPaper } from "./load-contest-problems";
+import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   ProctorApiError,
   getDrafts,
   getRun,
+  getSession,
   listMySubmissions,
   putDraft,
   run as runAgainstSamples,
+  serverNow,
   submit as submitSolution,
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
@@ -122,53 +123,26 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function fetchJsonOrNull(url: string): Promise<unknown | null> {
+type StoredSession = { id: string; contest_id: string };
+
+/** The session onboarding created, if this device has one.
+ *
+ * Tolerant of junk: a half-written or hand-edited entry is treated as absent,
+ * which routes the candidate back through onboarding rather than throwing
+ * inside the bootstrap.
+ */
+function readStoredSession(): StoredSession | null {
   try {
-    return await fetchJson<unknown>(url, {}, { dedupeKey: url, retries: 2 });
+    const raw = localStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredSession>;
+    if (!parsed?.id || !parsed?.contest_id) return null;
+    return { id: parsed.id, contest_id: parsed.contest_id };
   } catch {
     return null;
   }
 }
 
-async function fetchSessionQuestions(contestUid: string) {
-  // The paper comes from the contest, not the session: a statement is a
-  // property of the round, and routing it through the session was what made
-  // it impossible to read one before checking in.
-  const questions = await loadContestProblems(contestUid);
-  return { questions, objectUrls: [] as string[] };
-}
-
-async function createContestSession(contestId: string, contestTitle?: string) {
-  // Identity comes from the participant token now; the name is only here for
-  // the dedupe key and the legacy body below.
-  const candidateName = localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "candidate";
-  const response = await fetchJson<{ id?: string }>(
-    `${API_URL}/participant/sessions`,
-    {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        contest_id: contestId,
-        candidate_name: candidateName,
-      }),
-    },
-    { dedupeKey: `session:create:${contestId}:${candidateName}`, retries: 2 }
-  );
-
-  if (response.id) {
-    localStorage.setItem(
-      ACTIVE_SESSION_KEY,
-      JSON.stringify({
-        id: response.id,
-        contest_id: contestId,
-        contest_title: contestTitle,
-        updated_at: new Date().toISOString(),
-      })
-    );
-  }
-
-  return response;
-}
 declare global {
   interface Window {
     __TAURI__?: {
@@ -265,6 +239,12 @@ export default function ContestPageClient() {
   );
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
+  // The server's own view of where we are in the contest window. Outranks any
+  // deadline arithmetic done here — see `isBell`.
+  const [contestPhase, setContestPhase] = useState<ClockPhase>("running");
+  // True once the contest is over. The editor goes read-only and Run/Submit
+  // stop; nothing is auto-submitted.
+  const [bellRung, setBellRung] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeQ, setActiveQ] = useState(0);
   const [questionFiles, setQuestionFiles] = useState<Record<string, EditorFile[]>>({});
@@ -307,6 +287,9 @@ export default function ContestPageClient() {
   // In-flight guards so double-clicks / rapid retries can't fire a second POST to
   // /submissions while one is already pending (prevents duplicate QUEUED rows).
   const runInFlightRef = useRef(false);
+  // True when the initial draft load failed. The autosave path re-seeds its
+  // revision from the server's reply instead of assuming it starts at zero.
+  const [draftsUnknown, setDraftsUnknown] = useState(false);
   // Per-problem autosave revision. A ref rather than state: it is read and
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
@@ -344,7 +327,6 @@ export default function ContestPageClient() {
   const lastFocusLossRef = useRef(0);
   const lastStatementCopyRef = useRef(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const candidateAssetURLsRef = useRef<string[]>([]);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
   const [customIssueDetail, setCustomIssueDetail] = useState("");
@@ -801,7 +783,17 @@ export default function ContestPageClient() {
   }
 
   // stable fallback so useCountdown's effect doesn't restart on every render
-  const fallbackEndAt = useMemo(() => new Date(Date.now() + 3600000).toISOString(), []);
+  // The clock, straight from the server. There is deliberately no fallback:
+  // a fabricated deadline renders identically to a real one, and the previous
+  // "one hour from page load" default was what every candidate actually got,
+  // because the contest metadata came from a staff route that 403s.
+  const clock: ClockSnapshot = useMemo(
+    () => ({
+      endsAtMs: contest?.end_at ? Date.parse(contest.end_at) : null,
+      phase: contestPhase,
+    }),
+    [contest?.end_at, contestPhase]
+  );
 
   useEffect(() => {
     if (!contestId) {
@@ -865,89 +857,112 @@ export default function ContestPageClient() {
 
     const abortController = new AbortController();
     let disposed = false;
-    const contestRequest = fetchJsonOrNull(`${API_URL}/contests/${contestId}`);
-    const sessionRequest = createContestSession(contestId);
 
-    Promise.all([contestRequest, sessionRequest])
-      .then(async ([c, session]) => {
-        if (!session.id) {
-          throw new Error("Session creation returned no session ID");
-        }
-        const loadedQuestions = await fetchSessionQuestions(contestId);
-        if (disposed) {
-          releaseCandidateQuestionAssets(loadedQuestions.objectUrls);
-          return;
-        }
-        releaseCandidateQuestionAssets(candidateAssetURLsRef.current);
-        candidateAssetURLsRef.current = loadedQuestions.objectUrls;
-        const questions: Question[] = loadedQuestions.questions;
-        const contestMeta = c ? (c as ContestMeta) : null;
-        const normalizedLanguages = normalizeAllowedLanguages(contestMeta?.allowed_languages);
-        const firstLang = normalizedLanguages[0] ?? "C++17";
-        if (contestMeta) {
-          setContest({
-            ...contestMeta,
-            allowed_languages: normalizedLanguages,
-          });
-          setSelectedLanguage(firstLang);
-        }
+    // The room does not create sessions. Onboarding does, because it is the
+    // only place that can attest the lockdown engaged first — a session
+    // minted here would be one that never passed a check. This *adopts* what
+    // onboarding wrote, and sends anyone without one back to get checked.
+    const stored = readStoredSession();
+    if (!stored || stored.contest_id !== contestId) {
+      router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+      return;
+    }
 
-        let answersMap: Record<string, { language: string; content: string }> = {};
-        if (session?.id) {
-          setSessionId(session.id);
-          localStorage.setItem(
-            ACTIVE_SESSION_KEY,
-            JSON.stringify({
-              id: session.id,
-              contest_id: contestId,
-              contest_title: contestMeta?.title,
-              updated_at: new Date().toISOString(),
-            })
-          );
+    (async () => {
+      // `getSession` validates ownership server-side — someone else's session
+      // is a 404, not a 403 — and syncs the clock offset as a side effect.
+      const live = await getSession(stored.id);
+      if (disposed) return;
 
-          try {
-            // One draft per problem, keyed by label. The old shape stuffed the
-            // whole editor workspace into a single `answer_text` string, so two
-            // problems' autosaves contended for one row and recovering "what
-            // did they have for C" meant parsing a blob.
-            for (const draft of await getDrafts(session.id)) {
-              answersMap[draft.problem_label] = {
-                language: draft.language,
-                content: draft.source,
-              };
-              draftRevisionsRef.current[draft.problem_label] = draft.client_revision;
-            }
-            setSavedAnswers(answersMap);
-          } catch (err) {
-            console.error("Failed to load saved answers:", err);
-          }
-        }
+      if (live.status === "submitted" || live.status === "terminated") {
+        // Finished. Re-entering needs an invigilator, and that lives on /home.
+        router.replace("/home");
+        return;
+      }
 
-        setActiveQ(0);
-        setQuestions(questions);
-        if (questions.length > 0) {
-          loadQuestionWithAnswers(questions[0], answersMap, firstLang);
-          setLoadError(null);
-        } else {
-          setLoadError("Questions are not available yet. Please retry in a few seconds.");
-        }
+      const { index, questions } = await loadContestPaper(contestId);
+      if (disposed) return;
 
-        setLoading(false);
-      })
-      .catch((error) => {
-        if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
-        if (error instanceof SessionBindingError) {
-          router.push("/home");
-        }
-        setLoadError("Unable to load contest. Check connection and retry.");
-        setLoading(false);
+      setContest({
+        id: index.uid,
+        title: index.title,
+        end_at: index.ends_at,
+        status: index.phase === "running" ? "ACTIVE" : index.phase.toUpperCase(),
+        // cxxprobe judges C++ only, so there is nothing to negotiate. The old
+        // `allowed_languages` came from a contest endpoint v2 does not have.
+        allowed_languages: ["C++23"],
       });
+      setSelectedLanguage("C++23");
+      setContestPhase(index.phase);
+      setBellRung(isBell({ endsAtMs: Date.parse(index.ends_at), phase: index.phase }, serverNow()));
+      setSessionId(live.uid);
+      localStorage.setItem(
+        ACTIVE_SESSION_KEY,
+        JSON.stringify({
+          id: live.uid,
+          contest_id: contestId,
+          contest_title: index.title,
+          updated_at: new Date().toISOString(),
+        })
+      );
+
+      const answersMap: Record<string, { language: string; content: string }> = {};
+      try {
+        // One draft per problem, keyed by label. The old shape stuffed the
+        // whole editor workspace into a single `answer_text` string, so two
+        // problems' autosaves contended for one row and recovering "what did
+        // they have for C" meant parsing a blob.
+        for (const draft of await getDrafts(live.uid)) {
+          answersMap[draft.problem_label] = {
+            language: draft.language,
+            content: draft.source,
+          };
+          draftRevisionsRef.current[draft.problem_label] = draft.client_revision;
+        }
+        setSavedAnswers(answersMap);
+      } catch (err) {
+        // Revisions stay empty, so the next autosave would send `1` and the
+        // server would drop it as stale — for the rest of the exam, silently.
+        // `doSave` re-seeds from the PUT response to recover; flag it so that
+        // path knows to, and so the candidate is told rather than guessing.
+        console.error("Failed to load saved answers:", err);
+        setDraftsUnknown(true);
+      }
+
+      setActiveQ(0);
+      setQuestions(questions);
+      if (questions.length > 0) {
+        loadQuestionWithAnswers(questions[0], answersMap, "C++23");
+        setLoadError(null);
+      } else {
+        setLoadError("Questions are not available yet. Please retry in a few seconds.");
+      }
+      setLoading(false);
+    })().catch((error) => {
+      if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (error instanceof SessionBindingError) {
+        router.push("/home");
+        return;
+      }
+      if (error instanceof ProctorApiError && error.status === 404) {
+        // The stored session is gone or was never ours. Go and get a real one.
+        router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+        return;
+      }
+      if (error instanceof ProctorApiError && error.status === 409) {
+        // The paper is not open yet — the contest is inside its verification
+        // window. That is a state, not a failure.
+        setLoadError("The contest has not started yet. This page will let you in when it does.");
+        setLoading(false);
+        return;
+      }
+      setLoadError("Unable to load contest. Check connection and retry.");
+      setLoading(false);
+    });
 
     return () => {
       disposed = true;
       abortController.abort();
-      releaseCandidateQuestionAssets(candidateAssetURLsRef.current);
-      candidateAssetURLsRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestId]);
@@ -1451,22 +1466,29 @@ export default function ContestPageClient() {
 
   // Called by the countdown timer when end_at is reached.
   // Auto-submits the session so candidates never need to manually click "Submit & Exit".
-  async function handleContestExpiry() {
-    if (!sessionId) return;
-    if (exitInFlightRef.current) return;
-    exitInFlightRef.current = true;
-    setSubmitWarning(null);
-    setTimeUpState("submitting");
-    const confirmed = await attemptFinalSubmit();
-    if (!confirmed) {
-      setSubmitWarning(
-        "We couldn't confirm your final save — your work is stored locally on this device."
-      );
-    }
-    // The time-up path ALWAYS unlocks too: a network failure must not imprison
-    // the candidate. We never end in an "error" state with the shell still locked.
-    await runExitTeardown();
-    setTimeUpState("submitted");
+  /**
+   * The bell. Locks the room; submits nothing.
+   *
+   * It used to auto-submit and tear the session down. Two problems with that:
+   * a half-finished attempt got judged on the candidate's behalf, and a
+   * failed final submit still rendered under the heading "You're all done".
+   * The contest ending is not an instruction to send work — the server
+   * refuses submissions past the deadline anyway (409), so anything sent here
+   * could only fail.
+   *
+   * The candidate keeps their screen, keeps their code, and leaves by their
+   * own hand via Submit & Exit.
+   */
+  function handleContestExpiry() {
+    if (bellRung) return;
+    setBellRung(true);
+    setSubmitConfirm(false);
+    setRunError(null);
+    setSubmissionError(null);
+    // One last draft write. If the server has already closed the window it
+    // answers 409, which `doSave` renders as "the contest ended" rather than
+    // as a save failure.
+    void handleSave();
   }
 
   useEffect(() => {
@@ -2051,9 +2073,14 @@ export default function ContestPageClient() {
         : contest,
     [contest, currentQuestion?.judge_engine]
   );
-  const judgingUnavailableReason =
-    currentQuestion?.judge_engine === "cxxprobe"
-      ? "C++23 judging is not available in this release. You can review and edit the starter code."
+  // Why Run and Submit are unavailable, if they are. This used to hold
+  // "C++23 judging is not available in this release" for every cxxprobe
+  // problem — the third copy of that block, and the one that actually kept
+  // the buttons disabled after the two inline guards were removed.
+  const judgingUnavailableReason = bellRung
+    ? "The contest has ended. Your work is saved — you can read it, but not change it."
+    : !paperIsOpen({ endsAtMs: null, phase: contestPhase })
+      ? "The contest has not started yet."
       : null;
 
   // One trustworthy, invisible-saving model (Google-Docs style): the candidate
@@ -2341,7 +2368,7 @@ export default function ContestPageClient() {
       {/* ── Top bar ── */}
       <TopBar
         contest={contest}
-        fallbackEndAt={fallbackEndAt}
+        clock={clock}
         handleContestExpiry={handleContestExpiry}
         setShowSupportModal={setShowSupportModal}
         submitConfirm={submitConfirm}
@@ -2465,6 +2492,7 @@ export default function ContestPageClient() {
             sessionId={sessionId}
             triggerRun={triggerRun}
             judgingUnavailableReason={judgingUnavailableReason}
+            readOnly={bellRung}
             submitButton={submitButton}
             isSubmitting={isSubmitting}
             isEditorEmpty={isEditorEmpty}

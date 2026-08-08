@@ -1,11 +1,12 @@
 import { type Dispatch, type SetStateAction } from "react";
 import { Headset, LogOut } from "lucide-react";
 import { CountdownBadge } from "./CountdownBadge";
+import type { ClockSnapshot } from "../session-clock";
 import { type ContestMeta } from "./questions";
 
 export interface TopBarProps {
   contest: ContestMeta | null;
-  fallbackEndAt: string;
+  clock: ClockSnapshot;
   handleContestExpiry: () => void | Promise<void>;
   setShowSupportModal: Dispatch<SetStateAction<boolean>>;
   submitConfirm: boolean;
@@ -18,7 +19,7 @@ export interface TopBarProps {
 
 export function TopBar({
   contest,
-  fallbackEndAt,
+  clock,
   handleContestExpiry,
   setShowSupportModal,
   submitConfirm,
@@ -78,7 +79,7 @@ export function TopBar({
       </div>
 
       {/* Center: Timer */}
-      <CountdownBadge endAt={contest?.end_at ?? fallbackEndAt} onExpiry={handleContestExpiry} />
+      <CountdownBadge clock={clock} onExpiry={handleContestExpiry} />
 
       {/* Right: Support + exit */}
       <div

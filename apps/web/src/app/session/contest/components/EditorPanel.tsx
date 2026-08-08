@@ -38,6 +38,7 @@ export interface EditorPanelProps {
   sessionId: string | null;
   triggerRun: () => Promise<void>;
   judgingUnavailableReason: string | null;
+  readOnly: boolean;
   submitButton: SubmitButtonView;
   isSubmitting: boolean;
   isEditorEmpty: boolean;
@@ -70,6 +71,7 @@ export function EditorPanel({
   sessionId,
   triggerRun,
   judgingUnavailableReason,
+  readOnly,
   submitButton,
   isSubmitting,
   isEditorEmpty,

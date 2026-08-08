@@ -2,15 +2,16 @@ import { memo } from "react";
 import { Lock, Loader2 } from "lucide-react";
 import { type CountdownPhase } from "../countdown";
 import { useCountdown } from "./hooks";
+import type { ClockSnapshot } from "../session-clock";
 
 export const CountdownBadge = memo(function CountdownBadge({
-  endAt,
+  clock,
   onExpiry,
 }: {
-  endAt: string;
+  clock: ClockSnapshot;
   onExpiry?: () => void;
 }) {
-  const { remaining, phase } = useCountdown(endAt, onExpiry);
+  const { remaining, phase } = useCountdown(clock, onExpiry);
   const PHASE_COLOR: Record<CountdownPhase, string> = {
     nominal: "#e4e4e7",
     warning: "#a1a1aa",
