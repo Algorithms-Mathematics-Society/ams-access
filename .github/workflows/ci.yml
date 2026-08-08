@@ -122,5 +122,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Web guard tests
-        run: pnpm --filter @ams/web test
+      # Every package's tests, not just @ams/web. The policy-parity test lives
+      # in @ams/api-client and would otherwise never run — which is exactly
+      # how the Rust and TypeScript policy builders were free to drift.
+      - name: Guard tests
+        run: pnpm test

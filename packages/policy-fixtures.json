@@ -1,0 +1,1112 @@
+{
+  "internal_pilot/linux": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "internal_pilot/macos": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "internal_pilot/none": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "internal_pilot/windows": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "internal_pilot/windows_no_admin": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "practice/linux": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "practice/macos": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "practice/none": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "practice/windows": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "practice/windows_no_admin": {
+    "camera": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    }
+  },
+  "strict_contest/linux": {
+    "camera": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    }
+  },
+  "strict_contest/macos": {
+    "camera": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    }
+  },
+  "strict_contest/none": {
+    "camera": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "contest_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "device_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "external_display": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "microphone": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "platform": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "remote_server": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    },
+    "virtualization": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "warning"
+    }
+  },
+  "strict_contest/windows": {
+    "camera": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "contest_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "device_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "external_display": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "microphone": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "platform": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "remote_server": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "virtualization": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    }
+  },
+  "strict_contest/windows_no_admin": {
+    "camera": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "clock_integrity": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "contest_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "device_id": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "external_display": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "keyboard_lockdown": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "microphone": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "platform": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "remote_server": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "restricted_apps": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    },
+    "virtualization": {
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
+      "unsupported_severity": "block"
+    }
+  }
+}
