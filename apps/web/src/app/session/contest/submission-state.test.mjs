@@ -29,7 +29,13 @@ test("submission state helpers normalize backend attempts", () => {
   assert.equal(normalizeSubmissionVerdict(makeAttempt({ status: "RUNNING" })), "RUNNING");
   assert.equal(normalizeSubmissionVerdict(makeAttempt({ final_verdict: "AC" })), "AC");
   assert.equal(normalizeSubmissionVerdict(makeAttempt({ final_verdict: "CE" })), "CE");
-  assert.equal(normalizeSubmissionVerdict(makeAttempt({ status: "FAILED" })), "IE");
+  // "judging never completed" is `SE`, the judge's own name for it. This
+  // asserted `IE` against a `status === "FAILED" ? "IE" : "IE"` tautology,
+  // which could not have failed whatever the input.
+  assert.equal(normalizeSubmissionVerdict(makeAttempt({ status: "FAILED" })), "SE");
+  assert.equal(normalizeSubmissionVerdict(makeAttempt({ final_verdict: "SE" })), "SE");
+  // Kept as an alias so stored verdicts from before the rename still render.
+  assert.equal(normalizeSubmissionVerdict(makeAttempt({ final_verdict: "IE" })), "IE");
 
   const normalized = normalizeAttemptForRunResult(
     makeAttempt({

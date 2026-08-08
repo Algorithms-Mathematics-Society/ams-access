@@ -30,7 +30,6 @@ import {
   isUiBlockingPending,
   normalizeAttemptForRunResult,
   normalizeSubmissionVerdict,
-  resolveRunResultRefresh,
   shouldAutoExpandAttempt,
   type RunAttempt,
   type RunVerdict,
@@ -71,6 +70,7 @@ import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
 import { loadContestPaper } from "./load-contest-problems";
+import { toAttemptRecords } from "./attempt-adapter";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   ProctorApiError,
@@ -96,16 +96,6 @@ const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
 const LOCAL_ANSWER_BUFFER_PREFIX = "ams_contest_answer_buffer";
 const localAnswerBufferKey = (sessionId: string, questionId: string) =>
   `${LOCAL_ANSWER_BUFFER_PREFIX}:${sessionId}:${questionId}`;
-
-// A "Run on Judge" attempt (sample-only, never scored) is tagged by the backend
-// with submission_kind === "RUN". These must never appear in the Attempts
-// history — they surface only in the Output panel. Missing/legacy rows have no
-// kind and are treated as real submissions (SUBMIT) for back-compat. The field
-// isn't on SubmissionAttemptRecord (server-side addition), so we read it loosely.
-function isRunSubmission(sub: object | null | undefined): boolean {
-  const kind = (sub as { submission_kind?: string | null } | null | undefined)?.submission_kind;
-  return String(kind ?? "SUBMIT").toUpperCase() === "RUN";
-}
 
 // Autosave delay policy lives in ./autosave-timing (computeAutosaveDelayMs).
 // MAX_SAVE_RETRIES stays here — it caps handleSave's retry counter.
@@ -455,29 +445,26 @@ export default function ContestPageClient() {
     if (!sessionId || !questions[activeQ]) return;
     setLoadingSubmissions(true);
     try {
-      // The API excludes runs from this list itself — `mode` is filtered
-      // server-side — so the client-side filter below is now belt and braces
-      // rather than the only thing keeping unscored attempts out of history.
-      const rawSubmissions = (await listMySubmissions(
-        sessionId
-      )) as unknown as SubmissionAttemptRecord[];
-      const allSubmissions = rawSubmissions.filter((sub) => !isRunSubmission(sub));
+      // Adapted, not cast. The two shapes share almost no field names, so
+      // the `as unknown as` that used to be here matched nothing and left
+      // this panel permanently empty.
+      //
+      // No run filter: `session_submissions` already excludes them
+      // server-side, and the old `isRunSubmission` read `submission_kind`, a
+      // field v2 never sends — a filter on a field that does not exist is
+      // worse than none, because it reads as one.
+      const allSubmissions = toAttemptRecords(await listMySubmissions(sessionId));
       setAllSubmissionsList(allSubmissions);
       const qId = questions[activeQ].id;
       const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
       filtered.sort((a, b) => b.attempt_no - a.attempt_no);
       setSubmissionsList(filtered);
       setSubmissionsListQId(qId);
-      // Refresh the Output panel's run result ONLY from the run's own row
-      // (raw list — runs included). Strictly id-keyed; the old fallback to
-      // the newest filtered-list entry adopted the newest SUBMISSION into
-      // the run panel.
-      setRunResult((prev) => resolveRunResultRefresh(prev, rawSubmissions));
-      // Late-verdict recovery: once the run's own row is terminal, the
-      // "taking longer than expected" timeout notice no longer applies.
-      const rid = runResultAttemptIdRef.current;
-      const runRow = rid ? rawSubmissions.find((a) => a.id === rid) : undefined;
-      if (runRow && !isPendingSubmissionStatus(runRow.status)) setRunTimedOut(false);
+      // Nothing here refreshes the run panel any more. This list excludes
+      // runs by construction — the server filters on `mode` — so searching it
+      // for the run's own row could only ever miss. Runs are polled by uid
+      // through `getRun` in `triggerRun`, which is the only place that can
+      // see them.
     } catch (err) {
       console.error("Failed to fetch submissions:", err);
     } finally {
@@ -2108,6 +2095,7 @@ export default function ContestPageClient() {
     RE: "Runtime error",
     CE: "Didn’t compile",
     OLE: "Too much output",
+    SE: "Judging failed",
     IE: "Judge error — please retry",
   };
   const runStatus = runError
