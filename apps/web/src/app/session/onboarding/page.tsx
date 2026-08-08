@@ -158,18 +158,22 @@ export default function OnboardingPage() {
   const externalDisplayOverride = overrides.some((o) => o.check_kind === "external_display");
 
   useEffect(() => {
-    // The tester@ams.local fast-path skips all onboarding gates. It is keyed on a
+    // A fast-path that skips every onboarding gate, for working on the stages
+    // themselves without sitting through them. It is keyed on a
     // candidate-controllable localStorage value, so it MUST also require the
-    // build-time relax flag — otherwise a candidate could set the email in devtools
-    // and bypass proctoring in a shipping build. Flag off ⇒ no test account.
+    // build-time relax flag — otherwise setting the key in devtools would
+    // bypass proctoring in a shipping build. Flag off ⇒ no fast path.
+    //
+    // Keyed on its own dev flag rather than on a "tester@" email: sign-in is
+    // by printed slip now and no email is stored at all, so the old check
+    // could never fire and was dead code that read as live.
     if (!isGatingRelaxed()) {
       setIsTestAccount(false);
       return;
     }
-    const email = localStorage.getItem("ams_user_email") ?? "candidate@ams.local";
-    const isTester = email.trim().toLowerCase() === "tester@ams.local";
-    if (isTester) warnGatingRelaxed("tester@ams.local onboarding fast-path active");
-    setIsTestAccount(isTester);
+    const enabled = localStorage.getItem("ams_dev_skip_onboarding") === "1";
+    if (enabled) warnGatingRelaxed("onboarding fast-path active (ams_dev_skip_onboarding)");
+    setIsTestAccount(enabled);
   }, []);
 
   useEffect(() => {
@@ -476,33 +480,29 @@ export default function OnboardingPage() {
       // missing, the sign-in did not complete — abort the launch and send them back.
       // Lowercased to match the server, which stores and compares candidate_email
       // case-insensitively — keeps the client value byte-identical to the stored row.
-      const storedEmail = (localStorage.getItem("ams_user_email") ?? "").trim().toLowerCase();
-      const email = isTestAccount ? "tester@ams.local" : storedEmail;
-      if (!isTestAccount && !email) {
-        setPolicyBlock(
-          "Your sign-in could not be confirmed. Please return to the sign-in screen and log in again before starting the contest."
-        );
-        return;
-      }
       if (!sessionPrepared) {
-        const body = await fetchJson<{ id?: string }>(
-          `${API_URL}/sessions`,
+        const body = await fetchJson<{ uid?: string }>(
+          `${API_URL}/participant/sessions`,
           {
             method: "POST",
             headers: authHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
-              contest_id: contestId,
-              candidate_email: email,
-              candidate_name: email.split("@")[0],
+              // The contest uid, and the machine. Identity comes from the
+              // participant token — the old body sent a candidate email,
+              // which was both unverified and no longer a thing this system
+              // has.
+              contest_uid: contestId,
+              device_fingerprint: getOrCreateDeviceId(),
+              os_name: navigator.platform,
             }),
           },
-          { dedupeKey: `session:create:${contestId}:${email}`, retries: 2 }
+          { dedupeKey: `session:create:${contestId}`, retries: 2 }
         );
-        if (body?.id) {
+        if (body?.uid) {
           localStorage.setItem(
             "ams_active_session",
             JSON.stringify({
-              id: body.id,
+              id: body.uid,
               contest_id: contestId,
               updated_at: new Date().toISOString(),
             })
@@ -513,7 +513,7 @@ export default function OnboardingPage() {
           // waiting for the contest screen to mount.
           await invoke("configure_event_stream", {
             apiUrl: API_URL,
-            sessionId: body.id,
+            sessionId: body.uid,
             // Session endpoints are authenticated; without the token the
             // uploader would 401 for ever and the spool would grow unbounded.
             token: getCandidateToken(),

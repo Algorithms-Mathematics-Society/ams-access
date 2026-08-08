@@ -64,8 +64,8 @@ export function HelpRequestModal({
     };
     try {
       const url = sessionId
-        ? `${API_URL}/sessions/${encodeURIComponent(sessionId)}/incidents`
-        : `${API_URL}/support-incidents`;
+        ? `${API_URL}/participant/sessions/${encodeURIComponent(sessionId)}/incidents`
+        : `${API_URL}/participant/support-incidents`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
