@@ -299,6 +299,23 @@ export type ProblemProjection = {
   backfilled?: boolean;
 };
 
+/** A contest as it appears in this participant's list. Mirrors the API's
+ * `ContestOut`, minus the invite code — a proctored candidate has no use for
+ * one, and it would let them admit somebody else. */
+export type ContestSummary = {
+  uid: string;
+  title: string;
+  description: string;
+  status: string;
+  starts_at: string;
+  ends_at: string;
+  is_practice: boolean;
+  frozen: boolean;
+  organization_name: string;
+  verification_window_minutes: number;
+  problems: { uid: string; label: string; title: string; score: number }[];
+};
+
 export type ContestIndex = {
   uid: string;
   title: string;
@@ -455,6 +472,15 @@ export async function finishSession(sessionUid: string): Promise<ProctorSession>
 }
 
 // ── the paper ─────────────────────────────────────────────────────────────
+
+/** Every contest this participant is registered for.
+ *
+ * Usually one: credentials are contest-scoped, so a candidate normally holds
+ * a slip for the round they are about to sit. The list exists because one
+ * student can sit several rounds over a term. */
+export async function listContests(): Promise<ContestSummary[]> {
+  return request<ContestSummary[]>("GET", "/participant/contests");
+}
 
 /** Title, window, server clock and the problem list, in one call.
  *

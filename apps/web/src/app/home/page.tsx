@@ -10,11 +10,20 @@ import {
   runSessionReadiness,
   sessionPolicy,
 } from "@ams/api-client";
-import { fetchJson, useApiQuery } from "@/lib/api-client";
+import { useApiQuery } from "@/lib/api-client";
 import { useTheme } from "@/lib/theme";
 import { useDarkLocked } from "@/lib/theme-dark-lock"; // step-0 (shipped on main via PR #17)
 import { authHeaders, getCandidateToken } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
+import {
+  type ContestSummary,
+  consumeResume,
+  getSession,
+  latestResumeRequest,
+  listContests,
+  requestResume,
+  restoreToken,
+} from "@/lib/proctor-api";
 
 // ── Types ──────────────────────────────────────────────────────
 import type {
@@ -37,9 +46,6 @@ import {
   ACTIVE_SESSION_KEY,
   EMPTY_TELEMETRY,
   READINESS_TIMEOUT_MS,
-  mergeContestLists,
-  loadUnlockedContests,
-  saveUnlockedContests,
   getOrCreateDeviceId,
   withUiTimeout,
   getBrowserMediaAvailability,
@@ -78,6 +84,25 @@ const NAV_ITEMS = [
   },
 ];
 
+/** The participant API's contest shape, in the one the home UI already reads.
+ *
+ * An adapter rather than a rewrite: `ContestCards` and its siblings are
+ * ~7,000 lines of working UI whose only problem was where the data came
+ * from. Changing that in one function is a much smaller thing to get wrong. */
+function toInvitedContest(contest: ContestSummary): InvitedContest {
+  return {
+    id: contest.uid,
+    title: contest.title,
+    description: contest.description || null,
+    start_at: contest.starts_at,
+    end_at: contest.ends_at,
+    status: contest.status,
+    org_name: contest.organization_name,
+    question_count: contest.problems.length,
+    verification_window_minutes: contest.verification_window_minutes,
+  };
+}
+
 export default function HomePage() {
   const router = useRouter();
   const { theme: canonicalTheme } = useTheme(); // canonical single source
@@ -96,23 +121,19 @@ export default function HomePage() {
   const [contestsLoading, setContestsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
-  const [inviteCode, setInviteCode] = useState("");
-  const [inviteCodeStatus, setInviteCodeStatus] = useState<string | null>(null);
-  const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [resumeStatus, setResumeStatus] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
   const [resumeVerification, setResumeVerification] = useState<ResumeVerificationState>("none");
-  const [userEmail, setUserEmail] = useState("tester@ams.local");
-  const [userDisplayEmail, setUserDisplayEmail] = useState("");
-  const [userEmailHydrated, setUserEmailHydrated] = useState(false);
+  // Who is signed in, for display. There is no email: candidates sign in with
+  // a printed slip and the platform has no address for them.
+  const [displayName, setDisplayName] = useState("");
+  const [identityHydrated, setIdentityHydrated] = useState(false);
   const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
   const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
   const [closingApps, setClosingApps] = useState(false);
   const [closeFailedApps, setCloseFailedApps] = useState<string[]>([]);
-  const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
-  const inviteCodeInFlightRef = useRef(false);
   const resumeInFlightRef = useRef(false);
   const resumeConsumeInFlightRef = useRef(false);
   const [readiness, setReadiness] = useState<ReadinessState>({
@@ -247,52 +268,18 @@ export default function HomePage() {
     [readiness, readinessReport, activeSession]
   );
 
-  const contestsQueryKey = userEmailHydrated ? `contests:invited:${userEmail}` : null;
+  const contestsQueryKey = identityHydrated ? "contests:invited" : null;
   const invitedContestsQuery = useApiQuery<InvitedContest[]>(
     contestsQueryKey,
     async () => {
-      const url = `${API_URL}/contests/invited?email=${encodeURIComponent(userEmail)}`;
-      const data = await fetchJson<InvitedContest[]>(
-        url,
-        {},
-        {
-          dedupeKey: contestsQueryKey ?? url,
-          retries: 2,
-        }
-      );
-      const unlocked = loadUnlockedContests();
-      const freshUnlocked = await Promise.all(
-        unlocked.map(async (uc) => {
-          try {
-            const fresh = await fetchJson<any>(`${API_URL}/contests/${uc.id}`);
-            if (fresh && fresh.id) {
-              return {
-                ...uc,
-                title: fresh.title,
-                description: fresh.description,
-                start_at: fresh.start_at,
-                end_at: fresh.end_at,
-                timezone: fresh.timezone,
-                status: fresh.status,
-                org_name: fresh.org_name,
-                plugin_type: fresh.plugin_type,
-              };
-            }
-          } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            if (message.includes("HTTP 404")) {
-              return null;
-            }
-            console.error("Failed to fetch fresh contest details for", uc.id, e);
-          }
-          return uc;
-        })
-      );
-      const keptUnlocked = freshUnlocked.filter((c): c is InvitedContest => Boolean(c));
-      saveUnlockedContests(keptUnlocked);
-      return mergeContestLists(data ?? [], keptUnlocked);
+      // Whose contests these are comes from the participant token, not from a
+      // `?email=` parameter — the old endpoint took the identity as a query
+      // string, which made it both spoofable and dependent on an address the
+      // platform does not have for a slip-authenticated candidate.
+      const contests = await listContests();
+      return contests.map(toInvitedContest);
     },
-    { enabled: userEmailHydrated, staleMs: 30_000, retries: 0 }
+    { enabled: identityHydrated, staleMs: 30_000, retries: 0 }
   );
 
   useEffect(() => {
@@ -304,10 +291,10 @@ export default function HomePage() {
     }
   }, [invitedContestsQuery.data, invitedContestsQuery.error]);
 
-  async function loadContests(email: string, mode: "initial" | "refresh" = "refresh") {
+  async function loadContests(mode: "initial" | "refresh" = "refresh") {
     if (mode === "initial") setContestsLoading(true);
     else setSessionsRefreshing(true);
-    appendSecurityEvent("SESSION: Contest list refresh requested for " + email);
+    appendSecurityEvent("SESSION: Contest list refresh requested");
     setSessionsError(null);
     try {
       const data = await invitedContestsQuery.mutate();
@@ -499,21 +486,10 @@ export default function HomePage() {
     resumeConsumeInFlightRef.current = true;
     setResumeBusy(true);
     try {
-      const res = await fetchWithTimeout(
-        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-consume`,
-        {
-          method: "POST",
-          headers: authHeaders(),
-        }
-      );
-      if (!res.ok) {
-        setResumeStatus("Resume approval expired. Request access again.");
-        return;
-      }
-      const consumed = (await res.json()) as { status?: string };
-      const nextSession = mergeResumeRequestIntoSession(session, {
-        status: consumed.status ?? "CONSUMED",
-      });
+      // 409 here means the grant was spent, rejected or has lapsed — the
+      // server decides, and it is the only thing that can.
+      await consumeResume(session.id);
+      const nextSession = mergeResumeRequestIntoSession(session, { status: "CONSUMED" });
       localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
       setActiveSession(nextSession);
       setResumeStatus("Resume approved. Re-entering contest...");
@@ -534,16 +510,13 @@ export default function HomePage() {
   async function refreshResumeRequest(session: ActiveSession) {
     if (!session.id) return;
     try {
-      const res = await fetchWithTimeout(
-        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`,
-        { headers: authHeaders() }
-      );
-      if (!res.ok) return;
-      const request = (await res.json()) as {
-        id?: string;
-        status?: string;
-        requested_at?: string;
-        review_note?: string | null;
+      const latest = await latestResumeRequest(session.id);
+      if (!latest) return;
+      const request = {
+        id: latest.uid,
+        status: latest.status,
+        requested_at: latest.created_at,
+        review_note: latest.review_note,
       };
       const nextSession = mergeResumeRequestIntoSession(session, request);
       localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
@@ -573,27 +546,15 @@ export default function HomePage() {
     setResumeStatus("Requesting organizer approval...");
     appendSecurityEvent("SESSION: Resume approval requested");
     try {
-      const res = await fetchWithTimeout(
-        `${API_URL}/sessions/${encodeURIComponent(session.id)}/resume-request`,
-        {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            device_id: getOrCreateDeviceId(),
-            reason: "app_rejoin",
-          }),
-        }
-      );
-      if (!res.ok) {
-        setResumeStatus("Could not request organizer approval.");
-        setResumeBusy(false);
-        return;
-      }
-      const request = (await res.json()) as {
-        id?: string;
-        status?: string;
-        requested_at?: string;
-        review_note?: string | null;
+      const created = await requestResume(session.id, {
+        deviceFingerprint: getOrCreateDeviceId(),
+        reason: "The app was closed or crashed and is rejoining.",
+      });
+      const request = {
+        id: created.uid,
+        status: created.status,
+        requested_at: created.created_at,
+        review_note: created.review_note,
       };
       const nextSession = mergeResumeRequestIntoSession(session, request);
       localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
@@ -621,22 +582,24 @@ export default function HomePage() {
     );
 
     try {
-      const res = await fetchWithTimeout(`${API_URL}/sessions/${encodeURIComponent(session.id)}`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) {
+      let live;
+      try {
+        live = await getSession(session.id);
+      } catch {
+        // A 404 is the normal answer for someone else's session as well as a
+        // deleted one — the API deliberately does not distinguish them.
         clearStoredActiveSession("Stored active session could not be verified.");
         appendSecurityEvent("SESSION: Active session validation failed", "error");
         return null;
       }
 
-      const data = (await res.json()) as Partial<ActiveSession> & {
+      // The stored resume request, if any, is fetched separately now: the
+      // session response is about the session, and folding a review decision
+      // into it made two different lifecycles share one payload.
+      const pending = await latestResumeRequest(session.id).catch(() => null);
+      const data: Partial<ActiveSession> & {
         contest_id?: string;
-        contest_title?: string;
-        candidate_email?: string;
-        candidate_name?: string;
         status?: string;
-        expires_at?: string;
         ended_at?: string | null;
         resume_request_status?: string;
         resume_request?: {
@@ -645,6 +608,20 @@ export default function HomePage() {
           requested_at?: string;
           review_note?: string | null;
         } | null;
+      } = {
+        id: live.uid,
+        contest_id: live.contest_uid,
+        status: live.status,
+        ended_at: live.ended_at,
+        resume_request_status: pending?.status,
+        resume_request: pending
+          ? {
+              id: pending.uid,
+              status: pending.status,
+              requested_at: pending.created_at,
+              review_note: pending.review_note,
+            }
+          : null,
       };
       const contestId = data.contest_id;
       if (!contestId || (session.contest_id && contestId !== session.contest_id)) {
@@ -653,11 +630,10 @@ export default function HomePage() {
         return null;
       }
 
-      if (data.candidate_email && data.candidate_email.toLowerCase() !== userEmail.toLowerCase()) {
-        clearStoredActiveSession("Stored active session belongs to a different candidate.");
-        appendSecurityEvent("SESSION: Active session candidate mismatch blocked", "error");
-        return null;
-      }
+      // No candidate-identity comparison here any more. The session is
+      // fetched with this participant's own token and the API answers 404 for
+      // anyone else's, so ownership is enforced where it cannot be bypassed
+      // rather than by the client checking a field the client was sent.
 
       const status = String(data.status ?? "active").toLowerCase();
       if (
@@ -684,7 +660,6 @@ export default function HomePage() {
         id: data.id ?? session.id,
         contest_id: contestId,
         contest_title: data.contest_title ?? session.contest_title,
-        candidate_email: data.candidate_email ?? session.candidate_email ?? userEmail,
         updated_at: new Date().toISOString(),
       };
       const withResume = mergeResumeRequestIntoSession(verifiedSession, data.resume_request);
@@ -718,10 +693,11 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    const email = localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "tester@ams.local";
-    setUserEmail(email);
-    setUserDisplayEmail(localStorage.getItem(STORAGE_KEYS.USER_DISPLAY_EMAIL) ?? email);
-    setUserEmailHydrated(true);
+    // The token outlives the page: restoring it here is what lets a candidate
+    // whose app restarted mid-exam carry on instead of signing in again.
+    restoreToken();
+    setDisplayName(localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "");
+    setIdentityHydrated(true);
     const cancelledRef = { current: false };
     const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
     if (storedSession) {
@@ -749,9 +725,9 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (!userEmailHydrated || resumeVerification !== "unverified" || !activeSession?.id) return;
+    if (!identityHydrated || resumeVerification !== "unverified" || !activeSession?.id) return;
     void validateStoredActiveSession(activeSession, "hydrate");
-  }, [activeSession, resumeVerification, userEmailHydrated]);
+  }, [activeSession, resumeVerification, identityHydrated]);
 
   useEffect(() => {
     if (!activeSession?.id) return;
@@ -761,102 +737,6 @@ export default function HomePage() {
     void refreshResumeRequest(activeSession);
     return () => clearInterval(timer);
   }, [activeSession]);
-
-  async function handleInviteCodeSubmit() {
-    if (inviteCodeBusy || inviteCodeInFlightRef.current) return;
-    inviteCodeInFlightRef.current = true;
-    const code = inviteCode.trim();
-    setInviteCodeStatus(null);
-    if (!code) {
-      inviteCodeInFlightRef.current = false;
-      setInviteCodeStatus("Enter a session or invite code.");
-      appendSecurityEvent("SESSION: Empty session code submission blocked", "error");
-      return;
-    }
-    setInviteCodeBusy(true);
-    appendSecurityEvent("SESSION: Session code validation requested");
-    try {
-      const res = await fetchWithTimeout(`${API_URL}/session-codes/resolve`, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ code, candidate_email: userEmail }),
-      });
-      let data: Partial<import("./components/types").InviteCodeResolveResponse> | null = null;
-      try {
-        data = (await res.json()) as Partial<
-          import("./components/types").InviteCodeResolveResponse
-        >;
-      } catch {}
-      if (!res.ok && !data?.contest?.id) {
-        setInviteCodeStatus(data?.blocked_reason || "Code validation unavailable.");
-        appendSecurityEvent("SESSION: Session code validation blocked by API", "error");
-        return;
-      }
-      if (!data?.contest?.id) {
-        setInviteCodeStatus("Code validation unavailable.");
-        appendSecurityEvent("SESSION: Session code validation returned no contest", "error");
-        return;
-      }
-      const resolvedContest = data.contest as InvitedContest;
-      const unlocked = loadUnlockedContests();
-      const mergedUnlocked = mergeContestLists([resolvedContest], unlocked);
-      saveUnlockedContests(mergedUnlocked);
-      setContests((prev) => mergeContestLists([resolvedContest], prev));
-
-      const resolvedActiveSession = data.active_session_id
-        ? {
-            id: data.active_session_id,
-            contest_id: data.contest.id,
-            contest_title: data.contest.title,
-            updated_at: new Date().toISOString(),
-            candidate_email: userEmail,
-          }
-        : null;
-      if (resolvedActiveSession) {
-        localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(resolvedActiveSession));
-        setActiveSession(resolvedActiveSession);
-        setResumeVerification("verified");
-      }
-
-      const eligibility = String(data?.eligibility_status ?? "").toLowerCase();
-      const blockedReason = data?.blocked_reason?.trim();
-      if (eligibility === "allowed") {
-        setInviteSuccessMsg("Contest added to your list.");
-        setInviteCodeStatus(null);
-        appendSecurityEvent("SESSION: Session code accepted for " + resolvedContest.title);
-      } else if (eligibility === "wait") {
-        const verificationWindowMinutes = getVerificationWindowMinutes(resolvedContest);
-        setInviteSuccessMsg("Contest added to your list.");
-        setInviteCodeStatus(
-          blockedReason ||
-            `Verification opens ${verificationWindowMinutes} minutes before contest start.`
-        );
-        appendSecurityEvent(
-          "SESSION: Contest added; verification window not open for " + resolvedContest.title
-        );
-      } else if (eligibility === "blocked") {
-        setInviteSuccessMsg("Contest added to your list.");
-        setInviteCodeStatus(blockedReason || "Join window is closed for this contest.");
-        appendSecurityEvent(
-          "SESSION: Contest added but entry blocked for " + resolvedContest.title,
-          "warn"
-        );
-      } else {
-        setInviteSuccessMsg("Contest added to your list.");
-        setInviteCodeStatus(null);
-        appendSecurityEvent("SESSION: Contest added for " + resolvedContest.title);
-      }
-
-      setInviteCode("");
-      setTimeout(() => setInviteSuccessMsg(null), 6000);
-    } catch {
-      setInviteCodeStatus("Code validation unavailable.");
-      appendSecurityEvent("SESSION: Session code validation failed", "error");
-    } finally {
-      inviteCodeInFlightRef.current = false;
-      setInviteCodeBusy(false);
-    }
-  }
 
   async function handleResumeActiveSession() {
     setResumeStatus(null);
@@ -870,12 +750,6 @@ export default function HomePage() {
     }
 
     try {
-      if (userEmail.trim().toLowerCase() === "tester@ams.local") {
-        setResumeVerification("verified");
-        setResumeStatus("Resume approved. Entering contest...");
-        router.push(`/session/contest?contestId=${encodeURIComponent(activeSession.contest_id)}`);
-        return;
-      }
       const verifiedSession = await validateStoredActiveSession(activeSession, "resume");
       if (!verifiedSession?.contest_id) return;
       const requestStatus = String(verifiedSession.resume_request_status ?? "").toUpperCase();
@@ -1020,7 +894,7 @@ export default function HomePage() {
               whiteSpace: "nowrap",
             }}
           >
-            {userDisplayEmail || userEmail}
+            {displayName}
           </p>
           <button
             onClick={handleSignOut}
@@ -1045,7 +919,7 @@ export default function HomePage() {
               transition: "opacity var(--transition-fast)",
             }}
           >
-            {userEmail[0].toUpperCase()}
+            {(displayName || "?")[0].toUpperCase()}
           </button>
         </div>
       </div>
@@ -1173,7 +1047,7 @@ export default function HomePage() {
                   flexShrink: 0,
                 }}
               >
-                {userEmail[0].toUpperCase()}
+                {(displayName || "?")[0].toUpperCase()}
               </div>
               {/* Pill placeholder */}
               <div
@@ -1283,7 +1157,7 @@ export default function HomePage() {
                           fontWeight: 500,
                         }}
                       >
-                        {userDisplayEmail || userEmail}
+                        {displayName}
                       </span>
                     </p>
                   </div>
@@ -1300,14 +1174,7 @@ export default function HomePage() {
                   />
                   <SessionActionsPanel
                     activeSession={activeSession}
-                    inviteCode={inviteCode}
-                    inviteCodeBusy={inviteCodeBusy}
-                    inviteCodeStatus={inviteCodeStatus}
-                    inviteSuccessMsg={inviteSuccessMsg}
-                    onDismissInviteSuccess={() => setInviteSuccessMsg(null)}
-                    onInviteCodeChange={setInviteCode}
-                    onInviteCodeSubmit={handleInviteCodeSubmit}
-                    onRefresh={() => loadContests(userEmail)}
+                    onRefresh={() => loadContests()}
                     onResume={handleResumeActiveSession}
                     resumeBusy={resumeBusy}
                     resumeStatus={resumeStatus}
