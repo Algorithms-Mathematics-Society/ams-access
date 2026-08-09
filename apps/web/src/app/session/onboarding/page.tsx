@@ -12,6 +12,8 @@ import {
 } from "@ams/api-client";
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
+import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
+import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { useTheme } from "./components/hooks";
 import { PHASE_FRIENDLY_NAME, readinessBlockMessage } from "./components/labels";
@@ -91,6 +93,9 @@ export default function OnboardingPage() {
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
   const [contestWindow, setContestWindow] = useState<ContestWindowMeta | null>(null);
+  // The server's own view of the window, including `phase`. The entry gate is
+  // derived from this rather than from local clock arithmetic.
+  const [contestIndex, setContestIndex] = useState<ContestIndex | null>(null);
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const [sessionPrepared, setSessionPrepared] = useState(false);
@@ -196,21 +201,19 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestId) return;
     let cancelled = false;
-    fetchJson<{
-      start_at?: string;
-      end_at?: string;
-      timezone?: string;
-      verification_window_minutes?: number | null;
-    }>(`${API_URL}/contests/${contestId}`, {}, { dedupeKey: `contest:${contestId}`, retries: 2 })
-      .then((meta) => {
-        if (cancelled || !meta?.start_at || !meta?.end_at) return;
+    // `/participant/contests/{uid}` — authenticated, and it returns the
+    // server's own `phase` and `server_time` alongside the window. The old
+    // call went to `/contests/{id}`, a staff route, unauthenticated: it 403s
+    // for a participant, so `contestWindow` stayed null and every client-side
+    // time gate silently disabled itself.
+    getContest(contestId)
+      .then((index) => {
+        if (cancelled) return;
+        setContestIndex(index);
         setContestWindow({
-          startAt: meta.start_at,
-          endAt: meta.end_at,
-          timezone: meta.timezone,
-          verificationWindowMinutes: normalizeVerificationWindowMinutes(
-            meta.verification_window_minutes
-          ),
+          startAt: index.starts_at,
+          endAt: index.ends_at,
+          verificationWindowMinutes: index.verification_window_minutes,
         });
       })
       .catch(() => {});
@@ -231,105 +234,34 @@ export default function OnboardingPage() {
     return () => clearInterval(id);
   }, [contestWindow]);
 
+  /**
+   * Whether the server will let this candidate in, right now.
+   *
+   * Was 100 lines juggling `eligibility_status` and `session_window_state`
+   * from `GET /contests/{id}/session-window` — a staff route, called
+   * unauthenticated, which 403s for a participant. On 403 it returned
+   * `state: "UNKNOWN"`, which fell through to a local fallback that returned
+   * `{ ok: true }` whenever the window was also unknown. So the gate the
+   * entire entry flow depended on silently evaporated.
+   *
+   * `/participant/contests/{uid}` returns the server's own `phase`, which is
+   * the answer, so the whole thing is one call and one decision.
+   */
   async function evaluateEntryGateFromServer() {
     if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
     if (isTestAccount) return { ok: true, reason: null as string | null, state: "LIVE" };
     try {
-      let body: {
-        eligibility_status?: string;
-        blocked_reason?: string;
-        session_window_state?: string;
-        start_at?: string;
-        end_at?: string;
-        verification_window_minutes?: number | null;
-      } | null = null;
-      let lastErr: unknown = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          body = await fetchJson<{
-            eligibility_status?: string;
-            blocked_reason?: string;
-            session_window_state?: string;
-            start_at?: string;
-            end_at?: string;
-            verification_window_minutes?: number | null;
-          }>(
-            `${API_URL}/contests/${contestId}/session-window`,
-            {},
-            { dedupeKey: `contest-window:${contestId}:${attempt}`, retries: 0 }
-          );
-          break;
-        } catch (err) {
-          // Re-throw server errors (HTTP 4xx/5xx) — only retry network/timeout failures.
-          if (err instanceof Error && /^HTTP \d/.test(err.message)) throw err;
-          lastErr = err;
-          await new Promise((r) => setTimeout(r, 600));
-        }
-      }
-      if (!body) {
-        void lastErr;
-        return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
-      }
-      if (body.start_at && body.end_at) {
-        setContestWindow((prev) => ({
-          startAt: body.start_at ?? prev?.startAt ?? "",
-          endAt: body.end_at ?? prev?.endAt ?? "",
-          timezone: prev?.timezone,
-          verificationWindowMinutes:
-            normalizeVerificationWindowMinutes(body.verification_window_minutes) ??
-            prev?.verificationWindowMinutes ??
-            null,
-        }));
-      }
-      const status = String(body.eligibility_status ?? "blocked").toLowerCase();
-      const windowState = (body.session_window_state ?? "").toUpperCase();
-
-      // Authoritative backend window state takes precedence over secondary
-      // eligibility_status so that the 30-min late-entry buffer is honored
-      // and genuinely-closed windows are never allowed through.
-      //
-      // Priority order:
-      //  1. LIVE           → allow entry unconditionally (contest is active, late
-      //                       entry within the 30-min buffer is permitted).
-      //  2. LATE_CLOSED    → hard-block; 30-min late-entry window has passed.
-      //  3. ENDED          → hard-block; contest is over.
-      //  4. eligibility_status === "allowed" → allow (covers pre-start VERIFY_WINDOW_OPEN).
-      //  5. eligibility_status === "wait"    → not-open yet (verification window).
-      //  6. Anything else  → block (unknown / NOT_OPEN / default-safe).
-      if (windowState === "LIVE") return { ok: true, reason: null as string | null, state: "LIVE" };
-      if (windowState === "LATE_CLOSED")
-        return {
-          ok: false,
-          reason:
-            body.blocked_reason ||
-            "Entry closed — you can only join within 30 minutes of the contest start.",
-          state: "LATE_CLOSED",
-        };
-      if (windowState === "ENDED")
-        return {
-          ok: false,
-          reason: body.blocked_reason || "This contest has ended.",
-          state: "ENDED",
-        };
-      if (status === "allowed")
-        return {
-          ok: true,
-          reason: null as string | null,
-          state: body.session_window_state ?? "VERIFY_WINDOW_OPEN",
-        };
-      if (status === "wait")
-        return {
-          ok: false,
-          reason: body.blocked_reason || "Verification is not open for this contest yet.",
-          state: body.session_window_state ?? "NOT_OPEN",
-        };
-      // Default-safe: unknown state → block.
+      const index = await getContest(contestId);
+      setContestIndex(index);
+      const decision = decideEntry(index, serverNow());
       return {
-        ok: false,
-        reason: body.blocked_reason || "Join window is closed once contest starts.",
-        state: body.session_window_state ?? "UNKNOWN",
+        ok: shouldRunChecks(decision),
+        reason: blockedMessage(decision),
+        state: decision.kind.toUpperCase(),
       };
     } catch {
+      // Fail closed. Not knowing whether the contest is open is not a reason
+      // to open it.
       return { ok: false, reason: "Unable to validate contest entry window.", state: "UNKNOWN" };
     }
   }
@@ -381,63 +313,19 @@ export default function OnboardingPage() {
       return;
     }
 
-    let windowMeta = contestWindow;
-    const windowMetaRequest =
-      !windowMeta && contestId
-        ? fetchJson<{
-            start_at?: string;
-            end_at?: string;
-            timezone?: string;
-            verification_window_minutes?: number | null;
-          }>(
-            `${API_URL}/contests/${contestId}`,
-            {},
-            {
-              dedupeKey: `contest:${contestId}`,
-              retries: 2,
-            }
-          ).catch(() => null)
-        : Promise.resolve(null);
+    // One authenticated call. `evaluateEntryGateFromServer` also refreshes
+    // `contestIndex`, so the window and the decision cannot disagree — the
+    // previous code fetched them separately and then reconciled two answers
+    // with a `state === "UNKNOWN"` fallback that opened the gate whenever
+    // both were unknown.
+    const gate = await evaluateEntryGateFromServer();
+    const windowMeta = contestWindow;
 
-    const [fetchedWindowMeta, gate] = await Promise.all([
-      windowMetaRequest,
-      evaluateEntryGateFromServer(),
-    ]);
-
-    if (fetchedWindowMeta?.start_at && fetchedWindowMeta?.end_at) {
-      windowMeta = {
-        startAt: fetchedWindowMeta.start_at,
-        endAt: fetchedWindowMeta.end_at,
-        timezone: fetchedWindowMeta.timezone,
-        verificationWindowMinutes: normalizeVerificationWindowMinutes(
-          fetchedWindowMeta.verification_window_minutes
-        ),
-      };
-      setContestWindow(windowMeta);
-    }
-    const localGate = (() => {
-      if (!windowMeta) return { ok: true, reason: null as string | null };
-      const now = Date.now();
-      const start = new Date(windowMeta.startAt).getTime();
-      const end = new Date(windowMeta.endAt).getTime();
-      const open = getVerificationOpenMs(windowMeta);
-      if (now >= end) return { ok: false, reason: "Contest has ended." };
-      if (open !== null && now < open)
-        return {
-          ok: false,
-          reason: `Verification opens in the ${verificationWindowLabel(
-            windowMeta.verificationWindowMinutes
-          )} window before contest start.`,
-        };
-      return { ok: true, reason: null as string | null };
-    })();
-    const effectiveGate = gate.state === "UNKNOWN" ? localGate : gate;
-
-    if (!effectiveGate.ok && !isTestAccount) {
+    if (!gate.ok && !isTestAccount) {
       setCurrentStage(13);
       setTransitioning(false);
       setReadyForStart(false);
-      setPolicyBlock(effectiveGate.reason);
+      setPolicyBlock(gate.reason);
       return;
     }
 
@@ -824,18 +712,17 @@ export default function OnboardingPage() {
     return () => window.removeEventListener("keydown", handleEmergencyKey, true);
   }, [emergencyExit]);
 
-  const nowMs = Date.now();
-  const startMs = contestWindow ? new Date(contestWindow.startAt).getTime() : 0;
-  const endMs = contestWindow ? new Date(contestWindow.endAt).getTime() : 0;
-  const verifyOpenMs = getVerificationOpenMs(contestWindow);
-  const isTooEarly = isTestAccount ? false : verifyOpenMs !== null ? nowMs < verifyOpenMs : false;
-  const isAfterStart = isTestAccount
-    ? false
-    : contestWindow
-      ? nowMs >= startMs && nowMs < endMs
-      : false;
-  const isEnded = isTestAccount ? false : contestWindow ? nowMs >= endMs : false;
-  const verifyOpensInMs = verifyOpenMs !== null ? Math.max(0, verifyOpenMs - nowMs) : 0;
+  // One decision, from the server's own `phase`. This replaced
+  // `isTooEarly`/`isAfterStart`/`isEnded`, three local clock comparisons
+  // against a window fetched from a route that 403s — and `isAfterStart` in
+  // particular was true for the whole contest, hiding every stage from anyone
+  // who arrived after the start, **including every approved resume**.
+  const entry = contestIndex ? decideEntry(contestIndex, serverNow()) : ({ kind: "open" } as const);
+  const isTooEarly = isTestAccount ? false : entry.kind === "too_early";
+  const isEnded = isTestAccount ? false : entry.kind === "ended";
+  const verifyOpensInMs = entry.kind === "too_early" ? entry.opensInMs : 0;
+  const canRunChecks = isTestAccount || shouldRunChecks(entry);
+  const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
   const showWaitLock = currentStage === 15 && readyForStart;
 
   return (
@@ -1172,21 +1059,6 @@ export default function OnboardingPage() {
                 </div>
               </div>
             )}
-            {isAfterStart && !showWaitLock && (
-              <div
-                style={{
-                  border: "1px solid rgba(239,68,68,0.35)",
-                  background: "rgba(239,68,68,0.08)",
-                  borderRadius: "var(--radius-lg)",
-                  padding: "18px 16px",
-                  color: "#fca5a5",
-                  textAlign: "center",
-                  marginBottom: 16,
-                }}
-              >
-                Join window is closed once contest starts.
-              </div>
-            )}
             {isEnded && (
               <div
                 style={{
@@ -1202,7 +1074,7 @@ export default function OnboardingPage() {
                 Contest has ended.
               </div>
             )}
-            {!isTooEarly && (!isAfterStart || showWaitLock) && !isEnded && (
+            {canRunChecks && (
               <>
                 {currentStage === 15 && !dryRun && contestWindow && waitMs > 0 && (
                   <div
