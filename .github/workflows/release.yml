@@ -156,24 +156,28 @@ jobs:
       # asks for administrator (build.rs sets requireAdministrator). A
       # candidate has no way to tell that apart from malware except by
       # checking the hash, so publish it.
-      # Windows installers are unsigned, so SmartScreen will warn and the exe
-      # asks for administrator (build.rs sets requireAdministrator). A
-      # candidate has no way to tell that apart from malware except by
-      # checking the hash, so publish it.
+      #
+      # Written to a per-target *file* and uploaded as an asset rather than
+      # inlined into the release body. Each matrix job writes the body, so the
+      # last one wins and the others' sums vanish — the first cut of v2.0.0
+      # shipped with only the Linux hashes, under a note telling people to
+      # verify the Windows installer before running it.
       #
       # Only Linux and Windows runners reach this, and both have sha256sum in
       # bash. (macOS would need `shasum -a 256`; revisit when it returns.)
       - name: Checksums
         shell: bash
         run: |
-          {
-            echo "SHA256SUMS<<CHECKSUM_EOF"
-            while IFS= read -r file; do
-              [ -n "$file" ] || continue
-              printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$(basename "$file")"
-            done <<< "${RELEASE_FILES}"
-            echo "CHECKSUM_EOF"
-          } >> "$GITHUB_ENV"
+          SUMS="SHA256SUMS-${{ matrix.target }}.txt"
+          : > "$SUMS"
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$(basename "$file")" >> "$SUMS"
+          done <<< "${RELEASE_FILES}"
+          cat "$SUMS"
+          echo "RELEASE_FILES<<EOF" >> "$GITHUB_ENV"
+          printf '%s\n%s\n' "${RELEASE_FILES}" "$SUMS" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -197,9 +201,10 @@ jobs:
             an older one; the server refuses mismatched clients with a message
             saying so.
 
-            ```
-            ${{ env.SHA256SUMS }}
-            ```
+            Checksums are attached as `SHA256SUMS-<target>.txt`, one per
+            platform. Verify your download against the file for your OS before
+            running it, and get the file from a different channel than the
+            installer where you can.
 
             See CHANGELOG for details.
           fail_on_unmatched_files: false
