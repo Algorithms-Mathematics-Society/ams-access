@@ -1232,7 +1232,11 @@ export default function OnboardingPage() {
                   <Stage12_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
                 )}
                 {currentStage === 13 && (
-                  <Stage13_IntegrityConfirmation results={results} onPass={advancePass} />
+                  <Stage13_IntegrityConfirmation
+                    results={results}
+                    onPass={advancePass}
+                    blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
+                  />
                 )}
                 {currentStage === 14 && <Stage14_LockInCountdown onPass={advancePass} />}
               </>

@@ -2011,3 +2011,23 @@ html.light:not(.theme-dark-locked) {
   color: var(--theme-text-muted);
   margin-left: 8px;
 }
+
+/* The summary's Continue. Explicit, because the stage used to advance on a
+   3.5s timer — including when the candidate was blocked, which turned the
+   block screen into a silent ~9-second retry loop. */
+.onboarding-continue {
+  margin-top: 22px;
+  padding: 10px 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+  color: #22c55e;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.onboarding-continue:hover {
+  background: rgba(34, 197, 94, 0.14);
+}
