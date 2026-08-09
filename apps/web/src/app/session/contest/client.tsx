@@ -71,12 +71,28 @@ import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
 import { loadContestPaper } from "./load-contest-problems";
 import { toAttemptRecords } from "./attempt-adapter";
+import { flush as flushViolationQueue } from "@/lib/violation-queue";
+import {
+  activeContent,
+  chooseRestore,
+  clear as clearAnswerBuffer,
+  read as readAnswerBuffer,
+  write as writeAnswerBuffer,
+} from "./answer-buffer";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
+import {
+  connectionLevel,
+  initialHeartbeatState,
+  onFailure as onHeartbeatFailure,
+  onSuccess as onHeartbeatSuccess,
+  shouldLockEditor,
+} from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
   getDrafts,
   getRun,
   getSession,
+  heartbeat,
   listMySubmissions,
   putDraft,
   run as runAgainstSamples,
@@ -90,12 +106,6 @@ const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
 const EDITOR_THEME_KEY = "ams_contest_editor_theme";
 const PROBLEM_SPLIT_WIDTH_KEY = "ams_contest_problem_split_width";
 const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
-// Local answer buffer: last unsaved editor content per session+problem. This is
-// the safety net so a failed network save is never data loss (see handleSave /
-// writeLocalAnswerBuffer). Cleared on a confirmed successful save.
-const LOCAL_ANSWER_BUFFER_PREFIX = "ams_contest_answer_buffer";
-const localAnswerBufferKey = (sessionId: string, questionId: string) =>
-  `${LOCAL_ANSWER_BUFFER_PREFIX}:${sessionId}:${questionId}`;
 
 // Autosave delay policy lives in ./autosave-timing (computeAutosaveDelayMs).
 // MAX_SAVE_RETRIES stays here — it caps handleSave's retry counter.
@@ -280,6 +290,9 @@ export default function ContestPageClient() {
   // True when the initial draft load failed. The autosave path re-seeds its
   // revision from the server's reply instead of assuming it starts at zero.
   const [draftsUnknown, setDraftsUnknown] = useState(false);
+  // Problems whose editor was opened from this device's local buffer rather
+  // than the server's draft, so the candidate can be told.
+  const [restoredFromDevice, setRestoredFromDevice] = useState<string[]>([]);
   // Per-problem autosave revision. A ref rather than state: it is read and
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
@@ -305,7 +318,16 @@ export default function ContestPageClient() {
   const [presenceDetected, setPresenceDetected] = useState<"ok" | "away" | "unknown">("unknown");
   // Ambient connection signal for the trust strip. Defaults online; the effect
   // syncs the real value on mount (navigator is unavailable during SSR).
-  const [online, setOnline] = useState(true);
+  const [browserOnline, setBrowserOnline] = useState(true);
+  const [heartbeatState, setHeartbeatState] = useState(initialHeartbeatState);
+  // Set when the *server* says this session is over — terminated by an
+  // invigilator, or finished elsewhere. Distinct from the bell.
+  const [sessionEnded, setSessionEnded] = useState<"terminated" | "submitted" | null>(null);
+  // The browser's hint AND the server's silence. Either alone is wrong: the
+  // browser lies on a captive portal, and the heartbeat is only sampled once
+  // a minute.
+  const connection = connectionLevel(heartbeatState);
+  const online = browserOnline && connection !== "offline";
   const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -894,19 +916,39 @@ export default function ContestPageClient() {
       );
 
       const answersMap: Record<string, { language: string; content: string }> = {};
+      const restored: string[] = [];
       try {
         // One draft per problem, keyed by label. The old shape stuffed the
         // whole editor workspace into a single `answer_text` string, so two
         // problems' autosaves contended for one row and recovering "what did
         // they have for C" meant parsing a blob.
         for (const draft of await getDrafts(live.uid)) {
-          answersMap[draft.problem_label] = {
-            language: draft.language,
-            content: draft.source,
-          };
           draftRevisionsRef.current[draft.problem_label] = draft.client_revision;
+
+          // Whichever copy is newer wins, by revision — see `chooseRestore`.
+          // The local buffer holds anything the network never accepted, which
+          // is exactly what a crash mid-outage leaves behind.
+          const buffered = readAnswerBuffer(localStorage, live.uid, draft.problem_label);
+          const choice = chooseRestore(buffered, draft);
+          if (choice === "buffer" && buffered) {
+            answersMap[draft.problem_label] = {
+              language: buffered.language,
+              content: activeContent(buffered),
+            };
+            restored.push(draft.problem_label);
+          } else {
+            answersMap[draft.problem_label] = {
+              language: draft.language,
+              content: draft.source,
+            };
+          }
         }
         setSavedAnswers(answersMap);
+        if (restored.length > 0) {
+          // Say so. Silently restoring is as bad as silently losing — the
+          // candidate needs to know which version they are looking at.
+          setRestoredFromDevice(restored);
+        }
       } catch (err) {
         // Revisions stay empty, so the next autosave would send `1` and the
         // server would drop it as stale — for the rest of the exam, silently.
@@ -1202,35 +1244,32 @@ export default function ContestPageClient() {
     void fetchSubmissions();
   }
 
-  // Persist the current editor content to localStorage so an unconfirmed network
-  // save is never data loss. Best-effort: storage failures (quota / private mode)
+  // Persist the current editor content locally so an unconfirmed network save
+  // is never data loss. Best-effort: storage failures (quota, private mode)
   // must never throw into the save/submit/exit paths.
+  //
+  // Unlike before, this is *read back* — see `restoreAnswer` in the bootstrap.
+  // It previously wrote a key nothing consulted, while the UI told candidates
+  // their work was saved locally.
   function writeLocalAnswerBuffer() {
     if (!sessionId) return;
     const qId = questions[activeQ]?.id;
     if (!qId) return;
-    try {
-      localStorage.setItem(
-        localAnswerBufferKey(sessionId, qId),
-        JSON.stringify({
-          language: toLanguageId(selectedLanguage),
-          files: editorFiles,
-          active_file_id: activeFileId,
-          saved_at: Date.now(),
-        })
-      );
-    } catch {
-      // storage unavailable — nothing more we can do here
-    }
+    writeAnswerBuffer(localStorage, sessionId, qId, {
+      language: toLanguageId(selectedLanguage),
+      // Every tab, not just the active one. Scratch tabs were persisted
+      // nowhere at all — not locally and not on the server, which only ever
+      // receives the active file.
+      files: editorFiles,
+      activeFileId,
+      savedAtMs: Date.now(),
+      revision: draftRevisionsRef.current[qId] ?? 0,
+    });
   }
 
   function clearLocalAnswerBuffer(questionId: string) {
     if (!sessionId) return;
-    try {
-      localStorage.removeItem(localAnswerBufferKey(sessionId, questionId));
-    } catch {
-      // ignore
-    }
+    clearAnswerBuffer(localStorage, sessionId, questionId);
   }
 
   // The actual network-save body. Recreated fresh every render (a plain
@@ -1261,11 +1300,17 @@ export default function ContestPageClient() {
       const revision = (draftRevisionsRef.current[qId] ?? 0) + 1;
       draftRevisionsRef.current[qId] = revision;
 
-      await putDraft(sessionId, qId, {
+      const stored = await putDraft(sessionId, qId, {
         source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
         language: toLanguageId(selectedLanguage),
         clientRevision: revision,
       });
+      // Re-seed from what the server actually holds. If the initial draft
+      // load failed, our counter started at zero and every write would be
+      // dropped as stale for the rest of the exam — silently. A stale PUT
+      // returns the stored copy unchanged, so this self-heals in one trip.
+      draftRevisionsRef.current[qId] = Math.max(revision, stored.client_revision);
+      if (draftsUnknown) setDraftsUnknown(false);
       setSavedAnswers((prev) => ({
         ...prev,
         [qId]: {
@@ -1280,7 +1325,17 @@ export default function ContestPageClient() {
       setSavedLocallyOnly(false);
       clearLocalAnswerBuffer(qId);
       return true;
-    } catch {
+    } catch (caught) {
+      // The bell, not a failure. The contest closed while this save was in
+      // flight — or while the candidate was offline and this is the flush.
+      // Their work is on the device and their last accepted version is with
+      // the server; saying "save failed" would read as data loss.
+      if (caught instanceof ProctorApiError && caught.status === 409) {
+        setSaving(false);
+        setSaveError(null);
+        setBellRung(true);
+        return false;
+      }
       // The buffer write above means the work is safe locally regardless.
       saveRetryCountRef.current += 1;
       if (saveRetryCountRef.current >= MAX_SAVE_RETRIES) {
@@ -1610,21 +1665,81 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!sessionId) return;
-    const sendHeartbeat = () => {
-      fetch(`${API_URL}/participant/sessions/${sessionId}/heartbeat`, {
-        method: "POST",
-        keepalive: true,
-        headers: authHeaders(),
-      }).catch(() => {});
-    };
-    sendHeartbeat();
-    const id = setInterval(sendHeartbeat, 60_000);
-    return () => clearInterval(id);
-  }, [sessionId]);
 
-  // Track browser connectivity for the ambient trust strip.
+    let cancelled = false;
+
+    /**
+     * Liveness — and the only way the app learns anything changed.
+     *
+     * This was `fetch(...).catch(() => {})`, so the response was discarded.
+     * A candidate whose session an invigilator had terminated kept typing
+     * into a dead session and found out at submit time; the clock never
+     * resynced; and a dropped network was invisible because nothing counted
+     * the failures.
+     */
+    const beat = async () => {
+      try {
+        const live = await heartbeat(sessionId);
+        if (cancelled) return;
+
+        setHeartbeatState((prev) => onHeartbeatSuccess(prev, Date.now()));
+
+        // The server's word on where we are, once a minute. This corrects any
+        // drift and is authoritative over local deadline arithmetic.
+        setContestPhase(live.phase);
+        if (live.ends_at) setContest((prev) => (prev ? { ...prev, end_at: live.ends_at! } : prev));
+        if (
+          isBell(
+            { endsAtMs: live.ends_at ? Date.parse(live.ends_at) : null, phase: live.phase },
+            serverNow()
+          )
+        ) {
+          handleContestExpiry();
+        }
+
+        if (live.status === "terminated") {
+          setSessionEnded("terminated");
+        } else if (live.status === "submitted") {
+          setSessionEnded("submitted");
+        }
+      } catch (caught) {
+        if (cancelled) return;
+        if (caught instanceof ProctorApiError && caught.status === 401) {
+          // The token expired mid-exam. Keep `ams_active_session` so the
+          // resume path still has something to resume.
+          router.push("/login");
+          return;
+        }
+        setHeartbeatState(onHeartbeatFailure);
+      }
+    };
+
+    void beat();
+    const id = setInterval(() => void beat(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionId, router]);
+
+  // Flush the moment the connection comes back, rather than waiting out the
+  // autosave backoff. A candidate who reconnects with thirty seconds left
+  // should not lose them to a timer.
+  const wasOnlineRef = useRef(true);
   useEffect(() => {
-    const sync = () => setOnline(navigator.onLine);
+    const recovered = online && !wasOnlineRef.current;
+    wasOnlineRef.current = online;
+    if (!recovered || !sessionId || bellRung) return;
+    void handleSave();
+    void flushViolationQueue(sessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, sessionId, bellRung]);
+
+  // `navigator.onLine` is a hint, not a fact — it is true on a captive portal
+  // and true when the wifi is up but the exam server is unreachable. It is
+  // combined with the heartbeat's own verdict below.
+  useEffect(() => {
+    const sync = () => setBrowserOnline(navigator.onLine);
     sync();
     window.addEventListener("online", sync);
     window.addEventListener("offline", sync);
@@ -2064,11 +2179,22 @@ export default function ContestPageClient() {
   // "C++23 judging is not available in this release" for every cxxprobe
   // problem — the third copy of that block, and the one that actually kept
   // the buttons disabled after the two inline guards were removed.
-  const judgingUnavailableReason = bellRung
-    ? "The contest has ended. Your work is saved — you can read it, but not change it."
-    : !paperIsOpen({ endsAtMs: null, phase: contestPhase })
-      ? "The contest has not started yet."
-      : null;
+  // The editor goes read-only on a *sustained* outage, not the first dropped
+  // packet — see `heartbeat-policy`. Locking a whole exam hall on one lost
+  // packet would be a self-inflicted incident.
+  const editorLocked = shouldLockEditor(heartbeatState) || bellRung || Boolean(sessionEnded);
+
+  const judgingUnavailableReason = sessionEnded
+    ? sessionEnded === "terminated"
+      ? "An invigilator ended this session."
+      : "This session has already been submitted."
+    : bellRung
+      ? "The contest has ended. Your work is saved — you can read it, but not change it."
+      : !paperIsOpen({ endsAtMs: null, phase: contestPhase })
+        ? "The contest has not started yet."
+        : editorLocked
+          ? "We can't reach the exam server. Your work is saved on this device and will sync when the connection returns."
+          : null;
 
   // One trustworthy, invisible-saving model (Google-Docs style): the candidate
   // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
@@ -2480,7 +2606,7 @@ export default function ContestPageClient() {
             sessionId={sessionId}
             triggerRun={triggerRun}
             judgingUnavailableReason={judgingUnavailableReason}
-            readOnly={bellRung}
+            readOnly={editorLocked}
             submitButton={submitButton}
             isSubmitting={isSubmitting}
             isEditorEmpty={isEditorEmpty}
