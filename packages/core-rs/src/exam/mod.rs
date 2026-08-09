@@ -118,10 +118,13 @@ pub enum EnforcementProfile {
     StrictContest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockingSeverity {
     Info,
+    // The default for `ReadinessRequirement::unsupported_severity`: a check
+    // this platform cannot run is surfaced, not enforced.
+    #[default]
     Warning,
     Block,
 }
@@ -143,7 +146,16 @@ pub enum FailureReasonCode {
     ExternalDisplayDetected,
     ExternalDisplayIndeterminate,
     RemoteServerDetected,
+    /// The probe ran and could not conclude. Fails closed under a strict
+    /// policy: we cannot prove the environment is clean.
     ProbeUnavailable,
+    /// This platform has no such probe at all — there is nothing to run and
+    /// nothing to retry. Distinct from `ProbeUnavailable` because the two
+    /// deserve different answers: a check that *could not conclude* is a
+    /// reason to stop, a check that *does not exist here* is a reason to tell
+    /// the invigilator this machine is less supervised than the one next to
+    /// it. Never reported as a pass.
+    ProbeUnsupportedOnPlatform,
 }
 
 pub type FailureReason = FailureReasonCode;
@@ -170,6 +182,16 @@ pub struct ReadinessRequirement {
     pub required: bool,
     pub severity: BlockingSeverity,
     pub organizer_override_allowed: bool,
+    /// What to do when this platform cannot run the check at all.
+    ///
+    /// Deliberately a property of the *policy*, not of the check: whether an
+    /// unprobeable machine may sit the exam is an invigilation decision, and
+    /// the probe is not the place to make it. `#[serde(default)]` keeps older
+    /// payloads deserializing, and the default is `Warning` — an
+    /// under-protected machine is admitted and visible, rather than either
+    /// silently trusted or silently excluded.
+    #[serde(default)]
+    pub unsupported_severity: BlockingSeverity,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,11 +283,23 @@ impl SessionPolicy {
                 CheckKind::Platform if is_windows_no_admin => (false, BlockingSeverity::Warning),
                 _ => (required, severity.clone()),
             };
+            // What an unprobeable machine costs. Blocking only where the check
+            // is a hard requirement anyway — a strict Windows session — so the
+            // rule reads the same as the one above it: if this check matters
+            // enough to block on failure, it matters enough to block on
+            // "we cannot tell". Everywhere else it warns, which admits the
+            // candidate *and* puts them on the invigilator's screen.
+            let unsupported_severity = if strict && is_windows {
+                BlockingSeverity::Block
+            } else {
+                BlockingSeverity::Warning
+            };
             ReadinessRequirement {
                 kind,
                 required: kind_required,
                 severity: kind_severity,
                 organizer_override_allowed,
+                unsupported_severity,
             }
         })
         .collect();
@@ -722,10 +756,14 @@ fn evaluate_requirement(
             ),
             None => unknown(FailureReasonCode::ProbeUnavailable),
         },
-        // Windows-only entry check. Inert on macOS/Linux: when the device
-        // platform is not Windows (or no display scan was produced) the check
-        // always passes, and `required=false` from the policy on those
-        // platforms makes it doubly inert.
+        // Windows-only entry check.
+        //
+        // It used to fall through to "no extra or wireless display detected"
+        // on macOS and Linux, where no scan is ever produced — reporting a
+        // clean result for a probe that never ran. A Linux candidate looked
+        // exactly as supervised as a Windows one while being measurably less
+        // so. Those platforms now say `Unsupported`, and the policy decides
+        // whether that warns or blocks.
         CheckKind::ExternalDisplay => {
             let is_windows = matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
             let scan = device_state.external_displays.as_ref();
@@ -734,11 +772,15 @@ fn evaluate_requirement(
             let detected = is_windows && scan.map(|d| d.has_extra || d.has_wireless).unwrap_or(false);
             // Indeterminate: scan failed (count == 0 sentinel) or no scan was
             // produced on a Windows device. Fail-closed — we cannot prove a
-            // single-screen environment. `is_windows &&` keeps this inert on
-            // macOS/Linux (Rust && short-circuits; they always have None here).
+            // single-screen environment.
             let indeterminate = is_windows && scan.map(|d| d.count == 0).unwrap_or(true);
 
-            if detected {
+            if !is_windows {
+                unsupported(&format!(
+                    "display topology probe is not implemented on {}",
+                    platform_name(device_state)
+                ))
+            } else if detected {
                 (
                     false,
                     Some(FailureReasonCode::ExternalDisplayDetected),
@@ -773,12 +815,17 @@ fn evaluate_requirement(
                 )
             }
         }
-        // Windows-only entry check. Inert on macOS/Linux for the same reasons
-        // as `ExternalDisplay`.
+        // Windows-only entry check, with the same false-clear as
+        // `ExternalDisplay` and the same fix.
         CheckKind::RemoteServer => {
             let is_windows = matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
             let bad = is_windows && device_state.rdp_server == Some(true);
-            if bad {
+            if !is_windows {
+                unsupported(&format!(
+                    "remote-desktop host probe is not implemented on {}",
+                    platform_name(device_state)
+                ))
+            } else if bad {
                 (
                     false,
                     Some(FailureReasonCode::RemoteServerDetected),
@@ -799,16 +846,26 @@ fn evaluate_requirement(
         }
     };
 
-    let outcome = if passed {
-        CheckOutcome::Pass
+    // A check the platform cannot run is neither a pass nor a failure. It is
+    // reported as `Unknown`, and how much that matters is the policy's call
+    // via `unsupported_severity` — not the probe's, and not this function's.
+    let unsupported_here = reason
+        .as_ref()
+        .is_some_and(|code| matches!(code, FailureReasonCode::ProbeUnsupportedOnPlatform));
+
+    let (outcome, blocking) = if unsupported_here {
+        (
+            CheckOutcome::Unknown,
+            requirement.required
+                && matches!(requirement.unsupported_severity, BlockingSeverity::Block),
+        )
+    } else if passed {
+        (CheckOutcome::Pass, false)
     } else if matches!(requirement.severity, BlockingSeverity::Block) && requirement.required {
-        CheckOutcome::Fail
+        (CheckOutcome::Fail, true)
     } else {
-        CheckOutcome::Warn
+        (CheckOutcome::Warn, false)
     };
-    let blocking = matches!(outcome, CheckOutcome::Fail)
-        && requirement.required
-        && matches!(requirement.severity, BlockingSeverity::Block);
 
     ReadinessCheck {
         kind: requirement.kind,
@@ -840,6 +897,34 @@ fn unknown(
             RecoveryAction::ContactOrganizer,
         ],
     )
+}
+
+/// This platform has no such probe. Not a pass, not a failure — see
+/// `FailureReasonCode::ProbeUnsupportedOnPlatform`.
+///
+/// No `RetryReadinessScan`: there is nothing to retry, and offering it sends
+/// a candidate round a loop that cannot succeed.
+fn unsupported(
+    detail: &str,
+) -> (
+    bool,
+    Option<FailureReasonCode>,
+    Option<String>,
+    Vec<RecoveryAction>,
+) {
+    (
+        false,
+        Some(FailureReasonCode::ProbeUnsupportedOnPlatform),
+        Some(detail.to_string()),
+        vec![RecoveryAction::UseSupportedPlatform],
+    )
+}
+
+fn platform_name(device_state: &DeviceState) -> String {
+    device_state
+        .platform
+        .clone()
+        .unwrap_or_else(|| "this platform".to_string())
 }
 
 fn is_present(value: Option<&str>) -> bool {
@@ -963,9 +1048,14 @@ mod tests {
     }
 
     #[test]
-    fn non_windows_count_zero_is_inert_byte_identical() {
-        // Byte-identical guard: even a count==0 scan on Linux must NOT block,
-        // because the evaluator is `is_windows && ...` (short-circuits off-Windows).
+    fn off_windows_the_display_probe_reports_unsupported_not_clear() {
+        // This used to assert `Pass`. There is no display-topology probe on
+        // Linux, so a pass was a claim about something never measured — a
+        // Linux candidate looked exactly as supervised as a Windows one while
+        // being measurably less so.
+        //
+        // It still must not *block*: the machine is admitted. It is now also
+        // visible, which is the whole difference.
         let policy = SessionPolicy::for_profile_with_platform(
             EnforcementProfile::StrictContest,
             Some("linux"),
@@ -982,11 +1072,116 @@ mod tests {
             .iter()
             .find(|c| c.kind == CheckKind::ExternalDisplay)
             .expect("external display check present");
-        assert_eq!(ext.outcome, CheckOutcome::Pass);
+        assert_eq!(ext.outcome, CheckOutcome::Unknown);
+        assert_eq!(
+            ext.reason,
+            Some(FailureReasonCode::ProbeUnsupportedOnPlatform)
+        );
         assert!(!ext.blocking);
         assert!(!report
             .blocking_reasons
             .contains(&FailureReasonCode::ExternalDisplayIndeterminate));
+        // Nothing to retry — offering a rescan sends the candidate round a
+        // loop that cannot succeed.
+        assert!(!ext
+            .recovery_actions
+            .contains(&RecoveryAction::RetryReadinessScan));
+    }
+
+    #[test]
+    fn off_windows_the_remote_desktop_probe_reports_unsupported_not_clear() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        let report = evaluate_readiness(
+            &policy,
+            Some("c1".into()),
+            Some("d1".into()),
+            &passing_state(),
+        );
+        let rdp = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::RemoteServer)
+            .expect("remote server check present");
+        assert_eq!(rdp.outcome, CheckOutcome::Unknown);
+        assert_eq!(
+            rdp.reason,
+            Some(FailureReasonCode::ProbeUnsupportedOnPlatform)
+        );
+        assert!(!rdp.blocking);
+    }
+
+    #[test]
+    fn a_windows_machine_still_gets_a_real_display_verdict() {
+        // Regression guard: the tri-state must not have disarmed the platform
+        // where these probes actually run.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+
+        let mut clean = windows_state();
+        clean.external_displays = Some(DisplayScan {
+            count: 1,
+            has_extra: false,
+            has_wireless: false,
+        });
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &clean);
+        let ext = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::ExternalDisplay)
+            .expect("external display check present");
+        assert_eq!(ext.outcome, CheckOutcome::Pass);
+
+        let mut extra = windows_state();
+        extra.external_displays = Some(DisplayScan {
+            count: 2,
+            has_extra: true,
+            has_wireless: false,
+        });
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &extra);
+        let ext = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::ExternalDisplay)
+            .expect("external display check present");
+        assert_eq!(ext.outcome, CheckOutcome::Fail);
+        assert!(ext.blocking);
+    }
+
+    #[test]
+    fn policy_decides_whether_an_unprobeable_machine_is_admitted() {
+        // The point of `unsupported_severity` living on the requirement: the
+        // same probe result admits or blocks depending on the invigilation
+        // policy, not on anything the client reports.
+        let mut policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        for check in policy.checks.iter_mut() {
+            if check.kind == CheckKind::ExternalDisplay {
+                check.required = true;
+                check.unsupported_severity = BlockingSeverity::Block;
+            }
+        }
+
+        let report = evaluate_readiness(
+            &policy,
+            Some("c1".into()),
+            Some("d1".into()),
+            &passing_state(),
+        );
+        let ext = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::ExternalDisplay)
+            .expect("external display check present");
+        assert_eq!(ext.outcome, CheckOutcome::Unknown);
+        assert!(ext.blocking);
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
     }
 
     #[test]
@@ -1032,12 +1227,27 @@ mod tests {
             &passing_state(),
         );
 
-        assert_eq!(report.decision, EnforcementDecision::Allowed);
+        // `passing_state()` is a Linux machine, and Linux has no display or
+        // remote-desktop probe. Those two now report Unknown rather than
+        // claiming a clean result, so the honest decision is "admitted, with
+        // something the invigilator should see" — not an unqualified Allowed.
+        assert_eq!(report.decision, EnforcementDecision::AllowedWithWarnings);
         assert!(report.blocking_reasons.is_empty());
+        assert!(report.checks.iter().all(|check| !check.blocking));
         assert!(report
             .checks
             .iter()
-            .all(|check| check.outcome == CheckOutcome::Pass && !check.blocking));
+            .filter(|check| check.outcome != CheckOutcome::Unknown)
+            .all(|check| check.outcome == CheckOutcome::Pass));
+        assert_eq!(
+            report
+                .checks
+                .iter()
+                .filter(|check| check.outcome == CheckOutcome::Unknown)
+                .map(|check| check.kind.clone())
+                .collect::<Vec<_>>(),
+            vec![CheckKind::ExternalDisplay, CheckKind::RemoteServer],
+        );
     }
 
     #[test]
@@ -1067,7 +1277,10 @@ mod tests {
         assert_eq!(net.outcome, CheckOutcome::Warn);
         assert!(net.reason == Some(FailureReasonCode::NetworkHelperUnavailable));
 
-        // Unknown helper signal + an otherwise-good network still passes cleanly.
+        // Unknown helper signal + an otherwise-good network still admits the
+        // candidate. (Warnings, not Allowed: this is a Linux state, whose
+        // display and RDP probes do not exist — see
+        // `off_windows_the_display_probe_reports_unsupported_not_clear`.)
         let mut unknown = passing_state();
         unknown.network_helper_ready = None;
         let report = evaluate_readiness(
@@ -1076,7 +1289,8 @@ mod tests {
             Some("device-1".into()),
             &unknown,
         );
-        assert_eq!(report.decision, EnforcementDecision::Allowed);
+        assert_ne!(report.decision, EnforcementDecision::Blocked);
+        assert!(report.blocking_reasons.is_empty());
     }
 
     #[test]
@@ -1113,6 +1327,7 @@ mod tests {
             required: false,
             severity: BlockingSeverity::Warning,
             organizer_override_allowed: true,
+            unsupported_severity: BlockingSeverity::Warning,
         });
 
         let report = evaluate_readiness(
@@ -1180,7 +1395,12 @@ mod tests {
             &state,
         );
 
-        assert_eq!(report.decision, EnforcementDecision::Allowed);
+        // Not blocked, and nothing blames the clock. (Not an unqualified
+        // Allowed: this is a Linux state with two unprobeable checks.)
+        assert_ne!(report.decision, EnforcementDecision::Blocked);
+        assert!(!report
+            .blocking_reasons
+            .contains(&FailureReasonCode::ClockSkewDetected));
     }
 
     #[test]
@@ -1583,6 +1803,7 @@ mod tests {
             required: false,
             severity: BlockingSeverity::Warning,
             organizer_override_allowed: true,
+            unsupported_severity: BlockingSeverity::Warning,
         });
 
         let mut state = windows_state();
@@ -1696,5 +1917,104 @@ mod readiness_delivery_contract {
         assert!(!failed(CheckOutcome::Pass));
         assert!(!failed(CheckOutcome::Warn));
         assert!(!failed(CheckOutcome::Unknown));
+    }
+}
+
+#[cfg(test)]
+mod policy_parity {
+    //! The Rust and TypeScript policy builders are hand-maintained mirrors of
+    //! each other, and `merge_requirements` overlays one on the other. Nothing
+    //! stopped them drifting — a requirement changed on one side only would
+    //! produce a client that enforces something the readiness report does not
+    //! describe, silently.
+    //!
+    //! Both sides are pinned to one committed fixture. Whichever drifts fails.
+    //! Regenerate deliberately with `UPDATE_POLICY_FIXTURE=1 cargo test -p core-rs`
+    //! and update the TypeScript side to match in the same commit.
+
+    use super::*;
+    use std::path::PathBuf;
+
+    fn fixture_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("policy-fixtures.json")
+    }
+
+    /// Keyed by check kind rather than positional, so the two sides are
+    /// compared on content and not on the order they happen to build in.
+    fn snapshot() -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for profile in [
+            EnforcementProfile::Practice,
+            EnforcementProfile::InternalPilot,
+            EnforcementProfile::StrictContest,
+        ] {
+            for platform in [
+                None,
+                Some("windows"),
+                Some("windows_no_admin"),
+                Some("macos"),
+                Some("linux"),
+            ] {
+                let policy = SessionPolicy::for_profile_with_platform(profile.clone(), platform);
+                let mut checks = serde_json::Map::new();
+                for check in &policy.checks {
+                    checks.insert(
+                        serde_json::to_value(&check.kind)
+                            .expect("kind serialises")
+                            .as_str()
+                            .expect("kind is a string")
+                            .to_string(),
+                        serde_json::json!({
+                            "required": check.required,
+                            "severity": check.severity,
+                            "organizer_override_allowed": check.organizer_override_allowed,
+                            "unsupported_severity": check.unsupported_severity,
+                        }),
+                    );
+                }
+                let key = format!(
+                    "{}/{}",
+                    serde_json::to_value(&profile)
+                        .expect("profile serialises")
+                        .as_str()
+                        .expect("profile is a string"),
+                    platform.unwrap_or("none"),
+                );
+                out.insert(key, serde_json::Value::Object(checks));
+            }
+        }
+        serde_json::Value::Object(out)
+    }
+
+    #[test]
+    fn the_rust_policy_matches_the_shared_fixture() {
+        let current = snapshot();
+        let path = fixture_path();
+
+        if std::env::var("UPDATE_POLICY_FIXTURE").is_ok() {
+            std::fs::write(
+                &path,
+                format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&current).expect("fixture serialises")
+                ),
+            )
+            .expect("fixture is writable");
+            return;
+        }
+
+        let recorded: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).expect("policy fixture exists — see module docs"),
+        )
+        .expect("policy fixture is valid JSON");
+
+        assert_eq!(
+            current, recorded,
+            "the Rust readiness policy no longer matches policy-fixtures.json. \
+             If this change is intended, mirror it in packages/api-client/src/index.ts \
+             and regenerate with UPDATE_POLICY_FIXTURE=1."
+        );
     }
 }

@@ -9,13 +9,6 @@ import type { ActiveSession, ResumeVerificationState } from "./types";
 
 export function SessionActionsPanel({
   activeSession,
-  inviteCode,
-  inviteCodeBusy,
-  inviteCodeStatus,
-  inviteSuccessMsg,
-  onDismissInviteSuccess,
-  onInviteCodeChange,
-  onInviteCodeSubmit,
   onRefresh,
   onResume,
   resumeBusy,
@@ -26,13 +19,6 @@ export function SessionActionsPanel({
   theme,
 }: {
   activeSession: ActiveSession | null;
-  inviteCode: string;
-  inviteCodeBusy: boolean;
-  inviteCodeStatus: string | null;
-  inviteSuccessMsg: string | null;
-  onDismissInviteSuccess?: () => void;
-  onInviteCodeChange: (value: string) => void;
-  onInviteCodeSubmit: () => void;
   onRefresh: () => void;
   onResume: () => void;
   resumeBusy: boolean;
@@ -70,153 +56,10 @@ export function SessionActionsPanel({
         gap: "16px",
       }}
     >
-      {/* ── SESSION CODE hero ────────────────────────────────────── */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-        <label
-          htmlFor="session-code"
-          style={{
-            display: "block",
-            fontSize: "11px",
-            color: "var(--theme-text-muted)",
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            fontWeight: 600,
-          }}
-        >
-          Session Code
-        </label>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!inviteCodeBusy) onInviteCodeSubmit();
-          }}
-          style={{ display: "flex", gap: "10px" }}
-        >
-          <Field
-            id="session-code"
-            theme={theme}
-            value={inviteCode}
-            onChange={(e) => onInviteCodeChange(e.target.value)}
-            disabled={inviteCodeBusy}
-            placeholder="Enter invite code"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              cursor: inviteCodeBusy ? "not-allowed" : "text",
-              opacity: inviteCodeBusy ? 0.75 : 1,
-              background: "var(--surface-2)",
-              border: "1px solid var(--theme-border)",
-            }}
-          />
-          <Button
-            type="submit"
-            disabled={inviteCodeBusy}
-            theme={theme}
-            variant="primary"
-            style={{ minWidth: "96px" }}
-            onMouseEnter={(e) => {
-              if (inviteCodeBusy) return;
-              e.currentTarget.style.background = "var(--color-accent-base)";
-              e.currentTarget.style.borderColor = c.accentText;
-              e.currentTarget.style.boxShadow = "0 10px 24px rgb(var(--accent-rgb) / 0.22)";
-            }}
-            onMouseLeave={(e) => {
-              if (inviteCodeBusy) return;
-              e.currentTarget.style.background = "var(--color-accent-base)";
-              e.currentTarget.style.borderColor = c.accentBorder;
-              e.currentTarget.style.boxShadow = "none";
-            }}
-          >
-            {inviteCodeBusy && (
-              <Loader2 size={14} strokeWidth={2} style={{ animation: "spin 1s linear infinite" }} />
-            )}
-            {inviteCodeBusy ? "Checking" : "Validate"}
-          </Button>
-        </form>
-        {/* Compound invite result — when success + warning coexist, show as single amber message */}
-        {inviteSuccessMsg && inviteCodeStatus ? (
-          <p
-            role="status"
-            style={{
-              marginTop: "8px",
-              color: "var(--home-status-warn)",
-              fontSize: "13px",
-              lineHeight: 1.5,
-              fontWeight: 500,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "6px",
-            }}
-          >
-            <AlertTriangle size={14} strokeWidth={2} style={{ flexShrink: 0, marginTop: "2px" }} />
-            <span>
-              {inviteSuccessMsg} {inviteCodeStatus}
-            </span>
-            {onDismissInviteSuccess && (
-              <button
-                type="button"
-                onClick={onDismissInviteSuccess}
-                aria-label="Dismiss"
-                style={{
-                  marginLeft: "auto",
-                  background: "none",
-                  border: "none",
-                  color: "var(--home-status-warn)",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  lineHeight: 1,
-                  padding: "0 2px",
-                  fontFamily: "inherit",
-                  flexShrink: 0,
-                }}
-              >
-                <X size={14} strokeWidth={2} />
-              </button>
-            )}
-          </p>
-        ) : inviteSuccessMsg ? (
-          <p
-            role="status"
-            style={{
-              marginTop: "8px",
-              color: "var(--home-status-ok)",
-              fontSize: "13px",
-              lineHeight: 1.45,
-              fontWeight: 600,
-              display: "flex",
-              alignItems: "center",
-              gap: "5px",
-            }}
-          >
-            <CheckCircle size={14} strokeWidth={2} aria-hidden="true" />
-            {inviteSuccessMsg}
-            {onDismissInviteSuccess && (
-              <button
-                type="button"
-                onClick={onDismissInviteSuccess}
-                aria-label="Dismiss"
-                style={{
-                  marginLeft: "4px",
-                  background: "none",
-                  border: "none",
-                  color: "var(--home-status-ok)",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  lineHeight: 1,
-                  padding: "0 2px",
-                  fontFamily: "inherit",
-                }}
-              >
-                <X size={14} strokeWidth={2} />
-              </button>
-            )}
-          </p>
-        ) : inviteCodeStatus ? (
-          <InlineAlert theme={theme} tone="danger" style={{ marginTop: "8px" }}>
-            {inviteCodeStatus}
-          </InlineAlert>
-        ) : null}
-      </div>
+      {/* No session-code entry. Credentials are contest-scoped: signing in
+          with a printed slip already tells the server which contest this is,
+          so asking for a code as well added a thing to mistype under exam
+          pressure and no security whatsoever. */}
 
       {/* ── Refresh affordance ────────────────────────────────────── */}
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>

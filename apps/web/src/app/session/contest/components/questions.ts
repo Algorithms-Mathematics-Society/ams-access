@@ -14,6 +14,15 @@ export type Question = {
   time_limit_ms?: number | null;
   memory_limit_mb?: number | null;
   cxxprobe?: CXXProbeQuestionProjection | null;
+
+  // Contract v2. Worked examples, and the marking scheme — including the
+  // symbolic rules, which are a gate that zeroes the problem's partial credit.
+  // Both have been on the wire since v2 and rendered nowhere.
+  samples?: { label?: string; input: string; output: string }[];
+  families?: import("@/lib/proctor-api").ProblemFamilies;
+  /** The projection was reconstructed from the pre-v2 columns, so the
+   * marking scheme is unknown rather than empty. */
+  backfilled?: boolean;
 };
 
 export type ClientFollowUpPart = {

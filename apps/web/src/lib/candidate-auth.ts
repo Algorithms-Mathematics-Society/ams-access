@@ -1,27 +1,33 @@
 /**
- * Candidate JWT helpers — token storage + Authorization header factory.
+ * Headers for authenticated participant requests.
  *
- * The backend returns a `token` field on successful /students/verify-otp and
- * /students/login responses.  These helpers store/retrieve that JWT in
- * localStorage and build the Authorization header for authenticated requests.
+ * This module used to store the token itself, under `ams_candidate_token`.
+ * Nothing had written that key since sign-in moved to printed slips — the
+ * slip login writes `ams_participant_token` via `proctor-api.ts` — so
+ * `authHeaders()` silently returned no `Authorization` and every
+ * authenticated route answered 401: the contest room bounced to the login
+ * screen, organizer overrides came back empty, and the native event uploader
+ * spooled forever without delivering.
  *
- * All localStorage access is SSR-guarded (`typeof window !== "undefined"`) so
- * the module is safe to import in Server Components and during Next.js SSG.
+ * The token now has exactly one owner (`proctor-api.ts`). What is left here
+ * is the device id and the header map.
  *
- * Key string kept in sync with STORAGE_KEYS.CANDIDATE_TOKEN in
- * src/constants/storage-keys.ts ("ams_candidate_token").
+ * Imports are relative, not `@/`-aliased: the Node test runner does not
+ * resolve the alias, and this module has to stay testable.
  */
 
-const KEY = "ams_candidate_token";
-// Inline device-id key to avoid a cross-module import that breaks the Node
-// test runner (which strips @/ aliases).  Must stay in sync with
-// STORAGE_KEYS.DEVICE_ID ("ams_device_id").
+import { currentToken } from "./proctor-api.ts";
+
+// Inline rather than imported from `constants/storage-keys` for the same
+// alias reason. Must stay in sync with STORAGE_KEYS.DEVICE_ID.
 const DEVICE_ID_KEY = "ams_device_id";
 
 /**
- * Returns the stored device ID, or generates and persists a new one.
- * Inline copy of getOrCreateDeviceId() from utils.ts — kept here so
- * authHeaders() has no cross-module import dependency.
+ * The stored device id, generating and persisting one on first call.
+ *
+ * Not the participant's identity — the token is that. This says *which
+ * machine*, which is what readiness waivers are scoped to and what makes a
+ * session resumed from somewhere else visible as a finding.
  */
 function getDeviceId(): string {
   if (typeof window === "undefined") return "";
@@ -35,36 +41,21 @@ function getDeviceId(): string {
   return generated;
 }
 
-/** Returns the stored candidate JWT, or null if absent or running on the server. */
-export function getCandidateToken(): string | null {
+/** The participant bearer token, or null. Delegates to its single owner. */
+export function participantToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(KEY);
-}
-
-/** Persists the candidate JWT to localStorage. No-ops on the server. */
-export function setCandidateToken(t: string): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(KEY, t);
-}
-
-/** Removes the candidate JWT from localStorage. No-ops on the server. */
-export function clearCandidateToken(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(KEY);
+  return currentToken();
 }
 
 /**
- * Builds a plain-object header map for authenticated fetch calls.
+ * Header map for authenticated fetch calls.
  *
- * - Always includes `X-Device-Id: <deviceId>` (generated/retrieved from
- *   localStorage) so the backend can bind and validate the device.
- * - When a token is stored: also includes `Authorization: Bearer <token>`.
- * - On the server (SSR) both values are omitted (empty string / no key).
- *
- * The caller merges this into their own `headers` object.
+ * - `X-Device-Id` always, so the backend can bind and validate the machine.
+ * - `Authorization: Bearer <token>` when a participant is signed in.
+ * - Neither on the server; the caller merges its own headers over the top.
  */
 export function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const token = getCandidateToken();
+  const token = participantToken();
   const deviceId = getDeviceId();
   const base: Record<string, string> = {};
   if (token) base["Authorization"] = `Bearer ${token}`;

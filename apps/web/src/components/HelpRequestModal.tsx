@@ -39,10 +39,10 @@ export function HelpRequestModal({
   contestId,
   defaultEmail,
 }: HelpRequestModalProps) {
-  const [email, setEmail] = useState(
-    defaultEmail ||
-      (typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "")
-  );
+  // Blank unless the caller supplies one. Candidates sign in with a printed
+  // slip and the platform has no address for them — pre-filling a guess would
+  // send the reply nowhere.
+  const [email, setEmail] = useState(defaultEmail ?? "");
   const [note, setNote] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [reference, setReference] = useState<string | null>(null);
@@ -64,8 +64,8 @@ export function HelpRequestModal({
     };
     try {
       const url = sessionId
-        ? `${API_URL}/sessions/${encodeURIComponent(sessionId)}/incidents`
-        : `${API_URL}/support-incidents`;
+        ? `${API_URL}/participant/sessions/${encodeURIComponent(sessionId)}/incidents`
+        : `${API_URL}/participant/support-incidents`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

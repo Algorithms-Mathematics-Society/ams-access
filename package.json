@@ -6,6 +6,8 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "check:versions": "node scripts/check-versions.mjs",
     "clean": "turbo run clean && rm -rf node_modules",
     "prepare": "husky"
   },

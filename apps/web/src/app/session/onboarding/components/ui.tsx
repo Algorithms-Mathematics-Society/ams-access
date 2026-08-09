@@ -10,7 +10,10 @@ export function CheckLine({
   delay = 0,
 }: {
   label: string;
-  status: "checking" | "pass" | "warn" | "fail";
+  // `unknown` is not decoration. A stage that never ran is not a stage that
+  // passed, and rendering absence as green is how the summary came to report
+  // "All checks passed" over a red block banner.
+  status: "checking" | "pass" | "warn" | "fail" | "unknown";
   delay?: number;
 }) {
   const [visible, setVisible] = useState(false);
@@ -25,7 +28,7 @@ export function CheckLine({
   if (!visible) return null;
 
   const color =
-    status === "checking"
+    status === "checking" || status === "unknown"
       ? "rgba(255,255,255,0.58)"
       : status === "pass"
         ? "#22c55e"
@@ -34,13 +37,15 @@ export function CheckLine({
           : "#ef4444";
 
   const text =
-    status === "checking"
-      ? "Checking"
-      : status === "pass"
-        ? "Ready"
-        : status === "warn"
-          ? "Warning"
-          : "Needs action";
+    status === "unknown"
+      ? "Not run"
+      : status === "checking"
+        ? "Checking"
+        : status === "pass"
+          ? "Ready"
+          : status === "warn"
+            ? "Warning"
+            : "Needs action";
 
   return (
     <div

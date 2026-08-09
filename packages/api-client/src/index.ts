@@ -59,6 +59,11 @@ export type FailureReasonCode =
   | "restricted_application_detected"
   | "virtualization_detected"
   | "unsupported_platform"
+  // This platform has no such probe at all. Distinct from
+  // "probe_unavailable" (ran, could not conclude): there is nothing to retry,
+  // and it must never be presented as a pass. Mirrors core-rs
+  // FailureReasonCode::ProbeUnsupportedOnPlatform.
+  | "probe_unsupported_on_platform"
   | "clock_skew_detected"
   | "external_display_detected"
   | "external_display_indeterminate"
@@ -83,6 +88,9 @@ export type ReadinessRequirement = {
   required: boolean;
   severity: BlockingSeverity;
   organizer_override_allowed: boolean;
+  /** What to do when this platform cannot run the check at all. Optional so
+   * payloads written before the tri-state still parse; absent means warn. */
+  unsupported_severity?: BlockingSeverity;
 };
 
 export type SessionPolicy = {
@@ -187,6 +195,12 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   const isMacos = typeof platform === "string" && platform.toLowerCase().startsWith("macos");
   const isWindowsNoAdmin =
     typeof platform === "string" && platform.toLowerCase() === "windows_no_admin";
+  // What an unprobeable machine costs. Blocking only under a strict Windows
+  // session, where these checks are hard requirements anyway: if a check
+  // matters enough to block on failure, it matters enough to block on "we
+  // cannot tell". Everywhere else it warns — the candidate is admitted and
+  // the invigilator can see the machine is under-protected.
+  const unsupportedSeverity: BlockingSeverity = strict && isWindows ? "block" : "warning";
   return {
     profile,
     checks: POLICY_CHECKS.map((kind) => {
@@ -198,6 +212,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           required: false,
           severity: "warning" as const,
           organizer_override_allowed: !strict,
+          unsupported_severity: unsupportedSeverity,
         };
       }
       // Network is advisory on every profile: egress lockdown is applied
@@ -210,6 +225,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           required: false,
           severity: "warning" as const,
           organizer_override_allowed: !strict,
+          unsupported_severity: unsupportedSeverity,
         };
       }
       // Camera and the two Windows-only entry checks (external_display,
@@ -223,6 +239,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           required: block,
           severity: block ? ("block" as const) : ("warning" as const),
           organizer_override_allowed: !strict,
+          unsupported_severity: unsupportedSeverity,
         };
       }
       // KeyboardLockdown is advisory (warning, not required) on macOS only.
@@ -235,6 +252,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           required: false,
           severity: "warning" as const,
           organizer_override_allowed: !strict,
+          unsupported_severity: unsupportedSeverity,
         };
       }
       // Unelevated Windows: keep auto-elevation + the Relaunch-as-Administrator
@@ -247,6 +265,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           required: false,
           severity: "warning" as const,
           organizer_override_allowed: !strict,
+          unsupported_severity: unsupportedSeverity,
         };
       }
       return {
@@ -254,6 +273,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
         required: strict,
         severity: strict ? ("block" as const) : ("warning" as const),
         organizer_override_allowed: !strict,
+        unsupported_severity: unsupportedSeverity,
       };
     }),
   };

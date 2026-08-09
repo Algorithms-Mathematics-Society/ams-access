@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { countdownPhase, type CountdownPhase } from "../countdown";
+import { serverNow } from "@/lib/proctor-api";
+import { formatRemaining, isBell, remainingMs, type ClockSnapshot } from "../session-clock";
 
 export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void) {
   const ref = useRef<T>(null);
@@ -56,45 +58,75 @@ export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: 
   return ref;
 }
 
-export function useCountdown(endAt: string, onExpiry?: () => void) {
+/**
+ * The exam countdown.
+ *
+ * Three properties, each of which was previously wrong:
+ *
+ * - **Driven by `serverNow()`, never `Date.now()`.** A candidate can set the
+ *   system clock; this is the mechanism by which they could have extended
+ *   their own exam.
+ * - **A null deadline renders no countdown.** It used to fall back to "one
+ *   hour from page load" and render that identically to a real deadline.
+ * - **`onExpiry` lives in a ref.** It was excluded from the effect deps, so
+ *   with a stable `endAt` the effect never re-ran and the callback stayed
+ *   frozen at its mount-time closure — where `sessionId` was still null, so
+ *   the handler returned immediately and the bell did nothing at all.
+ */
+export function useCountdown(
+  snapshot: ClockSnapshot,
+  onExpiry?: () => void
+): { remaining: string; phase: CountdownPhase; percentLeft: number } {
   const totalMsRef = useRef<number | null>(null);
   const firedExpiryRef = useRef(false);
+
+  // Read through a ref so a changing callback never needs an effect restart,
+  // and a stable deadline never freezes a stale one.
+  const onExpiryRef = useRef(onExpiry);
+  onExpiryRef.current = onExpiry;
+
   const [state, setState] = useState<{
     remaining: string;
     phase: CountdownPhase;
     percentLeft: number;
-  }>({
-    remaining: "",
-    phase: "nominal",
-    percentLeft: 1,
-  });
+  }>({ remaining: formatRemaining(null), phase: "nominal", percentLeft: 1 });
+
+  const { endsAtMs, phase: serverPhase } = snapshot;
 
   useEffect(() => {
     totalMsRef.current = null;
     firedExpiryRef.current = false;
+
+    if (endsAtMs === null) {
+      // No deadline known. Show that, and run no timer.
+      setState({ remaining: formatRemaining(null), phase: "nominal", percentLeft: 1 });
+      return;
+    }
+
     let id: ReturnType<typeof setInterval> | null = null;
+
     function tick() {
-      const diff = new Date(endAt).getTime() - Date.now();
+      const current: ClockSnapshot = { endsAtMs, phase: serverPhase };
+      const diff = remainingMs(current, serverNow()) ?? 0;
       if (totalMsRef.current === null) totalMsRef.current = Math.max(diff, 0);
       const percentLeft =
         totalMsRef.current > 0 ? Math.max(0, Math.min(1, diff / totalMsRef.current)) : 0;
-      if (diff <= 0) {
+
+      if (isBell(current, serverNow())) {
         setState((prev) =>
           prev.remaining === "00:00:00" && prev.phase === "expired"
             ? prev
             : { remaining: "00:00:00", phase: "expired", percentLeft: 0 }
         );
-        if (!firedExpiryRef.current && onExpiry) {
+        if (!firedExpiryRef.current) {
           firedExpiryRef.current = true;
-          onExpiry();
+          onExpiryRef.current?.();
         }
         if (id) clearInterval(id);
         return;
       }
-      const h = Math.floor(diff / 3600000);
-      const m = Math.floor((diff % 3600000) / 60000);
-      const s = Math.floor((diff % 60000) / 1000);
-      const remaining = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+
+      const remaining = formatRemaining(diff);
       const phase = countdownPhase(diff);
       setState((prev) =>
         prev.remaining === remaining && prev.phase === phase
@@ -102,12 +134,13 @@ export function useCountdown(endAt: string, onExpiry?: () => void) {
           : { remaining, phase, percentLeft }
       );
     }
+
     tick();
     id = setInterval(tick, 1000);
     return () => {
       if (id) clearInterval(id);
     };
-  }, [endAt]);
+  }, [endsAtMs, serverPhase]);
 
   return state;
 }

@@ -4,7 +4,7 @@ import { Button } from "@/app/home/components/ui-primitives";
 import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { API_URL, getOrCreateDeviceId, tauriWindow, type MonitorInfo } from "../../support";
-import { getCandidateToken } from "@/lib/candidate-auth";
+import { participantToken } from "@/lib/candidate-auth";
 
 export function Stage3_MonitorDetection({
   onPass,
@@ -112,7 +112,7 @@ export function Stage3_MonitorDetection({
           API_URL,
           contestId,
           getOrCreateDeviceId(),
-          getCandidateToken() ?? ""
+          participantToken() ?? ""
         );
         if (!cancelled && grants.some((g) => g.check_kind === "external_display")) {
           clearInterval(id);

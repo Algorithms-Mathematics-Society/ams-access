@@ -1,13 +1,23 @@
+// Authenticated request headers.
+//
+// The previous version of this file passed while testing a storage key
+// nothing wrote. `candidate-auth` kept its own token under
+// `ams_candidate_token`; the slip login writes `ams_participant_token`. So
+// every `authHeaders()` call went out with no `Authorization`, every
+// authenticated route answered 401, and the suite was green throughout.
+//
+// These tests therefore assert against the key the login actually writes, and
+// go through `proctor-api` — the token's single owner — rather than a private
+// copy.
+
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import {
-  getCandidateToken,
-  setCandidateToken,
-  clearCandidateToken,
-  authHeaders,
-} from "./candidate-auth.ts";
 
-// Minimal localStorage stub
+import { authHeaders, participantToken } from "./candidate-auth.ts";
+import { setToken } from "./proctor-api.ts";
+
+const TOKEN_KEY = "ams_participant_token";
+
 function makeLocalStorage() {
   const store = new Map();
   return {
@@ -21,76 +31,71 @@ function makeLocalStorage() {
 beforeEach(() => {
   globalThis.window = {};
   globalThis.localStorage = makeLocalStorage();
-  // Stub crypto.randomUUID for device-id generation in Node test environment
   if (typeof globalThis.crypto === "undefined") {
     globalThis.crypto = { randomUUID: () => "test-device-uuid-1234" };
   }
+  // Clear the module-scope token between tests; it outlives localStorage.
+  setToken(null);
 });
 
-test("setCandidateToken / getCandidateToken round-trip", () => {
-  setCandidateToken("tok-abc123");
-  assert.equal(getCandidateToken(), "tok-abc123");
+test("a token set by the login is visible to authHeaders", () => {
+  setToken("slip-token");
+  assert.equal(participantToken(), "slip-token");
+  assert.equal(authHeaders()["Authorization"], "Bearer slip-token");
 });
 
-test("clearCandidateToken removes the stored token", () => {
-  setCandidateToken("tok-xyz");
-  clearCandidateToken();
-  assert.equal(getCandidateToken(), null);
+test("the token is read from the key the login actually writes", () => {
+  // The regression this file exists for. A token present in storage under
+  // the participant key must be picked up even with cold module state — a
+  // hard reload of a deep route is exactly the crash case resume covers.
+  localStorage.setItem(TOKEN_KEY, "restored-from-storage");
+  assert.equal(participantToken(), "restored-from-storage");
+  assert.equal(authHeaders()["Authorization"], "Bearer restored-from-storage");
 });
 
-test("authHeaders includes Bearer token when token is set", () => {
-  setCandidateToken("my-jwt");
-  const h = authHeaders();
-  assert.equal(h["Authorization"], "Bearer my-jwt");
+test("no Authorization when nobody is signed in", () => {
+  const headers = authHeaders();
+  assert.equal(Object.prototype.hasOwnProperty.call(headers, "Authorization"), false);
 });
 
-test("authHeaders omits Authorization when no token is stored", () => {
-  clearCandidateToken();
-  const h = authHeaders();
-  assert.equal(Object.prototype.hasOwnProperty.call(h, "Authorization"), false);
+test("signing out drops the Authorization header", () => {
+  setToken("temporary");
+  setToken(null);
+  assert.equal(Object.prototype.hasOwnProperty.call(authHeaders(), "Authorization"), false);
 });
 
-test("authHeaders merges extra headers", () => {
-  setCandidateToken("tok-merge");
-  const h = authHeaders({ "X-Custom": "val" });
-  assert.equal(h["Authorization"], "Bearer tok-merge");
-  assert.equal(h["X-Custom"], "val");
+test("an expired stored token is not used", () => {
+  localStorage.setItem(TOKEN_KEY, "stale");
+  localStorage.setItem("ams_participant_token_expires_at", String(Date.now() - 1000));
+  assert.equal(participantToken(), null);
 });
 
-test("authHeaders with extra and no token returns only extra", () => {
-  clearCandidateToken();
-  const h = authHeaders({ "X-Request-ID": "r1" });
-  assert.equal(Object.prototype.hasOwnProperty.call(h, "Authorization"), false);
-  assert.equal(h["X-Request-ID"], "r1");
+test("a stored token with no recorded expiry is still used", () => {
+  // The server is the authority and answers 401 if it disagrees. Discarding
+  // it here would force a re-login for a token that still works.
+  localStorage.setItem(TOKEN_KEY, "no-expiry-recorded");
+  assert.equal(participantToken(), "no-expiry-recorded");
 });
 
-test("authHeaders includes X-Device-Id when on the client", () => {
-  // Ensure a device id is generated and present in the header map.
-  const h = authHeaders();
-  assert.ok(
-    Object.prototype.hasOwnProperty.call(h, "X-Device-Id"),
-    "X-Device-Id header must be present"
-  );
-  assert.ok(h["X-Device-Id"].length > 0, "X-Device-Id must be non-empty");
+test("X-Device-Id is always present and stable", () => {
+  const first = authHeaders();
+  const second = authHeaders();
+  assert.ok(first["X-Device-Id"].length > 0);
+  assert.equal(first["X-Device-Id"], second["X-Device-Id"]);
 });
 
-test("authHeaders X-Device-Id is stable across calls (same device)", () => {
-  const h1 = authHeaders();
-  const h2 = authHeaders();
-  assert.equal(h1["X-Device-Id"], h2["X-Device-Id"]);
+test("extra headers merge, and win", () => {
+  setToken("tok");
+  const headers = authHeaders({ "X-Custom": "val", "X-Device-Id": "override" });
+  assert.equal(headers["Authorization"], "Bearer tok");
+  assert.equal(headers["X-Custom"], "val");
+  assert.equal(headers["X-Device-Id"], "override");
 });
 
-test("getCandidateToken returns null on SSR (no window)", () => {
+test("nothing is emitted, and nothing throws, during SSR", () => {
   delete globalThis.window;
-  assert.equal(getCandidateToken(), null);
-});
-
-test("setCandidateToken no-ops on SSR (no window)", () => {
-  delete globalThis.window;
-  // Should not throw
-  setCandidateToken("should-not-store");
-  // Restore window to verify nothing was stored
-  globalThis.window = {};
-  globalThis.localStorage = makeLocalStorage();
-  assert.equal(getCandidateToken(), null);
+  assert.equal(participantToken(), null);
+  const headers = authHeaders();
+  assert.equal(Object.prototype.hasOwnProperty.call(headers, "Authorization"), false);
+  assert.equal(headers["X-Device-Id"], undefined);
 });

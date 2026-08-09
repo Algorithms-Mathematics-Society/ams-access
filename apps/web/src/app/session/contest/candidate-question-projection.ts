@@ -73,6 +73,18 @@ export type CandidateQuestion = {
   time_limit_ms: number | null;
   memory_limit_mb: number | null;
   cxxprobe: CXXProbeQuestionProjection | null;
+
+  // Contract v2. Worked examples the candidate checks their own output
+  // against, and the marking scheme — including the symbolic rules, which are
+  // a *gate*: one violation zeroes this problem's partial credit however well
+  // the code runs. Being marked against an instruction you were never shown
+  // is the failure these two fields exist to prevent.
+  samples?: { label?: string; input: string; output: string }[];
+  families?: import("@/lib/proctor-api").ProblemFamilies;
+  /** The projection was reconstructed from the pre-v2 columns, so the marking
+   * scheme is unknown rather than empty — a distinction that matters, because
+   * saying "no restrictions" when we cannot tell is the unfair direction. */
+  backfilled?: boolean;
 };
 
 export type LoadedCandidateQuestions = {

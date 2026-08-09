@@ -8,6 +8,9 @@ export type RunVerdict =
   | "RE"
   | "CE"
   | "OLE"
+  // The judge's name for "judging never completed". `IE` was this codebase's
+  // own name for the same thing; kept so stored verdicts still render.
+  | "SE"
   | "IE";
 
 export type RunAttempt = {
@@ -66,6 +69,8 @@ export function isUiBlockingPending(
 }
 
 export function normalizeSubmissionVerdict(attempt: SubmissionAttemptRecord): RunVerdict {
+  // Statuses arrive here already normalized by `attempt-adapter`, which is
+  // the only thing that should be producing these records.
   if (attempt.status === "QUEUED" || attempt.status === "RUNNING") {
     return attempt.status as RunVerdict;
   }
@@ -78,10 +83,14 @@ export function normalizeSubmissionVerdict(attempt: SubmissionAttemptRecord): Ru
     case "RE":
     case "CE":
     case "OLE":
+    case "SE":
     case "IE":
       return verdict;
     default:
-      return attempt.status === "FAILED" ? "IE" : "IE";
+      // "judging never completed" — the server's own name for it. This was
+      // `attempt.status === "FAILED" ? "IE" : "IE"`, a tautology that dressed
+      // an unhandled case up as a considered one.
+      return "SE";
   }
 }
 
@@ -95,7 +104,9 @@ export function normalizeAttemptForRunResult(attempt: SubmissionAttemptRecord): 
     status,
     runtime_ms: attempt.runtime_ms ?? null,
     memory_kb: attempt.memory_kb ?? null,
-    compile_output: status === "CE" || status === "IE" ? compileOutput : null,
+    // `SE` alongside `CE`/`IE`: judging that never completed is exactly when
+    // whatever the worker did manage to say is worth showing.
+    compile_output: status === "CE" || status === "IE" || status === "SE" ? compileOutput : null,
     stderr,
   };
 }

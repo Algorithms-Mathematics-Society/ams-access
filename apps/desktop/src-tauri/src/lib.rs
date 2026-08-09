@@ -841,6 +841,17 @@ async fn deliver_readiness_report(
         .filter_map(|check| serde_json::to_value(&check.kind).ok())
         .collect();
 
+    // Checks this platform cannot run at all — reported separately because
+    // they are neither passes nor failures. Without this the tri-state exists
+    // in the client and dies here: the invigilation screen would show a Linux
+    // machine as clean, which is exactly the fiction the tri-state removed.
+    let unsupported_checks: Vec<serde_json::Value> = report
+        .checks
+        .iter()
+        .filter(|check| matches!(check.outcome, CheckOutcome::Unknown))
+        .filter_map(|check| serde_json::to_value(&check.kind).ok())
+        .collect();
+
     let delivered = match pinned_http_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -856,6 +867,12 @@ async fn deliver_readiness_report(
                 // recording it as a failure would misrepresent the gate.
                 "passed": !matches!(report.decision, EnforcementDecision::Blocked),
                 "failed_checks": failed_checks,
+                "unsupported_checks": unsupported_checks,
+                // The schema has always accepted these and the client has
+                // never sent them, so every stored report reads "" for the
+                // two fields that say which build on which OS produced it.
+                "os_name": std::env::consts::OS,
+                "app_version": app.package_info().version.to_string(),
                 "report": report,
             }))
             .send()
