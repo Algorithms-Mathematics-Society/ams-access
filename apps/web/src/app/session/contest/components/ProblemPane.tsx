@@ -1,6 +1,7 @@
 import { type Dispatch, type SetStateAction, type MouseEvent as ReactMouseEvent } from "react";
 import { type ProblemSectionKey } from "./markdown";
 import { type Question } from "./questions";
+import { MarkingScheme } from "./MarkingScheme";
 
 export interface ProblemPaneProps {
   problemPaneWidth: number;
@@ -158,6 +159,9 @@ export function ProblemPane({
             onClick={handleProblemBodyClick}
             dangerouslySetInnerHTML={{ __html: problemBodyHtml }}
           />
+          {activeProblemTab === "statement" && questions[activeQ] && (
+            <MarkingScheme question={questions[activeQ]} />
+          )}
         </article>
       </div>
     </div>

@@ -3445,6 +3445,19 @@ export default function ContestPageClient() {
         textarea::-webkit-scrollbar-thumb { background: rgb(var(--accent-rgb) / 0.2); border-radius: 3px; }
 
         /* Problem description markdown */
+        /* The marking scheme, in the statement. Restrictions are a gate —
+           breaking one zeroes the problem — so they are the one thing here
+           that is allowed to shout. */
+        .pb-marking { margin: 28px 0 8px; padding-top: 18px; border-top: 1px solid var(--theme-border); max-width: 720px; }
+        .pb-marking-title { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--theme-text-muted); margin: 0 0 10px; }
+        .pb-marking-note { font-size: 13px; color: var(--theme-text-muted); margin: 0; line-height: 1.6; }
+        .pb-marking-list { margin: 0; padding-left: 18px; color: #cbd5e1; font-size: 13px; line-height: 1.8; }
+        .pb-marking-weight { color: var(--theme-text-muted); }
+        .pb-marking-gate { margin-top: 14px; border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.06); border-radius: var(--radius-md); padding: 12px 14px; }
+        .pb-marking-gate-title { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #fca5a5; margin: 0 0 8px; }
+        .pb-marking-gate-list { margin: 0; padding-left: 18px; color: #fecaca; font-size: 13px; line-height: 1.75; }
+        .pb-marking-gate-list code { background: rgba(0, 0, 0, 0.25); padding: 1px 5px; border-radius: 4px; }
+        .pb-marking-gate-note { margin: 10px 0 0; font-size: 12.5px; color: #fca5a5; line-height: 1.6; }
         .pb-body { color: #cbd5e1; font-size: 14px; line-height: 1.7; }
         .pb-body-editorial { font-size: var(--text-base); line-height: 1.65; max-width: 720px; }
         .pb-body p { margin: 0 0 14px; }

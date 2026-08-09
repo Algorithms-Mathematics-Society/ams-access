@@ -46,6 +46,9 @@ export function toCandidateQuestion(
     memory_limit_mb: projection.limits.memory_mb || null,
     samples: projection.samples,
     families: projection.families,
+    // Carried so the marking block can say "unknown" rather than "none" for a
+    // version uploaded before projections existed.
+    backfilled: projection.backfilled ?? false,
     cxxprobe: {
       // No whole-document digest: v2 dropped it. It guarded a connection that
       // is already TLS- and certificate-pinned, and the per-artifact hashes
