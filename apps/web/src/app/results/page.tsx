@@ -1,268 +1,185 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+/**
+ * What the candidate did, after the bell.
+ *
+ * This page used to be a leaderboard behind a 48-hour embargo, fetched from
+ * `/contests/:id/results?email=…` — an endpoint that no longer exists, keyed
+ * on an identity the platform no longer has. Both are gone:
+ *
+ * - **No leaderboard.** Candidates see their own results and nobody else's.
+ *   The API has no participant-facing standings endpoint at all, deliberately.
+ * - **No embargo.** Everything here was already visible in the contest room
+ *   as they submitted. Locking it afterwards would be hiding something from
+ *   them that they had already been shown.
+ *
+ * The per-problem breakdown, including the symbolic gate, renders through the
+ * same modules the contest room uses, so a verdict reads identically in both
+ * places.
+ */
+
+import { useCallback, useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { resolveApiBase } from "@/lib/api-base";
-
-const API_URL = resolveApiBase();
 import { STORAGE_KEYS } from "@/constants/storage-keys";
-import type { ResultsData, MySubmission } from "./components/types";
-import { formatPenalty, formatCountdown } from "./components/utils";
+import { getContest, listMySubmissions, ProctorApiError } from "@/lib/proctor-api";
+import { toAttemptRecords, type AttemptRecord } from "@/app/session/contest/attempt-adapter";
+import { partialCreditZeroed } from "@/app/session/contest/family-summary";
+import { verdictColor, verdictLabel } from "@/lib/verdict";
 import { ResultsLoading } from "./components/ResultsLoading";
-import { LockedScreen } from "./components/LockedScreen";
 import { ErrorScreen } from "./components/ErrorScreen";
-import { MySubmissionsSection } from "./components/MySubmissionsSection";
 
-// ── Page ─────────────────────────────────────────────────────────────────────
+type ProblemRow = {
+  label: string;
+  title: string;
+  attempts: AttemptRecord[];
+};
+
+/** The session whose results to show: the one just finished, or the one still
+ * open if the candidate navigated here without exiting. */
+function resolveSessionId(contestId: string): string | null {
+  for (const key of [STORAGE_KEYS.LAST_SESSION, STORAGE_KEYS.ACTIVE_SESSION]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { id?: string; contest_id?: string };
+      if (parsed?.id && (!contestId || parsed.contest_id === contestId)) return parsed.id;
+    } catch {
+      // Corrupt entry — try the next one rather than failing the page.
+    }
+  }
+  return null;
+}
 
 function ResultsView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contestId = searchParams?.get("contestId") ?? "";
-  // TODO(proctor-v2): this page still calls the retired /contests/:id/results
-  // and /my-submissions endpoints. It moves to
-  // GET /participant/sessions/:uid/submissions — own-only, no leaderboard —
-  // when the contest room does.
-  const emailParam = searchParams?.get("email") ?? "";
-  const email =
-    emailParam ||
-    (typeof window !== "undefined" ? (localStorage.getItem(STORAGE_KEYS.USER_EMAIL) ?? "") : "");
 
-  const [results, setResults] = useState<ResultsData | null>(null);
-  const [locked, setLocked] = useState(false);
-  const [lockedUntil, setLockedUntil] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState("");
+  const [rows, setRows] = useState<ProblemRow[] | null>(null);
+  const [contestTitle, setContestTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [mySubmissions, setMySubmissions] = useState<MySubmission[] | null>(null);
-  const [expandedProblemId, setExpandedProblemId] = useState<string | null>(null);
-  const [loadingMySubmissions, setLoadingMySubmissions] = useState(false);
 
   const fetchResults = useCallback(async () => {
-    if (!contestId) return;
+    setError(null);
+    const sessionId = resolveSessionId(contestId);
+    if (!contestId || !sessionId) {
+      setError("We couldn't tell which contest this was. Open it from your home screen.");
+      return;
+    }
+
     try {
-      // Clear any stale error when a new attempt begins — error was previously
-      // write-only, so once set the error branch rendered forever and Retry
-      // could never recover even when the re-fetch succeeded.
-      setError(null);
-      const res = await fetch(
-        `${API_URL}/contests/${contestId}/results?email=${encodeURIComponent(email)}`
+      const [index, submissions] = await Promise.all([
+        getContest(contestId),
+        listMySubmissions(sessionId),
+      ]);
+      setContestTitle(index.title);
+
+      const attempts = toAttemptRecords(submissions);
+      setRows(
+        index.problems.map((problem) => ({
+          label: problem.label,
+          title: problem.title,
+          // Oldest first here: reading down the list is reading the story of
+          // how they got there.
+          attempts: attempts.filter((attempt) => attempt.problem_id === problem.label).reverse(),
+        }))
       );
-      if (res.status === 403) {
-        const data = (await res.json().catch(() => ({}))) as {
-          code?: string;
-          results_visible_at?: string;
-        };
-        if (data.code === "RESULTS_LOCKED") {
-          setLocked(true);
-          // Backend guarantees a concrete timestamp, but guard against an empty
-          // value so the locked screen always renders (never stuck on Loading).
-          setLockedUntil(data.results_visible_at ? data.results_visible_at : null);
-          return;
-        }
-      }
-      if (!res.ok) {
-        setError("Could not load results. The contest may not exist.");
-        // Lock state is unknown on failure — clear it so the honest error
-        // screen (with a working Retry) renders instead of a frozen locked
-        // screen (locked renders before error, so stale locked hid errors).
-        setLocked(false);
-        setLockedUntil(null);
+    } catch (caught) {
+      if (caught instanceof ProctorApiError && caught.status === 401) {
+        router.push("/login");
         return;
       }
-      const data = (await res.json()) as ResultsData;
-      setResults(data);
-      setLocked(false);
-      setLockedUntil(null);
-    } catch {
-      setError("Could not connect. Check your network and retry.");
-      // Same as above: don't assert a lock state we don't know.
-      setLocked(false);
-      setLockedUntil(null);
+      setError("Could not load your results. Check your connection and retry.");
     }
-  }, [contestId, email]);
+  }, [contestId, router]);
 
   useEffect(() => {
     void fetchResults();
   }, [fetchResults]);
 
-  // Countdown tick when locked.
-  useEffect(() => {
-    if (!lockedUntil) return;
-    const id = setInterval(() => {
-      const remaining = formatCountdown(lockedUntil);
-      setCountdown(remaining);
-      if (new Date(lockedUntil).getTime() <= Date.now()) {
-        clearInterval(id);
-        void fetchResults();
-      }
-    }, 1000);
-    setCountdown(formatCountdown(lockedUntil));
-    return () => clearInterval(id);
-  }, [lockedUntil, fetchResults]);
-
-  async function loadMySubmissions() {
-    if (!contestId || !email) return;
-    setLoadingMySubmissions(true);
-    try {
-      const res = await fetch(
-        `${API_URL}/contests/${contestId}/my-submissions?email=${encodeURIComponent(email)}`
-      );
-      if (res.ok) {
-        const data = (await res.json()) as { submissions: MySubmission[] };
-        setMySubmissions(data.submissions);
-      }
-    } finally {
-      setLoadingMySubmissions(false);
-    }
-  }
-
-  // No leaderboard. Candidates see their own results and nobody else's — the
-  // API has no participant-facing standings endpoint at all, deliberately, so
-  // there is nothing to render even if this page asked.
-  const myEntry = results?.entries.find((e) => e.session_id === results.my_session_id);
-  const myProblems = mySubmissions
-    ? results?.questions.map((q) => ({
-        question: q,
-        submissions: mySubmissions.filter((s) => s.problem_id === q.id),
-      }))
-    : null;
-
-  // ── Locked screen ──────────────────────────────────────────────────────────
-  if (locked) {
-    return (
-      <LockedScreen lockedUntil={lockedUntil} countdown={countdown} email={email} router={router} />
-    );
-  }
-
-  if (error) {
-    return <ErrorScreen error={error} fetchResults={fetchResults} router={router} />;
-  }
-
-  if (!results) {
-    return <ResultsLoading />;
-  }
+  if (error) return <ErrorScreen error={error} fetchResults={fetchResults} router={router} />;
+  if (!rows) return <ResultsLoading />;
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--surface-0)",
-        color: "var(--theme-text)",
-        fontFamily: "system-ui, sans-serif",
-        padding: "40px 20px",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 900,
-          margin: "0 auto",
-          display: "flex",
-          flexDirection: "column",
-          gap: 32,
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 12,
-          }}
-        >
+    <div className="results-root">
+      <div className="results-shell">
+        <header className="results-header">
           <div>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: "0.14em",
-                color: "var(--theme-text-muted)",
-                textTransform: "uppercase",
-                marginBottom: 6,
-              }}
-            >
-              Contest Results
-            </div>
-            <div
-              style={{ fontSize: "var(--text-xl)", fontWeight: 700, color: "var(--theme-text)" }}
-            >
-              Leaderboard
-            </div>
+            <div className="results-eyebrow">Your results</div>
+            <h1 className="results-title">{contestTitle}</h1>
           </div>
           <button onClick={() => router.push("/home")} className="results-btn results-btn-ghost">
             Back to Home
           </button>
-        </div>
+        </header>
 
-        {/* My result banner */}
-        {myEntry && (
-          <div
-            style={{
-              background: "rgb(var(--accent-rgb) / 0.10)",
-              border: "1px solid rgb(var(--accent-rgb) / 0.30)",
-              borderRadius: "var(--radius-lg)",
-              boxShadow: "var(--elevation-1)",
-              padding: "20px 24px",
-              display: "flex",
-              gap: 32,
-              flexWrap: "wrap",
-              animation: "slideDown var(--transition-slow) both",
-            }}
-          >
-            {[
-              { label: "Your Rank", value: `#${myEntry.rank}` },
-              { label: "Score", value: myEntry.total_score },
-              { label: "Solved", value: `${myEntry.solved_count} / ${results.questions.length}` },
-              { label: "Penalty", value: formatPenalty(myEntry.penalty_seconds) },
-            ].map((cell) => (
-              <div key={cell.label}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: "var(--theme-text-muted)",
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                    marginBottom: 4,
-                  }}
-                >
-                  {cell.label}
-                </div>
-                <div
-                  style={{
-                    fontSize: 24,
-                    fontWeight: 700,
-                    color: "var(--theme-text)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {cell.value}
-                </div>
-              </div>
-            ))}
-          </div>
+        {rows.every((row) => row.attempts.length === 0) && (
+          <p className="results-empty">You didn&rsquo;t submit anything for this contest.</p>
         )}
 
-        {/* My detailed breakdown */}
-        <MySubmissionsSection
-          mySubmissions={mySubmissions}
-          loadingMySubmissions={loadingMySubmissions}
-          loadMySubmissions={loadMySubmissions}
-          expandedProblemId={expandedProblemId}
-          setExpandedProblemId={setExpandedProblemId}
-          myProblems={myProblems}
-        />
-
-        {/* Full leaderboard */}
+        {rows.map((row) => (
+          <ProblemResult key={row.label} row={row} />
+        ))}
       </div>
     </div>
   );
 }
 
-// useSearchParams() requires a Suspense boundary under static export (output:
-// "export"). Wrapping the view keeps the rendered UI unchanged — the fallback
-// is the same loading screen the page already shows while fetching.
+function ProblemResult({ row }: { row: ProblemRow }) {
+  const latest = row.attempts[row.attempts.length - 1];
+  const verdict = latest?.final_verdict ?? (latest ? latest.status : "UNATTEMPTED");
+  const gated = latest ? partialCreditZeroed(latest.testcases) : false;
+
+  return (
+    <section className="results-problem">
+      <div className="results-problem-head">
+        <span
+          className="results-verdict-dot"
+          style={{ background: verdictColor(verdict) }}
+          role="img"
+          aria-label={verdictLabel(verdict)}
+        />
+        <span className="results-problem-label">{row.label}</span>
+        <span className="results-problem-title">{row.title}</span>
+        <span className="results-problem-count">
+          {row.attempts.length} attempt{row.attempts.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {gated && (
+        // Said here as well as on the verdict in the room. Someone reading a
+        // zero afterwards is exactly the person who most needs to know why,
+        // and they may never have looked at the panel during the contest.
+        <p className="results-gate">
+          A restriction was broken, so this problem scored zero regardless of the tests.
+        </p>
+      )}
+
+      {row.attempts.length > 0 && (
+        <ol className="results-attempts">
+          {row.attempts.map((attempt) => (
+            <li key={attempt.id}>
+              <span style={{ color: verdictColor(attempt.final_verdict ?? attempt.status) }}>
+                {verdictLabel(attempt.final_verdict ?? attempt.status)}
+              </span>
+              <span className="results-attempt-meta">
+                attempt {attempt.attempt_no} · {new Date(attempt.created_at).toLocaleTimeString()}
+                {attempt.testcases.length > 0 && (
+                  <>
+                    {" "}
+                    · {attempt.testcases.filter((t) => t.verdict === "AC").length}/
+                    {attempt.testcases.length} cases
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 export default function ResultsPage() {
   return (
     <Suspense fallback={<ResultsLoading />}>

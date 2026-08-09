@@ -1431,6 +1431,10 @@ export default function ContestPageClient() {
   // candidate inside the locked-down shell. Every step is failure-tolerant.
   async function runExitTeardown() {
     try {
+      // Remember which session this was before dropping it. The results
+      // screen opens after this runs and has nothing else to go on.
+      const finished = localStorage.getItem(ACTIVE_SESSION_KEY);
+      if (finished) localStorage.setItem(STORAGE_KEYS.LAST_SESSION, finished);
       localStorage.removeItem(ACTIVE_SESSION_KEY);
     } catch {
       // ignore storage errors
