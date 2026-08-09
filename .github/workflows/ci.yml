@@ -150,7 +150,10 @@ jobs:
           - platform: windows-latest
             artifact: "target/release/bundle/msi/*.msi"
           - platform: macos-latest
-            artifact: "target/release/bundle/macos/*.app"
+            # The .dmg, not the .app: Tauri moves the bundle *into* the disk
+            # image and leaves `bundle/macos/` empty, so asserting on the .app
+            # fails a build that in fact succeeded.
+            artifact: "target/release/bundle/dmg/*.dmg"
 
     runs-on: ${{ matrix.platform }}
     name: Bundle smoke (${{ matrix.platform }})
