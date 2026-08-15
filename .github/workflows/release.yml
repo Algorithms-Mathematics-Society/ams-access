@@ -165,6 +165,13 @@ jobs:
       #
       # Only Linux and Windows runners reach this, and both have sha256sum in
       # bash. (macOS would need `shasum -a 256`; revisit when it returns.)
+      #
+      # Spaces are translated to dots. The bundles are named "AMS Access_..."
+      # but GitHub rewrites spaces when it stores an asset, so a manifest
+      # holding the on-disk name lists files that nobody downloading from the
+      # release page will ever have — `sha256sum -c` then fails on every line,
+      # for everyone, while the hashes themselves are perfectly correct. The
+      # name has to be the one the downloader ends up with.
       - name: Checksums
         shell: bash
         run: |
@@ -172,7 +179,8 @@ jobs:
           : > "$SUMS"
           while IFS= read -r file; do
             [ -n "$file" ] || continue
-            printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$(basename "$file")" >> "$SUMS"
+            asset="$(basename "$file" | tr ' ' '.')"
+            printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$asset" >> "$SUMS"
           done <<< "${RELEASE_FILES}"
           cat "$SUMS"
           echo "RELEASE_FILES<<EOF" >> "$GITHUB_ENV"
@@ -202,9 +210,16 @@ jobs:
             saying so.
 
             Checksums are attached as `SHA256SUMS-<target>.txt`, one per
-            platform. Verify your download against the file for your OS before
-            running it, and get the file from a different channel than the
-            installer where you can.
+            platform. Put it beside your download and run, in that directory:
+
+            ```
+            sha256sum -c SHA256SUMS-x86_64-pc-windows-msvc.txt
+            ```
+
+            (Windows: `certutil -hashfile <installer> SHA256`, then compare by
+            eye.) Get the sums file from a different channel than the
+            installer where you can — a checksum served next to the file it
+            checks only proves the download was not corrupted.
 
             See CHANGELOG for details.
           fail_on_unmatched_files: false
