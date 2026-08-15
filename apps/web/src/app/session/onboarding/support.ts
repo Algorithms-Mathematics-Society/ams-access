@@ -174,7 +174,8 @@ export interface Stage {
 
 export type ContestWindowMeta = {
   startAt: string;
-  endAt: string;
+  /** Null for a practice contest, which has no end. */
+  endAt: string | null;
   timezone?: string;
   verificationWindowMinutes: number | null;
 };

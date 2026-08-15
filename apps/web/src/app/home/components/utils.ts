@@ -9,6 +9,7 @@ import type {
   ContestEntryState,
   ContestEntryPhase,
 } from "./types";
+import { PRACTICE_TICK_MS, isPracticeContest, practiceEntryState } from "./practice-card";
 
 export { sessionPolicy };
 export type { ReadinessCheck, ReadinessReport };
@@ -367,6 +368,10 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
     disabledTitle: "Contest timing metadata is unavailable",
   };
 
+  // Before every time-based branch, including the metadata one — see
+  // practice-card.ts for why.
+  if (isPracticeContest(c)) return practiceEntryState();
+
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return unavailable;
 
   const verificationOpen = start - verificationWindowMinutes * 60 * 1000;
@@ -485,6 +490,7 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
 }
 
 export function getScheduledContestTickDelay(contest: InvitedContest, now: number) {
+  if (isPracticeContest(contest)) return PRACTICE_TICK_MS;
   let nextTickAt = Math.ceil((now + 1) / 60000) * 60000;
   const start = new Date(contest.start_at).getTime();
   const end = new Date(contest.end_at).getTime();

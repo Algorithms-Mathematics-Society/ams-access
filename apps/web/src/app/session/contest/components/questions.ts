@@ -52,7 +52,8 @@ export type ContestMeta = {
   id: string;
   title: string;
   start_at?: string;
-  end_at: string;
+  /** Null for a practice contest, which has no end. */
+  end_at: string | null;
   status: string;
   allowed_languages?: string[];
 };

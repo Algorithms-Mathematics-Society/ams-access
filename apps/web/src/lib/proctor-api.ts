@@ -294,8 +294,12 @@ export type ProctorSession = {
   server_time: string;
   /** Drive the countdown from these. Never from `Date.now()` — the candidate
    * controls that clock, and the whole point of `serverNow()` is to close
-   * that as a way of extending your own exam. */
-  remaining_ms: number;
+   * that as a way of extending your own exam.
+   *
+   * Both are null for a practice contest, which has no deadline. `session-clock`
+   * already renders no timer for a null deadline rather than inventing one,
+   * which is exactly the behaviour practice needs. */
+  remaining_ms: number | null;
   ends_at: string | null;
   phase: SessionPhase;
 };
@@ -353,9 +357,10 @@ export type ContestIndex = {
   uid: string;
   title: string;
   starts_at: string;
-  ends_at: string;
+  /** Null for a practice contest — it has no end. */
+  ends_at: string | null;
   server_time: string;
-  remaining_ms: number;
+  remaining_ms: number | null;
   phase: SessionPhase;
   verification_window_minutes: number;
   problems: {

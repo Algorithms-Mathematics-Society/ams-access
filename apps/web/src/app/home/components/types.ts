@@ -14,6 +14,10 @@ export type InvitedContest = {
   question_count: number;
   verification_window_minutes?: number | null;
   results_visible_at?: string | null;
+  /** A rehearsal on real problems, unscored and with no clock. Distinct from
+   *  a "practice run", which is the device check at ?mode=dry-run and opens
+   *  no contest at all — the two must never be labelled the same way. */
+  is_practice?: boolean;
 };
 
 export type ReadinessStatus = "ok" | "fail" | "checking";

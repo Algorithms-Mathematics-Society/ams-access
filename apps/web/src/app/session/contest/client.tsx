@@ -904,7 +904,16 @@ export default function ContestPageClient() {
       });
       setSelectedLanguage("C++23");
       setContestPhase(index.phase);
-      setBellRung(isBell({ endsAtMs: Date.parse(index.ends_at), phase: index.phase }, serverNow()));
+      // `Date.parse(null)` is NaN, which compares false against everything and
+      // would have quietly meant "never rings" — right answer, no reasoning.
+      // A practice contest has no end, so it has no bell, and saying so
+      // explicitly is what keeps that true if the comparison ever changes.
+      setBellRung(
+        isBell(
+          { endsAtMs: index.ends_at ? Date.parse(index.ends_at) : null, phase: index.phase },
+          serverNow()
+        )
+      );
       setSessionId(live.uid);
       localStorage.setItem(
         ACTIVE_SESSION_KEY,

@@ -100,6 +100,9 @@ function toInvitedContest(contest: ContestSummary): InvitedContest {
     org_name: contest.organization_name,
     question_count: contest.problems.length,
     verification_window_minutes: contest.verification_window_minutes,
+    // Dropped here until now, so the practice card and the graded card were
+    // indistinguishable — a candidate had no way to tell which one counted.
+    is_practice: contest.is_practice,
   };
 }
 
