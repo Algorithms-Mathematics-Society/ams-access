@@ -15,6 +15,7 @@
  */
 
 import {
+  fetchProblemAsset,
   getContest,
   getProblem,
   type ContestIndex,
@@ -27,7 +28,11 @@ const MB = 1024 * 1024;
 
 export function toCandidateQuestion(
   projection: ProblemProjection,
-  orderIndex: number
+  orderIndex: number,
+  contestUid: string = "",
+  /** Blob URLs for this problem's statement images, keyed by content hash.
+   *  Absent entries simply leave a gap — see `loadStatementAssets`. */
+  objectUrls: ReadonlyMap<string, string> = new Map()
 ): CandidateQuestion {
   return {
     // The contest-problem *label* is the identifier now. It is what the
@@ -66,7 +71,12 @@ export function toCandidateQuestion(
         max_pids: 0,
       },
       statement: {
-        path: `${projection.label}/statement.md`,
+        // The path the markdown was authored at, inside the pack. It has to
+        // be the real one: relative image references are resolved against
+        // this directory, so `statement.md` at the problem root would make
+        // `![](figure.png)` look for `A/figure.png` while the asset is at
+        // `A/statement/figure.png`, and every image would silently miss.
+        path: `${projection.label}/statement/problem.md`,
         sha256: projection.statement.sha256,
         size_bytes: projection.statement.size_bytes,
         content: projection.statement.markdown,
@@ -81,10 +91,25 @@ export function toCandidateQuestion(
             content: projection.starter.source,
           }
         : null,
-      // Statement images are not carried in v2. When they come back they are
-      // fetched per problem from `/participant/contests/:uid/problems/:label
-      // /assets/:id`, not bundled into the projection.
-      assets: [],
+      // `path` is prefixed with the label so it sits in the same namespace as
+      // `statement.path` above, which is what the resolver walks.
+      assets: (projection.assets ?? [])
+        .map((asset) => ({
+          id: asset.sha256,
+          path: `${projection.label}/${asset.path}`,
+          filename: asset.path.split("/").pop() ?? asset.path,
+          media_type: asset.content_type,
+          sha256: asset.sha256,
+          size_bytes: asset.size_bytes,
+          // The API URL is recorded for diagnostics only. Nothing renders from
+          // it — an <img> cannot carry the bearer token, so the blob URL is
+          // what actually reaches the DOM.
+          url:
+            `/participant/contests/${contestUid}/problems/` +
+            `${projection.label}/assets/${asset.sha256}`,
+          object_url: objectUrls.get(asset.sha256) ?? "",
+        }))
+        .filter((asset) => asset.object_url !== ""),
     },
   };
 }
@@ -110,5 +135,46 @@ export async function loadContestPaper(
   const projections = await Promise.all(
     index.problems.map((problem) => getProblem(contestUid, problem.label))
   );
-  return { index, questions: projections.map(toCandidateQuestion) };
+  const assetUrls = await Promise.all(
+    projections.map((projection) => loadStatementAssets(contestUid, projection))
+  );
+  return {
+    index,
+    questions: projections.map((projection, i) =>
+      toCandidateQuestion(projection, i, contestUid, assetUrls[i])
+    ),
+  };
+}
+
+/**
+ * Fetch a problem's statement images and turn them into blob URLs.
+ *
+ * Blob URLs rather than direct `src` attributes to the API: the image element
+ * cannot carry an Authorization header, and the alternative — a presigned or
+ * unauthenticated URL — would make every diagram in a live contest readable
+ * by anyone holding the link.
+ *
+ * Failures are dropped, not thrown. A missing diagram leaves a gap in a
+ * statement the candidate can still read; failing the paper load over one
+ * image would turn a cosmetic problem into an exam-stopping one. The
+ * remaining images still load, because each is settled independently.
+ *
+ * Revoke these with `releaseCandidateQuestionAssets` when the room unmounts.
+ */
+export async function loadStatementAssets(
+  contestUid: string,
+  projection: ProblemProjection
+): Promise<Map<string, string>> {
+  const urls = new Map<string, string>();
+  const assets = projection.assets ?? [];
+  if (assets.length === 0) return urls;
+
+  const blobs = await Promise.all(
+    assets.map((asset) => fetchProblemAsset(contestUid, projection.label, asset.sha256))
+  );
+  assets.forEach((asset, i) => {
+    const blob = blobs[i];
+    if (blob) urls.set(asset.sha256, URL.createObjectURL(blob));
+  });
+  return urls;
 }

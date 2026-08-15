@@ -71,6 +71,7 @@ import { deriveSubmitButton } from "./submit-button";
 import { saveErrorAfterEdit } from "./save-edit-state";
 import { createSaveCoordinator } from "./save-coordinator";
 import { loadContestPaper } from "./load-contest-problems";
+import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { toAttemptRecords } from "./attempt-adapter";
 import { flush as flushViolationQueue } from "@/lib/violation-queue";
 import {
@@ -872,6 +873,8 @@ export default function ContestPageClient() {
     // only place that can attest the lockdown engaged first — a session
     // minted here would be one that never passed a check. This *adopts* what
     // onboarding wrote, and sends anyone without one back to get checked.
+    let loadedObjectUrls: string[] = [];
+
     const stored = readStoredSession();
     if (!stored || stored.contest_id !== contestId) {
       router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
@@ -892,6 +895,12 @@ export default function ContestPageClient() {
 
       const { index, questions } = await loadContestPaper(contestId);
       if (disposed) return;
+      // Held for the cleanup below. Blob URLs are document references the
+      // browser keeps alive until revoked explicitly, not garbage-collected
+      // values.
+      loadedObjectUrls = questions.flatMap((question) =>
+        (question.cxxprobe?.assets ?? []).map((asset) => asset.object_url).filter(Boolean)
+      );
 
       setContest({
         id: index.uid,
@@ -1002,6 +1011,12 @@ export default function ContestPageClient() {
     return () => {
       disposed = true;
       abortController.abort();
+      // Statement images are held as blob URLs, which the browser keeps alive
+      // until they are revoked explicitly — a document reference, not a
+      // garbage-collected one. `releaseCandidateQuestionAssets` existed and
+      // had no caller, so every diagram in every problem would have stayed
+      // resident for the life of the window.
+      releaseCandidateQuestionAssets(loadedObjectUrls);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestId]);

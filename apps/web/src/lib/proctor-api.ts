@@ -331,9 +331,21 @@ export type ProblemProjection = {
   starter?: { filename: string; source: string; sha256: string; size_bytes: number };
   samples: { label?: string; input: string; output: string }[];
   families: ProblemFamilies;
+  /** Images the statement embeds, as metadata only. The bytes are fetched
+   * separately by hash — see `fetchProblemAsset`. `path` is relative to the
+   * problem root ("statement/figure.png"), which is what the markdown
+   * references and what the resolver matches against. */
+  assets: StatementAsset[];
   /** True when the projection was reconstructed from the old columns rather
    * than extracted from the pack — the families are unknown, not empty. */
   backfilled?: boolean;
+};
+
+export type StatementAsset = {
+  path: string;
+  content_type: string;
+  sha256: string;
+  size_bytes: number;
 };
 
 /** A contest as it appears in this participant's list. Mirrors the API's
@@ -621,6 +633,47 @@ export async function listMySubmissions(
 
 /** Ask an invigilator to reopen a finished session. Idempotent while one is
  * pending — a crash-looping app must not fill their queue. */
+/**
+ * One statement image, as bytes.
+ *
+ * Its own fetch rather than `request()`, which is JSON-only. Addressed by
+ * content hash: the server checks the hash is one *this* problem declares, so
+ * the URL carries nothing a setter typed and there is no path to traverse.
+ *
+ * Returns null rather than throwing. A missing diagram should leave a gap in
+ * a statement the candidate can still read and still solve — failing the
+ * whole paper load over one image would turn a cosmetic problem into an
+ * exam-stopping one.
+ */
+export async function fetchProblemAsset(
+  contestUid: string,
+  label: string,
+  sha256: string
+): Promise<Blob | null> {
+  const bearer = currentToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${API}/participant/contests/${encodeURIComponent(contestUid)}/problems/` +
+        `${encodeURIComponent(label)}/assets/${encodeURIComponent(sha256)}`,
+      {
+        headers: {
+          "X-AMS-Client-Version": CLIENT_VERSION,
+          ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        },
+        signal: controller.signal,
+      }
+    );
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function requestResume(
   sessionUid: string,
   input: { deviceFingerprint?: string; reason?: string } = {}

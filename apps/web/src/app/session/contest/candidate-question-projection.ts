@@ -24,7 +24,7 @@ export type ProjectionAsset = {
   id: string;
   path: string;
   filename: string;
-  media_type: "image/png" | "image/jpeg" | "image/webp";
+  media_type: string;
   sha256: string;
   size_bytes: number;
   url: string;
