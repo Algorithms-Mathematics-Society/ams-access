@@ -1,5 +1,29 @@
 import { CheckLine, StageHeader } from "../ui";
-import { type StageStatus } from "../../support";
+import { REVIEW_STAGE, STAGES, type StageStatus } from "../../support";
+
+/**
+ * Outcome phrasing for the summary, keyed by the stage's own label.
+ *
+ * The summary reads better in the past tense ("Camera ready") than the stage
+ * table does ("Camera Setup"), so the wording differs — but the *set* of rows
+ * and their stage numbers are derived from `STAGES` below rather than written
+ * out again. The hand-written list this replaced still carried the numbering
+ * from before two stages were deleted, so every row after the third was
+ * reporting the result of a different check than it named.
+ */
+const OUTCOME_LABEL: Record<string, string> = {
+  "Secure Full-Screen": "Full-screen mode on",
+  "Display Check": "Display checked",
+  "Keyboard Setup": "Keyboard controls active",
+  "Setup Verification": "Setup verified",
+  "Application Check": "No conflicting apps",
+  "Device Compatibility": "Device verified",
+  "Camera Setup": "Camera ready",
+  "Face Scan": "Face scan complete",
+  "Presence Check": "Presence confirmed",
+  "Microphone Check": "Microphone ready",
+  "Connection Check": "Connection stable",
+};
 
 /**
  * The summary, and only the summary.
@@ -26,20 +50,12 @@ export function Stage13_IntegrityConfirmation({
    * renders — it is the useful part — but nothing advances. */
   blocked?: boolean;
 }) {
-  const items = [
-    { label: "Session prepared", stage: 1 },
-    { label: "Full-screen mode on", stage: 2 },
-    { label: "Display checked", stage: 3 },
-    { label: "Keyboard controls active", stage: 4 },
-    { label: "Setup verified", stage: 5 },
-    { label: "No conflicting apps", stage: 6 },
-    { label: "Device verified", stage: 7 },
-    { label: "Camera ready", stage: 8 },
-    { label: "Face scan complete", stage: 9 },
-    { label: "Presence confirmed", stage: 10 },
-    { label: "Microphone ready", stage: 11 },
-    { label: "Connection stable", stage: 12 },
-  ];
+  // Every stage before this one — this stage is the summary, and the one
+  // after it is the secure start, so neither has a result to report.
+  const items = STAGES.filter((s) => s.id < REVIEW_STAGE).map((s) => ({
+    stage: s.id,
+    label: OUTCOME_LABEL[s.label] ?? s.label,
+  }));
 
   const warnCount = items.filter(({ stage }) => results[stage] === "warn").length;
   const hasWarns = warnCount > 0;
@@ -49,7 +65,7 @@ export function Stage13_IntegrityConfirmation({
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={13} label="Almost Ready" />
+      <StageHeader label="Almost Ready" />
 
       <div
         style={{

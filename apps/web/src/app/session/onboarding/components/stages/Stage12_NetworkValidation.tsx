@@ -111,7 +111,7 @@ export function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; 
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={12} label="Connection Check" />
+      <StageHeader label="Connection Check" />
 
       <div
         className="mb-10 relative flex flex-col items-center justify-center"

@@ -130,7 +130,7 @@ export function Stage3_MonitorDetection({
 
   return (
     <div className="flex flex-col items-start w-full">
-      <StageHeader id={3} label="Display Check" />
+      <StageHeader label="Display Check" />
 
       <div
         style={{

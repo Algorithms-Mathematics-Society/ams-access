@@ -179,82 +179,94 @@ export type ContestWindowMeta = {
   verificationWindowMinutes: number | null;
 };
 
+// Every stage here must *measure something*. Two that did not have been
+// removed: "Preparing Your Session" and "Starting Session" were `setTimeout`
+// chains that printed green passes on a fixed schedule — they would have
+// reported a ready session on a machine with no camera, no network and no
+// contest. "Starting Session" was worse than useless: its five-second
+// countdown sat in front of the real lockdown work in the final stage, so the
+// one moment where something genuinely happens was the one moment that looked
+// like a progress bar finishing.
+//
+// The ids are the ordering and nothing else reads them for identity, so a
+// stage can be added or removed here alone. `FINAL_STAGE` is derived rather
+// than written down, because the last time it was a literal (`>= 15`) it had
+// to agree with this table in four separate places.
 export const STAGES: Omit<Stage, "status">[] = [
-  { id: 1, label: "Preparing Your Session", group: "Workspace Lockdown" },
-  { id: 2, label: "Secure Full-Screen", group: "Workspace Lockdown" },
-  { id: 3, label: "Display Check", group: "Workspace Lockdown" },
-  { id: 4, label: "Keyboard Setup", group: "Workspace Lockdown" },
-  { id: 5, label: "Setup Verification", group: "System Checks" },
-  { id: 6, label: "Application Check", group: "System Checks" },
-  { id: 7, label: "Device Compatibility", group: "System Checks" },
-  { id: 8, label: "Camera Setup", group: "Media Setup" },
-  { id: 9, label: "Face Scan", group: "Identity Scan" },
-  { id: 10, label: "Presence Check", group: "Identity Scan" },
-  { id: 11, label: "Microphone Check", group: "Media Setup" },
-  { id: 12, label: "Connection Check", group: "Finalizing" },
-  { id: 13, label: "Final Review", group: "Finalizing" },
-  { id: 14, label: "Starting Session", group: "Finalizing" },
-  { id: 15, label: "Entering Contest", group: "Finalizing" },
+  { id: 1, label: "Secure Full-Screen", group: "Workspace Lockdown" },
+  { id: 2, label: "Display Check", group: "Workspace Lockdown" },
+  { id: 3, label: "Keyboard Setup", group: "Workspace Lockdown" },
+  { id: 4, label: "Setup Verification", group: "System Checks" },
+  { id: 5, label: "Application Check", group: "System Checks" },
+  { id: 6, label: "Device Compatibility", group: "System Checks" },
+  { id: 7, label: "Camera Setup", group: "Media Setup" },
+  { id: 8, label: "Face Scan", group: "Identity Scan" },
+  { id: 9, label: "Presence Check", group: "Identity Scan" },
+  { id: 10, label: "Microphone Check", group: "Media Setup" },
+  { id: 11, label: "Connection Check", group: "Finalizing" },
+  { id: 12, label: "Final Review", group: "Finalizing" },
+  { id: 13, label: "Entering Contest", group: "Finalizing" },
 ];
+
+/** The stage that performs the actual secure start. Nothing follows it. */
+export const FINAL_STAGE = STAGES.length;
+
+/** The summary stage, which is also where a policy block is shown. */
+export const REVIEW_STAGE = FINAL_STAGE - 1;
 
 export const STAGE_META: Record<number, { checking: string; todo: string | null; onFail: string }> =
   {
     1: {
-      checking: "Session environment and baseline controls",
-      todo: null,
-      onFail: "Setup restarts automatically",
-    },
-    2: {
       checking: "Full-screen and window focus mode",
       todo: null,
       onFail: "Contest cannot start without full-screen mode",
     },
-    3: {
+    2: {
       checking: "Number of connected displays",
       todo: "Disconnect any external monitors if prompted, then scan again",
       onFail: "Multiple screens are not permitted during a contest",
     },
-    4: {
+    3: {
       checking: "Keyboard shortcut lockdown",
       todo: null,
-      onFail: "Some shortcuts may remain accessible — flagged for review",
+      onFail: "Some shortcuts may remain accessible — recorded, and you may still enter",
     },
-    5: {
-      checking: "Full-screen, keyboard controls, and session baseline",
+    4: {
+      checking: "Full-screen and keyboard controls",
       todo: null,
       onFail: "Warnings are recorded but do not block entry",
     },
-    6: {
+    5: {
       checking: "Restricted applications running on this device",
       todo: "Close any flagged apps when prompted, then scan again",
       onFail: "Entry is blocked until restricted apps are closed",
     },
-    7: {
+    6: {
       checking: "Whether this device is running inside a virtual machine",
       todo: null,
       onFail: "Session is flagged for review — you may still enter",
     },
-    8: {
+    7: {
       checking: "Camera access and video feed",
       todo: "Allow camera access when your OS asks",
       onFail: "Camera is required — fix the permission and try again",
     },
-    9: {
+    8: {
       checking: "Face position and identity capture",
       todo: "Look directly at the camera and hold still until captured",
       onFail: "Setup waits until a valid face is captured — contact your proctor if stuck",
     },
-    10: {
+    9: {
       checking: "Live presence via camera feed",
       todo: "Stay visible in front of your camera",
       onFail: "Presence must be confirmed before continuing",
     },
-    11: {
+    10: {
       checking: "Microphone access and audio signal",
       todo: "Allow microphone access when prompted",
       onFail: "Microphone is optional — setup continues with an advisory warning",
     },
-    12: {
+    11: {
       checking: "Network connection and response time",
       todo: "Make sure you have a stable internet connection",
       onFail: "Poor connection is recorded — you may still enter",

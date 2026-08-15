@@ -94,7 +94,7 @@ export function Stage8_CameraInit({
 
   return (
     <div className="flex flex-col items-center w-full">
-      <StageHeader id={8} label="Camera Setup" />
+      <StageHeader label="Camera Setup" />
 
       <div
         className="relative mb-8 overflow-hidden"

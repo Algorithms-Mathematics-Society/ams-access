@@ -41,13 +41,17 @@ export function Stage5_EnvironmentValidation({ onPass }: { onPass(): void }) {
       );
       resolveCheck("Keyboard controls", kbr?.active ? "pass" : "warn");
 
+      // Was `setTimeout(400)` then an unconditional pass. The command exists,
+      // is registered, and returns whether the exclusion actually applied —
+      // on Windows it is the thing that makes the exam window render black to
+      // every capture API, so claiming it without calling it is claiming the
+      // one protection a screen-recorder defeats.
       pushCheck("Screen capture guard");
-      await new Promise((r) => setTimeout(r, 400));
-      resolveCheck("Screen capture guard", "pass");
+      const capture = await withNullableTimeout(invoke<boolean>("apply_capture_protection"), 2500);
+      resolveCheck("Screen capture guard", capture === true ? "pass" : "warn");
 
-      pushCheck("Session baseline");
-      await new Promise((r) => setTimeout(r, 300));
-      resolveCheck("Session baseline", "pass");
+      // "Session baseline" is gone. It slept 300 ms and passed; there was no
+      // baseline, and nothing anywhere else in the codebase referred to one.
 
       await new Promise((r) => setTimeout(r, 500));
       if (!cancelled) onPass();
@@ -61,7 +65,7 @@ export function Stage5_EnvironmentValidation({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-start w-full">
-      <StageHeader id={5} label="Setup Verification" />
+      <StageHeader label="Setup Verification" />
       <div
         style={{
           width: "100%",

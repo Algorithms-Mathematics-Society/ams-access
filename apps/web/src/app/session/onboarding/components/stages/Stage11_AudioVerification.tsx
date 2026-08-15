@@ -80,7 +80,7 @@ export function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; 
 
   return (
     <div className="flex flex-col items-center">
-      <StageHeader id={11} label="Microphone Check" />
+      <StageHeader label="Microphone Check" />
 
       <div
         className="mb-8 flex items-end justify-center gap-1.5 relative"

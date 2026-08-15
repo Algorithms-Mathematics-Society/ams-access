@@ -17,7 +17,6 @@ import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { useTheme } from "./components/hooks";
 import { PHASE_FRIENDLY_NAME, readinessBlockMessage } from "./components/labels";
-import { Stage1_SessionIsolation } from "./components/stages/Stage1_SessionIsolation";
 import { Stage2_Fullscreen } from "./components/stages/Stage2_Fullscreen";
 import { Stage3_MonitorDetection } from "./components/stages/Stage3_MonitorDetection";
 import { Stage4_KeyboardLockdown } from "./components/stages/Stage4_KeyboardLockdown";
@@ -30,12 +29,13 @@ import { Stage10_PresenceVerification } from "./components/stages/Stage10_Presen
 import { Stage11_AudioVerification } from "./components/stages/Stage11_AudioVerification";
 import { Stage12_NetworkValidation } from "./components/stages/Stage12_NetworkValidation";
 import { Stage13_IntegrityConfirmation } from "./components/stages/Stage13_IntegrityConfirmation";
-import { Stage14_LockInCountdown } from "./components/stages/Stage14_LockInCountdown";
 import { ProgressBar } from "./components/ProgressBar";
 import { DryRunSummary } from "./components/DryRunSummary";
 
 import {
   API_URL,
+  FINAL_STAGE,
+  REVIEW_STAGE,
   STAGES,
   STAGE_META,
   delay,
@@ -154,7 +154,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (isTestAccount && currentStage === 0 && !dryRunComplete) {
-      setCurrentStage(15);
+      setCurrentStage(FINAL_STAGE);
       setReadyForStart(true);
       setPolicyBlock(null);
     }
@@ -183,7 +183,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!isTestAccount) return;
-    setCurrentStage(15);
+    setCurrentStage(FINAL_STAGE);
     setReadyForStart(true);
     setPolicyBlock(null);
     setTransitioning(false);
@@ -322,7 +322,7 @@ export default function OnboardingPage() {
     const windowMeta = contestWindow;
 
     if (!gate.ok && !isTestAccount) {
-      setCurrentStage(13);
+      setCurrentStage(REVIEW_STAGE);
       setTransitioning(false);
       setReadyForStart(false);
       setPolicyBlock(gate.reason);
@@ -332,7 +332,7 @@ export default function OnboardingPage() {
     if (windowMeta && !isTestAccount) {
       const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
       if (remaining > 0) {
-        setCurrentStage(15);
+        setCurrentStage(FINAL_STAGE);
         setTransitioning(false);
         setReadyForStart(true);
         setPolicyBlock(null);
@@ -529,7 +529,7 @@ export default function OnboardingPage() {
       if (windowMeta && !isTestAccount) {
         const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
         if (remaining > 0) {
-          setCurrentStage(15);
+          setCurrentStage(FINAL_STAGE);
           setTransitioning(false);
           setReadyForStart(true);
           setPolicyBlock(null);
@@ -616,7 +616,7 @@ export default function OnboardingPage() {
       if (windowMeta && !isTestAccount) {
         const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
         if (remaining > 0 && rawMsg.toLowerCase().includes("not accepting sessions")) {
-          setCurrentStage(15);
+          setCurrentStage(FINAL_STAGE);
           setTransitioning(false);
           setReadyForStart(true);
           setPolicyBlock(null);
@@ -628,7 +628,7 @@ export default function OnboardingPage() {
       // Windows-only external_display / remote_server blocks surface their
       // detail strings instead of a raw JSON blob.
       const msg = readinessBlockMessage(rawMsg) ?? rawMsg;
-      setCurrentStage(13);
+      setCurrentStage(REVIEW_STAGE);
       setTransitioning(false);
       setReadyForStart(false);
       setPolicyBlock(msg);
@@ -637,7 +637,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!contestWindow) return;
-    if (currentStage !== 15) return;
+    if (currentStage !== FINAL_STAGE) return;
     if (waitMs <= 0 && readyForStart) {
       void finalizeSecureStart();
     }
@@ -651,7 +651,7 @@ export default function OnboardingPage() {
       setTimeout(() => {
         setCurrentStage((s) => {
           const next = s + 1;
-          if (next >= 15) {
+          if (next >= FINAL_STAGE) {
             void finalizeSecureStart();
             return next;
           }
@@ -723,7 +723,7 @@ export default function OnboardingPage() {
   const verifyOpensInMs = entry.kind === "too_early" ? entry.opensInMs : 0;
   const canRunChecks = isTestAccount || shouldRunChecks(entry);
   const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
-  const showWaitLock = currentStage === 15 && readyForStart;
+  const showWaitLock = currentStage === FINAL_STAGE && readyForStart;
 
   return (
     <main
@@ -1076,7 +1076,7 @@ export default function OnboardingPage() {
             )}
             {canRunChecks && (
               <>
-                {currentStage === 15 && !dryRun && contestWindow && waitMs > 0 && (
+                {currentStage === FINAL_STAGE && !dryRun && contestWindow && waitMs > 0 && (
                   <div
                     style={{
                       border: "1px solid rgba(255, 255, 255, 0.05)",
@@ -1140,7 +1140,7 @@ export default function OnboardingPage() {
                     </div>
                   </div>
                 )}
-                {currentStage === 15 && !dryRun && (!contestWindow || waitMs <= 0) && (
+                {currentStage === FINAL_STAGE && !dryRun && (!contestWindow || waitMs <= 0) && (
                   <div
                     style={{
                       border: "1px solid rgba(255, 255, 255, 0.05)",
@@ -1196,25 +1196,28 @@ export default function OnboardingPage() {
                     </div>
                   </div>
                 )}
-                {currentStage === 1 && <Stage1_SessionIsolation onPass={advancePass} />}
-                {currentStage === 2 && <Stage2_Fullscreen onPass={advancePass} />}
-                {currentStage === 3 && (
+                {currentStage === 1 && <Stage2_Fullscreen onPass={advancePass} />}
+                {currentStage === 2 && (
                   <Stage3_MonitorDetection
                     onPass={advancePass}
                     platform={platform}
                     externalDisplayOverride={externalDisplayOverride}
                   />
                 )}
-                {currentStage === 4 && <Stage4_KeyboardLockdown onPass={advancePass} />}
-                {currentStage === 5 && <Stage5_EnvironmentValidation onPass={advancePass} />}
-                {currentStage === 6 && <Stage6_RestrictedApps onPass={advancePass} />}
-                {currentStage === 7 && (
+                {currentStage === 3 && (
+                  <Stage4_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
+                )}
+                {currentStage === 4 && <Stage5_EnvironmentValidation onPass={advancePass} />}
+                {currentStage === 5 && (
+                  <Stage6_RestrictedApps onPass={advancePass} onWarn={advanceWarn} />
+                )}
+                {currentStage === 6 && (
                   <Stage7_VMDetection onPass={advancePass} onWarn={advanceWarn} />
                 )}
-                {currentStage === 8 && (
+                {currentStage === 7 && (
                   <Stage8_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
                 )}
-                {currentStage === 9 && (
+                {currentStage === 8 && (
                   <Stage9_FaceCalibration
                     stream={cameraStream}
                     onPass={advancePass}
@@ -1222,23 +1225,26 @@ export default function OnboardingPage() {
                     onFaceFallback={handleFaceFallback}
                   />
                 )}
-                {currentStage === 10 && (
-                  <Stage10_PresenceVerification stream={cameraStream} onPass={advancePass} />
+                {currentStage === 9 && (
+                  <Stage10_PresenceVerification
+                    stream={cameraStream}
+                    onPass={advancePass}
+                    onWarn={advanceWarn}
+                  />
                 )}
-                {currentStage === 11 && (
+                {currentStage === 10 && (
                   <Stage11_AudioVerification onPass={advancePass} onWarn={advanceWarn} />
                 )}
-                {currentStage === 12 && (
+                {currentStage === 11 && (
                   <Stage12_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
                 )}
-                {currentStage === 13 && (
+                {currentStage === REVIEW_STAGE && (
                   <Stage13_IntegrityConfirmation
                     results={results}
                     onPass={advancePass}
                     blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
                   />
                 )}
-                {currentStage === 14 && <Stage14_LockInCountdown onPass={advancePass} />}
               </>
             )}
           </div>

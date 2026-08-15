@@ -30,7 +30,7 @@ export function Stage7_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?
 
   return (
     <div className="flex flex-col items-center w-full">
-      <StageHeader id={7} label="Device Compatibility" />
+      <StageHeader label="Device Compatibility" />
 
       <div
         style={{

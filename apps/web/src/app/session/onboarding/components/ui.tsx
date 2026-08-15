@@ -94,7 +94,10 @@ export function Spinner({ size = 20 }: { size?: number }) {
   );
 }
 
-export function StageHeader({ label }: { id?: number; label: string; total?: number }) {
+// `id` and `total` were accepted and never read — every stage passed its own
+// hard-coded number and none of them reached the DOM. That is also why
+// deleting two stages did not require renumbering thirteen files.
+export function StageHeader({ label }: { label: string }) {
   const theme = useTheme();
   const isLight = theme === "light";
   return (

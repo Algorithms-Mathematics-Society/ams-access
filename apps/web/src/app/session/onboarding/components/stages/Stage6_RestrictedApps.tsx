@@ -4,26 +4,47 @@ import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
-export function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
-  const [scanning, setScanning] = useState(true);
+/**
+ * Restricted-application scan.
+ *
+ * Three outcomes, not two. `withNullableTimeout` returns null for a timeout,
+ * for a thrown command, and for any build without the Tauri shell — and the
+ * old `result?.found ?? []` collapsed all three onto the empty array, which
+ * rendered as a green "No conflicting applications found". A scan that never
+ * ran is not a clean machine, and saying otherwise is the single most
+ * misleading thing this flow could tell a proctor.
+ *
+ * `unknown` warns and lets the candidate through rather than blocking: the
+ * scan failing is not their doing, and a locked-out candidate at an exam
+ * centre is a worse outcome than an unscanned one flagged for review.
+ */
+type ScanOutcome = "scanning" | "clean" | "found" | "unknown";
+
+export function Stage6_RestrictedApps({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
+  const [outcome, setOutcome] = useState<ScanOutcome>("scanning");
   const [found, setFound] = useState<string[]>([]);
   const [cleared, setCleared] = useState(false);
   const theme = useTheme();
   const isLight = theme === "light";
 
   const doScan = useCallback(async () => {
-    setScanning(true);
+    setOutcome("scanning");
     setCleared(false);
     await new Promise((r) => setTimeout(r, 600));
     const result = await withNullableTimeout(
       invoke<{ found: string[]; clean: boolean }>("scan_processes"),
       3000
     );
-    const foundApps = result?.found ?? [];
-    setFound(foundApps);
-    setScanning(false);
-    if (foundApps.length === 0) setTimeout(onPass, 800);
-  }, [onPass]);
+    if (result === null || !Array.isArray(result.found)) {
+      setFound([]);
+      setOutcome("unknown");
+      setTimeout(onWarn, 1400);
+      return;
+    }
+    setFound(result.found);
+    setOutcome(result.found.length === 0 ? "clean" : "found");
+    if (result.found.length === 0) setTimeout(onPass, 800);
+  }, [onPass, onWarn]);
 
   useEffect(() => {
     void doScan();
@@ -40,9 +61,9 @@ export function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-center w-full">
-      <StageHeader id={6} label="Application Check" />
+      <StageHeader label="Application Check" />
 
-      {scanning ? (
+      {outcome === "scanning" ? (
         <div className="flex flex-col items-center gap-4 w-full">
           <div
             style={{
@@ -76,7 +97,47 @@ export function Stage6_RestrictedApps({ onPass }: { onPass(): void }) {
           </div>
           <CheckLine label="Checking for restricted applications..." status="checking" />
         </div>
-      ) : found.length > 0 && !cleared ? (
+      ) : outcome === "unknown" ? (
+        <div className="flex flex-col items-center gap-5 w-full">
+          <div
+            style={{
+              width: "100%",
+              padding: "18px 24px",
+              borderRadius: "var(--radius-sm)",
+              background: isLight ? "#fff7ed" : "#1c1007",
+              border: `1px solid ${isLight ? "#fed7aa" : "#78350f"}`,
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              fontSize: "12.5px",
+              lineHeight: 1.7,
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 6px",
+                fontWeight: 700,
+                color: isLight ? "#9a3412" : "#fb923c",
+              }}
+            >
+              The application check could not run
+            </p>
+            <p style={{ margin: 0, color: isLight ? "#7c2d12" : "#fdba74" }}>
+              We could not read the list of running applications on this device, so we cannot say
+              whether any restricted ones are open. This does not stop you entering — it is recorded
+              for your proctor, and you should close anything you are not using.
+            </p>
+          </div>
+          <Button
+            theme={theme}
+            variant="secondary"
+            size="small"
+            onClick={() => void doScan()}
+            style={{ width: "100%" }}
+          >
+            Try the check again
+          </Button>
+          <CheckLine label="Restricted applications: not checked" status="unknown" />
+        </div>
+      ) : outcome === "found" && !cleared ? (
         <div style={{ width: "100%" }}>
           <div
             style={{

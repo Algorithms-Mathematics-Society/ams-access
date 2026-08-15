@@ -26,7 +26,7 @@ export function Stage2_Fullscreen({ onPass }: { onPass(): void }) {
 
   return (
     <div className="flex flex-col items-start w-full">
-      <StageHeader id={2} label="Secure Full-Screen" />
+      <StageHeader label="Secure Full-Screen" />
 
       <div
         style={{

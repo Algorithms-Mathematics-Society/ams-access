@@ -3,7 +3,16 @@ import { useTheme } from "../hooks";
 import { StageHeader, StatusBadge } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
-export function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
+/**
+ * Keyboard lockdown.
+ *
+ * A failure here does not block entry (decision 7 — lockdown violations are
+ * recorded and warned about, never auto-ejected), but it must be *recorded* as
+ * a warning rather than a pass: on a desktop environment where the intercept
+ * cannot engage, the candidate keeps Alt+Tab for the whole exam, and the
+ * proctor reviewing the session afterwards needs to know that.
+ */
+export function Stage4_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [phase, setPhase] = useState(0);
   const [lockFailed, setLockFailed] = useState(false);
   const [accessibilityDenied, setAccessibilityDenied] = useState(false);
@@ -59,11 +68,14 @@ export function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
         setAccessibilityDenied(true);
         return;
       }
-      if (result?.active !== true) {
-        setLockFailed(true);
-      }
+      const failed = result?.active !== true;
+      setLockFailed(failed);
       setPhase(4);
-      setTimeout(onPass, 600);
+      // Warn, not pass. The badge already said "unavailable" here while the
+      // stage was recorded as a clean pass, so the final summary and the
+      // proctor's record both showed keyboard lockdown green on a machine
+      // where it never engaged.
+      setTimeout(failed ? onWarn : onPass, 600);
     }
 
     function handleKey(e: KeyboardEvent) {
@@ -80,14 +92,17 @@ export function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
     window.addEventListener("keydown", handleKey, true);
     void go();
     return () => window.removeEventListener("keydown", handleKey, true);
-  }, [onPass]);
+  }, [onPass, onWarn]);
 
-  const keys = [
-    { label: "Alt+Tab", locked: phase >= 1 },
-    { label: "Super / Win", locked: phase >= 2 },
-    { label: "Alt+F4 / Cmd+Q", locked: phase >= 3 },
-    { label: "PrintScreen", locked: phase >= 4 },
-  ];
+  // One intercept covers all four, so they share one outcome. They used to be
+  // staggered on `phase >= 1..4` — but `phase` only ever goes 0 → 1 → 4, so
+  // the stagger was animation, and worse, all four rendered a green "Ready"
+  // even when the intercept had failed and the badge below said so.
+  const settled = phase >= 4;
+  const keys = ["Alt+Tab", "Super / Win", "Alt+F4 / Cmd+Q", "PrintScreen"].map((label) => ({
+    label,
+    locked: settled && !lockFailed,
+  }));
 
   // ── Accessibility denied — hard-block UI ──────────────────────────────────
   if (accessibilityDenied) {
@@ -96,7 +111,7 @@ export function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
       <div
         style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}
       >
-        <StageHeader id={4} label="Keyboard Setup" />
+        <StageHeader label="Keyboard Setup" />
         <div
           style={{
             width: "100%",
@@ -158,7 +173,7 @@ export function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
   // ── Normal flow ───────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-      <StageHeader id={4} label="Keyboard Setup" />
+      <StageHeader label="Keyboard Setup" />
 
       {/* Robust CSS grid container that isolates items from the footer status badge */}
       <div
@@ -199,31 +214,17 @@ export function Stage4_KeyboardLockdown({ onPass }: { onPass(): void }) {
                 "background var(--transition-standard), border-color var(--transition-standard)",
             }}
           >
-            {locked ? (
-              <span
-                style={{
-                  color: "#22c55e",
-                  fontWeight: 700,
-                  fontSize: "11px",
-                  flexShrink: 0,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                Ready
-              </span>
-            ) : (
-              <span
-                style={{
-                  color: "rgba(255,255,255,0.58)",
-                  fontWeight: 700,
-                  fontSize: "11px",
-                  flexShrink: 0,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                Checking
-              </span>
-            )}
+            <span
+              style={{
+                color: locked ? "#22c55e" : settled ? "#f59e0b" : "rgba(255,255,255,0.58)",
+                fontWeight: 700,
+                fontSize: "11px",
+                flexShrink: 0,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {locked ? "Ready" : settled ? "Not locked" : "Checking"}
+            </span>
             <span
               style={{
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",

@@ -777,7 +777,7 @@ export function Stage9_FaceCalibration({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <StageHeader id={9} label="Face Scan" />
+      <StageHeader label="Face Scan" />
 
       <div style={{ position: "relative", width: 320, height: 240, marginBottom: "24px" }}>
         {flash && (
