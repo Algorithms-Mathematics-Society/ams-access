@@ -13,6 +13,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
+import { cameraSession } from "@/lib/camera-session";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -1439,7 +1440,9 @@ export default function ContestPageClient() {
     } catch {
       // ignore storage errors
     }
-    cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+    // The one place the camera is genuinely finished with: the exam is over
+    // and the candidate is leaving the locked-down shell.
+    cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
     const win = window.__TAURI__?.window.getCurrentWindow();
@@ -1595,20 +1598,19 @@ export default function ContestPageClient() {
 
     async function acquire(attempt = 0) {
       try {
+        // Through the shared session, so the track onboarding already opened
+        // is adopted rather than the device being closed and reopened across
+        // the navigation. On a webcam slow to hand its handle back, that
+        // second open is what surfaced as NotReadableError — a candidate
+        // arriving at the contest with a dead camera that had worked a minute
+        // earlier, and a message telling them to check their settings.
         const stream = await withTimeout(
-          navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-            audio: true,
-          }),
+          cameraSession.ensure({ audio: true }),
           8000,
           "Camera request timed out"
         );
-        if (cancelled) {
-          stopStream(stream);
-          return;
-        }
+        if (cancelled) return;
 
-        stopStream(cameraStreamRef.current);
         cameraStreamRef.current = stream;
         // Honor the current toggles on every (re)acquisition: camera defaults
         // on, microphone defaults off until the contestant enables it.
@@ -1658,10 +1660,29 @@ export default function ContestPageClient() {
     }
 
     void acquire();
+
+    // A camera unplugged mid-exam previously produced no event at all: the
+    // preview froze on its last frame and presence monitoring quietly stopped
+    // seeing a face, which reads to a proctor exactly like a candidate who
+    // walked away.
+    const unsubscribe = cameraSession.subscribe((status) => {
+      if (cancelled || status !== "lost") return;
+      setCameraVideoReady(false);
+      setProctoringOk(false);
+      setFaceStatus("away");
+      setCameraError("The camera was disconnected. Reconnect it to resume monitoring.");
+      retryTimer = setTimeout(() => {
+        if (!cancelled) void acquire();
+      }, 1500);
+    });
+
     return () => {
       cancelled = true;
+      unsubscribe();
       if (retryTimer) clearTimeout(retryTimer);
-      stopStream(cameraStreamRef.current);
+      // The stream is not stopped here. It belongs to `cameraSession`, and
+      // this effect re-runs on `loading` — tearing the device down on a
+      // re-render is the failure this whole module exists to prevent.
       cameraStreamRef.current = null;
       setCameraVideoReady(false);
     };

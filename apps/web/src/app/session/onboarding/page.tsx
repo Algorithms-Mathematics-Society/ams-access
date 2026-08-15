@@ -13,6 +13,7 @@ import {
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
+import { cameraSession } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { useTheme } from "./components/hooks";
@@ -189,14 +190,14 @@ export default function OnboardingPage() {
     setTransitioning(false);
   }, [isTestAccount]);
 
-  // Stop camera tracks ONLY when this page unmounts (after router.push to contest).
-  // Stopping on every cameraStream change would kill the active stream mid-flow
-  // if Stage 8 ever re-acquires (e.g. due to StrictMode or unstable callback deps).
-  useEffect(() => {
-    return () => {
-      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
+  // The camera is deliberately NOT released here. This effect used to stop
+  // every track on unmount — and the unmount that matters is the one caused by
+  // `router.push` into the contest, so the flow closed the camera device and
+  // the contest room immediately reopened it. Two opens across a navigation
+  // the candidate never asked for, on the hardware least willing to be
+  // reopened quickly. `cameraSession` owns the stream now and outlives this
+  // page; the release points are the emergency exit, a completed dry run, and
+  // the end of the exam.
 
   useEffect(() => {
     if (!contestId) return;
@@ -303,7 +304,9 @@ export default function OnboardingPage() {
       }
       await window.__TAURI__?.core.invoke("unlock_desktop").catch(() => {});
       await window.__TAURI__?.core.invoke("disable_keyboard_intercept").catch(() => {});
-      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+      // A dry run ends here rather than entering a contest, so the camera has
+      // nothing left to serve.
+      cameraSession.release();
       cameraStreamRef.current = null;
       setCameraStream(null);
 
@@ -678,7 +681,7 @@ export default function OnboardingPage() {
     advanceWarn();
   }, [advanceWarn, dryRun]);
   const emergencyExit = useCallback(async () => {
-    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
 

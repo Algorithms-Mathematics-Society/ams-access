@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/app/home/components/ui-primitives";
 import { useTheme } from "../hooks";
 import { Spinner, StageHeader, StatusBadge } from "../ui";
-import { getUserMediaWithTimeout, invoke, stopMediaStream, waitForVideoReady } from "../../support";
+import { cameraSession } from "@/lib/camera-session";
+import { invoke, waitForVideoReady, withTimeout } from "../../support";
 
 export function Stage8_CameraInit({
   onPass,
@@ -27,41 +28,27 @@ export function Stage8_CameraInit({
 
   useEffect(() => {
     let cancelled = false;
-    let handedOff = false;
     let passTimer: ReturnType<typeof setTimeout> | null = null;
-    let localStream: MediaStream | null = null;
 
+    // The camera is opened through the shared session, which keeps it open
+    // across the navigation into the contest. Nothing here stops it — an
+    // unmount is the route change, not the end of the exam.
     async function init() {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Camera not available on this device");
-        }
-        const stream = await getUserMediaWithTimeout({
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-        });
-        localStream = stream;
-        if (cancelled) {
-          stopMediaStream(stream);
-          return;
-        }
+        const stream = await withTimeout(cameraSession.ensure(), 8000, "Camera request timed out");
+        if (cancelled) return;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
           await waitForVideoReady(videoRef.current);
         }
-        if (cancelled) {
-          stopMediaStream(stream);
-          return;
-        }
-        handedOff = true;
+        if (cancelled) return;
         onCameraReady(stream);
         setPhase("pass");
         passTimer = setTimeout(() => {
           if (!cancelled) onPass();
         }, 1000);
       } catch (err) {
-        stopMediaStream(localStream);
-        localStream = null;
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Camera access was denied";
         const denied =
@@ -83,12 +70,22 @@ export function Stage8_CameraInit({
     }
     void init();
 
+    // A camera unplugged while this stage is on screen used to hang here
+    // forever: the preview simply stopped updating, with no event, no error
+    // and no way forward. Now it surfaces as a failure with the retry button
+    // the error path already renders.
+    const unsubscribe = cameraSession.subscribe((status) => {
+      if (cancelled || status !== "lost") return;
+      if (passTimer) clearTimeout(passTimer);
+      setPermissionIssue(false);
+      setError("The camera was disconnected. Reconnect it and try again.");
+      setPhase("fail");
+    });
+
     return () => {
       cancelled = true;
+      unsubscribe();
       if (passTimer) clearTimeout(passTimer);
-      if (!handedOff) {
-        stopMediaStream(localStream);
-      }
     };
   }, [onPass, onCameraReady, retryKey]);
 

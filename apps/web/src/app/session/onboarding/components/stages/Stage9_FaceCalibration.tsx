@@ -1,15 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { cameraSession } from "@/lib/camera-session";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { StageHeader } from "../ui";
 import { type TauriGlobals } from "../tauri-globals";
-import {
-  BLAZEFACE_MODEL_URL,
-  getUserMediaWithTimeout,
-  invoke,
-  stopMediaStream,
-  waitForVideoReady,
-  withTimeout,
-} from "../../support";
+import { BLAZEFACE_MODEL_URL, invoke, waitForVideoReady, withTimeout } from "../../support";
 
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
 declare const window: Window & TauriGlobals;
@@ -373,17 +367,14 @@ export function Stage9_FaceCalibration({
       if (videoRef.current) {
         activeStream = stream;
 
-        if (!activeStream && navigator.mediaDevices) {
-          activeStream = await getUserMediaWithTimeout(
-            {
-              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-            },
-            8000
-          ).catch(() => null);
-          if (cancelled) {
-            stopMediaStream(activeStream);
-            return;
-          }
+        // Falls back to the shared session rather than a fresh getUserMedia:
+        // if stage 8 already opened the camera this reuses that exact track,
+        // and if it did not, this is the same single open the whole flow
+        // shares. Opening a second handle to a webcam that already has one is
+        // how NotReadableError happens on Windows.
+        if (!activeStream) {
+          activeStream = await cameraSession.ensure().catch(() => null);
+          if (cancelled) return;
           localStreamRef.current = activeStream;
         }
 
@@ -391,13 +382,10 @@ export function Stage9_FaceCalibration({
           videoRef.current.srcObject = activeStream;
           await videoRef.current.play().catch(() => {});
           await waitForVideoReady(videoRef.current, 2500).catch(() => {});
-          if (cancelled) {
-            if (localStreamRef.current === activeStream) {
-              stopMediaStream(localStreamRef.current);
-              localStreamRef.current = null;
-            }
-            return;
-          }
+          // Not stopped on cancel: this is the shared session's track, and
+          // "cancelled" here usually means React re-ran the effect, not that
+          // the exam is over.
+          if (cancelled) return;
         } else {
           beginTimedFallback();
           return;
@@ -485,7 +473,8 @@ export function Stage9_FaceCalibration({
       cancelled = true;
       detectorRef.current?.dispose();
       detectorRef.current = null;
-      stopMediaStream(localStreamRef.current);
+      // The detector is this stage's to dispose. The camera is not — it
+      // belongs to `cameraSession` and the contest room is about to use it.
       localStreamRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
