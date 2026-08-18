@@ -34,6 +34,11 @@ jobs:
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.target }})
 
+    # Job level, not step level: a step's own `env:` block is not in scope for
+    # that step's `if:`, so gating the import on it would silently never run.
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -115,6 +120,41 @@ jobs:
           [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
           cp "$bin" apps/desktop/src-tauri/helpers/ams-access-networkhelper
 
+      # Authenticode signing, if and only if a certificate has been provided.
+      #
+      # Unsigned is the current, deliberate state: every candidate meets
+      # "Windows protected your PC" plus an administrator prompt, which is
+      # scripted for invigilators in WINDOWS-INSTALL.md rather than
+      # pretended away. This step exists so that turning signing on is
+      # *adding two secrets*, not editing a workflow under time pressure the
+      # week of a contest.
+      #
+      # WINDOWS_CERTIFICATE          base64 of a .pfx
+      # WINDOWS_CERTIFICATE_PASSWORD its password
+      #
+      # Note the constraint that decides which certificate to buy: since June
+      # 2023 an OV or EV key may not sit in a plain file, so a .pfx comes only
+      # from a cloud signing service that exports one. Azure Trusted Signing
+      # (which `bundle.windows.timestampUrl` already points at) does not work
+      # this way — it needs `azure/trusted-signing-action` in place of this
+      # step. Whichever is chosen, `certificateThumbprint` is what Tauri
+      # actually reads, and it is injected below rather than committed.
+      - name: Import signing certificate
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = "$env:RUNNER_TEMP\signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx -Force
+          # The thumbprint is the handle Tauri wants; it is derived here rather
+          # than stored, so rotating the certificate needs no workflow change.
+          "TAURI_WINDOWS_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          Write-Host "signing certificate imported"
+
       - name: Build Tauri app
         working-directory: apps/desktop
         env:
@@ -125,7 +165,19 @@ jobs:
         # client that can silently change itself between the readiness check
         # and the contest is a liability. The API version-gates old builds
         # instead, with a 426 naming the download.
-        run: pnpm tauri build --target ${{ matrix.target }}
+        # `--config` overlays the thumbprint only when one exists, so an
+        # unsigned build stays byte-for-byte the build it is today rather
+        # than taking a different code path that is never exercised.
+        shell: bash
+        run: |
+          if [ -n "${TAURI_WINDOWS_THUMBPRINT:-}" ]; then
+            echo "signing with certificate ${TAURI_WINDOWS_THUMBPRINT}"
+            overlay="{\"bundle\":{\"windows\":{\"certificateThumbprint\":\"${TAURI_WINDOWS_THUMBPRINT}\"}}}"
+            pnpm tauri build --target ${{ matrix.target }} --config "$overlay"
+          else
+            echo "::warning::no signing certificate — this build is UNSIGNED and will trip SmartScreen"
+            pnpm tauri build --target ${{ matrix.target }}
+          fi
 
       - name: Collect artifact paths
         shell: bash
@@ -204,6 +256,14 @@ jobs:
             administrator — both are expected, and both are exactly what
             malware looks like, so verify the SHA-256 below before running it.
             Signing is a follow-up.
+
+            Running a contest on Windows? **Read
+            [WINDOWS-INSTALL.md](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/main/WINDOWS-INSTALL.md)
+            first.** It has the checksum steps, the two clicks that get past
+            SmartScreen (`More info` then `Run anyway` — the second is
+            invisible until you click the first, which is where people get
+            stuck), and what to do on a managed machine that offers no
+            override at all.
 
             This build requires the v2 exam backend and will not work against
             an older one; the server refuses mismatched clients with a message
