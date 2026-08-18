@@ -188,6 +188,39 @@ pub fn is_elevated() -> bool {
     }
 }
 
+/// Whether this process is running from inside an MSIX package.
+///
+/// This is the single most consequential fact about a Store build, because
+/// **a packaged app can never be elevated**. MSIX has no equivalent of the
+/// `requireAdministrator` manifest the installer build embeds — packaged
+/// processes always run as the invoking user, and there is no capability that
+/// buys it back. So on a Store build `netsh advfirewall` fails and there is no
+/// network lockdown, by construction rather than by accident.
+///
+/// Two things depend on knowing this:
+///
+///   - startup must not try to auto-elevate. A `runas` relaunch of a packaged
+///     app does not produce an elevated packaged app; at best it fails, at
+///     worst it launches a second instance outside the package.
+///   - readiness must report it distinctly, so an invigilator reading the
+///     console can tell "Store build, no firewall by design" apart from "this
+///     candidate could not elevate on their own machine". Those look identical
+///     otherwise and call for completely different responses.
+///
+/// Detected by asking for the current package identity: unpackaged processes
+/// answer `APPMODEL_ERROR_NO_PACKAGE`, and anything else means we have one.
+pub fn is_packaged() -> bool {
+    use windows::Win32::Foundation::APPMODEL_ERROR_NO_PACKAGE;
+    use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+
+    let mut length: u32 = 0;
+    // A null buffer with a zero length is the documented "how long is it?"
+    // call. Packaged processes answer ERROR_INSUFFICIENT_BUFFER; only an
+    // unpackaged one answers APPMODEL_ERROR_NO_PACKAGE.
+    let result = unsafe { GetCurrentPackageFullName(&mut length, None) };
+    result != APPMODEL_ERROR_NO_PACKAGE
+}
+
 /// Command-line marker handed to the elevated instance so it knows it is the
 /// product of a relaunch. Startup auto-elevation checks for this and refuses to
 /// prompt again, so a declined or ineffective elevation can never loop into a

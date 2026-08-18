@@ -615,8 +615,16 @@ fn execute_kiosk_action(
 }
 
 fn collect_fast_device_state() -> DeviceState {
+    // Three states, not two. A Store build is unelevated *by construction* and
+    // no amount of clicking will change that, whereas `windows_no_admin` is a
+    // machine where elevation was possible and did not happen — one is a known
+    // property of the build, the other is a candidate an invigilator may be
+    // able to help. Collapsing them would make the console unable to tell a
+    // deliberately reduced client from a failed setup.
     #[cfg(target_os = "windows")]
-    let platform = Some(if platform_rs::windows::is_elevated() {
+    let platform = Some(if platform_rs::windows::is_packaged() {
+        "windows_msix".to_string()
+    } else if platform_rs::windows::is_elevated() {
         "windows".to_string()
     } else {
         "windows_no_admin".to_string()
@@ -2339,7 +2347,12 @@ pub fn run() {
     #[cfg(target_os = "windows")]
     {
         let relaunched = std::env::args().any(|a| a == platform_rs::windows::RELAUNCH_MARKER);
-        if !relaunched && !platform_rs::windows::is_elevated() {
+        // A packaged (MSIX/Store) build is never elevated and never can be, so
+        // prompting would be a UAC dialog that cannot succeed — and a `runas`
+        // relaunch of a packaged exe either fails or starts a second instance
+        // outside the package, which is worse than not trying.
+        let packaged = platform_rs::windows::is_packaged();
+        if !packaged && !relaunched && !platform_rs::windows::is_elevated() {
             match platform_rs::windows::relaunch_as_admin() {
                 Ok(()) => std::process::exit(0),
                 Err(e) => eprintln!(

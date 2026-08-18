@@ -193,8 +193,16 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   // Windows — mirrors core-rs; otherwise enforcement disarms on non-admin machines.
   const isWindows = typeof platform === "string" && platform.toLowerCase().startsWith("windows");
   const isMacos = typeof platform === "string" && platform.toLowerCase().startsWith("macos");
+  // Both unelevated Windows shapes, mirroring core-rs. `windows_no_admin` is a
+  // machine where elevation was possible and did not happen; `windows_msix` is
+  // a Store build, which can never be elevated because MSIX has no equivalent
+  // of the `requireAdministrator` manifest. Neither can raise a firewall, so
+  // both downgrade the Platform check — hard-blocking the Store build would
+  // block every one of its users. They stay distinct on the wire so the
+  // console can tell them apart; only the consequence is shared.
   const isWindowsNoAdmin =
-    typeof platform === "string" && platform.toLowerCase() === "windows_no_admin";
+    typeof platform === "string" &&
+    (platform.toLowerCase() === "windows_no_admin" || platform.toLowerCase() === "windows_msix");
   // What an unprobeable machine costs. Blocking only under a strict Windows
   // session, where these checks are hard requirements anyway: if a check
   // matters enough to block on failure, it matters enough to block on "we

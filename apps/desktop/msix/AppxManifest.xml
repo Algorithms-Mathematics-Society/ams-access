@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest for the Microsoft Store build.
+
+  Identity is substituted at package time from Partner Center values rather
+  than committed, because `Publisher` must match the certificate the Store
+  signs with *byte for byte* — a wrong string is a submission rejection, and a
+  guessed one is a package that installs nowhere. See build-msix.ps1.
+
+  The important asymmetry with the installer build: there is no
+  `requestedExecutionLevel` here and there cannot be one. MSIX processes always
+  run as the invoking user, so this client never raises a network firewall. It
+  reports itself as `windows_msix` for exactly that reason.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="@PACKAGE_NAME@"
+    Publisher="@PACKAGE_PUBLISHER@"
+    Version="@PACKAGE_VERSION@"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>AMS Access</DisplayName>
+    <PublisherDisplayName>@PUBLISHER_DISPLAY_NAME@</PublisherDisplayName>
+    <Description>Proctored contest client for AMS Access.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!--
+      17763 (1809) is the floor for reliable MSIX desktop packaging, and is
+      also roughly where WebView2 support stops being a fight. Anything older
+      is a machine that will not run the exam shell well anyway.
+    -->
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.17763.0"
+      MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Capabilities>
+    <!--
+      runFullTrust is what lets a packaged Win32 app do anything beyond the
+      sandbox: keyboard hooks, capture protection, enumerating processes. It is
+      a restricted capability, so Store submission asks what it is for — the
+      answer is proctoring, and it is the same capability every packaged
+      desktop app declares.
+
+      Note what is NOT here and cannot be: elevation. There is no capability
+      for it, which is the whole reason the firewall is absent on this build.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Camera and microphone for identity and presence checks. -->
+    <DeviceCapability Name="webcam" />
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+
+  <Applications>
+    <Application
+      Id="AMSAccess"
+      Executable="@EXECUTABLE@"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="AMS Access"
+        Description="Proctored contest client for AMS Access."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <!-- No Wide310x150Logo: Tauri's icon generator does not produce one,
+             and naming an asset that is not in the package fails makeappx
+             rather than degrading. The wide tile is optional. -->
+        <uap:DefaultTile
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+</Package>

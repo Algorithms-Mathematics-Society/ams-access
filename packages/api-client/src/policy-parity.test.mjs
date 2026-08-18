@@ -23,7 +23,11 @@ const FIXTURE = JSON.parse(
 );
 
 const PROFILES = ["practice", "internal_pilot", "strict_contest"];
-const PLATFORMS = [undefined, "windows", "windows_no_admin", "macos", "linux"];
+// `windows_msix` is the Store build: unelevated by construction, because MSIX
+// has no equivalent of the `requireAdministrator` manifest. It must stay in
+// this list so the two policy builders cannot disagree about a platform that
+// every Store user runs on.
+const PLATFORMS = [undefined, "windows", "windows_no_admin", "windows_msix", "macos", "linux"];
 
 /** Keyed by check kind, so the sides are compared on content not build order. */
 function snapshot(profile, platform) {

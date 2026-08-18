@@ -247,3 +247,134 @@ jobs:
             exit 1
           fi
           printf 'OK %s\n' "${found[@]}"
+
+  msix:
+    # The Store build, packaged for real.
+    #
+    # Tauri has no MSIX target, so this is `makeappx` over a staged directory —
+    # which means nothing about it is verified by the other jobs. It is a
+    # separate job rather than a matrix entry on bundle-smoke because it needs
+    # a *differently manifested* binary: AMS_MSIX=1 switches the embedded
+    # manifest from requireAdministrator to asInvoker, and reusing the ordinary
+    # build would produce a package that installs and then silently refuses to
+    # launch.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: windows-latest
+    name: MSIX package
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Configure sccache
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: windows-latest-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            windows-latest-cargo-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm turbo run build --filter=@ams/web
+
+      - name: Build & stage network helper
+        shell: bash
+        run: |
+          cargo build --release -p network-helper
+          cp target/release/ams-access-networkhelper.exe \
+             apps/desktop/src-tauri/helpers/ams-access-networkhelper
+
+      # `tauri build` rather than `cargo build`: it is what copies bundle
+      # resources (the blazeface model, the helpers) into place, and the
+      # packaging script stages from that output.
+      - name: Build app with the asInvoker manifest
+        working-directory: apps/desktop
+        env:
+          AMS_MSIX: "1"
+        run: pnpm tauri build --target x86_64-pc-windows-msvc
+
+      - name: The binary must not require elevation
+        shell: pwsh
+        # The failure this catches is quiet and expensive: an MSIX built around
+        # a requireAdministrator binary packages cleanly, installs cleanly,
+        # appears in the Start menu, and does nothing whatsoever when clicked.
+        run: |
+          $exe = "target/x86_64-pc-windows-msvc/release/ams-access.exe"
+          $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($exe))
+          if ($text -match "requireAdministrator") {
+            Write-Error "AMS_MSIX=1 did not take effect — binary still requires elevation"
+            exit 1
+          }
+          if ($text -notmatch "asInvoker") {
+            Write-Error "no asInvoker manifest found in the binary"
+            exit 1
+          }
+          Write-Host "OK: asInvoker"
+
+      - name: Package MSIX
+        shell: pwsh
+        run: ./apps/desktop/msix/build-msix.ps1
+
+      - name: A package actually came out, and contains what it claims
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem target/msix -Filter *.msix | Select-Object -First 1
+          if (-not $msix) { Write-Error "no .msix produced"; exit 1 }
+          Write-Host "built $($msix.Name) ($([math]::Round($msix.Length/1MB,1)) MB)"
+
+          # A package whose manifest survived substitution but whose payload is
+          # missing the executable or the model would install and fail at the
+          # face scan, in front of a candidate.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($msix.FullName)
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+          } finally {
+            $zip.Dispose()
+          }
+          foreach ($required in @("AppxManifest.xml", "ams-access.exe",
+                                  "Assets/Square150x150Logo.png")) {
+            if ($names -notcontains $required) {
+              Write-Error "package is missing $required"
+              exit 1
+            }
+          }
+          if (-not ($names | Where-Object { $_ -like "resources/*blazeface*" })) {
+            Write-Warning "no blazeface model in the package — the face scan will fail at runtime"
+          }
+          Write-Host "OK: $($names.Count) entries"
+
+      - name: Upload for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-package
+          path: target/msix/*.msix
+          retention-days: 14

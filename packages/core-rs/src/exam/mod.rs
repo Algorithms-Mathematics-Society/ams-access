@@ -225,8 +225,22 @@ impl SessionPolicy {
         // Platform check is downgraded to a warning so they are not trapped.
         // Cost: no network firewall on that machine; keyboard + process
         // proctoring still apply. Genuinely unsupported OSes stay hard-blocked.
-        let is_windows_no_admin =
-            matches!(platform, Some(p) if p.eq_ignore_ascii_case("windows_no_admin"));
+        // Both unelevated Windows shapes. `windows_no_admin` is a machine where
+        // elevation was possible and did not happen; `windows_msix` is a Store
+        // build, which can never be elevated because MSIX has no equivalent of
+        // the `requireAdministrator` manifest. Neither can raise a firewall, so
+        // both downgrade the Platform check to a warning — hard-blocking the
+        // Store build would block every single one of its users.
+        //
+        // They stay distinct strings on the wire so the invigilation console
+        // can tell a deliberately reduced client from a failed setup; only the
+        // policy consequence is shared.
+        let is_windows_no_admin = matches!(
+            platform,
+            Some(p)
+                if p.eq_ignore_ascii_case("windows_no_admin")
+                    || p.eq_ignore_ascii_case("windows_msix")
+        );
         let severity = if strict {
             BlockingSeverity::Block
         } else {
@@ -1954,6 +1968,7 @@ mod policy_parity {
                 None,
                 Some("windows"),
                 Some("windows_no_admin"),
+                Some("windows_msix"),
                 Some("macos"),
                 Some("linux"),
             ] {
@@ -1986,6 +2001,69 @@ mod policy_parity {
             }
         }
         serde_json::Value::Object(out)
+    }
+
+    #[test]
+    fn a_store_build_is_admitted_rather_than_blocked() {
+        // Every Store user runs `windows_msix`, and MSIX can never be
+        // elevated, so a Platform check that blocks on it would block the
+        // entire Store audience on every launch. Asserted directly rather
+        // than only through the fixture, so the intent survives a
+        // regeneration that happens to record whatever the code then did.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_msix"),
+        );
+        let platform = policy
+            .checks
+            .iter()
+            .find(|c| matches!(c.kind, CheckKind::Platform))
+            .expect("the platform check exists");
+
+        assert!(!platform.required, "a Store build must not be hard-blocked");
+        assert_eq!(platform.severity, BlockingSeverity::Warning);
+    }
+
+    #[test]
+    fn a_store_build_still_enforces_everything_it_can() {
+        // The firewall is the only thing lost to being unelevated. Keyboard
+        // lockdown still applies, and if that ever silently downgraded, a
+        // Store build would be proctoring far less than it appears to.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_msix"),
+        );
+        let keyboard = policy
+            .checks
+            .iter()
+            .find(|c| matches!(c.kind, CheckKind::KeyboardLockdown))
+            .expect("the keyboard check exists");
+
+        assert!(keyboard.required, "keyboard lockdown must stay enforced");
+        assert_eq!(keyboard.severity, BlockingSeverity::Block);
+    }
+
+    #[test]
+    fn the_two_unelevated_windows_shapes_carry_the_same_policy() {
+        // They are deliberately distinct strings so the invigilation console
+        // can tell a Store build from a candidate who could not elevate — but
+        // the policy consequence must be identical, because neither can raise
+        // a firewall.
+        let store = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_msix"),
+        );
+        let no_admin = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_no_admin"),
+        );
+
+        assert_eq!(store.checks.len(), no_admin.checks.len());
+        for (a, b) in store.checks.iter().zip(no_admin.checks.iter()) {
+            assert_eq!(a.kind, b.kind);
+            assert_eq!(a.required, b.required, "{:?}", a.kind);
+            assert_eq!(a.severity, b.severity, "{:?}", a.kind);
+        }
     }
 
     #[test]
