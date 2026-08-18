@@ -112,15 +112,17 @@ New-Item -ItemType Directory -Path (Join-Path $stage "Assets") -Force | Out-Null
 
 Copy-Item $exe.FullName (Join-Path $stage $exe.Name)
 
-# Resources Tauri would have placed beside the executable in an installer.
-# Without these the blazeface model and the platform helpers are missing and
-# the identity checks fail at runtime rather than at package time.
+# Anything Tauri staged beside the executable. Expect this to be nearly empty:
+# the blazeface model and the tfjs WASM backends live in apps/web/public, so
+# the static export carries them and `frontendDist` compiles them *into* the
+# executable. That is why the exe is ~16 MB and `resources/` holds an icon.
+#
+# The declared bundle resources that are not embedded are the macOS and Linux
+# privileged helpers, which Windows does not use — it reaches the firewall
+# through netsh, and this build has no firewall at all.
 $resourceSrc = Join-Path $releaseDir "resources"
 if (Test-Path $resourceSrc) {
   Copy-Item $resourceSrc (Join-Path $stage "resources") -Recurse
-  Write-Host "staged resources/"
-} else {
-  Write-Warning "no resources/ in $releaseDir — face scan and presence will fail at runtime"
 }
 
 # WebView2 loader, when the build produced one beside the exe.

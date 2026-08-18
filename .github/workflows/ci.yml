@@ -367,10 +367,28 @@ jobs:
               exit 1
             }
           }
-          if (-not ($names | Where-Object { $_ -like "resources/*blazeface*" })) {
-            Write-Warning "no blazeface model in the package — the face scan will fail at runtime"
+          # The blazeface model and the tfjs WASM backends are NOT staged as
+          # files. They live in apps/web/public, so the static export carries
+          # them and `frontendDist` compiles them into the executable — which
+          # is why `resources/` in the package holds an icon and nothing else,
+          # and why the exe is ~16 MB rather than ~2 MB.
+          #
+          # So the check is on the binary's size. An executable that lost its
+          # embedded frontend would still package, still install, and then
+          # fail at the face scan in front of a candidate.
+          $exeEntry = $zip2 = $null
+          $zip2 = [IO.Compression.ZipFile]::OpenRead($msix.FullName)
+          try {
+            $exeEntry = $zip2.Entries | Where-Object { $_.FullName -eq "ams-access.exe" }
+            $exeSize = $exeEntry.Length
+          } finally {
+            $zip2.Dispose()
           }
-          Write-Host "OK: $($names.Count) entries"
+          if ($exeSize -lt 8MB) {
+            Write-Error "ams-access.exe is only $([math]::Round($exeSize/1MB,1)) MB — too small to contain the embedded frontend (blazeface model, tfjs backends)"
+            exit 1
+          }
+          Write-Host "OK: $($names.Count) entries, exe $([math]::Round($exeSize/1MB,1)) MB"
 
       - name: Upload for inspection
         uses: actions/upload-artifact@v4

@@ -90,6 +90,28 @@ Never submit a self-signed package.
 
 ---
 
+## What is actually in the package
+
+Seven entries, and that is correct:
+
+```
+AppxManifest.xml
+ams-access.exe          ~16 MB
+Assets/                 four logos
+resources/icon.ico
+```
+
+The blazeface model and the tfjs WASM backends are **not** separate files.
+They live in `apps/web/public`, so the static export carries them and
+`frontendDist` compiles them into the executable — which is why the binary is
+~16 MB rather than ~2 MB, and why `resources/` holds an icon and nothing else.
+CI asserts the executable's size for exactly this reason: one that had lost
+its embedded frontend would still package, still install, and then fail at the
+face scan in front of a candidate.
+
+The bundle resources that are *not* embedded are the macOS and Linux
+privileged helpers, which Windows never uses.
+
 ## Still unverified
 
 Two things need a real Windows machine and have not been checked:
