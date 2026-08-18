@@ -623,8 +623,18 @@ fn execute_kiosk_action(
 /// launch rather than one at install. Builds that do not want the firewall
 /// must therefore not try to elevate and must not call netsh — otherwise they
 /// raise the prompt this exists to remove, and then get refused anyway.
+//
+// Compared as bytes rather than with `matches!(.., Some("1"))`: matching on
+// `str` in a constant is still unstable, and this has to be a `const` so the
+// dead branch is removed at compile time rather than evaluated per call.
 #[cfg(target_os = "windows")]
-const WANTS_FIREWALL: bool = matches!(option_env!("AMS_FIREWALL_BUILD"), Some("1"));
+const WANTS_FIREWALL: bool = match option_env!("AMS_FIREWALL_BUILD") {
+    Some(value) => {
+        let bytes = value.as_bytes();
+        bytes.len() == 1 && bytes[0] == b'1'
+    }
+    None => false,
+};
 
 fn collect_fast_device_state() -> DeviceState {
     // Three states, not two. A Store build is unelevated *by construction* and
