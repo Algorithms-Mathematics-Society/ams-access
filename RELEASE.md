@@ -30,18 +30,35 @@ push a `v<version>` tag.
 There is no code-signing certificate, so:
 
 - SmartScreen shows **"Windows protected your PC"** and hides the Run button
-  behind _More info_.
-- The installer requests administrator. `build.rs` sets
-  `requireAdministrator` in the manifest, and the app genuinely needs it — the
-  network lockdown installs a firewall rule.
+  behind _More info_. This is the only prompt left.
+- The app **no longer requests administrator.** `build.rs` manifests it
+  `asInvoker`; only `netsh advfirewall` ever needed elevation, and contests do
+  not rely on the OS-level network lockdown. `AMS_FIREWALL=1` at build time
+  restores both the firewall and a UAC prompt on every launch.
 
-An unsigned executable demanding elevation is, from a candidate's point of
-view, indistinguishable from malware. That is why the release body publishes
-SHA-256 sums for every artifact and tells people to check them. Candidates
-should be sent the hash through a channel other than the download link.
+An unsigned executable is, from a candidate's point of view, hard to tell from
+malware. That is why the release body publishes SHA-256 sums for every
+artifact and tells people to check them. Candidates should be sent the hash
+through a channel other than the download link.
 
-Fixing this needs either an OV/EV certificate or Azure Trusted Signing. Both
-are a `signtool` step plus repo secrets in `release.yml`; neither is set up.
+No certificate is being bought — that is settled. The Microsoft Store build
+avoids the warning entirely, because Microsoft signs it; see
+`apps/desktop/msix/README.md`. The signing scaffolding in `release.yml` stays
+inert unless secrets appear.
+
+### The API host is not configurable, deliberately
+
+`resolveApiBase()` returns `https://api.amsaccess.com` from its own constant,
+that constant is the only origin the release CSP allows, and
+`csp-allows-api-base.test.mjs` checks the two agree.
+
+**Do not set `NEXT_PUBLIC_API_URL` in `release.yml`.** Next bakes
+`NEXT_PUBLIC_*` at build time and `resolveApiBase()` prefers the environment,
+so a repository secret silently overrides all three. That is what shipped in
+v2.0.0: a secret predating the move off Cloud Run, a dead host in every
+installer, and "Cannot reach the exam server" on a healthy API. Tests missed
+it because they run without the secret, and `tauri dev` missed it because
+`devCsp` is permissive.
 
 ### macOS is not built
 
