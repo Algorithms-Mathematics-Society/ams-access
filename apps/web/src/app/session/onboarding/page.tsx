@@ -62,6 +62,7 @@ declare const window: Window & {
     window: {
       getCurrentWindow: () => {
         setFullscreen: (v: boolean) => Promise<void>;
+        isFullscreen: () => Promise<boolean>;
         setAlwaysOnTop: (v: boolean) => Promise<void>;
         setDecorations: (v: boolean) => Promise<void>;
         availableMonitors: () => Promise<MonitorInfo[]>;
@@ -1199,7 +1200,9 @@ export default function OnboardingPage() {
                     </div>
                   </div>
                 )}
-                {currentStage === 1 && <Stage2_Fullscreen onPass={advancePass} />}
+                {currentStage === 1 && (
+                  <Stage2_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
+                )}
                 {currentStage === 2 && (
                   <Stage3_MonitorDetection
                     onPass={advancePass}

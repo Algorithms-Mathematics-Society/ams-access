@@ -152,6 +152,7 @@ declare global {
       window: {
         getCurrentWindow: () => {
           setFullscreen: (v: boolean) => Promise<void>;
+          isFullscreen: () => Promise<boolean>;
           setAlwaysOnTop: (v: boolean) => Promise<void>;
           setDecorations: (v: boolean) => Promise<void>;
           setResizable: (v: boolean) => Promise<void>;
