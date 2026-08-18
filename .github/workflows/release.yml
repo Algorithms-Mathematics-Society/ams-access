@@ -18,7 +18,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-          # macOS is deliberately absent. Notarization fails with a 403
+          # macOS is dormant, not dropped. Notarization fails with a 403
           # ("A required agreement is missing or has expired") and an
           # unnotarized .dmg is worse than no .dmg — Gatekeeper refuses it and
           # the candidate cannot open the app at all. The macOS targets and

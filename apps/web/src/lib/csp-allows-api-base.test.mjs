@@ -89,18 +89,21 @@ test("connect-src does not allow arbitrary hosts", () => {
   }
 });
 
-test("an overriding NEXT_PUBLIC_API_URL would still have to be CSP-allowed", () => {
-  // The guard for the day someone reintroduces the override. A build-time
-  // origin that connect-src does not list is not a misconfiguration you find
-  // in testing — devCsp is permissive, so it only appears in a shipped
-  // installer, as a network error with no explanation.
-  const override = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (!override) return; // the supported case: no override at all
-
-  const sources = connectSrc(config.app.security.csp);
-  assert.ok(
-    sources.includes(new URL(override).origin),
-    `NEXT_PUBLIC_API_URL=${override} is not in release CSP connect-src ` +
-      `${JSON.stringify(sources)} — every request from the shipped app would be blocked`
-  );
+test("the API host cannot be overridden by the environment at all", () => {
+  // Stronger than the guard this replaces. `resolveApiBase()` no longer reads
+  // NEXT_PUBLIC_API_URL, because Next bakes NEXT_PUBLIC_* at build time and a
+  // repository secret therefore overrode the constant in every shipped
+  // installer — with an address left over from a backend migration, which the
+  // CSP then blocked as well. It also masked a second bug by short-circuiting
+  // before the localhost branch (see api-base.test.mjs).
+  //
+  // Setting it must now change nothing.
+  const previous = process.env.NEXT_PUBLIC_API_URL;
+  process.env.NEXT_PUBLIC_API_URL = "https://somewhere-else.example";
+  try {
+    assert.equal(new URL(resolveApiBase()).origin, apiOrigin);
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+    else process.env.NEXT_PUBLIC_API_URL = previous;
+  }
 });

@@ -23,7 +23,7 @@ push a `v<version>` tag.
 | -------- | --------------------------- | -------------------- |
 | Windows  | `.msi`, `-setup.exe`        | **No** — see below   |
 | Linux    | `.deb`, `.rpm`, `.AppImage` | n/a                  |
-| macOS    | —                           | not built; see below |
+| macOS    | — (dormant)                 | see below            |
 
 ### Windows is unsigned
 

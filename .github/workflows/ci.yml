@@ -137,7 +137,7 @@ jobs:
     # once ran `tauri build`. This runs the real bundler and asserts an
     # installer came out, uploading nothing.
     #
-    # macOS is here even though it is dropped from the release matrix — it is
+    # macOS is here even though it is dormant in the release matrix — it is
     # the only thing that compiles platform-rs/src/macos/mod.rs, and dropping
     # it from both would let that code rot until the Apple agreement lands.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

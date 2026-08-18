@@ -1,6 +1,6 @@
 {
   "name": "@ams/web",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,7 @@
     "prebuild": "node scripts/setup-tfjs-wasm.mjs && node scripts/setup-blazeface-model.mjs && node scripts/setup-mediapipe.mjs --if-used",
     "build": "next build && node scripts/check-size-budgets.mjs",
     "lint": "next typegen && tsc --noEmit",
-    "test": "node --test --experimental-strip-types src/app/session/contest/submission-state.test.mjs src/app/session/contest/countdown.test.mjs src/lib/verdict.test.mjs src/lib/candidate-auth.test.mjs src/lib/theme-core.test.mjs src/lib/theme-dark-lock-core.test.mjs src/lib/theme-dark-lock-coverage.test.mjs src/lib/home-tokenize-aa.test.mjs src/lib/home-color-completeness.test.mjs src/app/session/contest/autosave-timing.test.mjs src/app/session/contest/save-indicator.test.mjs src/app/session/contest/save-edit-state.test.mjs src/app/session/contest/save-coordinator.test.mjs src/lib/abort-timeout.test.mjs src/app/session/contest/submit-button.test.mjs src/app/session/contest/candidate-question-projection.test.mjs src/lib/violation-queue-core.test.mjs src/lib/csp-allows-api-base.test.mjs src/app/login/components/slip-format.test.mjs src/app/session/contest/session-clock.test.mjs src/app/session/contest/attempt-adapter.test.mjs src/lib/heartbeat-policy.test.mjs src/app/session/contest/answer-buffer.test.mjs src/app/session/onboarding/entry-gate.test.mjs src/app/session/contest/family-summary.test.mjs src/app/session/onboarding/presence-check.test.mjs src/lib/camera-session.test.mjs src/app/home/components/practice-entry.test.mjs src/app/session/contest/statement-assets.test.mjs",
+    "test": "node --test --experimental-strip-types src/app/session/contest/submission-state.test.mjs src/app/session/contest/countdown.test.mjs src/lib/verdict.test.mjs src/lib/candidate-auth.test.mjs src/lib/theme-core.test.mjs src/lib/theme-dark-lock-core.test.mjs src/lib/theme-dark-lock-coverage.test.mjs src/lib/home-tokenize-aa.test.mjs src/lib/home-color-completeness.test.mjs src/app/session/contest/autosave-timing.test.mjs src/app/session/contest/save-indicator.test.mjs src/app/session/contest/save-edit-state.test.mjs src/app/session/contest/save-coordinator.test.mjs src/lib/abort-timeout.test.mjs src/app/session/contest/submit-button.test.mjs src/app/session/contest/candidate-question-projection.test.mjs src/lib/violation-queue-core.test.mjs src/lib/csp-allows-api-base.test.mjs src/lib/api-base.test.mjs src/app/login/components/slip-format.test.mjs src/app/session/contest/session-clock.test.mjs src/app/session/contest/attempt-adapter.test.mjs src/lib/heartbeat-policy.test.mjs src/app/session/contest/answer-buffer.test.mjs src/app/session/onboarding/entry-gate.test.mjs src/app/session/contest/family-summary.test.mjs src/app/session/onboarding/presence-check.test.mjs src/lib/camera-session.test.mjs src/app/home/components/practice-entry.test.mjs src/app/session/contest/statement-assets.test.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "clean": "rm -rf .next out",
     "mediapipe:setup": "node scripts/setup-mediapipe.mjs",
