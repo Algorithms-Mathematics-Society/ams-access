@@ -104,9 +104,19 @@ jobs:
           restore-keys: |
             ${{ matrix.platform }}-turbo-
 
+      # No NEXT_PUBLIC_API_URL. `resolveApiBase()` already returns the
+      # production host as its own constant, and that constant is the one the
+      # CSP allows and the one `csp-allows-api-base.test.mjs` verifies.
+      #
+      # A repository secret here can only override that with something else —
+      # and it did. The secret predated the move off Cloud Run, so release
+      # builds baked a dead host while every test passed, because tests run
+      # without the secret and `tauri dev` uses the permissive devCsp. The
+      # symptom was "Cannot reach the exam server" on a fresh install, with a
+      # working API and correct credentials.
+      #
+      # One source of truth, in code, next to the comment that explains it.
       - name: Build frontend
-        env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: pnpm turbo run build --filter=@ams/web
 
       - name: Check frontend size budgets
@@ -157,8 +167,6 @@ jobs:
 
       - name: Build Tauri app
         working-directory: apps/desktop
-        env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         # No TAURI_SIGNING_PRIVATE_KEY: there is no `plugins.updater` block in
         # tauri.conf.json, so no signature was ever produced and the key was
         # decoration. There is deliberately no updater either — a proctored

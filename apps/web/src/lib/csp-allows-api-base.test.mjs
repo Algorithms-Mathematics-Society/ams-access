@@ -29,8 +29,18 @@ function connectSrc(csp) {
   return directive.split(/\s+/).slice(1);
 }
 
-// Node has no `window`, and NEXT_PUBLIC_API_URL is unset here, so this is the
-// production branch — the one the shipped bundle takes.
+// Node has no `window`, so with NEXT_PUBLIC_API_URL unset this is the
+// production branch.
+//
+// It was NOT, however, "the one the shipped bundle takes" — which is what
+// this comment used to claim, and what made the test blind to the very bug it
+// was written for. The release workflow set NEXT_PUBLIC_API_URL from a
+// repository secret, so release builds baked whatever that secret held while
+// this test happily checked the constant nobody was using. The secret
+// predated the move off Cloud Run, and v2.0.0 shipped calling a dead host:
+// "Cannot reach the exam server", on a working API, with valid credentials.
+//
+// The workflow no longer sets it. The test below makes that permanent.
 const apiOrigin = new URL(resolveApiBase()).origin;
 
 test("the release CSP allows the production API origin", () => {
@@ -77,4 +87,20 @@ test("connect-src does not allow arbitrary hosts", () => {
       `dev CSP allows unexpected connect-src ${source}`
     );
   }
+});
+
+test("an overriding NEXT_PUBLIC_API_URL would still have to be CSP-allowed", () => {
+  // The guard for the day someone reintroduces the override. A build-time
+  // origin that connect-src does not list is not a misconfiguration you find
+  // in testing — devCsp is permissive, so it only appears in a shipped
+  // installer, as a network error with no explanation.
+  const override = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!override) return; // the supported case: no override at all
+
+  const sources = connectSrc(config.app.security.csp);
+  assert.ok(
+    sources.includes(new URL(override).origin),
+    `NEXT_PUBLIC_API_URL=${override} is not in release CSP connect-src ` +
+      `${JSON.stringify(sources)} — every request from the shipped app would be blocked`
+  );
 });
