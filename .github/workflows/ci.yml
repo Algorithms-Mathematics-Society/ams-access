@@ -253,11 +253,8 @@ jobs:
     #
     # Tauri has no MSIX target, so this is `makeappx` over a staged directory —
     # which means nothing about it is verified by the other jobs. It is a
-    # separate job rather than a matrix entry on bundle-smoke because it needs
-    # a *differently manifested* binary: AMS_MSIX=1 switches the embedded
-    # manifest from requireAdministrator to asInvoker, and reusing the ordinary
-    # build would produce a package that installs and then silently refuses to
-    # launch.
+    # separate job rather than a matrix entry on bundle-smoke because it
+    # packages with makeappx instead of Tauri's bundler.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     name: MSIX package
@@ -315,10 +312,10 @@ jobs:
       # `tauri build` rather than `cargo build`: it is what copies bundle
       # resources (the blazeface model, the helpers) into place, and the
       # packaging script stages from that output.
-      - name: Build app with the asInvoker manifest
+      # No AMS_FIREWALL: asInvoker is the default, and a firewall build could
+      # not be packaged at all.
+      - name: Build app
         working-directory: apps/desktop
-        env:
-          AMS_MSIX: "1"
         run: pnpm tauri build --target x86_64-pc-windows-msvc
 
       - name: The binary must not require elevation
@@ -330,7 +327,7 @@ jobs:
           $exe = "target/x86_64-pc-windows-msvc/release/ams-access.exe"
           $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($exe))
           if ($text -match "requireAdministrator") {
-            Write-Error "AMS_MSIX=1 did not take effect — binary still requires elevation"
+            Write-Error "binary requires elevation — asInvoker should be the default"
             exit 1
           }
           if ($text -notmatch "asInvoker") {

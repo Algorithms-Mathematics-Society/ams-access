@@ -614,6 +614,18 @@ fn execute_kiosk_action(
     }
 }
 
+/// Whether this build asks for elevation, decided at compile time by
+/// `AMS_FIREWALL=1` in build.rs.
+///
+/// False by default. The only thing on Windows that needs elevation is
+/// `netsh advfirewall`; everything else in the proctoring surface runs as a
+/// normal user, and `requireAdministrator` costs a UAC prompt on *every*
+/// launch rather than one at install. Builds that do not want the firewall
+/// must therefore not try to elevate and must not call netsh — otherwise they
+/// raise the prompt this exists to remove, and then get refused anyway.
+#[cfg(target_os = "windows")]
+const WANTS_FIREWALL: bool = matches!(option_env!("AMS_FIREWALL_BUILD"), Some("1"));
+
 fn collect_fast_device_state() -> DeviceState {
     // Three states, not two. A Store build is unelevated *by construction* and
     // no amount of clicking will change that, whereas `windows_no_admin` is a
@@ -621,13 +633,28 @@ fn collect_fast_device_state() -> DeviceState {
     // property of the build, the other is a candidate an invigilator may be
     // able to help. Collapsing them would make the console unable to tell a
     // deliberately reduced client from a failed setup.
+    // What an invigilator needs to tell apart, in the order it matters:
+    //
+    //   windows_msix     a Store build. Can never elevate, so never a firewall.
+    //   windows          elevated: a firewall build, running as intended.
+    //   windows_no_admin a firewall build that did NOT get elevation. This is
+    //                    the only one that is a *problem* — the candidate was
+    //                    meant to have a firewall and does not.
+    //
+    // A default (no-firewall) build reports `windows_no_firewall` rather than
+    // `windows_no_admin`. They are both unelevated, but conflating them would
+    // put every ordinary contestant on the invigilator's screen wearing the
+    // label that used to mean "this one needs help", and the label would stop
+    // meaning anything within one contest.
     #[cfg(target_os = "windows")]
     let platform = Some(if platform_rs::windows::is_packaged() {
         "windows_msix".to_string()
     } else if platform_rs::windows::is_elevated() {
         "windows".to_string()
-    } else {
+    } else if WANTS_FIREWALL {
         "windows_no_admin".to_string()
+    } else {
+        "windows_no_firewall".to_string()
     });
     #[cfg(not(target_os = "windows"))]
     let platform = Some(std::env::consts::OS.to_string());
@@ -1677,6 +1704,16 @@ fn get_proctoring_log(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
 /// is explicitly called — intentional, so an app crash does not restore internet access.
 #[tauri::command]
 async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, String> {
+    // A build that never asked for elevation cannot raise a firewall, so say
+    // so instead of resolving every allowlist host and then handing netsh a
+    // command it will refuse. `false` is the existing "not applied" answer —
+    // the caller already treats it as advisory, because this has always been
+    // best-effort on machines where it could not engage.
+    #[cfg(target_os = "windows")]
+    if !WANTS_FIREWALL {
+        return Ok(false);
+    }
+
     let mut ips: Vec<String> = Vec::new();
 
     for domain in &allowed_domains {
@@ -1801,6 +1838,13 @@ mod resolv_tests {
 /// Remove all AMS firewall rules and restore normal internet access.
 #[tauri::command]
 async fn disable_network_lockdown() -> Result<bool, String> {
+    // Nothing was ever applied, so there is nothing to tear down — and calling
+    // netsh here would fail noisily on the exit path of every ordinary exam.
+    #[cfg(target_os = "windows")]
+    if !WANTS_FIREWALL {
+        return Ok(false);
+    }
+
     platform_dispatch!(
         disable_network_lockdown(),
         else Err("Network lockdown not supported on this platform".to_string())
@@ -2352,7 +2396,11 @@ pub fn run() {
         // relaunch of a packaged exe either fails or starts a second instance
         // outside the package, which is worse than not trying.
         let packaged = platform_rs::windows::is_packaged();
-        if !packaged && !relaunched && !platform_rs::windows::is_elevated() {
+        // And a build with no firewall has nothing to elevate *for*. Without
+        // this the default build would prompt on every launch while the
+        // manifest says asInvoker — the worst of both, since the prompt would
+        // buy nothing.
+        if WANTS_FIREWALL && !packaged && !relaunched && !platform_rs::windows::is_elevated() {
             match platform_rs::windows::relaunch_as_admin() {
                 Ok(()) => std::process::exit(0),
                 Err(e) => eprintln!(

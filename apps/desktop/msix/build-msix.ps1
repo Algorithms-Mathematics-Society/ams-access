@@ -8,12 +8,12 @@
 
   Two things to understand before using this:
 
-  1. **The app must have been built with AMS_MSIX=1.** That switches the
-     embedded manifest from `requireAdministrator` to `asInvoker`. An MSIX
-     containing a `requireAdministrator` executable will not launch at all —
+  1. **The app must not have been built with AMS_FIREWALL=1.** `asInvoker` is
+     the default, so an ordinary build is already correct. A firewall build is
+     manifested `requireAdministrator`, which an MSIX cannot launch at all —
      packaged processes always run as the invoking user, and MSIX has no
-     equivalent of that manifest. This script refuses to run if it can see the
-     wrong one.
+     equivalent of that manifest. This script refuses one rather than shipping
+     a package that installs and then does nothing.
 
   2. **The resulting package is deliberately unsigned.** The Store re-signs on
      submission, which is the entire reason for going this route — no
@@ -81,7 +81,7 @@ Write-Host "version: $semver -> $version"
 $exe = Get-ChildItem -Path $releaseDir -Filter "ams-access.exe" -ErrorAction SilentlyContinue |
        Select-Object -First 1
 if (-not $exe) {
-  throw "no ams-access.exe in $releaseDir — build first with: AMS_MSIX=1 pnpm tauri build --target $Target"
+  throw "no ams-access.exe in $releaseDir — build first with: pnpm tauri build --target $Target"
 }
 
 # ── refuse a build that cannot launch ──────────────────────────────────────
@@ -95,13 +95,15 @@ $exeText  = [Text.Encoding]::UTF8.GetString($exeBytes)
 if ($exeText -match "requireAdministrator") {
   throw @"
 This executable is manifested requireAdministrator, which an MSIX package
-cannot launch. Rebuild with AMS_MSIX=1 set, which switches it to asInvoker:
+cannot launch. It was built with AMS_FIREWALL=1; rebuild without it —
+asInvoker is the default:
 
-  `$env:AMS_MSIX = '1'; pnpm tauri build --target $Target
+  Remove-Item Env:\AMS_FIREWALL -ErrorAction SilentlyContinue
+  pnpm tauri build --target $Target
 
-Be aware of what that costs: the resulting client cannot raise a network
-firewall. Keyboard, capture protection, process scanning and presence are
-unaffected.
+The default build has no network firewall, which is the trade the Store
+route requires. Keyboard, capture protection, process scanning and presence
+are unaffected.
 "@
 }
 

@@ -27,7 +27,15 @@ const PROFILES = ["practice", "internal_pilot", "strict_contest"];
 // has no equivalent of the `requireAdministrator` manifest. It must stay in
 // this list so the two policy builders cannot disagree about a platform that
 // every Store user runs on.
-const PLATFORMS = [undefined, "windows", "windows_no_admin", "windows_msix", "macos", "linux"];
+const PLATFORMS = [
+  undefined,
+  "windows",
+  "windows_no_admin",
+  "windows_msix",
+  "windows_no_firewall",
+  "macos",
+  "linux",
+];
 
 /** Keyed by check kind, so the sides are compared on content not build order. */
 function snapshot(profile, platform) {

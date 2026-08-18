@@ -26,21 +26,28 @@ invigilation console can distinguish *"Store build, no firewall by design"*
 from *"this candidate could not elevate on their own machine"* — those look
 identical otherwise and need completely different responses.
 
-**Neither Windows client is code-signed by us, and that is a settled
-decision** — no certificate is being bought. So the choice between them is not
-signed-versus-unsigned; it is *firewall* versus *friction*:
+**Neither Windows client is code-signed by us, and that is settled** — no
+certificate is being bought. Since `asInvoker` became the default, the two
+builds also behave identically: neither asks for administrator, and neither
+raises a network firewall unless built with `AMS_FIREWALL=1`.
 
-| | NSIS/MSI installer | Store build (this) |
+So the only difference left is the install experience:
+
+| | Direct download | Store (this) |
 |---|---|---|
-| SmartScreen warning | yes, every machine | none — Microsoft signs it |
-| Administrator prompt | yes | none |
-| Network locked down | **yes** | no |
-| Keyboard, camera, capture guard, process scan | yes | yes |
+| SmartScreen warning | once, at install | none — Microsoft signs it |
+| Administrator prompt | none | none |
+| Lockdown, camera, capture guard, process scan | yes | yes |
+| Network firewall | no | no, and cannot |
 
-Use the installer when a candidate opening a browser would matter, and wear
-the two clicks (they are scripted in `WINDOWS-INSTALL.md`). Use this build for
-practice, rehearsal, and pre-installing on hall machines, where painless
-deployment is worth more than a firewall you were not relying on.
+The Store build is the nicer front door. Keep the direct download as the
+fallback, and as the escape hatch for a fix you need live today when
+certification would take three.
+
+`AMS_FIREWALL=1` is the exception: it restores the OS-level firewall for a
+contest that wants it, at the cost of a UAC prompt on every launch — and such
+a build **cannot be packaged as MSIX at all**, because packaged processes can
+never be elevated.
 
 ---
 
@@ -69,9 +76,9 @@ deployment is worth more than a firewall you were not relying on.
 Two steps, and the first one matters:
 
 ```powershell
-# 1. Build with the asInvoker manifest. Without AMS_MSIX=1 you get a binary
-#    manifested requireAdministrator, which an MSIX cannot launch at all.
-$env:AMS_MSIX = "1"
+# 1. Build. asInvoker is the default, so nothing special is needed — just make
+#    sure AMS_FIREWALL is NOT set, since that produces a requireAdministrator
+#    binary an MSIX cannot launch.
 pnpm tauri build --target x86_64-pc-windows-msvc
 
 # 2. Package it.

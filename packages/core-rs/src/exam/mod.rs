@@ -225,21 +225,28 @@ impl SessionPolicy {
         // Platform check is downgraded to a warning so they are not trapped.
         // Cost: no network firewall on that machine; keyboard + process
         // proctoring still apply. Genuinely unsupported OSes stay hard-blocked.
-        // Both unelevated Windows shapes. `windows_no_admin` is a machine where
-        // elevation was possible and did not happen; `windows_msix` is a Store
-        // build, which can never be elevated because MSIX has no equivalent of
-        // the `requireAdministrator` manifest. Neither can raise a firewall, so
-        // both downgrade the Platform check to a warning — hard-blocking the
-        // Store build would block every single one of its users.
+        // Every unelevated Windows shape. None of them can raise a firewall,
+        // so all three downgrade the Platform check to a warning rather than
+        // blocking — and two of the three are now the *normal* case:
         //
-        // They stay distinct strings on the wire so the invigilation console
-        // can tell a deliberately reduced client from a failed setup; only the
-        // policy consequence is shared.
+        //   windows_no_firewall  the default build. No elevation is asked for,
+        //                        because only netsh needs it.
+        //   windows_msix         a Store build, which can never elevate.
+        //   windows_no_admin     a firewall build that failed to elevate. The
+        //                        only one that represents something going
+        //                        wrong, and still a warning rather than a
+        //                        block, because a candidate locked out of an
+        //                        exam is worse than one without a firewall.
+        //
+        // They stay distinct on the wire so an invigilator can tell them
+        // apart; only the policy consequence is shared. Blocking any of them
+        // would block the entire ordinary audience.
         let is_windows_no_admin = matches!(
             platform,
             Some(p)
                 if p.eq_ignore_ascii_case("windows_no_admin")
                     || p.eq_ignore_ascii_case("windows_msix")
+                    || p.eq_ignore_ascii_case("windows_no_firewall")
         );
         let severity = if strict {
             BlockingSeverity::Block
@@ -1969,6 +1976,7 @@ mod policy_parity {
                 Some("windows"),
                 Some("windows_no_admin"),
                 Some("windows_msix"),
+                Some("windows_no_firewall"),
                 Some("macos"),
                 Some("linux"),
             ] {
@@ -2001,6 +2009,53 @@ mod policy_parity {
             }
         }
         serde_json::Value::Object(out)
+    }
+
+    #[test]
+    fn the_default_build_is_admitted_rather_than_blocked() {
+        // `windows_no_firewall` is now what an ordinary contestant reports:
+        // asInvoker is the default, because only netsh needs elevation and
+        // `requireAdministrator` costs a UAC prompt on every launch. If this
+        // ever blocked, it would block essentially the entire audience.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_no_firewall"),
+        );
+        let platform = policy
+            .checks
+            .iter()
+            .find(|c| matches!(c.kind, CheckKind::Platform))
+            .expect("the platform check exists");
+
+        assert!(!platform.required);
+        assert_eq!(platform.severity, BlockingSeverity::Warning);
+    }
+
+    #[test]
+    fn every_unelevated_windows_shape_carries_one_policy() {
+        // Three strings, deliberately distinct so an invigilator can tell a
+        // default build from a Store build from a firewall build that failed
+        // to elevate. None of them can raise a firewall, so the policy must
+        // not differ — a divergence here would mean the same machine was
+        // judged differently depending on how it was packaged.
+        let shapes = ["windows_no_admin", "windows_msix", "windows_no_firewall"];
+        let reference = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some(shapes[0]),
+        );
+
+        for shape in &shapes[1..] {
+            let other = SessionPolicy::for_profile_with_platform(
+                EnforcementProfile::StrictContest,
+                Some(shape),
+            );
+            assert_eq!(reference.checks.len(), other.checks.len(), "{shape}");
+            for (a, b) in reference.checks.iter().zip(other.checks.iter()) {
+                assert_eq!(a.kind, b.kind, "{shape}");
+                assert_eq!(a.required, b.required, "{shape} {:?}", a.kind);
+                assert_eq!(a.severity, b.severity, "{shape} {:?}", a.kind);
+            }
+        }
     }
 
     #[test]
@@ -2041,29 +2096,6 @@ mod policy_parity {
 
         assert!(keyboard.required, "keyboard lockdown must stay enforced");
         assert_eq!(keyboard.severity, BlockingSeverity::Block);
-    }
-
-    #[test]
-    fn the_two_unelevated_windows_shapes_carry_the_same_policy() {
-        // They are deliberately distinct strings so the invigilation console
-        // can tell a Store build from a candidate who could not elevate — but
-        // the policy consequence must be identical, because neither can raise
-        // a firewall.
-        let store = SessionPolicy::for_profile_with_platform(
-            EnforcementProfile::StrictContest,
-            Some("windows_msix"),
-        );
-        let no_admin = SessionPolicy::for_profile_with_platform(
-            EnforcementProfile::StrictContest,
-            Some("windows_no_admin"),
-        );
-
-        assert_eq!(store.checks.len(), no_admin.checks.len());
-        for (a, b) in store.checks.iter().zip(no_admin.checks.iter()) {
-            assert_eq!(a.kind, b.kind);
-            assert_eq!(a.required, b.required, "{:?}", a.kind);
-            assert_eq!(a.severity, b.severity, "{:?}", a.kind);
-        }
     }
 
     #[test]

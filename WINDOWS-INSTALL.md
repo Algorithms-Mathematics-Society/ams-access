@@ -126,26 +126,32 @@ laptop while a hall waits — that is what the spares are for.
 ## Is this ever going away?
 
 Not by buying a certificate — we have decided not to. So this page is not a
-stopgap; it is how the installer works.
+stopgap; it is how the download works.
 
-There is a way around it, and it is a different package rather than a
-different signature. The **Microsoft Store build** is signed by Microsoft on
-submission, so it installs with no warning and no administrator prompt at all.
-What it gives up is the network firewall: a Store app can never run elevated,
-so it cannot block internet access during a contest.
+Two things are worth knowing about what that actually costs you.
 
-That is the choice, and it is per contest rather than once and for all:
+**The app no longer asks for administrator.** It used to, and it prompted on
+every single launch. That existed for one feature — blocking internet access
+at the OS firewall — and contests do not rely on it, so it is off by default.
+Everything else is unchanged: the app still takes over the screen, intercepts
+Alt+Tab and the Windows key, disables Task Manager, blocks screen capture,
+watches for restricted applications, and monitors presence through the camera.
 
-| | This installer | Store build |
+**A signature would not have removed that prompt anyway.** A signed app that
+asks for administrator prompts exactly the same. Signing only removes the
+SmartScreen warning below and puts our name on the prompt. So going without a
+certificate costs you one warning at install, and nothing else.
+
+### The Store version has no warning at all
+
+Microsoft signs apps distributed through the Microsoft Store, so that version
+installs with no warning, no administrator prompt, and no clicking through
+anything. If it is listed for your contest, prefer it — this page is for
+people installing the direct download.
+
+| | Direct download | Microsoft Store |
 |---|---|---|
-| SmartScreen warning | yes, every machine | none |
-| Administrator prompt | yes | none |
-| Network locked down | **yes** | no |
-| Keyboard, camera, capture guard, process scan | yes | yes |
-
-For a graded contest where candidates could otherwise open a browser, the
-firewall is usually worth the two clicks. For practice, rehearsal, and getting
-a hall's machines ready in advance, the Store build is far less friction.
-
-The release pipeline can still sign if a certificate ever appears — it is two
-repository secrets and no workflow edit — but nothing is waiting on that.
+| SmartScreen warning | yes, once at install | none |
+| Administrator prompt | none | none |
+| Lockdown, camera, capture guard | yes | yes |
+| Network firewall | no (off by default) | no |
