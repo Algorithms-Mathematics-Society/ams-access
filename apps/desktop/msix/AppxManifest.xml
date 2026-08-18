@@ -75,12 +75,16 @@
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
-        <!-- No Wide310x150Logo: Tauri's icon generator does not produce one,
-             and naming an asset that is not in the package fails makeappx
-             rather than degrading. The wide tile is optional. -->
-        <uap:DefaultTile
-          Square71x71Logo="Assets\Square71x71Logo.png"
-          Square310x310Logo="Assets\Square310x310Logo.png" />
+        <!-- Only the small tile. Tauri's icon generator produces no
+             Wide310x150Logo, and makeappx rejects a manifest that names
+             Square310x310Logo without one:
+
+               "The DefaultTile element must specify the Wide310x150Logo
+                attribute if the Square310x310Logo attribute is specified."
+
+             Both large tiles are optional, so the large one goes rather than
+             inventing an asset nobody designed. -->
+        <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png" />
       </uap:VisualElements>
     </Application>
   </Applications>

@@ -130,12 +130,20 @@ Get-ChildItem -Path $releaseDir -Filter "*.dll" -ErrorAction SilentlyContinue |
 # Store logos. Tauri's icon generator already produces the Square*/StoreLogo
 # set, so there is nothing to draw here.
 $icons = Join-Path $repoRoot "apps\desktop\src-tauri\icons"
-foreach ($logo in @("StoreLogo.png","Square44x44Logo.png","Square71x71Logo.png",
-                    "Square150x150Logo.png","Square310x310Logo.png")) {
+# Exactly the set the manifest names. Shipping more is dead weight; shipping
+# fewer fails packaging.
+foreach ($logo in @("StoreLogo.png","Square44x44Logo.png",
+                    "Square71x71Logo.png","Square150x150Logo.png")) {
   $src = Join-Path $icons $logo
   if (-not (Test-Path $src)) { throw "missing icon $logo — makeappx fails on a manifest naming an absent asset" }
   Copy-Item $src (Join-Path $stage "Assets\$logo")
 }
+
+Write-Host "── staged ──"
+Get-ChildItem $stage -Recurse -File |
+  ForEach-Object { Write-Host ("  {0,10:N0}  {1}" -f $_.Length, $_.FullName.Substring($stage.Length + 1)) }
+$staged = (Get-ChildItem $stage -Recurse -File).Count
+Write-Host "$staged file(s) staged"
 
 # ── manifest ───────────────────────────────────────────────────────────────
 $manifest = Get-Content (Join-Path $msixDir "AppxManifest.xml") -Raw
