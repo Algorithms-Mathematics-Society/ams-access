@@ -123,11 +123,29 @@ laptop while a hall waits — that is what the spares are for.
 
 ---
 
-## What we are doing about it
+## Is this ever going away?
 
-Signing is a purchase and a validation process, not a code change. The
-release pipeline is already wired for it: adding the certificate as two
-repository secrets is the whole change, and the next tagged release comes out
-signed with no edit to any workflow.
+Not by buying a certificate — we have decided not to. So this page is not a
+stopgap; it is how the installer works.
 
-Until then this page is the honest version of what candidates will see.
+There is a way around it, and it is a different package rather than a
+different signature. The **Microsoft Store build** is signed by Microsoft on
+submission, so it installs with no warning and no administrator prompt at all.
+What it gives up is the network firewall: a Store app can never run elevated,
+so it cannot block internet access during a contest.
+
+That is the choice, and it is per contest rather than once and for all:
+
+| | This installer | Store build |
+|---|---|---|
+| SmartScreen warning | yes, every machine | none |
+| Administrator prompt | yes | none |
+| Network locked down | **yes** | no |
+| Keyboard, camera, capture guard, process scan | yes | yes |
+
+For a graded contest where candidates could otherwise open a browser, the
+firewall is usually worth the two clicks. For practice, rehearsal, and getting
+a hall's machines ready in advance, the Store build is far less friction.
+
+The release pipeline can still sign if a certificate ever appears — it is two
+repository secrets and no workflow edit — but nothing is waiting on that.

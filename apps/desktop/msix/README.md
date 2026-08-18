@@ -26,9 +26,21 @@ invigilation console can distinguish *"Store build, no firewall by design"*
 from *"this candidate could not elevate on their own machine"* — those look
 identical otherwise and need completely different responses.
 
-**Use the signed NSIS/MSI installer for graded contests.** This packaging is
-for practice, rehearsal, and any setting where the firewall is not what you
-are relying on.
+**Neither Windows client is code-signed by us, and that is a settled
+decision** — no certificate is being bought. So the choice between them is not
+signed-versus-unsigned; it is *firewall* versus *friction*:
+
+| | NSIS/MSI installer | Store build (this) |
+|---|---|---|
+| SmartScreen warning | yes, every machine | none — Microsoft signs it |
+| Administrator prompt | yes | none |
+| Network locked down | **yes** | no |
+| Keyboard, camera, capture guard, process scan | yes | yes |
+
+Use the installer when a candidate opening a browser would matter, and wear
+the two clicks (they are scripted in `WINDOWS-INSTALL.md`). Use this build for
+practice, rehearsal, and pre-installing on hall machines, where painless
+deployment is worth more than a firewall you were not relying on.
 
 ---
 

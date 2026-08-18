@@ -255,7 +255,10 @@ jobs:
             "Windows protected your PC" and the installer asks for
             administrator — both are expected, and both are exactly what
             malware looks like, so verify the SHA-256 below before running it.
-            Signing is a follow-up.
+            We are not buying a code-signing certificate, so this is how the
+            installer works rather than a temporary state — the Microsoft
+            Store build avoids the warning entirely, at the cost of the
+            network firewall.
 
             Running a contest on Windows? **Read
             [WINDOWS-INSTALL.md](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/main/WINDOWS-INSTALL.md)
