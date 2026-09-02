@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { cppStdlibCompletions } from "./cpp-stdlib";
 import { cpp } from "@codemirror/lang-cpp";
 import { python } from "@codemirror/lang-python";
 import { java } from "@codemirror/lang-java";
@@ -157,87 +158,6 @@ const cppKeywordCompletions: Completion[] = [
   "while",
 ].map((label) => ({ label, type: "keyword" }));
 
-const cppStdCompletions: Completion[] = [
-  { label: "cin", type: "variable", detail: "std::istream" },
-  { label: "cout", type: "variable", detail: "std::ostream" },
-  { label: "cerr", type: "variable", detail: "std::ostream" },
-  { label: "vector", type: "class", detail: "std::vector<T>" },
-  { label: "array", type: "class", detail: "std::array<T, N>" },
-  { label: "string", type: "class", detail: "std::string" },
-  { label: "pair", type: "class", detail: "std::pair<T, U>" },
-  { label: "tuple", type: "class", detail: "std::tuple" },
-  { label: "map", type: "class", detail: "std::map<K, V>" },
-  { label: "unordered_map", type: "class", detail: "std::unordered_map<K, V>" },
-  { label: "set", type: "class", detail: "std::set<T>" },
-  { label: "unordered_set", type: "class", detail: "std::unordered_set<T>" },
-  { label: "queue", type: "class", detail: "std::queue<T>" },
-  { label: "priority_queue", type: "class", detail: "std::priority_queue<T>" },
-  { label: "deque", type: "class", detail: "std::deque<T>" },
-  { label: "stack", type: "class", detail: "std::stack<T>" },
-  { label: "sort", type: "function", apply: "sort(v.begin(), v.end())", detail: "<algorithm>" },
-  {
-    label: "stable_sort",
-    type: "function",
-    apply: "stable_sort(v.begin(), v.end())",
-    detail: "<algorithm>",
-  },
-  {
-    label: "reverse",
-    type: "function",
-    apply: "reverse(v.begin(), v.end())",
-    detail: "<algorithm>",
-  },
-  {
-    label: "lower_bound",
-    type: "function",
-    apply: "lower_bound(v.begin(), v.end(), x)",
-    detail: "<algorithm>",
-  },
-  {
-    label: "upper_bound",
-    type: "function",
-    apply: "upper_bound(v.begin(), v.end(), x)",
-    detail: "<algorithm>",
-  },
-  {
-    label: "binary_search",
-    type: "function",
-    apply: "binary_search(v.begin(), v.end(), x)",
-    detail: "<algorithm>",
-  },
-  { label: "min", type: "function", detail: "std::min" },
-  { label: "max", type: "function", detail: "std::max" },
-  { label: "swap", type: "function", detail: "std::swap" },
-  { label: "gcd", type: "function", detail: "std::gcd" },
-  { label: "lcm", type: "function", detail: "std::lcm" },
-  { label: "abs", type: "function", detail: "std::abs" },
-  {
-    label: "accumulate",
-    type: "function",
-    apply: "accumulate(v.begin(), v.end(), 0LL)",
-    detail: "<numeric>",
-  },
-  { label: "iota", type: "function", apply: "iota(v.begin(), v.end(), 0)", detail: "<numeric>" },
-  {
-    label: "next_permutation",
-    type: "function",
-    apply: "next_permutation(v.begin(), v.end())",
-    detail: "<algorithm>",
-  },
-  {
-    label: "prev_permutation",
-    type: "function",
-    apply: "prev_permutation(v.begin(), v.end())",
-    detail: "<algorithm>",
-  },
-  { label: "push_back", type: "method", apply: "push_back()", detail: "container method" },
-  { label: "emplace_back", type: "method", apply: "emplace_back()", detail: "container method" },
-  { label: "begin", type: "method", apply: "begin()", detail: "container method" },
-  { label: "end", type: "method", apply: "end()", detail: "container method" },
-  { label: "size", type: "method", apply: "size()", detail: "container method" },
-  { label: "empty", type: "method", apply: "empty()", detail: "container method" },
-];
-
 const cppSnippetCompletions: Completion[] = [
   snippetCompletion(
     "int main() {\n  ios::sync_with_stdio(false);\n  cin.tie(nullptr);\n\n  ${}\n  return 0;\n}",
@@ -296,7 +216,7 @@ const cppSnippetCompletions: Completion[] = [
 const cppCompletionOptions = [
   ...cppSnippetCompletions,
   ...cppKeywordCompletions,
-  ...cppStdCompletions,
+  ...cppStdlibCompletions,
 ];
 
 function cppContestCompletionSource(context: CompletionContext) {

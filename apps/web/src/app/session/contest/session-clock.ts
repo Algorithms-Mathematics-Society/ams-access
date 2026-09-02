@@ -17,10 +17,21 @@
 export type ClockPhase = "before_window" | "verification" | "running" | "ended";
 
 export type ClockSnapshot = {
-  /** Epoch ms. Null when the server has not told us yet. */
+  /** Epoch ms. Null when there is no deadline — see `untimed` for which kind. */
   endsAtMs: number | null;
   /** The server's own view, which outranks anything derived locally. */
   phase: ClockPhase;
+  /**
+   * The server has answered and the answer is "this contest has no deadline"
+   * — a practice contest, which is deliberately unlimited.
+   *
+   * A third state, because a null `endsAtMs` had been carrying two meanings:
+   * "we have not been told yet" and "there is nothing to tell". Both rendered
+   * as `—:—:—`, so a practice contest looked like a broken clock for its whole
+   * duration. Absent or false means genuinely unknown, which is the safe
+   * default for a client that has not synced yet.
+   */
+  untimed?: boolean;
 };
 
 /** Milliseconds left, floored at zero. Null when there is no known deadline. */
@@ -65,4 +76,16 @@ export function formatRemaining(ms: number | null): string {
  */
 export function paperIsOpen(snapshot: ClockSnapshot): boolean {
   return snapshot.phase === "running";
+}
+
+/**
+ * What to show where a countdown would go.
+ *
+ * Practice is untimed by design, so it says so. An unknown clock keeps the
+ * em-dashes: a candidate whose contest metadata failed to load must not be
+ * told they have unlimited time.
+ */
+export function countdownLabel(snapshot: ClockSnapshot, remaining: string): string {
+  if (snapshot.endsAtMs === null && snapshot.untimed === true) return "No time limit";
+  return remaining;
 }

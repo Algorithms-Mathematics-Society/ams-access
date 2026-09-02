@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { countdownPhase, type CountdownPhase } from "../countdown";
 import { serverNow } from "@/lib/proctor-api";
-import { formatRemaining, isBell, remainingMs, type ClockSnapshot } from "../session-clock";
+import {
+  countdownLabel,
+  formatRemaining,
+  isBell,
+  remainingMs,
+  type ClockSnapshot,
+} from "../session-clock";
 
 export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void) {
   const ref = useRef<T>(null);
@@ -91,15 +97,22 @@ export function useCountdown(
     percentLeft: number;
   }>({ remaining: formatRemaining(null), phase: "nominal", percentLeft: 1 });
 
-  const { endsAtMs, phase: serverPhase } = snapshot;
+  const { endsAtMs, phase: serverPhase, untimed } = snapshot;
 
   useEffect(() => {
     totalMsRef.current = null;
     firedExpiryRef.current = false;
 
     if (endsAtMs === null) {
-      // No deadline known. Show that, and run no timer.
-      setState({ remaining: formatRemaining(null), phase: "nominal", percentLeft: 1 });
+      // No deadline to count down. `countdownLabel` decides whether that is
+      // "no time limit" (a practice contest, which the server has told us has
+      // no end) or "we do not know yet" — both leave endsAtMs null, and only
+      // the second should render as em-dashes.
+      setState({
+        remaining: countdownLabel({ endsAtMs, phase: serverPhase, untimed }, formatRemaining(null)),
+        phase: "nominal",
+        percentLeft: 1,
+      });
       return;
     }
 
@@ -140,7 +153,7 @@ export function useCountdown(
     return () => {
       if (id) clearInterval(id);
     };
-  }, [endsAtMs, serverPhase]);
+  }, [endsAtMs, serverPhase, untimed]);
 
   return state;
 }
