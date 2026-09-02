@@ -3,7 +3,7 @@ import { fetchOrganizerOverrides } from "@ams/api-client";
 import { Button } from "@/app/home/components/ui-primitives";
 import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
-import { API_URL, getOrCreateDeviceId, tauriWindow, type MonitorInfo } from "../../support";
+import { API_URL, availableMonitors, getOrCreateDeviceId, type MonitorInfo } from "../../support";
 import { participantToken } from "@/lib/candidate-auth";
 
 export function Stage2_MonitorDetection({
@@ -36,42 +36,33 @@ export function Stage2_MonitorDetection({
     setScanning(true);
     setDone(false);
 
-    let mons: MonitorInfo[] = [];
-    try {
-      const win = await tauriWindow();
-      if (win) {
-        let monitorsPromise: Promise<MonitorInfo[]>;
-        try {
-          monitorsPromise = win.availableMonitors();
-        } catch {
-          monitorsPromise = Promise.resolve([]);
-        }
-        mons = await Promise.race([
-          monitorsPromise,
-          new Promise<MonitorInfo[]>((resolve) => setTimeout(() => resolve([]), 2000)),
-        ]).catch(() => [] as MonitorInfo[]);
-      }
-    } catch {
-      mons = [];
-    }
+    // `null` means we could not ask; `[]` means we asked and got nothing.
+    // Only the first is a failure to verify. They used to be the same value,
+    // which is how a broken API call became a candidate-facing hard block.
+    const mons = await Promise.race([
+      availableMonitors(),
+      new Promise<MonitorInfo[] | null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]).catch(() => null);
 
-    // Windows fail-closed: an empty enumeration is "could not verify", NOT a
-    // single screen. Off-Windows (or with an organizer override) keep the prior
-    // advisory synthetic-single fallback so macOS/Linux behavior is unchanged.
-    const enumFailed = mons.length === 0;
+    // Windows fail-closed: an enumeration we could not perform is "could not
+    // verify", NOT a single screen. Off-Windows (or with an organizer
+    // override) keep the advisory synthetic-single fallback so macOS/Linux
+    // behavior is unchanged.
+    const enumFailed = mons === null;
     const indeterminate = isWindows && !externalDisplayOverride && enumFailed;
     setScanIndeterminate(indeterminate);
 
-    const list = mons.length
-      ? mons
-      : [
-          {
-            name: "Primary Display",
-            position: { x: 0, y: 0 },
-            size: { width: window.screen.width, height: window.screen.height },
-            scaleFactor: window.devicePixelRatio,
-          },
-        ];
+    const list =
+      mons && mons.length
+        ? mons
+        : [
+            {
+              name: "Primary Display",
+              position: { x: 0, y: 0 },
+              size: { width: window.screen.width, height: window.screen.height },
+              scaleFactor: window.devicePixelRatio,
+            },
+          ];
     setMonitors(list);
     setScanning(false);
     setDone(true);
