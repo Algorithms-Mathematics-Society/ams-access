@@ -795,6 +795,11 @@ export default function ContestPageClient() {
   }
 
   // stable fallback so useCountdown's effect doesn't restart on every render
+  // Whether any server clock answer has arrived. Distinguishes "no deadline"
+  // from "no answer yet" — both leave endsAtMs null, and conflating them
+  // showed a practice contest a broken-looking clock for its whole duration.
+  const [clockSynced, setClockSynced] = useState(false);
+
   // The clock, straight from the server. There is deliberately no fallback:
   // a fabricated deadline renders identically to a real one, and the previous
   // "one hour from page load" default was what every candidate actually got,
@@ -803,8 +808,12 @@ export default function ContestPageClient() {
     () => ({
       endsAtMs: contest?.end_at ? Date.parse(contest.end_at) : null,
       phase: contestPhase,
+      // Only once the server has actually answered. Before that a null
+      // deadline means "not told yet", and calling that untimed would show a
+      // candidate "No time limit" on a contest that has one.
+      untimed: clockSynced && !contest?.end_at,
     }),
-    [contest?.end_at, contestPhase]
+    [contest?.end_at, contestPhase, clockSynced]
   );
 
   useEffect(() => {
@@ -918,6 +927,7 @@ export default function ContestPageClient() {
       // would have quietly meant "never rings" — right answer, no reasoning.
       // A practice contest has no end, so it has no bell, and saying so
       // explicitly is what keeps that true if the comparison ever changes.
+      setClockSynced(true);
       setBellRung(
         isBell(
           { endsAtMs: index.ends_at ? Date.parse(index.ends_at) : null, phase: index.phase },
@@ -1737,6 +1747,7 @@ export default function ContestPageClient() {
         // The server's word on where we are, once a minute. This corrects any
         // drift and is authoritative over local deadline arithmetic.
         setContestPhase(live.phase);
+        setClockSynced(true);
         if (live.ends_at) setContest((prev) => (prev ? { ...prev, end_at: live.ends_at! } : prev));
         if (
           isBell(

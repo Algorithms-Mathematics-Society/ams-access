@@ -12,7 +12,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatRemaining, isBell, paperIsOpen, remainingMs } from "./session-clock.ts";
+import {
+  formatRemaining,
+  isBell,
+  paperIsOpen,
+  remainingMs,
+  countdownLabel,
+} from "./session-clock.ts";
 
 const AT = 1_700_000_000_000; // arbitrary fixed "now"
 const running = (endsAtMs) => ({ endsAtMs, phase: "running" });
@@ -76,4 +82,37 @@ test("the paper is open only while the contest is running", () => {
   assert.equal(paperIsOpen({ endsAtMs: AT, phase: "verification" }), false);
   assert.equal(paperIsOpen({ endsAtMs: AT, phase: "before_window" }), false);
   assert.equal(paperIsOpen({ endsAtMs: AT, phase: "ended" }), false);
+});
+
+// ── untimed vs unknown ────────────────────────────────────────────────────
+//
+// A null deadline was carrying two meanings — "we have not been told yet" and
+// "there is nothing to tell" — and both rendered as em-dashes. So a practice
+// contest, which is deliberately unlimited, showed a broken-looking clock for
+// its entire duration.
+
+test("a practice contest says it has no time limit", () => {
+  const snapshot = { endsAtMs: null, phase: "running", untimed: true };
+  assert.equal(countdownLabel(snapshot, formatRemaining(null)), "No time limit");
+});
+
+test("a clock we have not synced yet still shows em-dashes", () => {
+  // A candidate whose contest metadata failed to load must NOT be told they
+  // have unlimited time.
+  assert.equal(countdownLabel({ endsAtMs: null, phase: "running" }, "—:—:—"), "—:—:—");
+  assert.equal(
+    countdownLabel({ endsAtMs: null, phase: "running", untimed: false }, "—:—:—"),
+    "—:—:—"
+  );
+});
+
+test("a real deadline is never overridden by the label", () => {
+  const snapshot = { endsAtMs: Date.now() + 60_000, phase: "running", untimed: true };
+  assert.equal(countdownLabel(snapshot, "00:01:00"), "00:01:00");
+});
+
+test("an untimed contest never rings the bell", () => {
+  // No end means no expiry. If this ever flips, practice would lock its own
+  // editor.
+  assert.equal(isBell({ endsAtMs: null, phase: "running", untimed: true }, Date.now()), false);
 });
