@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { lumaStats, decideCapture, settlingMessage } from "../../face-frame";
 import { cameraSession } from "@/lib/camera-session";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { StageHeader } from "../ui";
@@ -60,6 +61,8 @@ export function Stage8_FaceCalibration({
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
+  /** Frames skipped waiting for the sensor. Not backend rejections. */
+  const settlingAttemptsRef = useRef(0);
   const detectorRef = useRef<DetectorLike | null>(null);
   const onPassRef = useRef(onPass);
   onPassRef.current = onPass;
@@ -148,6 +151,16 @@ export function Stage8_FaceCalibration({
     const video = videoRef.current;
     const cap = captureCanvasRef.current;
     if (video && cap) {
+      // Capture at the stream's own resolution. The canvas used to be a fixed
+      // 320x240 against a 640x480 stream, and averaging four pixels into one
+      // reduces exactly the variance and edge density the backend validator
+      // thresholds on — the client was degrading the frame and then failing it
+      // on the degradation.
+      const sourceW = video.videoWidth || cap.width;
+      const sourceH = video.videoHeight || cap.height;
+      if (cap.width !== sourceW) cap.width = sourceW;
+      if (cap.height !== sourceH) cap.height = sourceH;
+
       const ctx = cap.getContext("2d");
       if (ctx) {
         ctx.save();
@@ -155,6 +168,32 @@ export function Stage8_FaceCalibration({
         ctx.scale(-1, 1);
         ctx.drawImage(video, 0, 0, cap.width, cap.height);
         ctx.restore();
+
+        // Measure before submitting. A frame that is merely still settling —
+        // the sensor's auto-exposure has not caught up yet — is retried rather
+        // than sent, because a backend rejection is what counts toward the
+        // "contact your proctor" escalation, and a warming camera is not a
+        // reason to involve a human. Bounded: once the warm-up budget is spent
+        // the frame goes anyway and the backend's verdict stands.
+        try {
+          const stats = lumaStats(ctx.getImageData(0, 0, cap.width, cap.height).data);
+          const decision = decideCapture(stats, settlingAttemptsRef.current);
+          if (decision.action === "wait") {
+            settlingAttemptsRef.current += 1;
+            capturingRef.current = false;
+            holdMsRef.current = 0;
+            lockPctRef.current = 0;
+            setLockPct(0);
+            setScanState("ready");
+            setGuidance(settlingMessage(decision.reason));
+            setRuntimeNote(null);
+            return;
+          }
+        } catch {
+          // getImageData can throw on a tainted canvas. The backend check is
+          // the authority either way, so fall through and let it decide.
+        }
+
         try {
           const blob = await new Promise<Blob | null>((resolve) =>
             cap.toBlob(resolve, "image/png")
