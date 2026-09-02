@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
 import { stopMediaStream } from "../../support";
 
-export function Stage11_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
+export function Stage10_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
   const [level, setLevel] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const analyserRef = useRef<AnalyserNode | null>(null);

@@ -5,7 +5,7 @@ import { Spinner, StageHeader, StatusBadge } from "../ui";
 import { cameraSession } from "@/lib/camera-session";
 import { invoke, waitForVideoReady, withTimeout } from "../../support";
 
-export function Stage8_CameraInit({
+export function Stage7_CameraInit({
   onPass,
   onCameraReady,
 }: {

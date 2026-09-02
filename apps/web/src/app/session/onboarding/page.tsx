@@ -19,18 +19,18 @@ import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { decideNetworkLockdown } from "./network-gate";
 import { useTheme } from "./components/hooks";
 import { PHASE_FRIENDLY_NAME, readinessBlockMessage } from "./components/labels";
-import { Stage2_Fullscreen } from "./components/stages/Stage2_Fullscreen";
-import { Stage3_MonitorDetection } from "./components/stages/Stage3_MonitorDetection";
-import { Stage4_KeyboardLockdown } from "./components/stages/Stage4_KeyboardLockdown";
-import { Stage5_EnvironmentValidation } from "./components/stages/Stage5_EnvironmentValidation";
-import { Stage6_RestrictedApps } from "./components/stages/Stage6_RestrictedApps";
-import { Stage7_VMDetection } from "./components/stages/Stage7_VMDetection";
-import { Stage8_CameraInit } from "./components/stages/Stage8_CameraInit";
-import { Stage9_FaceCalibration } from "./components/stages/Stage9_FaceCalibration";
-import { Stage10_PresenceVerification } from "./components/stages/Stage10_PresenceVerification";
-import { Stage11_AudioVerification } from "./components/stages/Stage11_AudioVerification";
-import { Stage12_NetworkValidation } from "./components/stages/Stage12_NetworkValidation";
-import { Stage13_IntegrityConfirmation } from "./components/stages/Stage13_IntegrityConfirmation";
+import { Stage1_Fullscreen } from "./components/stages/Stage1_Fullscreen";
+import { Stage2_MonitorDetection } from "./components/stages/Stage2_MonitorDetection";
+import { Stage3_KeyboardLockdown } from "./components/stages/Stage3_KeyboardLockdown";
+import { Stage4_EnvironmentValidation } from "./components/stages/Stage4_EnvironmentValidation";
+import { Stage5_RestrictedApps } from "./components/stages/Stage5_RestrictedApps";
+import { Stage6_VMDetection } from "./components/stages/Stage6_VMDetection";
+import { Stage7_CameraInit } from "./components/stages/Stage7_CameraInit";
+import { Stage8_FaceCalibration } from "./components/stages/Stage8_FaceCalibration";
+import { Stage9_PresenceVerification } from "./components/stages/Stage9_PresenceVerification";
+import { Stage10_AudioVerification } from "./components/stages/Stage10_AudioVerification";
+import { Stage11_NetworkValidation } from "./components/stages/Stage11_NetworkValidation";
+import { Stage12_IntegrityConfirmation } from "./components/stages/Stage12_IntegrityConfirmation";
 import { ProgressBar } from "./components/ProgressBar";
 import { DryRunSummary } from "./components/DryRunSummary";
 
@@ -1209,30 +1209,30 @@ export default function OnboardingPage() {
                   </div>
                 )}
                 {currentStage === 1 && (
-                  <Stage2_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
+                  <Stage1_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
                 )}
                 {currentStage === 2 && (
-                  <Stage3_MonitorDetection
+                  <Stage2_MonitorDetection
                     onPass={advancePass}
                     platform={platform}
                     externalDisplayOverride={externalDisplayOverride}
                   />
                 )}
                 {currentStage === 3 && (
-                  <Stage4_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
+                  <Stage3_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
                 )}
-                {currentStage === 4 && <Stage5_EnvironmentValidation onPass={advancePass} />}
+                {currentStage === 4 && <Stage4_EnvironmentValidation onPass={advancePass} />}
                 {currentStage === 5 && (
-                  <Stage6_RestrictedApps onPass={advancePass} onWarn={advanceWarn} />
+                  <Stage5_RestrictedApps onPass={advancePass} onWarn={advanceWarn} />
                 )}
                 {currentStage === 6 && (
-                  <Stage7_VMDetection onPass={advancePass} onWarn={advanceWarn} />
+                  <Stage6_VMDetection onPass={advancePass} onWarn={advanceWarn} />
                 )}
                 {currentStage === 7 && (
-                  <Stage8_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
+                  <Stage7_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
                 )}
                 {currentStage === 8 && (
-                  <Stage9_FaceCalibration
+                  <Stage8_FaceCalibration
                     stream={cameraStream}
                     onPass={advancePass}
                     dryRun={dryRun}
@@ -1240,20 +1240,20 @@ export default function OnboardingPage() {
                   />
                 )}
                 {currentStage === 9 && (
-                  <Stage10_PresenceVerification
+                  <Stage9_PresenceVerification
                     stream={cameraStream}
                     onPass={advancePass}
                     onWarn={advanceWarn}
                   />
                 )}
                 {currentStage === 10 && (
-                  <Stage11_AudioVerification onPass={advancePass} onWarn={advanceWarn} />
+                  <Stage10_AudioVerification onPass={advancePass} onWarn={advanceWarn} />
                 )}
                 {currentStage === 11 && (
-                  <Stage12_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
+                  <Stage11_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
                 )}
                 {currentStage === REVIEW_STAGE && (
-                  <Stage13_IntegrityConfirmation
+                  <Stage12_IntegrityConfirmation
                     results={results}
                     onPass={advancePass}
                     blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}

@@ -1,6 +1,6 @@
 // Shared non-UI support for the onboarding flow: Tauri bridge wrappers,
 // timing utilities, media helpers, and the stage table. Extracted from
-// page.tsx (first tranche of the per-stage split — see fable.md item 15).
+// page.tsx (first tranche of the per-stage split).
 
 import { resolveApiBase } from "@/lib/api-base";
 
@@ -254,7 +254,7 @@ export const STAGE_META: Record<number, { checking: string; todo: string | null;
       onFail: "Camera is required — fix the permission and try again",
     },
     8: {
-      checking: "Face position and identity capture",
+      checking: "Face position and framing, checked on this device",
       todo: "Look directly at the camera and hold still until captured",
       onFail: "Setup waits until a valid face is captured — contact your proctor if stuck",
     },

@@ -844,7 +844,7 @@ async fn start_secure_session(
 /// delivery is best-effort here: a failure is logged as a proctoring event
 /// (and will reach the organizer via the event stream) but never blocks entry
 /// client-side. Long-term this becomes a device-key-signed report; see
-/// fable.md item 14.
+/// BACKLOG.md.
 async fn deliver_readiness_report(
     app: &tauri::AppHandle,
     report: &ReadinessReport,
@@ -1611,6 +1611,9 @@ async fn unlock_desktop(app: tauri::AppHandle) {
     }
     #[cfg(target_os = "windows")]
     platform_rs::windows::stop_clipboard_monitor();
+    // The session is over, so the enrolment snapshots have nothing left to be
+    // for. See purge_face_captures.
+    purge_face_captures();
     platform_dispatch!(unlock_desktop(), else ())
 }
 
@@ -1860,6 +1863,43 @@ async fn disable_network_lockdown() -> Result<bool, String> {
         else Err("Network lockdown not supported on this platform".to_string())
     )
     .map(|_| true)
+}
+
+/// Where face captures land. One definition, because the purge below has to
+/// agree with the writer exactly — a purge pointed at the wrong directory
+/// silently does nothing, which is indistinguishable from working.
+fn face_capture_dir() -> String {
+    if cfg!(target_os = "windows") {
+        format!(
+            "{}\\ams_faces",
+            std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into())
+        )
+    } else {
+        std::env::temp_dir().join("ams_faces").display().to_string()
+    }
+}
+
+/// Delete the face captures this machine has accumulated.
+///
+/// Nothing ever uploads these — there is no endpoint and no reviewer, so the
+/// only thing they can do after a session is sit on a contestant's disk. They
+/// were never cleaned up, so every rehearsal and every exam left another set
+/// behind indefinitely.
+///
+/// Called on teardown and again at startup. Startup is the one that matters:
+/// teardown does not run when the app is killed mid-exam, which is exactly the
+/// case that used to strand them for good.
+///
+/// Best-effort by design. A file held open by an antivirus scanner must not
+/// take down lockdown teardown, and failing to delete a temp file is not
+/// something to tell a candidate about mid-contest.
+fn purge_face_captures() {
+    let dir = face_capture_dir();
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => eprintln!("[ams][faces] cleared {dir}"),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => eprintln!("[ams][faces] could not clear {dir}: {err}"),
+    }
 }
 
 /// Result returned by `save_face_image` — includes backend image validation outcome.
@@ -2270,14 +2310,7 @@ async fn save_face_image(
         return Err(reason);
     }
 
-    let dir = if cfg!(target_os = "windows") {
-        format!(
-            "{}\\ams_faces",
-            std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into())
-        )
-    } else {
-        std::env::temp_dir().join("ams_faces").display().to_string()
-    };
+    let dir = face_capture_dir();
 
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = format!("{}/face_{}.png", dir, index);
@@ -2475,6 +2508,12 @@ pub fn run() {
             configure_event_stream,
         ])
         .setup(|app| {
+            // Anything left in the face-capture directory belongs to a run
+            // that did not shut down cleanly — a crash, a kill, a power cut.
+            // Teardown cannot clear those, so startup does. See
+            // purge_face_captures.
+            purge_face_captures();
+
             // Organizer event stream: tail the violation/proctoring spool and
             // upload once the frontend arms it with a session id.
             spawn_event_sync_task(app.handle().clone());

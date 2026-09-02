@@ -18,7 +18,7 @@ import { tauriWindow } from "../../support";
  * stage re-reads the same fact, so a machine that drifts back out of
  * full-screen is caught twice.
  */
-export function Stage2_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
+export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [done, setDone] = useState(false);
   const [engaged, setEngaged] = useState(true);
   const theme = useTheme();
@@ -48,8 +48,7 @@ export function Stage2_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
       }
       if (!ok) {
         ok =
-          Boolean(document.fullscreenElement) ||
-          window.innerHeight >= window.screen.height * 0.94;
+          Boolean(document.fullscreenElement) || window.innerHeight >= window.screen.height * 0.94;
       }
 
       if (cancelled) return;
@@ -88,7 +87,9 @@ export function Stage2_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
           <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
             Window mode:{" "}
           </span>
-          <span style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
+          <span
+            style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}
+          >
             {!done ? "Starting" : engaged ? "Full-screen" : "Not full-screen"}
           </span>
         </div>
@@ -96,7 +97,9 @@ export function Stage2_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
           <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
             Focus mode:{" "}
           </span>
-          <span style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
+          <span
+            style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}
+          >
             {!done ? "Starting" : engaged ? "On" : "Unconfirmed"}
           </span>
         </div>
@@ -104,7 +107,9 @@ export function Stage2_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
           <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
             Window controls:{" "}
           </span>
-          <span style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}>
+          <span
+            style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}
+          >
             {!done ? "Starting" : engaged ? "Hidden" : "Unconfirmed"}
           </span>
         </div>

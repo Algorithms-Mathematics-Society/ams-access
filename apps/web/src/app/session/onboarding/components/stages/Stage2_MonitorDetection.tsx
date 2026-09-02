@@ -6,7 +6,7 @@ import { CheckLine, StageHeader } from "../ui";
 import { API_URL, getOrCreateDeviceId, tauriWindow, type MonitorInfo } from "../../support";
 import { participantToken } from "@/lib/candidate-auth";
 
-export function Stage3_MonitorDetection({
+export function Stage2_MonitorDetection({
   onPass,
   platform,
   externalDisplayOverride,

@@ -23,7 +23,7 @@ import { StageHeader, StatusBadge } from "../ui";
  *
  * The verdict rules live in `presence-check.ts` so they can be tested.
  */
-export function Stage10_PresenceVerification({
+export function Stage9_PresenceVerification({
   stream,
   onPass,
   onWarn,

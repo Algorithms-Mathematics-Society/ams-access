@@ -12,7 +12,7 @@ import { invoke, withNullableTimeout } from "../../support";
  * cannot engage, the candidate keeps Alt+Tab for the whole exam, and the
  * proctor reviewing the session afterwards needs to know that.
  */
-export function Stage4_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
+export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [phase, setPhase] = useState(0);
   const [lockFailed, setLockFailed] = useState(false);
   const [accessibilityDenied, setAccessibilityDenied] = useState(false);

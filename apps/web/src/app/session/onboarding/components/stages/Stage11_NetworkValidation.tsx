@@ -7,7 +7,7 @@ import { getNetworkProbeHost, invoke, invokeStrict, withNullableTimeout } from "
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
 declare const window: Window & TauriGlobals;
 
-export function Stage12_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
+export function Stage11_NetworkValidation({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
   const [latency, setLatency] = useState<number | null>(null);
   const [quality, setQuality] = useState<string | null>(null);
   const [phase, setPhase] = useState<"checking" | "pass" | "warn">("checking");

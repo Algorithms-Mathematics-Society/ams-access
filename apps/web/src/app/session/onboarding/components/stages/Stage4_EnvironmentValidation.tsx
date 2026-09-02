@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
-export function Stage5_EnvironmentValidation({ onPass }: { onPass(): void }) {
+export function Stage4_EnvironmentValidation({ onPass }: { onPass(): void }) {
   interface Check {
     label: string;
     status: "checking" | "pass" | "warn";

@@ -39,7 +39,7 @@ const OUTCOME_LABEL: Record<string, string> = {
  * It no longer advances by itself, and it no longer paints absent results
  * green — a stage that never ran reads "Not run".
  */
-export function Stage13_IntegrityConfirmation({
+export function Stage12_IntegrityConfirmation({
   results,
   onPass,
   blocked = false,

@@ -3,7 +3,7 @@ import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
-export function Stage7_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
+export function Stage6_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
   const [phase, setPhase] = useState<"checking" | "pass" | "warn">("checking");
   const [platform, setPlatform] = useState<string | null>(null);
   const theme = useTheme();

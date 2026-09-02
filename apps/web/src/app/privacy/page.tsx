@@ -26,9 +26,9 @@ export default function PrivacyPage() {
                 operating-system checks to confirm that a device is ready for a locked session.
               </P>
               <P>
-                Your contest organizer may have additional privacy terms for registration,
-                grading, leaderboard publication, identity verification, and support. Those
-                organizer terms apply in addition to this client policy.
+                Your contest organizer may have additional privacy terms for registration, grading,
+                leaderboard publication, identity verification, and support. Those organizer terms
+                apply in addition to this client policy.
               </P>
             </>
           ),
@@ -82,11 +82,13 @@ export default function PrivacyPage() {
                 rules.
               </P>
               <P>
-                During face calibration, the client may save a local face snapshot in the operating
-                system temporary directory, such as <code>/tmp/ams_faces</code> on Linux/macOS or{" "}
-                <code>%TEMP%\ams_faces</code> on Windows. These local files are used for session
-                calibration and should be treated as temporary app data; exact cleanup can depend on
-                the operating system, crash state, and organizer build.
+                During face calibration, the client saves a face snapshot to the operating system
+                temporary directory — <code>/tmp/ams_faces</code> on Linux/macOS,{" "}
+                <code>%TEMP%\ams_faces</code> on Windows. It is used on your device to confirm the
+                camera can see one correctly framed face, and it is{" "}
+                <strong>never uploaded to us</strong>: there is no endpoint that receives it and
+                nobody reviews it. It is deleted when your session ends, and anything a crash leaves
+                behind is deleted the next time the app starts.
               </P>
               <P>
                 The repository includes local media analysis and readiness checks. Any remote media

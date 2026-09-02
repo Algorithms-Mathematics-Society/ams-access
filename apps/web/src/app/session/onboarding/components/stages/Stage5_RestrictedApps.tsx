@@ -20,7 +20,7 @@ import { invoke, withNullableTimeout } from "../../support";
  */
 type ScanOutcome = "scanning" | "clean" | "found" | "unknown";
 
-export function Stage6_RestrictedApps({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
+export function Stage5_RestrictedApps({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [outcome, setOutcome] = useState<ScanOutcome>("scanning");
   const [found, setFound] = useState<string[]>([]);
   const [cleared, setCleared] = useState(false);

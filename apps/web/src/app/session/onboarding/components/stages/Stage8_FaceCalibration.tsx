@@ -8,7 +8,7 @@ import { BLAZEFACE_MODEL_URL, invoke, waitForVideoReady, withTimeout } from "../
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
 declare const window: Window & TauriGlobals;
 
-export function Stage9_FaceCalibration({
+export function Stage8_FaceCalibration({
   stream,
   onPass,
   dryRun = false,
