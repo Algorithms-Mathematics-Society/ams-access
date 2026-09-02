@@ -636,38 +636,55 @@ const WANTS_FIREWALL: bool = match option_env!("AMS_FIREWALL_BUILD") {
     None => false,
 };
 
-fn collect_fast_device_state() -> DeviceState {
-    // Three states, not two. A Store build is unelevated *by construction* and
-    // no amount of clicking will change that, whereas `windows_no_admin` is a
-    // machine where elevation was possible and did not happen — one is a known
-    // property of the build, the other is a candidate an invigilator may be
-    // able to help. Collapsing them would make the console unable to tell a
-    // deliberately reduced client from a failed setup.
-    // What an invigilator needs to tell apart, in the order it matters:
-    //
-    //   windows_msix     a Store build. Can never elevate, so never a firewall.
-    //   windows          elevated: a firewall build, running as intended.
-    //   windows_no_admin a firewall build that did NOT get elevation. This is
-    //                    the only one that is a *problem* — the candidate was
-    //                    meant to have a firewall and does not.
-    //
-    // A default (no-firewall) build reports `windows_no_firewall` rather than
-    // `windows_no_admin`. They are both unelevated, but conflating them would
-    // put every ordinary contestant on the invigilator's screen wearing the
-    // label that used to mean "this one needs help", and the label would stop
-    // meaning anything within one contest.
+/// The platform label the readiness policy keys on.
+///
+/// Not `std::env::consts::OS`. Policy has to tell an ordinary unelevated
+/// release apart from a build that asked for elevation and did not get it,
+/// and `"windows"` cannot say which. Both the home screen and the onboarding
+/// gate read this, so the two cannot disagree about what machine they are on
+/// — they did, and the home screen hard-failed the platform check on every
+/// no-firewall build because it was reading the coarse value.
+///
+/// Three states, not two. A Store build is unelevated *by construction* and
+/// no amount of clicking will change that, whereas `windows_no_admin` is a
+/// machine where elevation was possible and did not happen — one is a known
+/// property of the build, the other is a candidate an invigilator may be
+/// able to help. Collapsing them would make the console unable to tell a
+/// deliberately reduced client from a failed setup.
+/// What an invigilator needs to tell apart, in the order it matters:
+///
+///   windows_msix     a Store build. Can never elevate, so never a firewall.
+///   windows          elevated: a firewall build, running as intended.
+///   windows_no_admin a firewall build that did NOT get elevation. This is
+///                    the only one that is a *problem* — the candidate was
+///                    meant to have a firewall and does not.
+///
+/// A default (no-firewall) build reports `windows_no_firewall` rather than
+/// `windows_no_admin`. They are both unelevated, but conflating them would
+/// put every ordinary contestant on the invigilator's screen wearing the
+/// label that used to mean "this one needs help", and the label would stop
+/// meaning anything within one contest.
+fn platform_label() -> String {
     #[cfg(target_os = "windows")]
-    let platform = Some(if platform_rs::windows::is_packaged() {
-        "windows_msix".to_string()
-    } else if platform_rs::windows::is_elevated() {
-        "windows".to_string()
-    } else if WANTS_FIREWALL {
-        "windows_no_admin".to_string()
-    } else {
-        "windows_no_firewall".to_string()
-    });
+    {
+        if platform_rs::windows::is_packaged() {
+            "windows_msix".to_string()
+        } else if platform_rs::windows::is_elevated() {
+            "windows".to_string()
+        } else if WANTS_FIREWALL {
+            "windows_no_admin".to_string()
+        } else {
+            "windows_no_firewall".to_string()
+        }
+    }
     #[cfg(not(target_os = "windows"))]
-    let platform = Some(std::env::consts::OS.to_string());
+    {
+        std::env::consts::OS.to_string()
+    }
+}
+
+fn collect_fast_device_state() -> DeviceState {
+    let platform = Some(platform_label());
 
     let restricted_processes = Some(scan_processes());
     let virtualization = Some(detect_virtualization());
@@ -1421,6 +1438,12 @@ async fn measure_clock_skew(api_url: &str) -> Option<i64> {
 #[tauri::command]
 fn get_platform() -> serde_json::Value {
     serde_json::json!({
+        // `os` stays the bare OS for anything that just wants to know it is
+        // Windows. `label` is the one policy must use — see platform_label.
+        // The home screen read `os` and so never learned this was a
+        // no-firewall build, which left the platform check required+blocking
+        // and painted it red for every ordinary contestant.
+        "label": platform_label(),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "family": std::env::consts::FAMILY,

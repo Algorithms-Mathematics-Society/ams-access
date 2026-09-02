@@ -359,8 +359,13 @@ export default function HomePage() {
       // used the platform-less defaults and hard-blocked macOS keyboard lockdown
       // (which is meant to be advisory on macOS). Also lets the Windows-only
       // display/RDP checks enforce here, matching the onboarding gate.
-      const devicePlatform = await invoke<{ os?: string }>("get_platform")
-        .then((p) => p?.os)
+      // `label`, not `os`. `os` is the bare "windows", which cannot say
+      // whether this build was meant to raise a firewall — so the policy left
+      // the platform check required+blocking and every ordinary unelevated
+      // contestant saw a red "Platform compatibility" in Required checks.
+      // Falls back to `os` for an older shell that has no `label`.
+      const devicePlatform = await invoke<{ label?: string; os?: string }>("get_platform")
+        .then((p) => p?.label ?? p?.os)
         .catch(() => undefined);
       if (isCancelled()) return;
       const basePolicy = sessionPolicy(

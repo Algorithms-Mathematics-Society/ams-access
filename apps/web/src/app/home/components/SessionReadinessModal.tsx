@@ -3,9 +3,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { fetchJson } from "@/lib/api-client";
+import { getContest } from "@/lib/proctor-api";
+import { decideEntry, shouldRunChecks, blockedMessage } from "@/app/session/onboarding/entry-gate";
 import { invoke } from "@ams/api-client";
-import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore, API_URL } from "./utils";
+import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore } from "./utils";
 import { deriveContestantReadiness } from "./readiness-context";
 import { useFocusTrap } from "./hooks";
 import { parseLogLine } from "./SecurityOperationsLog";
@@ -123,24 +124,28 @@ export function SessionReadinessModal({
   useEffect(() => {
     let cancelled = false;
     setEntryWindow({ status: "checking", reason: null });
-    fetchJson<{
-      eligibility_status?: string;
-      blocked_reason?: string;
-      session_window_state?: string;
-    }>(
-      `${API_URL}/contests/${contestId}/session-window`,
-      {},
-      { dedupeKey: `contest-window:${contestId}`, retries: 2 }
-    )
-      .then((body) => {
+    // `GET /contests/{uid}/session-window` used to answer this. It is a v1
+    // staff route, it was deleted in the v2 migration, and this screen kept
+    // calling it — so every candidate got a 404, the catch below fired, and
+    // the modal said "Unable to validate contest entry window" over a contest
+    // the server was perfectly happy to admit them to. Onboarding was moved
+    // onto the participant route; this one was missed.
+    //
+    // The decision is the server's `phase`, via the same `decideEntry` the
+    // onboarding gate uses — one rule for whether a candidate may enter, not
+    // two that can disagree.
+    getContest(contestId)
+      .then((index) => {
         if (cancelled) return;
-        const status = String(body.eligibility_status ?? "blocked").toLowerCase();
-        const state = String(body.session_window_state ?? "").toUpperCase();
-        const allowed = status === "allowed" || (sessionType === "resume" && state === "LIVE");
-        setEntryWindow({
-          status: allowed ? "allowed" : "blocked",
-          reason: allowed ? null : body.blocked_reason || "Contest entry window is not open.",
-        });
+        const decision = decideEntry(index, Date.parse(index.server_time) || Date.now());
+        setEntryWindow(
+          shouldRunChecks(decision)
+            ? { status: "allowed", reason: null }
+            : {
+                status: "blocked",
+                reason: blockedMessage(decision) ?? "Contest entry window is not open.",
+              }
+        );
       })
       .catch(() => {
         if (!cancelled) {
