@@ -150,20 +150,20 @@ declare global {
     __TAURI__?: {
       core: { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
       window: {
+        availableMonitors: () => Promise<
+          Array<{
+            name: string | null;
+            position: { x: number; y: number };
+            size: { width: number; height: number };
+            scaleFactor: number;
+          }>
+        >;
         getCurrentWindow: () => {
           setFullscreen: (v: boolean) => Promise<void>;
           isFullscreen: () => Promise<boolean>;
           setAlwaysOnTop: (v: boolean) => Promise<void>;
           setDecorations: (v: boolean) => Promise<void>;
           setResizable: (v: boolean) => Promise<void>;
-          availableMonitors: () => Promise<
-            Array<{
-              name: string | null;
-              position: { x: number; y: number };
-              size: { width: number; height: number };
-              scaleFactor: number;
-            }>
-          >;
         };
       };
     };

@@ -5,12 +5,12 @@ export type TauriGlobals = {
   __TAURI__?: {
     core: { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
     window: {
+      availableMonitors: () => Promise<MonitorInfo[]>;
       getCurrentWindow: () => {
         setFullscreen: (v: boolean) => Promise<void>;
         isFullscreen: () => Promise<boolean>;
         setAlwaysOnTop: (v: boolean) => Promise<void>;
         setDecorations: (v: boolean) => Promise<void>;
-        availableMonitors: () => Promise<MonitorInfo[]>;
         setResizable: (v: boolean) => Promise<void>;
       };
     };

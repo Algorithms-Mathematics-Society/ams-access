@@ -51,12 +51,12 @@ declare const window: Window & {
   __TAURI__?: {
     core: { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
     window: {
+      availableMonitors: () => Promise<MonitorInfo[]>;
       getCurrentWindow: () => {
         setFullscreen: (v: boolean) => Promise<void>;
         isFullscreen: () => Promise<boolean>;
         setAlwaysOnTop: (v: boolean) => Promise<void>;
         setDecorations: (v: boolean) => Promise<void>;
-        availableMonitors: () => Promise<MonitorInfo[]>;
         setResizable: (v: boolean) => Promise<void>;
       };
     };
@@ -88,6 +88,31 @@ export async function invokeStrict<T>(
 
 export async function tauriWindow() {
   return window.__TAURI__?.window.getCurrentWindow() ?? null;
+}
+
+/**
+ * The connected displays, or `null` when we could not ask.
+ *
+ * `availableMonitors` is a module-level export of `@tauri-apps/api/window`,
+ * not a method on the object `getCurrentWindow()` returns. Calling it as
+ * `win.availableMonitors()` therefore threw `undefined is not a function` on
+ * every platform — and the caller swallowed that into an empty array, which
+ * on Windows is fail-closed and blocked the display check outright. The type
+ * declarations asserted the method existed, so nothing caught it. They now
+ * describe the real shape.
+ *
+ * `null` and `[]` are kept distinct on purpose: "we could not enumerate" and
+ * "there are no monitors" have to be told apart, and conflating them is what
+ * turned a broken call into a candidate-facing block.
+ */
+export async function availableMonitors(): Promise<MonitorInfo[] | null> {
+  const api = window.__TAURI__?.window;
+  if (typeof api?.availableMonitors !== "function") return null;
+  try {
+    return await api.availableMonitors();
+  } catch {
+    return null;
+  }
 }
 
 export function delay(ms: number) {
