@@ -16,6 +16,7 @@ import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
+import { decideNetworkLockdown } from "./network-gate";
 import { useTheme } from "./components/hooks";
 import { PHASE_FRIENDLY_NAME, readinessBlockMessage } from "./components/labels";
 import { Stage2_Fullscreen } from "./components/stages/Stage2_Fullscreen";
@@ -423,21 +424,39 @@ export default function OnboardingPage() {
         setSessionPrepared(true);
       }
 
-      // SEC-3: network lockdown is the core anti-cheat control — never enter a
-      // contest with it silently un-applied. Outside the desktop shell (dev /
-      // browser preview) there is nothing to lock, so skip. Inside it, a failure
-      // is a hard stop with a durable, server-visible violation so the proctor
-      // sees the attempt rather than the candidate slipping in with open internet.
+      // Platform-aware strict policy. Prefer the platform reported by
+      // collect_device_state (authoritative at start time); fall back to the
+      // get_platform value resolved at mount. On Windows this makes camera /
+      // external_display / remote_server required+block so the Rust-side
+      // merge_requirements keeps the Windows enforcement; off-Windows they stay
+      // advisory and behavior is unchanged.
+      //
+      // Resolved before the network gate below, which needs the same value.
+      // `get_platform` reports only the coarse `os` ("windows"), and the gate's
+      // whole decision turns on the native label — windows_no_firewall vs
+      // windows_no_admin — which only collect_device_state carries.
+      const devicePlatform = deviceState.platform ?? platform ?? undefined;
+
+      // SEC-3: egress lockdown is the core anti-cheat control, so a build that
+      // was meant to raise a firewall and did not get one is a hard stop, with
+      // a durable server-visible violation so the proctor sees the attempt
+      // rather than the candidate slipping in with open internet.
+      //
+      // A build that never asked to elevate is a different thing entirely, and
+      // used to be treated as the same thing — which blocked every candidate on
+      // the ordinary Windows release. It now enters with the fact recorded.
+      // decideNetworkLockdown owns that distinction; see network-gate.ts.
+      // Outside the desktop shell (dev / browser preview) there is nothing to
+      // lock, so this is skipped.
       const tauriBridge = window.__TAURI__;
       if (tauriBridge) {
-        let lockdownEngaged = false;
+        let engaged = false;
         let lockdownError: string | null = null;
         try {
           // Bound the call: a hung/half-installed helper must not freeze the
           // final stage. withTimeout rejects on timeout AND propagates the
-          // helper's real error, so the catch surfaces a clear reason and the
-          // hard-block path below fires.
-          lockdownEngaged = await withTimeout(
+          // helper's real error, so the record carries a usable reason.
+          engaged = await withTimeout(
             tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
               allowedDomains: [getNetworkLockdownAllowlistHost()],
             }),
@@ -448,56 +467,45 @@ export default function OnboardingPage() {
           lockdownError = err instanceof Error ? err.message : String(err);
         }
 
-        if (!lockdownEngaged) {
-          const detail = lockdownError ?? "enable_network_lockdown returned false";
-          // Always record the failure server-side first, so the proctor sees the
-          // attempt regardless of which path we take below.
-          await invoke("log_violation", { kind: "network_lockdown_failed", detail }).catch(
+        const gate = decideNetworkLockdown({
+          platform: devicePlatform ?? null,
+          engaged,
+          error: lockdownError,
+          relaxed: isGatingRelaxed(),
+        });
+
+        // Recorded before the block check, not after — the blocked case is the
+        // one an invigilator actually needs to read.
+        if (gate.violation) {
+          await invoke("log_violation", { kind: gate.eventKind, detail: gate.detail }).catch(
             () => {}
           );
-          await invoke("log_proctoring_event", {
-            kind: "network_lockdown_failed",
-            detail,
-            payload: { allowed_domains: [getNetworkLockdownAllowlistHost()] },
-          }).catch(() => {});
-
-          if (isGatingRelaxed()) {
-            // TEST MODE ONLY — gated on the build-time NEXT_PUBLIC_AMS_RELAX_GATING
-            // flag, which a candidate cannot set. Relaxed builds proceed into the
-            // contest even though the privileged network helper never engaged, so
-            // the full contest flow can be exercised on machines without the helper
-            // (e.g. dev Linux boxes). The failure is still logged above as a
-            // server-visible violation, and the "relaxed mode" badge is shown. This
-            // branch must NEVER be reachable in a shipping build — strict builds
-            // fall through to the hard stop below.
-            warnGatingRelaxed(
-              `network lockdown NOT engaged at launch (${detail}) — entering contest with OPEN internet`
-            );
-            // fall through to launch
-          } else {
-            setReadyForStart(false);
-            setTransitioning(false);
-            setPolicyBlock(
-              "We couldn't secure your network for the exam — the proctoring network component may not be installed or still needs your permission. Re-run device setup, then try again. Starting now would leave your internet open, which a secured contest does not allow."
-            );
-            return;
-          }
         }
-
         await invoke("log_proctoring_event", {
-          kind: "network_lockdown_engaged",
-          detail: "Outbound traffic restricted to the exam allowlist.",
-          payload: { allowed_domains: [getNetworkLockdownAllowlistHost()] },
+          kind: gate.eventKind,
+          detail: gate.detail,
+          payload: {
+            allowed_domains: [getNetworkLockdownAllowlistHost()],
+            platform: devicePlatform ?? null,
+          },
         }).catch(() => {});
+
+        if (gate.decision === "blocked") {
+          setReadyForStart(false);
+          setTransitioning(false);
+          setPolicyBlock(gate.message);
+          return;
+        }
+        if (gate.decision === "advisory" && gate.violation) {
+          // TEST MODE ONLY — a relaxed build entering with open internet. This
+          // branch must never be reachable in a shipping build; the ordinary
+          // unelevated release takes the non-violation advisory path above.
+          warnGatingRelaxed(
+            `network lockdown NOT engaged at launch (${gate.detail}) — entering contest with OPEN internet`
+          );
+        }
       }
 
-      // Platform-aware strict policy. Prefer the platform reported by
-      // collect_device_state (authoritative at start time); fall back to the
-      // get_platform value resolved at mount. On Windows this makes camera /
-      // external_display / remote_server required+block so the Rust-side
-      // merge_requirements keeps the Windows enforcement; off-Windows they stay
-      // advisory and behavior is unchanged.
-      const devicePlatform = deviceState.platform ?? platform ?? undefined;
       const deviceId = getOrCreateDeviceId();
       // Re-fetch overrides at the gate so a freshly issued waiver is honored.
       // A fetch failure yields the base policy — we never trap the candidate on
