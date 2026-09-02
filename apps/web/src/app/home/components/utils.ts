@@ -270,6 +270,23 @@ export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
       return { label: "Device ID", success: "Device registered", fail: "Device not registered" };
     case "clock_integrity":
       return { label: "Clock check", success: "Clock in sync", fail: "Clock out of sync" };
+    // Both are Windows-only entry checks. Without these cases the default
+    // branch printed the raw `external_display` / `remote_server` identifiers
+    // straight into the candidate's readiness list, next to sentence-case
+    // labels — it read like a leaked internal, and neither name tells a
+    // contestant what to actually do about it.
+    case "external_display":
+      return {
+        label: "Extra monitors",
+        success: "One display",
+        fail: "Disconnect extra monitors",
+      };
+    case "remote_server":
+      return {
+        label: "Remote access",
+        success: "No remote session",
+        fail: "Close remote desktop software",
+      };
     default:
       return { label: String(kind), success: "Check passed", fail: "Check failed" };
   }
