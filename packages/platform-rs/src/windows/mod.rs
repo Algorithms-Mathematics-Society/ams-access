@@ -489,27 +489,36 @@ fn set_sleep_prevention(enable: bool) {
 
 // ── Registry lockdown ─────────────────────────────────────────────────────────
 
+/// Registry policy applied for the duration of a lockdown.
+///
+/// **`NoWinKeys` is deliberately not set any more.** It was redundant and
+/// dangerous: `kbproc` already swallows LWin (0x5B), RWin (0x5C) and every
+/// `win_down` combination, and that hook dies with the process. The registry
+/// value does not — so a force-kill, a crash or a flat battery left the
+/// candidate's Windows key dead, with the only repair being "launch the exam
+/// app again", which is the last thing someone in that state will do.
+///
+/// It is still *deleted* here, and in `recover_registry_if_crashed`, so a
+/// machine that ran an older build and has the value stuck gets cleaned up.
+/// Explorer reads `NoWinKeys` when it starts, so a machine that is already
+/// enforcing it needs Explorer restarted (or a sign-out) for the deletion to
+/// take effect — that is a one-time cost for existing installs only.
+///
+/// `DisableTaskMgr` stays. Ctrl+Alt+Del runs on the secure desktop where no
+/// user-mode hook can reach it, so this is the only thing that closes that
+/// route, and there is no hook-based equivalent to fall back on.
 fn apply_registry_policies(enable: bool) {
+    const TASK_MGR_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
+    const EXPLORER_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+
     if enable {
-        reg_set(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-            "DisableTaskMgr",
-            "1",
-        );
-        reg_set(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-            "NoWinKeys",
-            "1",
-        );
+        reg_set(TASK_MGR_KEY, "DisableTaskMgr", "1");
     } else {
-        reg_delete_value(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-            "DisableTaskMgr",
-        );
-        reg_delete_value(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-            "NoWinKeys",
-        );
+        reg_delete_value(TASK_MGR_KEY, "DisableTaskMgr");
+        // Never set by this build; cleared in case an older one left it behind.
+        // A stale value on a machine that has not yet unlocked is handled at
+        // startup by `recover_registry_if_crashed`, which runs before any lock.
+        reg_delete_value(EXPLORER_KEY, "NoWinKeys");
     }
 }
 
@@ -554,15 +563,30 @@ fn set_game_bar_enabled(enabled: bool) {
 /// Must be called before Tauri initialises so it completes before any
 /// enable_keyboard_intercept() call can race the restore.
 pub fn recover_registry_if_crashed() {
-    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
-    let task_mgr_set = hidden_command("reg")
-        .args(["query", key, "/v", "DisableTaskMgr"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if task_mgr_set {
+    fn value_present(key: &str, name: &str) -> bool {
+        hidden_command("reg")
+            .args(["query", key, "/v", name])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    // Both values are checked, not just DisableTaskMgr. A build at or before
+    // 2.0.7 also set `NoWinKeys`, and a machine killed while that was applied
+    // can be left with the Windows key dead but the task-manager policy
+    // already cleared — in which case the old single-value probe saw nothing
+    // wrong and left the candidate stuck.
+    let task_mgr_set = value_present(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
+        "DisableTaskMgr",
+    );
+    let win_keys_set = value_present(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+        "NoWinKeys",
+    );
+    if task_mgr_set || win_keys_set {
         eprintln!("AMS Access: crashed-session registry state detected — restoring");
         apply_registry_policies(false);
         set_game_bar_enabled(true);

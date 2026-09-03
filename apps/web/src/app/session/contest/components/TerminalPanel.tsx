@@ -670,20 +670,51 @@ export function TerminalPanel({
                 </span>
               )}
             </div>
-            {runResult?.compile_output ? (
-              <div
-                style={{
-                  color: runResult.status === "CE" ? "#fca5a5" : "#94a3b8",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {runResult.compile_output}
-              </div>
-            ) : runResult && !isRunning ? (
-              <div style={{ color: "#475569" }}>No compiler output.</div>
-            ) : !isRunning ? (
-              <div style={{ color: "#334155" }}>Compiler messages appear here after a run.</div>
-            ) : null}
+            {/* A submission's compiler output counts too. This tab read only
+                `runResult`, so a candidate who *submitted* code that failed to
+                compile saw a bare CE verdict and the words "Compiler messages
+                appear here after a run" — the diagnostic they needed most,
+                withheld at the moment they needed it. The adapter has carried
+                `compile_output` on every attempt all along; nothing read it.
+
+                A run wins when both exist, because it is the more recent thing
+                the candidate did, and the source is named either way so the
+                two are never mistaken for each other. */}
+            {(() => {
+              const fromRun = runResult?.compile_output ?? null;
+              const fromSubmission = latestAttempt?.compile_output ?? null;
+              const text = fromRun || fromSubmission;
+              if (!text) {
+                if (isRunning) return null;
+                return runResult || latestAttempt ? (
+                  <div style={{ color: "#475569" }}>No compiler output.</div>
+                ) : (
+                  <div style={{ color: "#334155" }}>
+                    Compiler messages appear here after a run or submission.
+                  </div>
+                );
+              }
+              const isError = fromRun
+                ? runResult?.status === "CE"
+                : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE";
+              return (
+                <>
+                  <div
+                    style={{
+                      fontSize: "9px",
+                      letterSpacing: "0.1em",
+                      color: "#475569",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    {fromRun ? "FROM YOUR LAST RUN" : "FROM YOUR LAST SUBMISSION"}
+                  </div>
+                  <div style={{ color: isError ? "#fca5a5" : "#94a3b8", whiteSpace: "pre-wrap" }}>
+                    {text}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 

@@ -1,6 +1,6 @@
 {
   "name": "@ams/desktop",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "private": true,
   "scripts": {
     "dev": "tauri dev",
