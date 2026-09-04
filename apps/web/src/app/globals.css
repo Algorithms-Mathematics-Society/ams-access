@@ -854,6 +854,19 @@ html.light:not(.theme-dark-locked) {
   line-height: 1.5;
 }
 
+/* `host · CODE` under a connection error. Quiet on purpose: the candidate
+   does not need it and should not be alarmed by it, while the invigilator
+   helping them cannot diagnose anything without it. Monospace because it is
+   an identifier, not prose. */
+.login-error-diagnostic {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+
 /* Dev sign-in (dev builds only) */
 .login-dev-btn {
   display: block;

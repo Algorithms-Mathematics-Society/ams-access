@@ -210,7 +210,14 @@ async function request<T>(
     throw new ProctorApiError(
       aborted ? "The server did not respond in time." : "Cannot reach the exam server.",
       0,
-      aborted ? "TIMEOUT" : "UNREACHABLE"
+      aborted ? "TIMEOUT" : "UNREACHABLE",
+      // WHICH host, and how long we waited. Without this the UI can only say
+      // "cannot reach the exam server", which is true of a wrong host, a dead
+      // resolver, a stale firewall allowlist and a real outage alike. It cost
+      // a full investigation to discover the app was calling
+      // http://localhost:8080 on a machine whose network was perfect.
+      // See `network-error.ts` for what is done with it.
+      { api_base: API, path, timeout_ms: timeoutMs }
     );
   } finally {
     clearTimeout(timer);

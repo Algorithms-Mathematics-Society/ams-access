@@ -23,6 +23,7 @@ export function SlipForm({
   setPassword,
   loading,
   error,
+  diagnostic,
   onSubmit,
 }: {
   loginId: string;
@@ -31,6 +32,9 @@ export function SlipForm({
   setPassword: (value: string) => void;
   loading: boolean;
   error: string | null;
+  /** `host · CODE` for a connection that produced no HTTP response. Rendered
+   * quietly under the error: it is for whoever is helping, not the candidate. */
+  diagnostic?: string | null;
   onSubmit: (event: FormEvent) => void;
 }) {
   return (
@@ -80,6 +84,12 @@ export function SlipForm({
       {error && (
         <p className="login-error" role="alert">
           {error}
+          {diagnostic && (
+            // Inside the alert so a screen reader gets it with the message,
+            // monospace and dimmed so it reads as a reference rather than a
+            // second thing gone wrong.
+            <span className="login-error-diagnostic">{diagnostic}</span>
+          )}
         </p>
       )}
 

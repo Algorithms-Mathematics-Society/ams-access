@@ -18,6 +18,8 @@ import { useRouter } from "next/navigation";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { invoke } from "@ams/api-client";
+import { describeUnreachable } from "@/lib/network-error";
 import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
 import { BrandPane } from "./components/BrandPane";
 import { SlipForm } from "./components/SlipForm";
@@ -29,12 +31,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `host · CODE` for a status-0. Shown small and quiet under the error: the
+  // candidate does not need it, and the person helping them cannot work
+  // without it. See `network-error.ts`.
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (loading) return;
     setError(null);
+    setDiagnostic(null);
     setLoading(true);
 
     try {
@@ -63,7 +70,25 @@ export default function LoginPage() {
         return;
       }
       if (caught.status === 0) {
-        setError("Cannot reach the exam server. Check the network, or ask an invigilator.");
+        // No HTTP response at all. Distinguish "wait" from "get help", and
+        // name the host, so the next person to see this does not repeat the
+        // investigation that produced it.
+        const { message, diagnostic } = describeUnreachable({
+          code: caught.code,
+          apiBase: caught.detail?.api_base,
+        });
+        setError(message);
+        setDiagnostic(diagnostic);
+        // Leave a trace. Login failures previously produced nothing: no
+        // console line, no violation, no proctoring event. This writes
+        // straight to the local JSONL spool, which needs no session, and is
+        // uploaded once one exists.
+        void invoke("log_proctoring_event", {
+          kind: "api_unreachable",
+          detail: diagnostic,
+          timestamp: Date.now(),
+          payload: { api_base: caught.detail?.api_base ?? null, code: caught.code, phase: "login" },
+        }).catch(() => {});
         return;
       }
       // The server's own wording. It already distinguishes "incorrect",
@@ -93,6 +118,7 @@ export default function LoginPage() {
             setPassword={setPassword}
             loading={loading}
             error={error}
+            diagnostic={diagnostic}
             onSubmit={handleSubmit}
           />
 
@@ -134,6 +160,9 @@ export default function LoginPage() {
           // never included.
           attempted_login_id: loginId.trim() || undefined,
           last_error: error,
+          // Which host the client actually called. If the incident is that it
+          // cannot reach the server, this is the field that says why.
+          last_diagnostic: diagnostic,
         }}
       />
     </div>

@@ -1,5 +1,5 @@
 import { sessionPolicy, type ReadinessCheck, type ReadinessReport } from "@ams/api-client";
-import { resolveApiBase } from "@/lib/api-base";
+import { allowlistHostFor, resolveApiBase } from "@/lib/api-base";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import type {
   InvitedContest,
@@ -90,11 +90,11 @@ export function getNetworkProbeHost() {
   return "www.google.com";
 }
 
+/** See the note on the onboarding copy of this: `allowlistHostFor` throws
+ * rather than falling back to `"localhost"`, which used to build a
+ * loopback-only firewall and call it engaged. */
 export function getNetworkLockdownAllowlistHost() {
-  try {
-    return new URL(API_URL).hostname;
-  } catch {}
-  return "localhost";
+  return allowlistHostFor(API_URL);
 }
 
 // ── Async helpers ─────────────────────────────────────────────
