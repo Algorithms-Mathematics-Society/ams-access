@@ -4,6 +4,16 @@ set -e
 # Remove the udev rule added by postinst.
 UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
 
+# The privileged network helper, installed out-of-band by the app itself via
+# pkexec rather than by dpkg. Removing the package left all of it behind: a
+# root daemon still enabled and running, pinned to a client binary that no
+# longer exists. Nothing would ever authorise to it again, and it would keep
+# starting on every boot for the life of the machine.
+HELPER_UNIT="ams-proctor-helper.service"
+HELPER_UNIT_PATH="/etc/systemd/system/${HELPER_UNIT}"
+HELPER_BIN_DIR="/usr/local/lib/ams-access"
+HELPER_CONFIG_DIR="/etc/ams-access"
+
 case "$1" in
     remove|deconfigure)
         rm -f "$UDEV_RULE_PATH"
@@ -11,6 +21,29 @@ case "$1" in
         if command -v udevadm > /dev/null 2>&1; then
             udevadm control --reload-rules 2>/dev/null || true
         fi
+
+        # Stop and disable before deleting the unit file, or systemd keeps the
+        # running instance with no unit to manage it by. Every step tolerates
+        # absence: the helper is optional and most installs never had it.
+        if command -v systemctl > /dev/null 2>&1; then
+            systemctl stop "$HELPER_UNIT" 2>/dev/null || true
+            systemctl disable "$HELPER_UNIT" 2>/dev/null || true
+        fi
+        rm -f "$HELPER_UNIT_PATH"
+        rm -rf "$HELPER_BIN_DIR"
+        # The pinned client path. Leaving it behind is worse than pointless:
+        # a stale pin naming a deleted binary means the helper, if it were
+        # ever reinstalled, would refuse every client.
+        rm -rf "$HELPER_CONFIG_DIR"
+        if command -v systemctl > /dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+
+        # The boot-scoped lockdown state. If the package is removed while a
+        # lockdown is applied, the kernel rules outlive both the helper and
+        # this script; the marker is removed so a later helper does not
+        # re-apply a dead session's allowlist at startup.
+        rm -f /run/ams-proctor.lock
         ;;
 
     # On an upgrade the new postinst rewrites the rule immediately, so

@@ -745,9 +745,20 @@ async fn collect_device_state_inner(
     }
 
     // Linux egress lockdown runs through the privileged helper; surface whether
-    // it is installed/reachable so the readiness policy can hard-block a strict
-    // contest that would otherwise run with unrestricted egress (core-rs
-    // CheckKind::Network gate). Other platforms leave this None (inert).
+    // it is installed/reachable so the readiness report can SHOW that a contest
+    // would run with unrestricted egress. Other platforms leave this None (inert).
+    //
+    // It surfaces; it does not gate. This comment used to say the policy
+    // "hard-blocks a strict contest" on a down helper, and it does not:
+    // `CheckKind::Network` is `(false, BlockingSeverity::Warning)` on EVERY
+    // profile (core-rs `SessionPolicy::for_profile_with_platform`), and the
+    // check's own arm documents that a down helper "never blocks contest
+    // entry". The real block, where there is one, comes later from
+    // `decideNetworkLockdown` in the frontend, and only for a build that was
+    // meant to raise a firewall. Two comments asserting an enforcement the
+    // policy does not implement is how the AppImage case (helper install can
+    // never succeed, candidate proceeds with open egress) reads as acceptable
+    // to someone auditing this file.
     #[cfg(target_os = "linux")]
     {
         match platform_rs::linux::network_helper_status() {
@@ -1791,11 +1802,15 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
     }
 
     // The Linux/macOS client returns Err when the privileged helper is not
-    // installed/running. We propagate that verbatim instead of swallowing it:
-    // an exam must NOT proceed with unrestricted egress. This is the last-line
-    // enforcement at ContestLaunch; the readiness policy already hard-blocks a
-    // strict Linux contest earlier via the CheckKind::Network helper gate in
-    // `packages/core-rs/src/exam/mod.rs` (fed by `network_helper_ready`).
+    // installed/running. We propagate that verbatim instead of swallowing it,
+    // because this is the ONLY place egress failure can still stop entry.
+    //
+    // Not, as this comment previously claimed, a second line of defence behind
+    // a readiness gate that already blocked: `CheckKind::Network` is advisory
+    // on every profile, so nothing upstream blocks. Whether a propagated Err
+    // actually stops the candidate is decided by `decideNetworkLockdown`
+    // (apps/web/.../network-gate.ts), which blocks only when the build was
+    // meant to raise a firewall and failed to.
     platform_dispatch!(
         enable_network_lockdown(&ips),
         else Err("Network lockdown not supported on this platform".to_string())

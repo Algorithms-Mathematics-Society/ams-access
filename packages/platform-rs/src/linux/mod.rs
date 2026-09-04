@@ -560,18 +560,65 @@ fn gsettings_get(schema: &str, key: &str) -> Option<String> {
     }
 }
 
-fn gsettings_set(schema: &str, key: &str, value: &str) {
+/// Write a GSettings key, and report whether it actually took.
+///
+/// Returns `false` when the key does not exist on this GNOME version, when
+/// the `gsettings` binary is missing entirely, when the write exits non-zero,
+/// or when a read-back does not match what we asked for. The read-back is the
+/// point: an exit status of 0 from a tool that is not there is not something
+/// this code can observe, and `enable_keyboard_intercept` used to report a
+/// successful lockdown on exactly that basis.
+fn gsettings_set(schema: &str, key: &str, value: &str) -> bool {
     if gsettings_get(schema, key).is_none() {
-        return;
+        return false;
     }
-    let _ = std::process::Command::new("gsettings")
+    let wrote = std::process::Command::new("gsettings")
         .args(["set", schema, key, value])
         .stderr(std::process::Stdio::null())
-        .status();
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !wrote {
+        return false;
+    }
+    // Prove it stuck. GSettings normalises some values (quoting, empty arrays),
+    // so compare on the normalised forms rather than raw equality.
+    match gsettings_get(schema, key) {
+        Some(actual) => normalize_gvariant(&actual) == normalize_gvariant(value),
+        None => false,
+    }
 }
 
+/// Enough normalisation to compare what we wrote with what came back.
+/// `@as []` and `[]` are the same empty string-array; quoting varies.
+fn normalize_gvariant(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("@as ")
+        .replace(['\'', '"', ' '], "")
+}
+
+/// The result of trying to install the intercept.
+///
+/// `active` is `applied > 0`: the intercept is real if any key took, and a
+/// partial apply is normal on a GNOME version where some schema keys have been
+/// renamed or removed. The ratio travels in `method` so an invigilator can see
+/// the coverage instead of a bare boolean that was true no matter what.
+fn intercept_outcome(applied: usize, total: usize, method: &str) -> KeyboardInterceptResult {
+    KeyboardInterceptResult {
+        active: applied > 0,
+        method: format!("{method} ({applied}/{total} applied)"),
+        platform: "linux".to_string(),
+    }
+}
+
+/// Read a KDE global-shortcut key, for the pre-lockdown backup.
+///
+/// Qt6 name first: on Plasma 6 the `5` binary is often absent, and a failed
+/// read here means no backup, which means `disable_keyboard_intercept` has
+/// nothing to restore. That turns a temporary lockdown into a permanent one.
 fn kreadconfig_get(group: &str, key: &str) -> Option<String> {
-    let out = std::process::Command::new("kreadconfig5")
+    let out = std::process::Command::new(kde_tool("kreadconfig")?)
         .args([
             "--file",
             "kglobalshortcutsrc",
@@ -594,8 +641,35 @@ fn kreadconfig_get(group: &str, key: &str) -> Option<String> {
     }
 }
 
-fn kwriteconfig_set(group: &str, key: &str, value: &str) {
-    let _ = std::process::Command::new("kwriteconfig5")
+/// Plasma 6 renamed these tools. Kubuntu 24.04+, Fedora KDE 40+ and current
+/// openSUSE ship `kwriteconfig6`/`kreadconfig6` and often no longer ship the
+/// `5` variants at all, so hardcoding `kwriteconfig5` meant every write
+/// ENOENT'd, `let _ =` swallowed it, and the branch still reported the
+/// intercept active. Probe newest first.
+fn kde_tool(stem: &str) -> Option<&'static str> {
+    for suffix in ["6", "5"] {
+        let name: &'static str = Box::leak(format!("{stem}{suffix}").into_boxed_str());
+        if std::process::Command::new(name)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Write a KDE global-shortcut key. Returns whether the tool existed and
+/// exited cleanly.
+fn kwriteconfig_set(group: &str, key: &str, value: &str) -> bool {
+    let Some(tool) = kde_tool("kwriteconfig") else {
+        return false;
+    };
+    std::process::Command::new(tool)
         .args([
             "--file",
             "kglobalshortcutsrc",
@@ -605,17 +679,43 @@ fn kwriteconfig_set(group: &str, key: &str, value: &str) {
             key,
             value,
         ])
-        .status();
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
-fn kde_reconfigure() {
-    let _ = std::process::Command::new("qdbus")
-        .args([
-            "org.kde.kglobalaccel",
-            "/kglobalaccel",
-            "org.kde.KGlobalAccel.reconfigure",
-        ])
-        .status();
+/// Ask KGlobalAccel and KWin to reload their config. Returns whether either
+/// call actually succeeded.
+///
+/// This is load-bearing, not a nicety: `kwriteconfig` only edits
+/// `kglobalshortcutsrc` on disk, and KWin does not notice until it is told.
+/// Without a working `qdbus` the shortcut writes are inert until the next
+/// logout, which is indistinguishable from no lockdown at all. `qdbus` is also
+/// not in any dependency chain, so its absence is the common case rather than
+/// an exotic one. Both Qt5 and Qt6 binary names are tried.
+fn kde_reconfigure() -> bool {
+    let mut ok = false;
+    for bin in ["qdbus6", "qdbus-qt6", "qdbus"] {
+        let accel = std::process::Command::new(bin)
+            .args([
+                "org.kde.kglobalaccel",
+                "/kglobalaccel",
+                "org.kde.KGlobalAccel.reconfigure",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let kwin = std::process::Command::new(bin)
+            .args(["org.kde.KWin", "/KWin", "reconfigure"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if accel || kwin {
+            ok = true;
+            break;
+        }
+    }
+    ok
 }
 
 /// Disable GNOME and KDE compositor shortcuts (Super, Alt+Tab, Alt+F4, launcher, etc.)
@@ -634,14 +734,19 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
         let all_settings = GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter());
 
+        let mut applied = 0usize;
+        let mut total = 0usize;
         for &(schema, key, disable_val) in all_settings {
+            total += 1;
             let map_key = format!("gnome/{schema}/{key}");
             if !saved.contains_key(&map_key) {
                 if let Some(current) = gsettings_get(schema, key) {
                     saved.insert(map_key.clone(), current);
                 }
             }
-            gsettings_set(schema, key, disable_val);
+            if gsettings_set(schema, key, disable_val) {
+                applied += 1;
+            }
         }
 
         write_backup(&saved);
@@ -651,67 +756,95 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         } else {
             "gsettings/x11"
         };
-        return KeyboardInterceptResult {
-            active: true,
-            method: method.to_string(),
-            platform: "linux".to_string(),
-        };
+        if applied == 0 {
+            // Almost always a missing `gsettings` binary (`libglib2.0-bin`).
+            // Loud, because the readiness gate is about to decide on this.
+            eprintln!(
+                "[ams][kb] no GSettings key could be applied; is `gsettings` installed? \
+                 Reporting the intercept as INACTIVE rather than claiming a lockdown."
+            );
+        }
+        return intercept_outcome(applied, total, method);
     } else if is_kde {
         let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
 
+        let mut applied = 0usize;
+        let mut total = 0usize;
         for &(group, key, disable_val) in KDE_SHORTCUTS {
+            total += 1;
             let map_key = format!("kde/{group}/{key}");
             if !saved.contains_key(&map_key) {
                 if let Some(current) = kreadconfig_get(group, key) {
                     saved.insert(map_key.clone(), current);
                 }
             }
-            kwriteconfig_set(group, key, disable_val);
+            if kwriteconfig_set(group, key, disable_val) {
+                applied += 1;
+            }
         }
 
         let meta_key = "kde_meta".to_string();
         if !saved.contains_key(&meta_key) {
-            let current = std::process::Command::new("kreadconfig5")
-                .args([
-                    "--file",
-                    "kwinrc",
-                    "--group",
-                    "ModifierOnlyShortcuts",
-                    "--key",
-                    "Meta",
-                ])
-                .output()
-                .ok()
+            let current = kde_tool("kreadconfig")
+                .and_then(|tool| {
+                    std::process::Command::new(tool)
+                        .args([
+                            "--file",
+                            "kwinrc",
+                            "--group",
+                            "ModifierOnlyShortcuts",
+                            "--key",
+                            "Meta",
+                        ])
+                        .output()
+                        .ok()
+                })
                 .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
                 .unwrap_or_default();
             if !current.is_empty() {
                 saved.insert(meta_key, current);
             }
         }
-        let _ = std::process::Command::new("kwriteconfig5")
-            .args([
-                "--file",
-                "kwinrc",
-                "--group",
-                "ModifierOnlyShortcuts",
-                "--key",
-                "Meta",
-                "none",
-            ])
-            .status();
+        let meta_applied = kde_tool("kwriteconfig")
+            .map(|tool| {
+                std::process::Command::new(tool)
+                    .args([
+                        "--file",
+                        "kwinrc",
+                        "--group",
+                        "ModifierOnlyShortcuts",
+                        "--key",
+                        "Meta",
+                        "none",
+                    ])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if meta_applied {
+            applied += 1;
+        }
+        total += 1;
 
         write_backup(&saved);
 
-        kde_reconfigure();
-        let _ = std::process::Command::new("qdbus")
-            .args(["org.kde.KWin", "/KWin", "reconfigure"])
-            .status();
+        // Without a working `qdbus` KWin never reloads kglobalshortcutsrc, so
+        // the writes above are inert until the next logout. A KDE lockdown
+        // that cannot ask KWin to reconfigure is not a lockdown, so it is
+        // counted rather than assumed.
+        let reconfigured = kde_reconfigure();
+        if !reconfigured {
+            eprintln!(
+                "[ams][kb] KWin could not be asked to reconfigure (no working qdbus); \
+                 shortcut writes will not take effect this session."
+            );
+        }
 
-        return KeyboardInterceptResult {
-            active: true,
-            method: "kwriteconfig/kde".to_string(),
-            platform: "linux".to_string(),
-        };
+        if applied == 0 || !reconfigured {
+            return intercept_outcome(0, total, "kwriteconfig/kde");
+        }
+        return intercept_outcome(applied, total, "kwriteconfig/kde");
     }
 
     KeyboardInterceptResult {
@@ -879,10 +1012,32 @@ fn xdotool_int(args: &[&str]) -> Option<u32> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
+/// Whether the X11-only watchdogs can do anything on this session.
+///
+/// `$DISPLAY` is the wrong signal and was the one being used: XWayland sets it
+/// on every GNOME and KDE Wayland session, so the gate passed and the threads
+/// spawned to poll `xdotool` against a window with no X11 id. They then
+/// returned at a silent 10s deadline, leaving no workspace correction and no
+/// native focus_loss events, with nothing anywhere saying so.
+///
+/// Conservative on purpose: an app forced onto XWayland with `GDK_BACKEND=x11`
+/// inside a Wayland session would in fact be drivable, and this declines it.
+/// Losing a watchdog in a configuration nobody ships beats claiming one that
+/// does not work in the configuration everybody ships.
+fn watchdogs_supported(display_server: &str) -> bool {
+    display_server == "x11"
+}
+
 /// Spawn a workspace-guard thread (no-op if not on X11 or xdotool/wmctrl absent).
 fn spawn_workspace_watchdog() {
-    // Only meaningful on X11.
-    if std::env::var("DISPLAY").is_err() {
+    let session = detect_display_server();
+    if !watchdogs_supported(&session) {
+        // Loud, because the alternative is a proctored session silently
+        // enforcing less than the organizer believes it does.
+        eprintln!(
+            "[ams][watchdog] workspace guard disabled: {session} session has no usable X11 \
+             window to track. Desktop-switch correction is NOT active."
+        );
         return;
     }
 
@@ -1004,8 +1159,16 @@ fn our_window_ids(pid: &str) -> std::collections::HashSet<u64> {
 /// watchdog handles desktop-switch correction; this never steals focus back, so
 /// it can't fight a legitimate system modal.
 fn spawn_focus_watchdog() {
-    if std::env::var("DISPLAY").is_err() {
-        return; // X11 only
+    let session = detect_display_server();
+    if !watchdogs_supported(&session) {
+        // On Wayland this leaves the webview's own blur/visibilitychange
+        // handler as the ONLY focus signal, and that is the one a candidate
+        // can suppress from the page. Say so rather than appear to watch.
+        eprintln!(
+            "[ams][watchdog] focus guard disabled: {session} session exposes no X11 active \
+             window. Native focus_loss violations will NOT be raised."
+        );
+        return;
     }
     std::thread::Builder::new()
         .name("ams-focus-guard".into())
@@ -1235,6 +1398,122 @@ const HELPER_CONNECT_ERR_PREFIX: &str = "connect to helper";
 /// (never persisted) so a crash-relaunch deliberately cannot lift the lockdown.
 static SESSION_TOKEN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+// ── Session token persistence (L2) ───────────────────────────────────────────
+//
+// The token authorises lifting an active lockdown, and it used to live only in
+// the `SESSION_TOKEN` Mutex above. `disable` sent `unwrap_or_default()` when
+// that was `None`, and the helper rejects an empty token against a live
+// marker, so a RELAUNCHED app could never lift the lockdown its predecessor
+// applied. A SIGKILL mid-exam therefore pinned the candidate to a stale
+// allowlist with a reboot as the only way out, while the recovery panel told
+// them to relaunch the app, which is precisely the thing that cannot work.
+//
+// The token is written to the user's runtime dir, which is tmpfs and cleared
+// on reboot: the same boot-scoped lifetime as the helper's marker and the
+// iptables rules themselves, so the three cannot disagree. Mode 0600 inside a
+// 0700 directory; the helper still authenticates the peer by pinned exe path,
+// so this does not widen who may disable, only which *process* of the
+// authorised binary can.
+//
+// KNOWN RESIDUAL GAP, stated rather than papered over. `XDG_RUNTIME_DIR` is
+// removed by logind when the user's last session ends, while the marker in
+// /run and the kernel's rules survive until reboot. So "crash, then log out
+// and back in" still strands the candidate, where "crash, then relaunch"
+// no longer does. /tmp would survive logout but is world-writable, and this
+// path is opened with O_CREAT rather than O_EXCL, so a planted symlink would
+// be followed: trading a narrow recovery gap for a local attack is the wrong
+// way round. Closing it properly belongs to the helper, which should notice
+// the owning process is gone and flush on its own (L1 in linux-fixes.md).
+
+/// Our own uid, without adding a `libc` dependency to this crate: `/proc/self`
+/// is owned by the process's real uid.
+fn own_uid() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self")
+        .map(|m| m.uid())
+        .unwrap_or(0)
+}
+
+fn session_token_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("/run/user/{}", own_uid())));
+    base.join("ams-access").join("session-token")
+}
+
+fn store_session_token_at(path: &std::path::Path, token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    // Atomic: write a sibling then rename over the target, mirroring the
+    // helper's own marker IO. `truncate` + `write` leaves a window in which a
+    // concurrent reader sees an empty file, and an empty token is precisely
+    // the value the helper rejects, so the lazy form could manufacture the
+    // bug this whole change exists to remove.
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(token.as_bytes())?;
+        file.sync_all()?;
+    }
+    let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    std::fs::rename(&tmp, path)
+}
+
+/// `None` for absent, unreadable, or blank. Blank must never read as
+/// `Some("")`: that is the empty token the helper rejects, which is the bug.
+fn load_session_token_at(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn clear_session_token_at(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+/// Remember a freshly minted token in memory AND on disk.
+fn remember_session_token(token: &str) {
+    let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = Some(token.to_string());
+    if let Err(e) = store_session_token_at(&session_token_path(), token) {
+        // Not fatal: the in-memory copy still serves this process. It only
+        // costs the ability to recover after a crash, which is what the file
+        // is for, so it is worth a line in the log.
+        eprintln!("[ams][lockdown] could not persist session token: {e}");
+    }
+}
+
+/// This session's token: memory first, then the file a previous run left.
+fn current_session_token() -> String {
+    if let Some(token) = SESSION_TOKEN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return token;
+    }
+    load_session_token_at(&session_token_path()).unwrap_or_default()
+}
+
+fn clear_session_token() {
+    let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = None;
+    clear_session_token_at(&session_token_path());
+}
+
 /// 16 random bytes from /dev/urandom, hex-encoded (32 chars). Falls back to a
 /// PID+nanos nonce if urandom is unavailable — still unique per session.
 fn mint_token() -> String {
@@ -1337,11 +1616,10 @@ fn configured_nameservers() -> Vec<String> {
 
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     // Mint + remember this session's token, then send it with the allowlist.
+    // Remembered on disk as well as in memory: see `remember_session_token`
+    // for why a process-local token made a crashed session unrecoverable.
     let token = mint_token();
-    {
-        let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
-        *slot = Some(token.clone());
-    }
+    remember_session_token(&token);
 
     // Split out the resolvers so the helper can restrict them to DNS ports.
     // They stay in `ips` as well: an older helper ignores `resolvers`, and
@@ -1371,25 +1649,59 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     })
 }
 
-/// Lift the network lockdown via the privileged helper, presenting this
-/// session's token. A connection failure means the helper isn't running, so
-/// there is nothing to flush — treated as success. On success the in-memory
-/// token is cleared.
-pub fn disable_network_lockdown() -> Result<(), String> {
-    let token = {
-        let slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
-        slot.clone().unwrap_or_default()
-    };
-    let request = serde_json::json!({ "cmd": "disable", "token": token }).to_string();
-    match helper_send(&request) {
-        Ok(()) => {
-            let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
-            *slot = None;
-            Ok(())
+/// The helper's lockdown marker. Root-owned 0600, so an unprivileged client
+/// cannot read it, but `/run` is world-executable so it CAN stat it. Presence
+/// alone is the fact we need: a lockdown was applied and has not been torn
+/// down. Kept in sync with `network-helper`'s `MARKER_PATH` by name only,
+/// which is acceptable because the client never opens it.
+const MARKER_PATH: &str = "/run/ams-proctor.lock";
+
+/// Returned when the helper is unreachable while a lockdown marker is still
+/// present. Distinguishable on purpose: the caller must be able to tell "there
+/// was nothing to undo" from "the firewall may still be up and I could not
+/// reach the only thing that can remove it".
+pub const HELPER_RULES_MAY_PERSIST: &str = "helper_unreachable_rules_may_persist";
+
+fn lockdown_marker_present() -> bool {
+    std::path::Path::new(MARKER_PATH).exists()
+}
+
+/// What a `disable` attempt actually means. Pure so the decision is testable
+/// without a socket or root.
+///
+/// The arm this replaces mapped every connection failure to `Ok(())`, on the
+/// reasoning that an unreachable helper means there is nothing to flush. That
+/// is false: iptables rules live in the kernel and outlive the daemon. A
+/// stopped, masked or uninstalled helper leaves `AMS_PROCTOR` hooked into
+/// OUTPUT while every caller reports success, and the recovery panel then
+/// tells the candidate their network access has been restored when it has not.
+fn disable_outcome(result: Result<(), String>, marker_present: bool) -> Result<(), String> {
+    match result {
+        Ok(()) => Ok(()),
+        // Unreachable helper. Only a failure if something was actually applied.
+        Err(e) if e.starts_with(HELPER_CONNECT_ERR_PREFIX) => {
+            if marker_present {
+                Err(format!("{HELPER_RULES_MAY_PERSIST}: {e}"))
+            } else {
+                Ok(())
+            }
         }
-        Err(e) if e.starts_with(HELPER_CONNECT_ERR_PREFIX) => Ok(()),
+        // A reachable helper that refused, e.g. a token mismatch. Pass the
+        // real reason through; rewriting it would hide the cause.
         Err(e) => Err(e),
     }
+}
+
+/// Lift the network lockdown via the privileged helper, presenting this
+/// session's token. On success the stored token is cleared.
+pub fn disable_network_lockdown() -> Result<(), String> {
+    let token = current_session_token();
+    let request = serde_json::json!({ "cmd": "disable", "token": token }).to_string();
+    let outcome = disable_outcome(helper_send(&request), lockdown_marker_present());
+    if outcome.is_ok() {
+        clear_session_token();
+    }
+    outcome
 }
 
 /// Install the helper binary + systemd unit and start it as root.
@@ -1545,7 +1857,342 @@ fn linux_process_alive(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{lower_basename, match_restricted, mint_token};
+    use super::{
+        disable_outcome, lower_basename, match_restricted, mint_token, HELPER_CONNECT_ERR_PREFIX,
+    };
+
+    // ── L4: teardown must not claim success while rules may still be applied ──
+    //
+    // The old arm mapped any connect failure to Ok(()), reasoning that an
+    // unreachable helper means there is nothing to flush. iptables rules live
+    // in the kernel and outlive the daemon, so a stopped, masked or removed
+    // helper leaves AMS_PROCTOR hooked into OUTPUT while every caller reports
+    // success — including the recovery panel, which then tells the candidate
+    // their network access has been restored.
+    //
+    // The marker is the discriminator. It is root-owned 0600, but /run is
+    // world-executable, so an unprivileged client can stat it without reading
+    // it: present means a lockdown was applied and not torn down.
+
+    #[test]
+    fn disable_succeeds_when_the_helper_answers() {
+        assert!(disable_outcome(Ok(()), true).is_ok());
+        assert!(disable_outcome(Ok(()), false).is_ok());
+    }
+
+    #[test]
+    fn unreachable_helper_with_a_live_marker_is_a_failure() {
+        let err = format!("{HELPER_CONNECT_ERR_PREFIX} (/run/ams-proctor.sock: refused)");
+        let out = disable_outcome(Err(err), true);
+        let message = out.expect_err("rules may still be applied; this must not report success");
+        assert!(
+            message.contains("rules_may_persist"),
+            "caller needs a distinguishable code, got: {message}"
+        );
+    }
+
+    #[test]
+    fn unreachable_helper_with_no_marker_is_genuinely_nothing_to_do() {
+        // The common case: the helper was never installed, so no chain was
+        // ever built. Erroring here would put a scary message on every
+        // ordinary exit.
+        let err = format!("{HELPER_CONNECT_ERR_PREFIX} (/run/ams-proctor.sock: no such file)");
+        assert!(disable_outcome(Err(err), false).is_ok());
+    }
+
+    // ── L2: the disable token must outlive the process that minted it ────────
+    //
+    // The token lived only in a process-local Mutex, and `disable` sent
+    // `unwrap_or_default()` when it was None. The helper rejects an empty
+    // token against a live marker, so a relaunched app could NEVER lift the
+    // lockdown its predecessor applied: SIGKILL mid-exam left the candidate
+    // pinned to a stale allowlist with a reboot as the only exit, while the
+    // recovery panel told them to relaunch the app.
+    //
+    // The file is boot-scoped like the marker (both tmpfs) so a reboot still
+    // clears both, and 0600 inside the user's own runtime dir.
+
+    #[test]
+    fn a_stored_token_survives_into_a_fresh_process() {
+        let dir = std::env::temp_dir().join(format!("ams-tok-{}", std::process::id()));
+        let path = dir.join("session-token");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        super::store_session_token_at(&path, "deadbeef").expect("store");
+        // A new process starts with no in-memory token; this is that read.
+        assert_eq!(
+            super::load_session_token_at(&path).as_deref(),
+            Some("deadbeef")
+        );
+
+        super::clear_session_token_at(&path);
+        assert_eq!(super::load_session_token_at(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_stored_token_is_not_readable_by_other_users() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ams-tokperm-{}", std::process::id()));
+        let path = dir.join("session-token");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        super::store_session_token_at(&path, "s3cret").expect("store");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the token authorises lifting a firewall");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_or_blank_token_file_reads_as_absent_not_empty_string() {
+        // An empty token is what the old code sent, and the helper rejects it.
+        // Reading blank as Some("") would reintroduce exactly that.
+        let dir = std::env::temp_dir().join(format!("ams-tokblank-{}", std::process::id()));
+        let path = dir.join("session-token");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(super::load_session_token_at(&path), None);
+
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "   \n").unwrap();
+        assert_eq!(super::load_session_token_at(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── P1: the keyboard intercept must report what actually applied ─────────
+    //
+    // Both branches ended in an unconditional `active: true`, and every
+    // primitive they call discards its result (`gsettings_set` returns `()`,
+    // the KDE writes are `let _ = ...`). So with `gsettings` absent, which the
+    // .deb did not declare until 3240141, the stage showed four green badges,
+    // readiness went green, the organizer's record went green, and Alt+Tab
+    // worked for the whole exam. A silent false pass is worse than a failure,
+    // because nobody looks for it.
+
+    #[test]
+    fn nothing_applied_means_the_intercept_is_not_active() {
+        // gsettings missing, or every write rejected. This is the case that
+        // used to report success.
+        let r = super::intercept_outcome(0, 21, "gsettings/x11");
+        assert!(!r.active, "zero applied settings is not a lockdown");
+    }
+
+    #[test]
+    fn a_full_apply_is_active_and_says_so() {
+        let r = super::intercept_outcome(21, 21, "gsettings/x11");
+        assert!(r.active);
+        assert!(
+            r.method.contains("21/21"),
+            "method must carry the ratio, got: {}",
+            r.method
+        );
+    }
+
+    #[test]
+    fn a_partial_apply_is_active_but_legible_as_partial() {
+        // Normal on a GNOME version where some schema keys no longer exist.
+        // The candidate is still protected, and the invigilator can see the
+        // coverage rather than a bare "true".
+        let r = super::intercept_outcome(7, 21, "gsettings/x11");
+        assert!(r.active);
+        assert!(r.method.contains("7/21"), "got: {}", r.method);
+    }
+
+    #[test]
+    fn the_platform_is_always_reported() {
+        for applied in [0, 5, 21] {
+            assert_eq!(
+                super::intercept_outcome(applied, 21, "gsettings/x11").platform,
+                "linux"
+            );
+        }
+    }
+
+    // ── P3: the X11 watchdogs must be gated on the session, not on $DISPLAY ──
+    //
+    // Both watchdogs skipped only when DISPLAY was unset. XWayland sets
+    // DISPLAY on every GNOME and KDE Wayland session, so on the most common
+    // modern Linux desktop the threads spawned, polled `xdotool search --pid`
+    // against a native Wayland window that has no X11 id, and returned at a
+    // silent 10s deadline. Verified on the investigation host, which reports
+    // XDG_SESSION_TYPE=wayland with DISPLAY=:0 set.
+    //
+    // The consequence was not a crash but a lie of omission: no workspace
+    // correction and no native focus_loss events, while nothing said so.
+
+    #[test]
+    fn the_x11_watchdogs_run_only_on_a_real_x11_session() {
+        assert!(super::watchdogs_supported("x11"));
+    }
+
+    #[test]
+    fn a_wayland_session_does_not_pretend_to_run_them() {
+        // The XWayland trap: DISPLAY is set here, which is why the old gate
+        // passed.
+        assert!(!super::watchdogs_supported("wayland"));
+        assert!(!super::watchdogs_supported("wayland/gnome"));
+        assert!(!super::watchdogs_supported("wayland/kde"));
+    }
+
+    #[test]
+    fn an_unknown_session_is_not_assumed_to_be_x11() {
+        assert!(!super::watchdogs_supported("unknown"));
+        assert!(!super::watchdogs_supported(""));
+    }
+
+    /// Stress: many threads storing/loading/clearing the token at once must
+    /// never yield a torn value. A partially-written token is worse than no
+    /// token, because the helper would reject it and the candidate would be
+    /// stranded with a lockdown nobody can lift. Writes are whole-file, so the
+    /// property to prove is that a reader only ever sees a complete token or
+    /// nothing at all.
+    #[test]
+    fn concurrent_token_access_never_yields_a_partial_token() {
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("ams-tok-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = Arc::new(dir.join("session-token"));
+
+        const TOKEN: &str = "abcdef0123456789abcdef0123456789";
+        // Written once up front, so from here a reader must ALWAYS see the
+        // whole token. With a truncate-in-place write it would intermittently
+        // see None, which is the empty token the helper rejects. The atomic
+        // rename in `store_session_token_at` is what makes this assertable.
+        super::store_session_token_at(&path, TOKEN).expect("seed");
+
+        let mut handles = Vec::new();
+        for t in 0..8 {
+            let path = Arc::clone(&path);
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..200 {
+                    if t % 2 == 0 {
+                        super::store_session_token_at(&path, TOKEN).ok();
+                    } else {
+                        assert_eq!(
+                            super::load_session_token_at(&path).as_deref(),
+                            Some(TOKEN),
+                            "a concurrent write must never be observable"
+                        );
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("no thread panicked");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stress: the disable decision must be total. Any (error, marker) pair
+    /// has to produce a definite answer, and an unreachable helper with a live
+    /// marker must NEVER be reported as success, whatever the message says.
+    #[test]
+    fn disable_outcome_is_total_and_never_falsely_succeeds() {
+        let messages = [
+            String::new(),
+            "unauthorized disable: token mismatch".to_string(),
+            "disable refused: lock state unreadable".to_string(),
+            format!("{HELPER_CONNECT_ERR_PREFIX} (…)"),
+            format!("prefixed {HELPER_CONNECT_ERR_PREFIX}"), // NOT a connect error
+            "\u{0}\u{1}binary junk".to_string(),
+            "x".repeat(4096),
+        ];
+        for message in messages {
+            for marker in [true, false] {
+                let is_connect_error = message.starts_with(HELPER_CONNECT_ERR_PREFIX);
+                let out = disable_outcome(Err(message.clone()), marker);
+                if is_connect_error && marker {
+                    assert!(out.is_err(), "unreachable + live marker must not succeed");
+                } else if is_connect_error {
+                    assert!(out.is_ok(), "unreachable with nothing applied is a no-op");
+                } else {
+                    // A reachable helper's refusal is always propagated.
+                    assert_eq!(out.unwrap_err(), message);
+                }
+            }
+        }
+    }
+
+    // ── Crash-injection rig (opt-in; MUTATES THE RUNNING DESKTOP) ────────────
+    //
+    // Two halves, run as two separate `cargo test` invocations so the second
+    // genuinely starts with empty process state. That is the whole point: the
+    // in-memory `saved()` map survives within one process and would mask the
+    // bug, which only appears when the process that applied the lockdown is
+    // gone.
+    //
+    //   cargo test -p platform-rs --lib -- --ignored --exact \
+    //       linux::tests::crash_rig_1_lock_and_abandon
+    //   cargo test -p platform-rs --lib -- --ignored --exact \
+    //       linux::tests::crash_rig_2_recover_after_crash
+    //
+    // Never runs in CI: `#[ignore]`, and it would rewrite the runner's
+    // GSettings. Requires a live GNOME session.
+
+    #[test]
+    #[ignore = "mutates the running desktop; run explicitly, see the rig comment"]
+    fn crash_rig_1_lock_and_abandon() {
+        let result = super::enable_keyboard_intercept();
+        // P1: this must now be an honest report, not an unconditional true.
+        assert!(
+            result.method.contains("applied"),
+            "method must carry the applied ratio, got {:?}",
+            result.method
+        );
+        assert!(
+            result.active,
+            "expected a GNOME session with gsettings present"
+        );
+
+        // The backup must exist BEFORE the crash, in the persistent location.
+        // If this is still under /tmp, a reboot loses it and the desktop stays
+        // broken for good (L5).
+        let backup = super::backup_file();
+        assert!(backup.exists(), "no backup written at {}", backup.display());
+        assert!(
+            !backup.starts_with("/tmp"),
+            "backup is in /tmp, which is cleared at boot: {}",
+            backup.display()
+        );
+
+        // Exit without calling disable_keyboard_intercept(): this IS the crash.
+        eprintln!("[rig] locked, backup at {}", backup.display());
+    }
+
+    #[test]
+    #[ignore = "second half of the crash rig; run after crash_rig_1"]
+    fn crash_rig_2_recover_after_crash() {
+        // Fresh process: `saved()` is empty, exactly as after a SIGKILL.
+        let backup = super::backup_file();
+        assert!(
+            backup.exists(),
+            "run crash_rig_1 first; no backup at {}",
+            backup.display()
+        );
+
+        super::recover_keyboard_if_crashed();
+
+        // Alt+Tab is the one a candidate notices first.
+        let restored =
+            super::gsettings_get("org.gnome.desktop.wm.keybindings", "switch-applications");
+        assert!(
+            restored.as_deref().is_some_and(|v| v.contains("Tab")),
+            "switch-applications not restored, got {restored:?}"
+        );
+        assert!(
+            !backup.exists(),
+            "a consumed backup must be removed, or a later restore could undo \
+             settings the candidate has since changed"
+        );
+    }
+
+    #[test]
+    fn a_refusal_from_a_reachable_helper_is_passed_through_unchanged() {
+        // e.g. "unauthorized disable: token mismatch" (L2). The caller must
+        // see the real reason, not a rewritten one.
+        let out = disable_outcome(Err("unauthorized disable: token mismatch".into()), true);
+        assert_eq!(out.unwrap_err(), "unauthorized disable: token mismatch");
+    }
 
     #[test]
     fn mint_token_is_32_hex_chars_and_varies() {

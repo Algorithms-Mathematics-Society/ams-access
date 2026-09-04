@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, memo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { invoke } from "@ams/api-client";
+import { manualRecoveryCommand, recoveryFailureMessage } from "@/lib/recovery-message";
 import {
   getThemeColors,
   describeMediaError,
@@ -155,14 +156,21 @@ function ProcessListItem({
  */
 const RestoreLockdownCard = memo(function RestoreLockdownCard({
   theme,
+  platform,
   onSecurityEvent,
 }: {
   theme: "dark" | "light";
+  /** Native platform label from `get_platform`. Decides what the failure copy
+   * may honestly promise: only macOS and Windows re-run firewall recovery at
+   * startup, so only they can be told to relaunch. */
+  platform: string | null;
   onSecurityEvent: (event: string, level?: SecurityLogLevel) => void;
 }) {
   const c = useMemo(() => getThemeColors(theme), [theme]);
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [detail, setDetail] = useState<string | null>(null);
+  // A copyable escape for the one platform where relaunching cannot help.
+  const [manualCommand, setManualCommand] = useState<string | null>(null);
 
   async function restore() {
     setStatus("working");
@@ -186,13 +194,16 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
     }
     if (rejected.length > 0) {
       setStatus("error");
-      setDetail(
-        "Some settings could not be restored automatically. Relaunch AMS Access — it re-runs recovery on startup — or restart your Mac."
-      );
+      // Platform-correct, because the previous single string told a Linux
+      // candidate to restart their Mac and to relaunch the app, neither of
+      // which clears the firewall they are stuck behind. See recovery-message.ts.
+      setDetail(recoveryFailureMessage(platform));
+      setManualCommand(manualRecoveryCommand(platform));
       onSecurityEvent("RECOVERY: manual restore reported errors", "warn");
       return;
     }
     setStatus("done");
+    setManualCommand(null);
     setDetail(
       "Trackpad gestures, keyboard shortcuts, screen sleep, and network access have been restored."
     );
@@ -274,6 +285,28 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
         >
           {detail}
         </p>
+      )}
+      {manualCommand && (
+        // Selectable, not a button: this is meant to be read out or copied by
+        // an invigilator, and it needs sudo, so the app cannot run it itself.
+        <pre
+          style={{
+            margin: 0,
+            padding: "8px 10px",
+            background: c.cardBg,
+            border: `1px solid ${c.border}`,
+            borderRadius: "var(--radius-sm)",
+            fontFamily: "var(--font-mono, ui-monospace, monospace)",
+            fontSize: "11px",
+            lineHeight: 1.6,
+            color: c.textMuted,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            userSelect: "text",
+          }}
+        >
+          {manualCommand}
+        </pre>
       )}
     </div>
   );
@@ -1210,7 +1243,11 @@ export const SettingsPanel = memo(function SettingsPanel({
 
         {activeTab === "permissions" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            <RestoreLockdownCard theme={theme} onSecurityEvent={onSecurityEvent} />
+            <RestoreLockdownCard
+              theme={theme}
+              platform={platformInfo?.os ?? null}
+              onSecurityEvent={onSecurityEvent}
+            />
             <PermissionLine
               label="Webcam Hardware Access"
               enabled={readiness.camera === "ok"}
