@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Sign-in, by printed slip.
+ * Sign-in, by handle.
  *
  * This replaces an email + one-time-code flow that assumed candidates have
  * mailboxes the platform can reach. They do not: a roster of exam candidates
@@ -83,7 +83,7 @@ export default function LoginPage() {
         </div>
         <div className="login-form-wrap">
           <div className="login-form-title">Sign in</div>
-          <div className="login-form-sub">Use the login ID and password on your printed slip.</div>
+          <div className="login-form-sub">Use the handle and password from your email.</div>
           <div className="login-rule" />
 
           <SlipForm
@@ -105,11 +105,11 @@ export default function LoginPage() {
             className="login-form-support"
             style={{ display: "flex", gap: 16, flexWrap: "wrap" }}
           >
-            {/* No password reset. A slip cannot be recovered, only reissued —
+            {/* No password reset. A passphrase cannot be recovered, only reissued —
                 the server stores a hash and genuinely cannot tell anyone what
                 the password was. An invigilator issues a new one. */}
             <span className="login-form-hint">
-              Lost your slip? An invigilator can issue a new one.
+              Lost your details? An invigilator can reissue them.
             </span>
             <button
               type="button"
@@ -129,9 +129,10 @@ export default function LoginPage() {
         summary="I can't sign in to AMS Access."
         details={{
           source: "login",
-          // The login id is on a slip and is not a secret; it is the one thing
-          // that lets an invigilator find the right candidate. The password is
-          // never included.
+          // The handle is not a secret — it is in their email and on the
+          // invigilator's roster — and it is the one thing that lets a
+          // support request be matched to a candidate. The password is never
+          // included.
           attempted_login_id: loginId.trim() || undefined,
           last_error: error,
         }}

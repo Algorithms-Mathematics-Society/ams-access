@@ -1,20 +1,21 @@
 "use client";
 
 /**
- * The printed-slip sign-in.
+ * Sign-in, by handle.
  *
- * A candidate is holding a piece of paper with two grouped codes on it and is
- * about to sit an exam. Everything here is in service of that: the fields
- * auto-hyphenate so they cannot fight the format, the login id is uppercased
- * as they type because the slip is uppercase, and the password is shown by
- * default — it is on paper in their hand, there is nobody to shoulder-surf
- * that they are not already sitting next to, and silent typos in a masked
- * field are how people lock themselves out of their own exam.
+ * A candidate has `ayush.s-kqmwd@access` in an email and is about to sit an
+ * exam. Everything here serves that: `@access` is rendered as a fixed suffix
+ * inside the field rather than typed, so there is nothing to misspell and
+ * nothing to forget; pasting the whole string still works because the
+ * formatter drops everything from the `@` on; and the password is shown by
+ * default — it is in the same email, there is nobody to shoulder-surf that
+ * they are not already sitting next to, and silent typos in a masked field
+ * are how people lock themselves out of their own exam.
  */
 
 import type { FormEvent } from "react";
 
-import { formatLoginId, formatPassword } from "./slip-format";
+import { formatHandle, formatPassword, HANDLE_SUFFIX } from "./slip-format";
 
 export function SlipForm({
   loginId,
@@ -36,24 +37,35 @@ export function SlipForm({
   return (
     <form onSubmit={onSubmit} className="login-form" noValidate>
       <label className="login-label" htmlFor="login-id">
-        Login ID
+        Your handle
       </label>
-      <input
-        id="login-id"
-        name="login-id"
-        className="login-input"
-        value={loginId}
-        onChange={(event) => setLoginId(formatLoginId(event.target.value))}
-        placeholder="AMS-XXXX-XXXX"
-        autoComplete="off"
-        autoCapitalize="characters"
-        autoCorrect="off"
-        spellCheck={false}
-        inputMode="text"
-        maxLength={13}
-        autoFocus
-        required
-      />
+      <div className="login-handle-row">
+        <input
+          id="login-id"
+          name="login-id"
+          className="login-input login-handle-input"
+          value={loginId}
+          onChange={(event) => setLoginId(formatHandle(event.target.value))}
+          placeholder="ayush.s-kqmwd"
+          autoComplete="username"
+          // Lowercase: handles are stored lowercase, and a phone keyboard
+          // helpfully capitalising the first letter would otherwise be a
+          // failed sign-in nobody could explain.
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          inputMode="text"
+          maxLength={64}
+          autoFocus
+          required
+        />
+        {/* Shown, not typed. `aria-hidden` because the label and the value
+            already say what this field is; a screen reader announcing
+            "at access" after every keystroke would be noise. */}
+        <span className="login-handle-suffix" aria-hidden="true">
+          {HANDLE_SUFFIX}
+        </span>
+      </div>
 
       <label className="login-label" htmlFor="login-password">
         Password
@@ -61,7 +73,7 @@ export function SlipForm({
       <input
         id="login-password"
         name="login-password"
-        // Not masked: it is printed on the slip in their hand, and a masked
+        // Not masked: it is in the email open in front of them, and a masked
         // field turns one mistyped character into "incorrect login" with no
         // way to see why.
         type="text"

@@ -757,6 +757,59 @@ html.light:not(.theme-dark-locked) {
   border-color: rgb(var(--accent-rgb) / 0.45);
   background: var(--theme-bg);
 }
+
+/* The handle field and its fixed `@access`.
+   One bordered box containing both, so it reads as a single control: the
+   suffix is part of their handle, not a second thing to fill in. The border
+   moves to the wrapper and the inner input gives its own up, or focus would
+   draw a box inside a box. */
+.login-handle-row {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  background: var(--theme-inner-bg);
+  border: 1px solid var(--theme-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.login-handle-row:focus-within {
+  border-color: rgb(var(--accent-rgb) / 0.45);
+  background: var(--theme-bg);
+}
+
+.login-handle-input {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  /* `min-width: 0` so a long handle shrinks the input instead of pushing the
+     suffix off the edge — flex items refuse to shrink below their content
+     width without it. */
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.login-handle-input:focus,
+.login-handle-input:focus-visible {
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+.login-handle-suffix {
+  display: flex;
+  align-items: center;
+  padding-right: 14px;
+  padding-left: 2px;
+  font-size: 13px;
+  /* Dimmer than the value: it is context, not something they entered. */
+  color: var(--theme-text-muted, rgb(var(--accent-rgb) / 0.55));
+  white-space: nowrap;
+  user-select: none;
+}
 .login-input:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
