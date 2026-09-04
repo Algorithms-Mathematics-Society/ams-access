@@ -26,7 +26,17 @@ const RESTRICTED: &[&str] = &[
     "strace",
     "gdb",
     "lldb",
-    "xdotool",
+    // `xdotool` is deliberately NOT restricted. This app spawns it itself —
+    // five call sites, every 250ms from the workspace watchdog and every 500ms
+    // from the focus watchdog — and `spawn_kill_shield` matches on the exe
+    // basename, so listing it here meant the lockdown SIGKILLed its own
+    // watchdog mid-probe. It then surfaced as "blocked application detected:
+    // xdotool" in the candidate's contest room, flipped proctoring red, and
+    // filed an incident against a candidate who had done nothing.
+    //
+    // It is a 40KB input-synthesis utility, not a cheating vector: anything it
+    // could do, the restricted screen-sharing and remote-desktop entries above
+    // already cover.
     "scrcpy",
     "zoom",
     "skype",
@@ -264,15 +274,67 @@ fn saved() -> &'static Mutex<HashMap<String, String>> {
     SAVED_BINDINGS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-const BACKUP_PATH: &str = "/tmp/ams_access_kb_backup";
+/// Where the pre-exam desktop settings are stored while the lockdown is up.
+///
+/// **Not `/tmp`.** It used to be, and that made a reboot destroy the only copy
+/// of the candidate's own settings: `/usr/lib/tmpfiles.d/tmp.conf` carries
+/// `D /tmp ...`, and systemd-tmpfiles runs with `--remove --boot`, so `/tmp`
+/// is emptied at every boot. The values being held are dconf/kwriteconfig
+/// settings, which are *permanent*.
+///
+/// That combination had a specific, ugly failure: the app is killed mid-exam
+/// (SIGKILL, OOM, a WebKitGTK fault — none of which run our teardown), the
+/// candidate reboots to recover, and the backup is gone. Super, Alt+Tab,
+/// Alt+F4, screenshot and the touchpad stay disabled *permanently*, with no
+/// in-app recovery left. On a laptop with no external mouse that is an
+/// unusable machine, caused by exam software, after the exam has finished.
+///
+/// `$XDG_STATE_HOME` is the correct home for this: it is exactly "state that
+/// should persist between restarts but is not config", and it shares dconf's
+/// lifetime, which is the thing being restored.
+fn backup_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join(".local/state"))
+        })
+        // No HOME at all: fall back to the old location rather than losing the
+        // backup entirely. Worse than XDG, far better than nothing.
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    base.join("ams-access")
+}
+
+/// The pre-2.0.9 location. Read once so an upgrade mid-lockdown can still
+/// recover; never written.
+const LEGACY_BACKUP_PATH: &str = "/tmp/ams_access_kb_backup";
+
+fn backup_file() -> std::path::PathBuf {
+    backup_path().join("kb-backup")
+}
 
 fn write_backup(map: &HashMap<String, String>) {
     let content: String = map.iter().map(|(k, v)| format!("{}\t{}\n", k, v)).collect();
-    let _ = std::fs::write(BACKUP_PATH, content);
+    let dir = backup_path();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!(
+            "[ams][kb] cannot create {}: {e} — falling back to /tmp",
+            dir.display()
+        );
+        let _ = std::fs::write(LEGACY_BACKUP_PATH, content);
+        return;
+    }
+    let _ = std::fs::write(backup_file(), content);
 }
 
 fn read_backup() -> Option<HashMap<String, String>> {
-    let content = std::fs::read_to_string(BACKUP_PATH).ok()?;
+    // Current location first, then the legacy one, so a build that upgrades
+    // while a crashed lockdown is outstanding still restores it.
+    let content = std::fs::read_to_string(backup_file())
+        .or_else(|_| std::fs::read_to_string(LEGACY_BACKUP_PATH))
+        .ok()?;
     let mut map = HashMap::new();
     for line in content.lines() {
         if let Some((k, v)) = line.split_once('\t') {
@@ -287,7 +349,10 @@ fn read_backup() -> Option<HashMap<String, String>> {
 }
 
 fn delete_backup() {
-    let _ = std::fs::remove_file(BACKUP_PATH);
+    let _ = std::fs::remove_file(backup_file());
+    // The legacy copy too, or a stale /tmp file would be restored on a later
+    // run and silently undo settings the candidate has since changed.
+    let _ = std::fs::remove_file(LEGACY_BACKUP_PATH);
 }
 
 /// Call on app startup — restores GSettings if a previous run crashed without cleanup.
@@ -1245,6 +1310,31 @@ pub fn network_helper_running() -> bool {
 /// by family. If the helper is not installed/reachable, returns a clear `Err`
 /// so the launch gate can refuse to start the exam (egress would be unrestricted
 /// otherwise — see the Tauri `enable_network_lockdown` command in lib.rs).
+/// Nameservers this host is configured to use, read from the same files the
+/// caller unions when it builds the allowlist.
+///
+/// Used only to work out which entries in `allowed_ips` are resolvers, so they
+/// can be sent port-scoped rather than wide open. Reading it here rather than
+/// changing `enable_network_lockdown`'s signature keeps the cross-platform
+/// dispatch identical on macOS and Windows.
+fn configured_nameservers() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for path in ["/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"] {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines() {
+            if let Some(rest) = line.trim().strip_prefix("nameserver") {
+                let candidate = rest.trim().to_string();
+                if candidate.parse::<std::net::IpAddr>().is_ok() && !out.contains(&candidate) {
+                    out.push(candidate);
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     // Mint + remember this session's token, then send it with the allowlist.
     let token = mint_token();
@@ -1252,8 +1342,24 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
         let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
         *slot = Some(token.clone());
     }
-    let request =
-        serde_json::json!({ "cmd": "enable", "ips": allowed_ips, "token": token }).to_string();
+
+    // Split out the resolvers so the helper can restrict them to DNS ports.
+    // They stay in `ips` as well: an older helper ignores `resolvers`, and
+    // dropping them from `ips` would leave that helper with no DNS at all —
+    // failing the exam shut rather than merely leaving it as wide as before.
+    let nameservers = configured_nameservers();
+    let resolvers: Vec<&String> = allowed_ips
+        .iter()
+        .filter(|ip| nameservers.contains(ip))
+        .collect();
+
+    let request = serde_json::json!({
+        "cmd": "enable",
+        "ips": allowed_ips,
+        "resolvers": resolvers,
+        "token": token,
+    })
+    .to_string();
     helper_send(&request).map_err(|e| {
         if e.starts_with(HELPER_CONNECT_ERR_PREFIX) {
             "network helper not installed/running: cannot lock egress. \

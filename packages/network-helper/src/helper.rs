@@ -9,7 +9,7 @@
 //! Protocol (shared verbatim with the macOS/Linux clients): newline-delimited
 //! JSON, one request -> one response.
 //!   Request:  {"cmd":"ping"}
-//!             {"cmd":"enable","ips":["1.2.3.4","2606:4700::1111"]}
+//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"]}
 //!             {"cmd":"disable"}
 //!   Response: {"ok":true}
 //!             {"ok":false,"error":"<message>"}
@@ -79,6 +79,12 @@ const MARKER_PATH: &str = "/run/ams-proctor.lock";
 struct Marker {
     token: String,
     ips: Vec<String>,
+    /// Resolvers, so a restart re-applies the same port scoping rather than
+    /// silently widening them back to full access. `default` so a marker
+    /// written by an older helper still deserialises instead of being read as
+    /// Corrupt, which would leave a live exam's rules untouched.
+    #[serde(default)]
+    resolvers: Vec<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -92,7 +98,7 @@ enum MarkerState {
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq)]
 enum StartupAction {
-    ReApply(Vec<String>),
+    ReApply(Vec<String>, Vec<String>),
     Flush,
     LeaveAsIs,
 }
@@ -110,7 +116,7 @@ enum DisableDecision {
 #[cfg(target_os = "linux")]
 fn startup_action(state: MarkerState) -> StartupAction {
     match state {
-        MarkerState::Present(m) => StartupAction::ReApply(m.ips),
+        MarkerState::Present(m) => StartupAction::ReApply(m.ips, m.resolvers),
         MarkerState::Absent => StartupAction::Flush,
         MarkerState::Corrupt => StartupAction::LeaveAsIs,
     }
@@ -188,6 +194,13 @@ enum Request {
     Ping,
     Enable {
         ips: Vec<String>,
+        /// DNS resolvers, allowed on port 53/853 ONLY.
+        ///
+        /// Optional so an older client that sends everything in `ips` keeps
+        /// working — it simply gets the previous, unscoped behaviour rather
+        /// than losing DNS entirely.
+        #[serde(default)]
+        resolvers: Vec<String>,
         #[serde(default)]
         token: String,
     },
@@ -230,8 +243,13 @@ pub fn run() {
     {
         let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         match startup_action(read_marker()) {
-            StartupAction::ReApply(ips) => {
-                if let Err(e) = iptables_enable(&ips) {
+            StartupAction::ReApply(ips, resolvers) => {
+                let full: Vec<String> = ips
+                    .iter()
+                    .filter(|ip| !resolvers.contains(ip))
+                    .cloned()
+                    .collect();
+                if let Err(e) = iptables_enable(&full, &resolvers) {
                     eprintln!("AMS helper: startup re-apply failed (rules left as-is): {e}");
                 }
             }
@@ -500,15 +518,19 @@ fn pid_path(pid: libc::pid_t) -> Result<String, String> {
 fn dispatch(json: &str) -> String {
     match serde_json::from_str::<Request>(json.trim()) {
         Ok(Request::Ping) => json_ok(),
-        Ok(Request::Enable { ips, token }) => {
+        Ok(Request::Enable {
+            ips,
+            resolvers,
+            token,
+        }) => {
             let result = {
                 #[cfg(target_os = "linux")]
                 {
-                    firewall_enable(&ips, &token)
+                    firewall_enable(&ips, &resolvers, &token)
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
-                    let _ = &token;
+                    let _ = (&token, &resolvers);
                     firewall_enable(&ips)
                 }
             };
@@ -556,14 +578,26 @@ static FIREWALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// leaves a marker → next startup re-applies (fail-closed). On apply failure
 /// remove the marker so we never claim locked while open.
 #[cfg(target_os = "linux")]
-fn firewall_enable(ips: &[String], token: &str) -> Result<(), String> {
+fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<(), String> {
     let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let marker = Marker {
         token: token.to_string(),
         ips: ips.to_vec(),
+        resolvers: resolvers.to_vec(),
     };
     write_marker(&marker).map_err(|e| format!("write marker: {e}"))?;
-    if let Err(e) = iptables_enable(ips) {
+
+    // A resolver named in BOTH lists must not also get a full-access rule, or
+    // the wide rule wins and the scoping is decorative. The client sends
+    // resolvers in both so an older helper still resolves DNS; here they are
+    // removed from the unrestricted set and re-added port-scoped below.
+    let full: Vec<String> = ips
+        .iter()
+        .filter(|ip| !resolvers.contains(ip))
+        .cloned()
+        .collect();
+
+    if let Err(e) = iptables_enable(&full, resolvers) {
         remove_marker();
         return Err(e);
     }
@@ -728,7 +762,7 @@ fn teardown_chain(bin: &str) {
 /// Build the AMS_PROCTOR chain in `bin` (iptables OR ip6tables), allowing only
 /// the given same-family IP strings, and hook it into OUTPUT at position 1.
 #[cfg(target_os = "linux")]
-fn build_chain(bin: &str, allowed: &[&str]) -> Result<(), String> {
+fn build_chain(bin: &str, allowed: &[&str], resolvers: &[&str]) -> Result<(), String> {
     // Fresh chain (teardown already ran).
     let out = run_tables(bin, &["-N", CHAIN])?;
     if !out.status.success() {
@@ -782,6 +816,36 @@ fn build_chain(bin: &str, allowed: &[&str]) -> Result<(), String> {
                 "{bin} allow {ip} failed: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             ));
+        }
+    }
+
+    // Resolvers get DNS ports ONLY, never a bare `-d`.
+    //
+    // An unscoped `-d <resolver> -j ACCEPT` was a complete egress bypass. A
+    // candidate installing at home is root on their own laptop: writing
+    // `nameserver 203.0.113.7` into /etc/resolv.conf before launch allowlisted
+    // an arbitrary internet host on *every port and protocol* — SSH, WireGuard,
+    // a plain HTTP proxy — while the UI reported the lockdown engaged and the
+    // readiness report recorded a pass. Every other defect here costs one
+    // candidate their exam; that one cost the contest its integrity.
+    //
+    // 853 is DNS-over-TLS: omitting it would break resolution on hosts
+    // configured for DoT, which is the failure mode that tempts someone to
+    // widen this back out again.
+    for ip in resolvers {
+        for (proto, port) in [("udp", "53"), ("tcp", "53"), ("tcp", "853")] {
+            let out = run_tables(
+                bin,
+                &[
+                    "-A", CHAIN, "-d", ip, "-p", proto, "--dport", port, "-j", "ACCEPT",
+                ],
+            )?;
+            if !out.status.success() {
+                return Err(format!(
+                    "{bin} allow resolver {ip} {proto}/{port} failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
         }
     }
 
@@ -858,18 +922,24 @@ fn should_build_v6_chain(ipv6_present: bool) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn iptables_enable(ips: &[String]) -> Result<(), String> {
+fn iptables_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
     // Family-split first so a v6 literal can never reach the v4 binary (LX-4).
     let (v4, v6) = split_ip_families(ips)?;
+    let (r4, r6) = split_ip_families(resolvers)?;
     let v4: Vec<&str> = v4.iter().map(String::as_str).collect();
     let v6: Vec<&str> = v6.iter().map(String::as_str).collect();
+    let r4: Vec<&str> = r4.iter().map(String::as_str).collect();
+    let r6: Vec<&str> = r6.iter().map(String::as_str).collect();
 
     // Refuse a degenerate allowlist: with no allowed destinations in either
     // family this would build a loopback+established+DROP chain — a near-total
     // egress block that also cuts the exam's own API. Almost certainly a caller
     // bug; fail closed with an error rather than silently applying it (parity
     // with the macOS validate_ipv4_allowlist empty-list rejection).
-    if v4.is_empty() && v6.is_empty() {
+    // Resolvers count toward "not degenerate": they are now a separate list, so
+    // checking only `v4`/`v6` would reject a legitimate DNS-only allowlist that
+    // previously passed.
+    if v4.is_empty() && v6.is_empty() && r4.is_empty() && r6.is_empty() {
         return Err("empty allowlist: refusing to apply a near-total egress block".to_string());
     }
 
@@ -879,7 +949,7 @@ fn iptables_enable(ips: &[String]) -> Result<(), String> {
 
     // Build v4. If this fails, roll back so we never leave a half-applied
     // (and therefore unpredictable) firewall. v4 failure is ALWAYS fatal.
-    if let Err(e) = build_chain(IPTABLES, &v4) {
+    if let Err(e) = build_chain(IPTABLES, &v4, &r4) {
         teardown_chain(IPTABLES);
         return Err(e);
     }
@@ -894,7 +964,7 @@ fn iptables_enable(ips: &[String]) -> Result<(), String> {
     //     ip6tables rule failure as FATAL — we must not claim lockdown while
     //     IPv6 egress leaks. A v6 failure rolls back BOTH tables.
     if should_build_v6_chain(ipv6_stack_present()) {
-        if let Err(e) = build_chain(IP6TABLES, &v6) {
+        if let Err(e) = build_chain(IP6TABLES, &v6, &r6) {
             teardown_chain(IPTABLES);
             teardown_chain(IP6TABLES);
             return Err(e);
@@ -969,11 +1039,41 @@ mod tests {
         let m = Marker {
             token: "t".into(),
             ips: vec!["1.2.3.4".into()],
+            resolvers: vec![],
         };
         assert_eq!(
             startup_action(MarkerState::Present(m)),
-            StartupAction::ReApply(vec!["1.2.3.4".into()])
+            StartupAction::ReApply(vec!["1.2.3.4".into()], vec![])
         );
+    }
+
+    #[test]
+    fn startup_reapply_keeps_resolvers_scoped() {
+        // A helper restart mid-exam must re-apply the SAME rules. Losing the
+        // resolver split here would silently widen every nameserver back to
+        // full egress on every restart — the bypass returning by the back door.
+        let m = Marker {
+            token: "t".into(),
+            ips: vec!["1.2.3.4".into(), "9.9.9.9".into()],
+            resolvers: vec!["9.9.9.9".into()],
+        };
+        assert_eq!(
+            startup_action(MarkerState::Present(m)),
+            StartupAction::ReApply(
+                vec!["1.2.3.4".into(), "9.9.9.9".into()],
+                vec!["9.9.9.9".into()]
+            )
+        );
+    }
+
+    #[test]
+    fn a_marker_without_resolvers_still_deserialises() {
+        // Written by a pre-2.0.9 helper. It must not read as Corrupt: that
+        // maps to LeaveAsIs, which would strand a live exam's rules.
+        let old: Marker = serde_json::from_str(r#"{"token":"t","ips":["1.2.3.4"]}"#)
+            .expect("legacy marker must still parse");
+        assert_eq!(old.ips, vec!["1.2.3.4".to_string()]);
+        assert!(old.resolvers.is_empty());
     }
 
     #[test]
@@ -995,6 +1095,7 @@ mod tests {
         let m = Marker {
             token: "secret".into(),
             ips: vec![],
+            resolvers: vec![],
         };
         assert_eq!(
             authorize_disable(Some(&m), "secret"),
@@ -1015,6 +1116,7 @@ mod tests {
         let m = Marker {
             token: "abc".into(),
             ips: vec!["10.0.0.1".into(), "::1".into()],
+            resolvers: vec![],
         };
         let json = serde_json::to_string(&m).unwrap();
         let back: Marker = serde_json::from_str(&json).unwrap();
@@ -1028,6 +1130,7 @@ mod tests {
         let m = Marker {
             token: "tok".into(),
             ips: vec!["1.1.1.1".into()],
+            resolvers: vec![],
         };
         write_marker_at(&path, &m).expect("write");
         assert_eq!(read_marker_at(&path), MarkerState::Present(m));
@@ -1054,6 +1157,7 @@ mod tests {
             &Marker {
                 token: "t".into(),
                 ips: vec![],
+                resolvers: vec![],
             },
         )
         .unwrap();

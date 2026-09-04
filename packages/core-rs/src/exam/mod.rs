@@ -677,6 +677,26 @@ fn evaluate_requirement(
                 Some(format!("keyboard lockdown active via {}", keyboard.method)),
                 vec![],
             ),
+            // A desktop environment with no lockdown mechanism at all is an
+            // *unprobeable* machine, not a failing one, and the tri-state
+            // already knows what to do with that: `unsupported_severity` warns
+            // everywhere except a strict Windows session, so the candidate is
+            // admitted and appears on the invigilator's screen.
+            //
+            // Treating it as Fail hard-blocked every Xfce, Cinnamon, MATE,
+            // LXQt and tiling-WM candidate from entering the contest —
+            // including Linux Mint, whose default desktop is Cinnamon. The
+            // block landed at the readiness modal, after install and after
+            // login, offering "Retry scan" against a string match that can
+            // never match. There is no action the candidate can take, which is
+            // the definition of a check that should not be blocking.
+            //
+            // Distinct from a mechanism that exists and did not engage (below):
+            // that one is a real failure with a real remedy.
+            Some(keyboard) if keyboard.method == "unsupported" => unsupported(&format!(
+                "no keyboard lockdown mechanism on this desktop ({})",
+                keyboard.platform
+            )),
             Some(keyboard) => (
                 false,
                 Some(FailureReasonCode::KeyboardLockdownUnavailable),
@@ -1542,6 +1562,65 @@ mod tests {
             .find(|c| c.kind == CheckKind::KeyboardLockdown)
             .expect("keyboard_lockdown check present");
         assert!(!kbd.blocking, "keyboard_lockdown must not block on macOS");
+    }
+
+    #[test]
+    fn a_desktop_with_no_lockdown_mechanism_does_not_block_entry() {
+        // Xfce, Cinnamon, MATE, LXQt and every tiling WM report
+        // `method: "unsupported"` — there is no mechanism to engage, so there
+        // is nothing the candidate can do about it. Treating that as a Fail
+        // hard-blocked every Linux Mint user (Cinnamon is its default) at the
+        // readiness modal, after install and after login, behind a "Retry
+        // scan" button that could never succeed.
+        //
+        // It is an unprobeable machine, not a failing one: warn, admit, and
+        // put them on the invigilator's screen.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        let mut state = passing_state();
+        state.platform = Some("linux".to_string());
+        state.keyboard = Some(KeyboardInterceptResult {
+            active: false,
+            method: "unsupported".to_string(),
+            platform: "linux".to_string(),
+        });
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_ne!(
+            report.decision,
+            EnforcementDecision::Blocked,
+            "an unsupported desktop must not block contest entry"
+        );
+    }
+
+    #[test]
+    fn a_lockdown_that_exists_and_failed_still_blocks_on_linux() {
+        // The carve-out above must not swallow a real failure. A mechanism
+        // that is present and did not engage has a remedy, so it stays
+        // blocking on Linux — otherwise the relaxation would disarm the check
+        // on precisely the machines it works on.
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        let mut state = passing_state();
+        state.platform = Some("linux".to_string());
+        state.keyboard = Some(KeyboardInterceptResult {
+            active: false,
+            method: "gsettings".to_string(),
+            platform: "linux".to_string(),
+        });
+
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+
+        assert_eq!(
+            report.decision,
+            EnforcementDecision::Blocked,
+            "a failed-but-present keyboard lockdown must still block on Linux"
+        );
     }
 
     #[test]
