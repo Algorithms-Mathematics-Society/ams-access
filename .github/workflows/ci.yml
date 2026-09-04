@@ -248,6 +248,68 @@ jobs:
           fi
           printf 'OK %s\n' "${found[@]}"
 
+      # Only the Linux bundler produces something we can install here, and
+      # asserting a file exists is not the same as asserting it works.
+      - name: Upload the .deb for the install smoke
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-for-smoke
+          path: target/release/bundle/deb/*.deb
+          retention-days: 1
+
+  deb-install-smoke:
+    # CI built a .deb and never once installed it, so every packaging defect
+    # could only be found by a candidate: unresolvable dependencies, missing
+    # runtime binaries, maintainer scripts that abort, and a startup panic
+    # inside setup() that aborts before a window exists.
+    #
+    # `--no-install-recommends` is the load-bearing flag. Without it apt pulls
+    # in half the desktop and the `depends` array is satisfied by accident;
+    # with it, this job is the only thing that proves the list is complete.
+    # It is also what would catch dropping libayatana-appindicator3-1 if that
+    # library turned out to be linked after all.
+    #
+    # Run through `docker run` rather than a `container:` job: a bare
+    # ubuntu:22.04 image lacks what the JS actions need, and an install smoke
+    # that fails for runner-infrastructure reasons teaches nobody anything.
+    needs: bundle-smoke
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    name: Deb install smoke
+    timeout-minutes: 15
+    steps:
+      - name: Download the built package
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-for-smoke
+          path: deb
+
+      - name: Install, verify, remove — on a clean image
+        run: |
+          set -eux
+          docker run --rm -v "$PWD/deb:/deb" ubuntu:22.04 bash -eux -c '
+            apt-get update
+            # The clean-image install. Recommends off, so the depends array is
+            # proven rather than accidentally satisfied.
+            apt-get install -y --no-install-recommends /deb/*.deb
+
+            dpkg -l | grep -q ams-access
+            test -x /usr/bin/ams-access
+            test -f /etc/udev/rules.d/70-ams-access-camera.rules
+
+            # Every binary the Linux lockdown shells out to. Each call site is
+            # `let _ = ...`, so a missing one degrades silently into a lockdown
+            # that reports success and does nothing.
+            for bin in gsettings xdotool wmctrl xinput pgrep iptables; do
+              command -v "$bin" >/dev/null || { echo "::error::$bin missing after install"; exit 1; }
+            done
+
+            # prerm must leave nothing behind.
+            apt-get remove -y ams-access
+            test ! -f /etc/udev/rules.d/70-ams-access-camera.rules
+          '
+
   msix:
     # The Store build, packaged for real.
     #

@@ -41,9 +41,37 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"],
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libglib2.0-bin",
+          "ca-certificates",
+          "xdotool",
+          "wmctrl",
+          "xinput",
+          "procps",
+          "policykit-1 | polkitd",
+          "iptables",
+          "kmod"
+        ],
         "postInstallScript": "debian/postinst",
         "preRemoveScript": "debian/prerm"
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "glib-networking",
+          "ca-certificates",
+          "glib2",
+          "xdotool",
+          "wmctrl",
+          "xorg-x11-server-utils",
+          "procps-ng",
+          "polkit",
+          "iptables",
+          "kmod"
+        ]
       }
     },
     "macOS": {
