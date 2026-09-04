@@ -3,8 +3,26 @@ set -e
 
 # Remove the udev rule added by postinst.
 UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
-rm -f "$UDEV_RULE_PATH"
 
-if command -v udevadm > /dev/null 2>&1; then
-    udevadm control --reload-rules 2>/dev/null || true
-fi
+case "$1" in
+    remove|deconfigure)
+        rm -f "$UDEV_RULE_PATH"
+
+        if command -v udevadm > /dev/null 2>&1; then
+            udevadm control --reload-rules 2>/dev/null || true
+        fi
+        ;;
+
+    # On an upgrade the new postinst rewrites the rule immediately, so
+    # removing it here would open a window where a camera check could fail
+    # for no reason.
+    upgrade|failed-upgrade)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

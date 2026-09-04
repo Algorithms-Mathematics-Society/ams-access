@@ -6,15 +6,42 @@ set -e
 # the session owner automatically without requiring group membership or logout.
 UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
 
-cat > "$UDEV_RULE_PATH" << 'EOF'
+case "$1" in
+    configure)
+        # `mkdir -p` because the directory is NOT guaranteed to exist. udev
+        # ships it on a normal desktop, but a minimal or container image has
+        # no udev at all — and with `set -e` the redirect below then aborted
+        # the whole postinst, leaving dpkg with a half-configured package and
+        # apt exiting 100. An install that fails *after* unpacking is worse
+        # than one that refuses up front: it needs `dpkg --configure` or a
+        # purge to clear.
+        mkdir -p "$(dirname "$UDEV_RULE_PATH")"
+
+        cat > "$UDEV_RULE_PATH" << 'EOF'
 # AMS Access — grant session user access to webcam for proctoring camera check.
 SUBSYSTEM=="video4linux", TAG+="uaccess"
 EOF
 
-chmod 0644 "$UDEV_RULE_PATH"
+        chmod 0644 "$UDEV_RULE_PATH"
 
-# Reload rules so existing devices pick up the tag immediately.
-if command -v udevadm > /dev/null 2>&1; then
-    udevadm control --reload-rules 2>/dev/null || true
-    udevadm trigger --subsystem-match=video4linux 2>/dev/null || true
-fi
+        # Reload rules so existing devices pick up the tag immediately.
+        # Absent in a container; absence is not a failure.
+        if command -v udevadm > /dev/null 2>&1; then
+            udevadm control --reload-rules 2>/dev/null || true
+            udevadm trigger --subsystem-match=video4linux 2>/dev/null || true
+        fi
+        ;;
+
+    # Debian policy calls postinst on these too. Doing the work again is at
+    # best pointless and at worst destructive, so they are explicitly no-ops
+    # rather than falling through to the configure path.
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
