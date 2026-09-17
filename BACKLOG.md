@@ -1,7 +1,7 @@
 # Backlog
 
 Work that is deliberately not done, and why. Everything here was found during
-an audit, decided on, and left — so the *next* audit finds a decision instead
+an audit, decided on, and left — so the _next_ audit finds a decision instead
 of rediscovering it as a bug. That has already happened once: the items below
 were all reported as defects in a round where they were choices.
 
@@ -43,7 +43,7 @@ feed whose value depends on an invigilator being able to trust every row. And
 it would not close the real hole either way: a candidate pointing a second
 device at their screen is invisible to both.
 
-Remote desktop *is* covered, separately and at the entry gate, by the
+Remote desktop _is_ covered, separately and at the entry gate, by the
 `remote_server` readiness check.
 
 Revisit if a contest is ever sat somewhere the blackout does not apply.
@@ -75,3 +75,13 @@ invigilation aid and not fine if it ever becomes a gate.
 
 Signing it with a per-device key would make it evidence rather than a claim.
 Worth doing before any decision is made to enforce readiness server-side.
+
+## Word-list passphrases
+
+The integration plan settled on a three-word passphrase from a ≥2,048-word
+list (~33 bits, decision 6). What shipped is the older `XXXX-XXXX-XXXX` token
+from a 31-symbol alphabet (~59 bits) — stronger, but not memorable, and now
+that it arrives by email rather than on a slip the argument for words is
+weaker than it was. `services/participants.py::generate_password` is the one
+function to change if the words are wanted; the mail template already renders
+whatever it returns.
