@@ -85,3 +85,31 @@ that it arrives by email rather than on a slip the argument for words is
 weaker than it was. `services/participants.py::generate_password` is the one
 function to change if the words are wanted; the mail template already renders
 whatever it returns.
+
+## Worker-side package caching
+
+`_stage_inputs` fetches the problem package from S3 **on every job**. In a
+contest that is one download per submission for a set of maybe seven
+packages — ~42,000 fetches of 7 distinct files.
+
+It does not matter much when the worker and the bucket share a region. It
+matters a lot when they do not: measured 2026-09-20, the same workload ran
+at **0.73 jobs/s/vCPU** on workers in the bucket's own region and
+**0.40 jobs/s/vCPU** on a fleet spread across ap-south-1, us-east-1 and
+us-west-2 — a 46% loss. Two S3 round trips per job (package + submission) at
+~220 ms each, against a job that itself takes ~0.5 s, accounts for the whole
+gap.
+
+That matters because the contest-day fleet _has_ to be multi-region on this
+account: the Free Tier plan caps EC2 at 5–8 vCPU per region, so capacity
+only exists spread out.
+
+Two fixes, either workable:
+
+- Cache packages on the worker, keyed by URI. They are immutable for the
+  duration of a contest, so a TTL is enough; validating with a HEAD would
+  cost the round trip the cache is there to avoid.
+- Pre-stage the contest's packages into each instance at boot. The set is
+  small and known in advance, and it takes the per-job package fetch to zero.
+
+The submission fetch has to stay — it is different every time.
