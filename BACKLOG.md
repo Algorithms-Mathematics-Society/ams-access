@@ -113,3 +113,17 @@ Two fixes, either workable:
   small and known in advance, and it takes the per-job package fetch to zero.
 
 The submission fetch has to stay — it is different every time.
+
+## `api_keys.revoked` has no server default
+
+`ParticipantCredential`-style boolean columns declare `default=False`, which
+is a _Python-side_ default — SQLAlchemy fills it, Postgres does not. A raw
+`INSERT` that omits the column therefore fails with
+
+    null value in column "revoked" of relation "api_keys"
+
+which is a confusing way to learn it, and ops inserts are exactly when it
+happens (creating an integration key by hand, 2026-09-23). Adding
+`server_default=text("false")` to `revoked` — and auditing the other
+boolean columns for the same shape — would make the schema mean what the
+models say it means.
