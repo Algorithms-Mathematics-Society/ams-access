@@ -126,6 +126,10 @@ export interface TerminalPanelProps {
   runError: string | null;
   isEditorEmpty: boolean;
   submissionsList: SubmissionAttemptRecord[];
+  /** The active problem's label. The Attempts list is scoped to one problem,
+   *  so the empty state has to say which — otherwise a candidate who has
+   *  submitted on A and switched to B reads "no attempts" as lost work. */
+  problemLabel: string;
   loadingSubmissions: boolean;
   expandedAttemptId: string | null;
   toggleExpandAttempt: (attemptId: string) => void;
@@ -158,6 +162,7 @@ export function TerminalPanel({
   runError,
   isEditorEmpty,
   submissionsList,
+  problemLabel,
   loadingSubmissions,
   expandedAttemptId,
   toggleExpandAttempt,
@@ -910,7 +915,7 @@ export function TerminalPanel({
                     fontFamily: "Inter, system-ui, sans-serif",
                   }}
                 >
-                  No submissions yet
+                  {problemLabel ? `No attempts on ${problemLabel} yet` : "No attempts yet"}
                 </span>
                 <span
                   style={{
@@ -923,6 +928,7 @@ export function TerminalPanel({
                 >
                   Press Submit Solution to send your code to the judge.
                   <br />
+                  This list shows only {problemLabel ? `problem ${problemLabel}` : "this problem"}.
                   Each attempt is scored independently.
                 </span>
               </div>

@@ -2709,6 +2709,7 @@ export default function ContestPageClient() {
             runError={runError}
             isEditorEmpty={isEditorEmpty}
             submissionsList={submissionsList}
+            problemLabel={activeQLabel}
             loadingSubmissions={loadingSubmissions}
             expandedAttemptId={expandedAttemptId}
             toggleExpandAttempt={toggleExpandAttempt}
