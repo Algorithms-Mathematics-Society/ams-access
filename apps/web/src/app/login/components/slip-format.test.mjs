@@ -1,47 +1,77 @@
-// Slip transcription.
+// What a candidate types to sign in.
 //
-// Someone is copying two grouped codes off a printed slip, by hand, about to
-// sit an exam. Every way the field can fight them is a support ticket during
-// a live contest — which is exactly why the server's alphabet has no 0/O or
-// 1/I/L in it, and why this formats as they type rather than validating
-// afterwards and telling them they got it wrong.
+// They have `ayush.s-kqmwd@access` in an email and are about to sit an exam.
+// Every way the field can fight them is a support ticket during a live
+// contest, so this shapes input as they type rather than validating afterwards
+// and telling them they got it wrong.
+//
+// The handle replaced a printed slip id (`AMS-7K3M-QR9T`). Two things changed
+// that these pin: it is lowercase, not uppercase — the old formatter
+// upper-cased, which for a handle matches nothing — and `@access` is dropped,
+// because the field shows it as a fixed suffix and they will paste the whole
+// string from the email regardless.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatLoginId, formatPassword } from "./slip-format.ts";
+import { formatHandle, formatPassword, HANDLE_SUFFIX } from "./slip-format.ts";
 
-test("a login id types out grouped", () => {
-  assert.equal(formatLoginId("AMS7K3MQR9T"), "AMS-7K3M-QR9T");
+test("a handle types through unchanged", () => {
+  assert.equal(formatHandle("ayush.s-kqmwd"), "ayush.s-kqmwd");
 });
 
-test("the hyphens a candidate types themselves are absorbed", () => {
-  assert.equal(formatLoginId("AMS-7K3M-QR9T"), "AMS-7K3M-QR9T");
+test("capitals are folded, not preserved", () => {
+  // The old slip formatter upper-cased. Carrying that over would mean no
+  // handle ever matched, because they are stored lowercase.
+  assert.equal(formatHandle("Ayush.S-KQMWD"), "ayush.s-kqmwd");
+  assert.equal(formatHandle("AYUSH.S-KQMWD"), "ayush.s-kqmwd");
 });
 
-test("lowercase becomes uppercase, because the slip is uppercase", () => {
-  assert.equal(formatLoginId("ams-7k3m-qr9t"), "AMS-7K3M-QR9T");
+test("a pasted handle keeps only the part before @access", () => {
+  // The normal case, not the exceptional one: the email shows the whole
+  // thing, so that is what gets pasted.
+  assert.equal(formatHandle("ayush.s-kqmwd@access"), "ayush.s-kqmwd");
+  assert.equal(formatHandle("ayush.s-kqmwd@access.amsaccess.com"), "ayush.s-kqmwd");
+  assert.equal(formatHandle("Ayush.S-Kqmwd@Access"), "ayush.s-kqmwd");
 });
 
-test("the AMS prefix is added rather than demanded", () => {
-  // A candidate reading "7K3M-QR9T" off the slip and skipping the prefix
-  // should not be told their credentials are wrong.
-  assert.equal(formatLoginId("7K3MQR9T"), "AMS-7K3M-QR9T");
+test("a half-typed @access does not eat the handle", () => {
+  // They type the @ themselves out of habit; the field must not blank.
+  assert.equal(formatHandle("ayush.s-kqmwd@"), "ayush.s-kqmwd");
+  assert.equal(formatHandle("ayush.s-kqmwd@acc"), "ayush.s-kqmwd");
 });
 
-test("spaces and stray punctuation are dropped", () => {
-  assert.equal(formatLoginId("AMS 7K3M QR9T"), "AMS-7K3M-QR9T");
-  assert.equal(formatLoginId("AMS–7K3M–QR9T"), "AMS-7K3M-QR9T");
+test("spaces and stray punctuation are dropped rather than rejected", () => {
+  assert.equal(formatHandle("  ayush.s-kqmwd  "), "ayush.s-kqmwd");
+  assert.equal(formatHandle("ayush.s_kqmwd"), "ayush.skqmwd");
 });
 
-test("a partial login id formats as far as it goes", () => {
-  assert.equal(formatLoginId("AMS7K"), "AMS-7K");
-  assert.equal(formatLoginId("AMS7K3M"), "AMS-7K3M");
-  assert.equal(formatLoginId("AMS7K3MQ"), "AMS-7K3M-Q");
+test("digits are dropped, because no handle contains one", () => {
+  // That is the property that makes 0/o and 1/l unambiguous when a handle is
+  // read aloud across a room.
+  assert.equal(formatHandle("ayush.s-kqmw0"), "ayush.s-kqmw");
 });
 
-test("backspacing to empty does not strand a dangling prefix", () => {
-  assert.equal(formatLoginId(""), "");
+test("dots and hyphens survive, since handles are built from them", () => {
+  assert.equal(formatHandle("anne.d-vtbnr"), "anne.d-vtbnr");
+  assert.equal(formatHandle("madonna-hvyeb"), "madonna-hvyeb");
+});
+
+test("a partial handle is left alone while it is being typed", () => {
+  // No reformatting mid-word: nothing here should move the caret.
+  assert.equal(formatHandle("ay"), "ay");
+  assert.equal(formatHandle("ayush."), "ayush.");
+  assert.equal(formatHandle("ayush.s-"), "ayush.s-");
+});
+
+test("an absurdly long paste is bounded", () => {
+  assert.equal(formatHandle("a".repeat(200)).length, 64);
+});
+
+test("the suffix shown beside the field is the one that gets stripped", () => {
+  // If these ever disagree, the field would display one thing and accept
+  // another.
+  assert.equal(formatHandle(`ayush.s-kqmwd${HANDLE_SUFFIX}`), "ayush.s-kqmwd");
 });
 
 test("a password types out in three groups", () => {

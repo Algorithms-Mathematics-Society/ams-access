@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  attemptsForProblem,
   isPendingSubmissionStatus,
   isUiBlockingPending,
   JUDGING_LOCKOUT_MAX_MS,
@@ -150,4 +151,70 @@ test("resolveRunResultRefresh null/empty edges", () => {
     stderr: null,
   };
   assert.equal(resolveRunResultRefresh(prevRun, []), prevRun);
+});
+
+// ── the Attempts panel shows one problem's history, not the contest's ──────
+//
+// The room used to store this list, written from whatever problem was active
+// when the fetch was issued. A fetch outlives that problem, so a reply could
+// land under the wrong tab and stay there.
+
+test("attemptsForProblem keeps only the asked-for problem", () => {
+  const all = [
+    makeAttempt({ id: "a1", problem_id: "A", attempt_no: 1 }),
+    makeAttempt({ id: "b1", problem_id: "B", attempt_no: 1 }),
+    makeAttempt({ id: "a2", problem_id: "A", attempt_no: 2 }),
+  ];
+  assert.deepEqual(
+    attemptsForProblem(all, "A").map((a) => a.id),
+    ["a2", "a1"],
+    "B's attempt must not appear under A, and A's must be newest-first"
+  );
+  assert.deepEqual(
+    attemptsForProblem(all, "B").map((a) => a.id),
+    ["b1"]
+  );
+});
+
+test("attemptsForProblem shows nothing for a problem with no attempts", () => {
+  const all = [makeAttempt({ id: "a1", problem_id: "A" })];
+  assert.deepEqual(attemptsForProblem(all, "C"), []);
+});
+
+test("attemptsForProblem never falls back to the whole contest", () => {
+  // The failure being guarded: an empty or unknown label showing every
+  // attempt in the contest, which is what a `?? all` fallback would do.
+  const all = [
+    makeAttempt({ id: "a1", problem_id: "A" }),
+    makeAttempt({ id: "b1", problem_id: "B" }),
+  ];
+  assert.deepEqual(attemptsForProblem(all, ""), [], "no label means no rows, not all rows");
+});
+
+test("attemptsForProblem hides a submission the server could not attribute", () => {
+  // `_to_out` sends problem_label: "" when a submission has no
+  // contest_problem_id. Such a row belongs under no problem rather than all.
+  const all = [
+    makeAttempt({ id: "orphan", problem_id: "" }),
+    makeAttempt({ id: "a1", problem_id: "A" }),
+  ];
+  assert.deepEqual(
+    attemptsForProblem(all, "A").map((a) => a.id),
+    ["a1"]
+  );
+});
+
+test("attemptsForProblem does not mutate what it is given", () => {
+  // It sorts, and sorting the caller's array in place would reorder the
+  // all-problems list the question rail badges are built from.
+  const all = [
+    makeAttempt({ id: "a1", problem_id: "A", attempt_no: 1 }),
+    makeAttempt({ id: "a2", problem_id: "A", attempt_no: 2 }),
+  ];
+  const order = all.map((a) => a.id);
+  attemptsForProblem(all, "A");
+  assert.deepEqual(
+    all.map((a) => a.id),
+    order
+  );
 });
