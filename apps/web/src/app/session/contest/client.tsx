@@ -27,6 +27,7 @@ import {
   type ContestEditorThemeId,
 } from "./editor-pane";
 import {
+  attemptsForProblem,
   isPendingSubmissionStatus,
   isUiBlockingPending,
   normalizeAttemptForRunResult,
@@ -383,8 +384,6 @@ export default function ContestPageClient() {
   const lastResultExpandIdRef = useRef<string | null>(null);
   const lastResultStatusRef = useRef<string | null>(null);
   const prevSubmittingRef = useRef(false);
-  const [submissionsList, setSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
-  const [submissionsListQId, setSubmissionsListQId] = useState<string | null>(null);
   const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
@@ -478,13 +477,12 @@ export default function ContestPageClient() {
       // server-side, and the old `isRunSubmission` read `submission_kind`, a
       // field v2 never sends — a filter on a field that does not exist is
       // worse than none, because it reads as one.
-      const allSubmissions = toAttemptRecords(await listMySubmissions(sessionId));
-      setAllSubmissionsList(allSubmissions);
-      const qId = questions[activeQ].id;
-      const filtered = allSubmissions.filter((sub) => sub.problem_id === qId);
-      filtered.sort((a, b) => b.attempt_no - a.attempt_no);
-      setSubmissionsList(filtered);
-      setSubmissionsListQId(qId);
+      // One list, unfiltered. The per-problem view is derived from it below
+      // rather than stored: a stored copy is written by whichever fetch
+      // resolves last, and fetches outlive the problem they were started for.
+      // Submit on A (which arms a 2s poll), switch to B, and A's reply would
+      // land and repaint B's Attempts panel with A's history.
+      setAllSubmissionsList(toAttemptRecords(await listMySubmissions(sessionId)));
       // Nothing here refreshes the run panel any more. This list excludes
       // runs by construction — the server filters on `mode` — so searching it
       // for the run's own row could only ever miss. Runs are polled by uid
@@ -496,6 +494,20 @@ export default function ContestPageClient() {
       setLoadingSubmissions(false);
     }
   }, [sessionId, activeQ, questions]);
+
+  /**
+   * The active problem's attempts, newest first.
+   *
+   * Derived, so it cannot disagree with the problem on screen. The old stored
+   * version needed a `submissionsListQId` beside it to say which problem it
+   * described — and that guard was only ever consulted by the Submit button,
+   * never by the panel that rendered the rows.
+   */
+  const activeQLabel = questions[activeQ]?.id ?? "";
+  const submissionsList = useMemo(
+    () => attemptsForProblem(allSubmissionsList, activeQLabel),
+    [allSubmissionsList, activeQLabel]
+  );
 
   useEffect(() => {
     fetchSubmissions();
@@ -2268,9 +2280,11 @@ export default function ContestPageClient() {
     submissionError,
     hasSession: Boolean(sessionId),
     editorEmpty: isEditorEmpty,
-    judgingPending:
-      submissionsListQId === currentQId &&
-      submissionsList.some((s) => isUiBlockingPending(s.status, s.created_at, Date.now())),
+    // No `submissionsListQId === currentQId` guard any more: the list is
+    // derived from the active problem, so it cannot describe another one.
+    judgingPending: submissionsList.some((s) =>
+      isUiBlockingPending(s.status, s.created_at, Date.now())
+    ),
   });
   const runStatusLabelMap: Record<RunVerdict, string> = {
     QUEUED: "Queued",

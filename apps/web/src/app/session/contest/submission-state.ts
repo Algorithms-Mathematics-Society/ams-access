@@ -127,6 +127,36 @@ export function resolveRunResultRefresh(
   return match ? normalizeAttemptForRunResult(match) : prev;
 }
 
+/**
+ * This problem's attempts, newest first.
+ *
+ * Exported and pure so it can be tested, and so the room has no reason to keep
+ * a *stored* per-problem list. It used to keep one, written by `fetchSubmissions`
+ * from whatever `activeQ` was when the request was issued — and a request
+ * outlives the problem it was issued for. Submitting on A arms a 2s poll;
+ * switch to B while it is in flight and A's reply lands and repaints B's
+ * Attempts panel with A's history. The stored copy even had a
+ * `submissionsListQId` beside it recording which problem it described, but only
+ * the Submit button ever consulted it — never the panel that drew the rows.
+ *
+ * Derived state cannot disagree with the problem on screen, so the whole class
+ * of bug goes away rather than being guarded against.
+ *
+ * `problem_id` here is the contest-problem *label* ("A", "B"), which is what
+ * `attempt-adapter` puts there and what `toCandidateQuestion` uses as a
+ * question's `id`. An empty label matches nothing: a submission the server
+ * could not attribute to a problem must not appear under all of them.
+ */
+export function attemptsForProblem<T extends SubmissionAttemptRecord>(
+  attempts: readonly T[],
+  problemLabel: string
+): T[] {
+  if (!problemLabel) return [];
+  return attempts
+    .filter((attempt) => attempt.problem_id === problemLabel)
+    .sort((a, b) => b.attempt_no - a.attempt_no);
+}
+
 export function isTerminalSubmission(attempt: SubmissionAttemptRecord): boolean {
   return !isPendingSubmissionStatus(attempt.status);
 }
