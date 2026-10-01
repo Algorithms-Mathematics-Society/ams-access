@@ -1,5 +1,8 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Kbd } from "@astryxdesign/core/Kbd";
+import { HStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 
 // ─── Types ────────────────────────────────────────────────────
 export interface MarkovState {
@@ -360,13 +363,14 @@ export default function MarkovEditor({ value, onChange, readOnly = false }: Prop
               ✕ Delete
             </button>
           )}
-          <span style={{ fontSize: 10, color: "#64748b", marginLeft: 4 }}>
-            {mode === "transition"
-              ? drawFrom
-                ? "Click target (Esc cancel)"
-                : "Click source"
-              : "Dbl-click canvas = new state · Right-click = toggle start/accept"}
-          </span>
+          <HStack gap={2} align="center" wrap="wrap" style={{ marginInlineStart: 'var(--spacing-1)' }}>
+            <Text type="supporting" color="secondary">{mode === "transition"
+              ? drawFrom ? "Click target" : "Click source"
+              : "Double-click canvas to add a state · Right-click to toggle start/accept"}</Text>
+            {mode === "transition" && drawFrom && <HStack gap={1} align="center">
+              <Kbd keys="escape" /><Text type="supporting" color="secondary">to cancel</Text>
+            </HStack>}
+          </HStack>
         </div>
       )}
 

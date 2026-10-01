@@ -1,105 +1,71 @@
+import { Button } from "@astryxdesign/core/Button";
+import { HStack } from "@astryxdesign/core/Stack";
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { useEffect, useState } from "react";
-import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
-export function Stage6_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
+export function Stage6_VMDetection({ onPass, onWarn }: { onPass(): void; onWarn?(detail: string): void }) {
   const [phase, setPhase] = useState<"checking" | "pass" | "warn">("checking");
   const [platform, setPlatform] = useState<string | null>(null);
-  const theme = useTheme();
-  const isLight = theme === "light";
+  const warning = `Virtualization detected${platform ? ` (${platform})` : ""}. Ask your invigilator whether this device is permitted. Continuing keeps this warning; contest entry requirements still apply.`;
 
   useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function go() {
       const result = await withNullableTimeout(
         invoke<{ detected: boolean; platform: string | null }>("detect_virtualization"),
         3000
       );
       await new Promise((r) => setTimeout(r, 1400));
+      if (cancelled) return;
       if (result?.detected) {
         setPhase("warn");
         setPlatform(result.platform);
-        setTimeout(() => (onWarn ?? onPass)(), 3000);
       } else {
         setPhase("pass");
-        setTimeout(onPass, 1200);
+        timer = setTimeout(() => { if (!cancelled) onPass(); }, 1200);
       }
     }
     void go();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [onPass]);
 
   return (
-    <div className="flex flex-col items-center w-full">
-      <StageHeader label="Device Compatibility" />
-
-      <div
-        style={{
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          fontSize: "12.5px",
-          lineHeight: 1.8,
-          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
-          width: "100%",
-          padding: "18px 24px",
-          background: isLight ? "#f8fafc" : "#0F0F0F",
-          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "var(--radius-sm)",
-          marginBottom: "20px",
-        }}
-      >
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Virtual machine:{" "}
-          </span>
-          {phase === "checking" ? (
-            <span style={{ color: "#f59e0b", fontWeight: 700 }}>Checking</span>
-          ) : phase === "pass" ? (
-            <span style={{ color: "#22c55e", fontWeight: 700 }}>Not detected</span>
-          ) : (
-            <span style={{ color: "#ef4444", fontWeight: 700 }}>
-              [ TRUE ({platform ?? "UNKNOWN"}) ]
-            </span>
-          )}
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Device platform:{" "}
-          </span>
-          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>x86_64</span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Operating system:{" "}
-          </span>
-          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>Linux 6.x</span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Device status:{" "}
-          </span>
-          <span style={{ color: "#22c55e", fontWeight: 700 }}>Active</span>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
+    <VStack gap={6} width="100%">
+      <StageHeader label="Device compatibility" />
+      <Text color="secondary">
+        We’re checking whether your contest is running in a virtual machine.
+      </Text>
+      <MetadataList>
+        <MetadataListItem label="Virtual machine">
+          {phase === "checking"
+            ? "Checking"
+            : phase === "pass"
+              ? "Not detected"
+              : (platform ?? "Detected — platform unknown")}
+        </MetadataListItem>
+      </MetadataList>
+      <VStack gap={2}>
         {phase === "checking" && (
-          <CheckLine
-            label="Checking whether this device is running in a virtual machine..."
-            status="checking"
-          />
+          <CheckLine label="Checking your device environment..." status="checking" />
         )}
         {phase === "pass" && (
-          <>
-            <CheckLine label="Device is compatible" status="pass" />
-            <CheckLine label="Running on physical hardware" status="pass" />
-          </>
+          <CheckLine label="Device compatibility check complete" status="pass" />
         )}
         {phase === "warn" && (
           <>
             <CheckLine label="Virtualization platform active" status="warn" />
-            <CheckLine label="Session flagged for additional review" status="warn" />
+            <Text color="secondary">{warning}</Text>
+            <HStack gap={3} wrap="wrap">
+              <Button label="Continue with warning" variant="primary" onClick={() => onWarn ? onWarn(warning) : onPass()} />
+            </HStack>
           </>
         )}
-      </div>
-    </div>
+      </VStack>
+    </VStack>
   );
 }

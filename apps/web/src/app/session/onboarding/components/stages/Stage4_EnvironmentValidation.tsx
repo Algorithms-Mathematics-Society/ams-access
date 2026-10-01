@@ -1,3 +1,5 @@
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
 import { useEffect, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
@@ -64,20 +66,16 @@ export function Stage4_EnvironmentValidation({ onPass }: { onPass(): void }) {
   }, [onPass]);
 
   return (
-    <div className="flex flex-col items-start w-full">
-      <StageHeader label="Setup Verification" />
-      <div
-        style={{
-          width: "100%",
-          display: "flex",
-          flexDirection: "column",
-          gap: "12px",
-        }}
-      >
+    <VStack gap={6} width="100%">
+      <StageHeader label="Setup verification" />
+      <Text color="secondary">
+        We’re confirming your display, keyboard and screen capture settings before continuing.
+      </Text>
+      <VStack gap={2}>
         {checks.map((c) => (
           <CheckLine key={c.label} label={c.label} status={c.status} />
         ))}
-      </div>
-    </div>
+      </VStack>
+    </VStack>
   );
 }

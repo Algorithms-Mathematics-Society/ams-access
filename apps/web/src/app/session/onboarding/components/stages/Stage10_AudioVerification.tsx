@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
+import { Button } from "@astryxdesign/core/Button";
+import { HStack } from "@astryxdesign/core/Stack";
+import { SetupPermissionInfo } from "../SetupPermissionInfo";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { stopMediaStream } from "../../support";
 
-export function Stage10_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?(): void }) {
+export function Stage10_AudioVerification({ onPass, onWarn }: { onPass(): void; onWarn?(detail: string): void }) {
   const [level, setLevel] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
+  const [retryKey, setRetryKey] = useState(0);
+  const warning = "Microphone access is unavailable. Allow microphone access in your system or browser settings, close other apps using it, then try again. If access remains unavailable, ask an invigilator. Continuing keeps this warning; contest entry requirements still apply.";
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
@@ -59,10 +67,16 @@ export function Stage10_AudioVerification({ onPass, onWarn }: { onPass(): void; 
         }, 3500);
       } catch {
         if (cancelled) return;
+        // A failed analyser must not keep the microphone open while the
+        // candidate reads a persistent warning or decides whether to retry.
+        cancelAnimationFrame(rafRef.current);
+        stopMediaStream(streamRef.current);
+        streamRef.current = null;
+        audioCtxRef.current?.close().catch(() => {});
+        audioCtxRef.current = null;
+        analyserRef.current = null;
+        setLevel(0);
         setPhase("fail");
-        passTimer = setTimeout(() => {
-          if (!cancelled) (onWarn ?? onPass)();
-        }, 2000);
       }
     }
     void init();
@@ -75,98 +89,26 @@ export function Stage10_AudioVerification({ onPass, onWarn }: { onPass(): void; 
       audioCtxRef.current?.close().catch(() => {});
       audioCtxRef.current = null;
     };
-  }, [onPass]);
-  const bars = Array.from({ length: 20 }, (_, i) => i);
+  }, [onPass, retryKey]);
 
   return (
-    <div className="flex flex-col items-center">
-      <StageHeader label="Microphone Check" />
-
-      <div
-        className="mb-8 flex items-end justify-center gap-1.5 relative"
-        style={{ height: 60, width: "160px" }}
-      >
-        {/* Dotted threshold line indicating passing barrier */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: "20px",
-            left: "-20px",
-            right: "-20px",
-            borderBottom: "1px dashed rgba(255,255,255,0.25)",
-            zIndex: 1,
-            pointerEvents: "none",
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-        >
-          <span
-            style={{
-              fontSize: "11px",
-              fontFamily: "'JetBrains Mono', monospace",
-              color: "rgba(255,255,255,0.58)",
-              background: "rgba(255,255,255,0.08)",
-              padding: "2px 6px",
-              borderRadius: "var(--radius-sm)",
-              transform: "translateY(5px)",
-              letterSpacing: "0.05em",
-              fontWeight: 600,
-            }}
-          >
-            -24DB THRESHOLD
-          </span>
-        </div>
-        {bars.map((i) => {
-          const height =
-            phase === "pass"
-              ? Math.max(4, level * 0.6 * (0.4 + 0.6 * Math.abs(Math.sin(i * 0.8 + level * 0.05))))
-              : 4;
-          const isAboveThreshold = height >= 20;
-          return (
-            <div
-              key={i}
-              style={{
-                width: 6,
-                borderRadius: "0px",
-                height: `${height}px`,
-                background:
-                  phase === "pass"
-                    ? isAboveThreshold
-                      ? "#FFF"
-                      : "rgba(255,255,255,0.18)"
-                    : "rgba(255,255,255,0.06)",
-                transition: "height var(--transition-fast), background var(--transition-standard)",
-                maxHeight: 56,
-                zIndex: 2,
-              }}
-            />
-          );
-        })}
-      </div>
-
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "300px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "12px",
-        }}
-      >
-        {phase === "checking" && (
-          <CheckLine label="Requesting microphone access..." status="checking" />
-        )}
-        {phase === "pass" && (
-          <>
-            <CheckLine label="Microphone detected" status="pass" />
-            <CheckLine label="Audio signal received" status="pass" delay={300} />
-            <CheckLine label="Background noise is acceptable" status="pass" delay={600} />
-          </>
-        )}
-        {phase === "fail" && (
-          <CheckLine label="No microphone found — continuing anyway" status="warn" />
-        )}
-      </div>
-    </div>
+    <VStack gap={5} style={{ width: "100%", minWidth: 0 }}>
+      <StageHeader label="Microphone check" />
+      <Text color="secondary">We’re checking access to your microphone. Speak briefly to see input activity.</Text>
+      <SetupPermissionInfo kind="microphone" />
+      <Text type="supporting" color="secondary">Microphone input activity</Text>
+      <ProgressBar label="Microphone input activity" isLabelHidden value={level} max={100} variant="accent" isDisabled={phase !== "pass"} />
+      <Text type="supporting" color="secondary">The meter shows live input activity, not a sound-quality score.</Text>
+      {phase === "checking" && <CheckLine label="Requesting microphone access…" status="checking" />}
+      {phase === "pass" && <CheckLine label="Microphone access granted" status="pass" />}
+      {phase === "fail" && <VStack gap={3}>
+        <CheckLine label="Microphone access unavailable" status="warn" />
+        <Text color="secondary">{warning}</Text>
+        <HStack gap={3} wrap="wrap">
+          <Button label="Try microphone again" variant="secondary" onClick={() => { setPhase("checking"); setLevel(0); setRetryKey(key => key + 1); }} />
+          <Button label="Continue with warning" variant="primary" onClick={() => onWarn ? onWarn(warning) : onPass()} />
+        </HStack>
+      </VStack>}
+    </VStack>
   );
 }

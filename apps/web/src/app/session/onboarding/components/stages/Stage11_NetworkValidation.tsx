@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { isGatingRelaxed, warnGatingRelaxed, RELAXED_MODE_BADGE } from "@/lib/gating";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import { CheckLine, Spinner, StageHeader } from "../ui";
 import { type TauriGlobals } from "../tauri-globals";
 import { getNetworkProbeHost, invoke, invokeStrict, withNullableTimeout } from "../../support";
@@ -102,72 +104,20 @@ export function Stage11_NetworkValidation({ onPass, onWarn }: { onPass(): void; 
     void go();
   }, [onPass, onWarn]);
 
-  const qualityColor =
-    quality === "excellent" || quality === "good"
-      ? "#22c55e"
-      : quality === "fair"
-        ? "var(--color-indicator-warn)"
-        : "var(--color-error)";
-
   return (
-    <div className="flex flex-col items-center">
-      <StageHeader label="Connection Check" />
-
-      <div
-        className="mb-10 relative flex flex-col items-center justify-center"
-        style={{
-          width: 180,
-          height: 80,
-          borderRadius: "var(--radius-sm)",
-          background: "#0F0F0F",
-          border: `1px solid ${phase === "checking" ? "rgba(255,255,255,0.06)" : phase === "pass" ? "rgba(34,197,94,0.4)" : "#ef4444"}`,
-          transition: "border-color var(--transition-slow)",
-        }}
-      >
-        {phase === "checking" ? (
-          <Spinner size={24} />
-        ) : (
-          <div className="text-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-            <p
-              style={{
-                fontSize: "var(--text-lg)",
-                fontWeight: 700,
-                color: qualityColor,
-                lineHeight: 1,
-              }}
-            >
-              {latency} MS
-            </p>
-            <p
-              style={{
-                fontSize: "11px",
-                color: "rgba(255,255,255,0.58)",
-                marginTop: "6px",
-                letterSpacing: "0.1em",
-              }}
-            >
-              Response time
-            </p>
-          </div>
-        )}
-      </div>
-
-      {phase !== "checking" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          <CheckLine label={`Response time: ${latency}ms`} status={phase} />
-          <CheckLine label={`Connection quality: ${quality ?? "-"}`} status={phase} delay={200} />
-          {helperPhase !== "skipped" && (
-            <CheckLine
-              label={helperMessage}
-              status={helperPhase === "pass" ? "pass" : "warn"}
-              delay={400}
-            />
-          )}
-          {phase === "pass" && (
-            <CheckLine label="Server connection established" status="pass" delay={600} />
-          )}
-        </div>
-      )}
-    </div>
+    <VStack gap={5} style={{ width: "100%", minWidth: 0 }}>
+      <StageHeader label="Connection check" />
+      <Text color="secondary">We’re checking the connection and preparing any network controls required by your device.</Text>
+      {phase === "checking" ? <HStack gap={3} align="center"><Spinner /><Text color="secondary">Checking your connection…</Text></HStack> : <VStack gap={2}>
+        <Text type="supporting" color="secondary">Response time</Text>
+        <Text style={{ fontSize: "var(--font-size-3xl)", fontVariantNumeric: "tabular-nums" }}>{latency === null ? "Not measured" : `${latency} ms`}</Text>
+      </VStack>}
+      {phase !== "checking" && <VStack gap={2}>
+        <CheckLine label={latency === null ? "No response-time measurement available" : `Response time: ${latency} ms`} status={latency === null ? "unknown" : phase} />
+        <CheckLine label={`Connection quality: ${quality ?? "Not measured"}`} status={phase} delay={200} />
+        {helperPhase !== "skipped" && <CheckLine label={helperMessage} status={helperPhase === "pass" ? "pass" : "warn"} delay={400} />}
+        {phase === "pass" && <CheckLine label="Server connection established" status="pass" delay={600} />}
+      </VStack>}
+    </VStack>
   );
 }

@@ -1,5 +1,9 @@
 import { type RefObject } from "react";
-import { Video, VideoOff, Mic, MicOff, AlertTriangle, Loader2 } from "lucide-react";
+import { Video, VideoOff, Mic, MicOff } from "lucide-react";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Button } from "@astryxdesign/core/Button";
+import { Text } from "@astryxdesign/core/Text";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
 
 export interface CameraTileProps {
   cameraVideoRef: RefObject<HTMLVideoElement | null>;
@@ -28,146 +32,18 @@ export function CameraTile({
   handleToggleMedia,
 }: CameraTileProps) {
   return (
-    <div
-      title={cameraStatusLabel}
-      style={{
-        background: "#0F0F0F",
-        position: "absolute",
-        left: 0,
-        bottom: 0,
-        width: "220px",
-        height: "150px",
-        zIndex: 50,
-        // Docked over the expanded rail's bottom; hidden (NOT unmounted) when the rail
-        // collapses — <video> stays mounted, srcObject bound, tracks running (no teardown).
-        display: (cameraStream ?? cameraError) && !sidebarCollapsed ? "flex" : "none",
-        flexDirection: "column",
-        border: "1px solid #1F1F1F",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: "6px",
-          right: "6px",
-          zIndex: 2,
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          // Scrim behind the toggles: the live feed behind them can be any
-          // color (a bright wall, a light shirt), so the red/white icons
-          // need guaranteed contrast independent of what's on camera.
-          padding: "3px",
-          borderRadius: "var(--radius-md)",
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(6px)",
-          border: "1px solid rgba(255,255,255,0.08)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => handleToggleMedia("camera", !cameraEnabled)}
-          className={`ic-btn ${cameraEnabled ? "ic-btn-white" : "ic-btn-red"}`}
-          title={cameraEnabled ? "Camera on — click to turn off" : "Camera off — click to turn on"}
-          aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
-        >
-          {cameraEnabled ? (
-            <Video size={15} strokeWidth={1.75} />
-          ) : (
-            <VideoOff size={15} strokeWidth={1.75} />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => handleToggleMedia("mic", !micEnabled)}
-          className={`ic-btn ${micEnabled ? "ic-btn-white" : "ic-btn-red"}`}
-          title={
-            micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
-          }
-          aria-label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
-        >
-          {micEnabled ? (
-            <Mic size={15} strokeWidth={1.75} />
-          ) : (
-            <MicOff size={15} strokeWidth={1.75} />
-          )}
-        </button>
-      </div>
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          border: "none",
-          boxSizing: "border-box",
-          position: "relative",
-        }}
-      >
-        <video
-          ref={cameraVideoRef}
-          muted
-          playsInline
-          autoPlay
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            transform: "scaleX(-1)",
-            display: "block",
-            borderRadius: "0",
-          }}
-        />
-      </div>
-      {/* Camera health — announced via a content-based live region + a non-color visible
-          cue. Healthy = silent/clean box (mockup look); a chip appears ONLY on a problem.
-          ⚠ is reserved for a real fault — intentional-off gets a neutral icon, and the
-          transient "Starting…" resolves to an announced "Camera active" so an SR user hears
-          it clear rather than hearing "Starting…" stick. faceStatus/stream logic untouched. */}
-      <div
-        role="status"
-        aria-live="polite"
-        style={{
-          position: "absolute",
-          bottom: "6px",
-          left: "6px",
-          zIndex: 2,
-          pointerEvents: "none",
-        }}
-      >
-        {cameraHealthy ? (
-          <span className="sr-only">Camera active</span>
-        ) : (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "4px",
-              padding: "2px 6px",
-              background: "#0F0F0F",
-              border: "1px solid #1F1F1F",
-              borderRadius: "4px",
-              fontSize: "10px",
-              fontWeight: 600,
-              fontFamily: "Inter, system-ui, sans-serif",
-              color: "#e2e8f0",
-            }}
-          >
-            {!cameraEnabled ? (
-              <VideoOff size={11} strokeWidth={2} aria-hidden="true" />
-            ) : cameraError ? (
-              <AlertTriangle size={11} strokeWidth={2} color="#f59e0b" aria-hidden="true" />
-            ) : (
-              <Loader2
-                size={11}
-                strokeWidth={2}
-                aria-hidden="true"
-                style={{ animation: "spin 1.2s linear infinite" }}
-              />
-            )}
-            {!cameraEnabled ? "Off" : cameraError ? "Camera issue" : "Starting…"}
-          </span>
-        )}
-      </div>
-    </div>
+    <VStack className="contest-camera-tile" aria-label={cameraStatusLabel} gap={0} style={{ position: "absolute", left: 0, bottom: 0, width: "calc(var(--spacing-10) * 5.5)", height: "calc(var(--spacing-10) * 4)", zIndex: 50, display: (cameraStream ?? cameraError) && !sidebarCollapsed ? "flex" : "none", background: "var(--color-background-card)", border: "var(--border-width) solid var(--color-border)", overflow: "hidden" }}>
+      <HStack gap={1} className="contest-camera-controls" style={{ position: "absolute", top: "var(--spacing-2)", right: "var(--spacing-2)", zIndex: 2, padding: "var(--spacing-1)", background: "var(--color-background-card)", borderRadius: "var(--radius-element)", border: "var(--border-width) solid var(--color-border)" }}>
+        <Button type="button" label={cameraEnabled ? "Turn camera off" : "Turn camera on"} tooltip={cameraEnabled ? "Camera on — click to turn off" : "Camera off — click to turn on"} variant="ghost" size="sm" isIconOnly icon={cameraEnabled ? <Video size={16} /> : <VideoOff size={16} />} onClick={() => handleToggleMedia("camera", !cameraEnabled)} />
+        <Button type="button" label={micEnabled ? "Turn microphone off" : "Turn microphone on"} tooltip={micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"} variant="ghost" size="sm" isIconOnly icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />} onClick={() => handleToggleMedia("mic", !micEnabled)} />
+      </HStack>
+      <VStack style={{ width: "100%", height: "100%", position: "relative" }}>
+        <video ref={cameraVideoRef} muted playsInline autoPlay style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: "block", borderRadius: "0" }} />
+      </VStack>
+      <HStack role="status" aria-live="polite" gap={2} align="center" style={{ position: "absolute", bottom: "var(--spacing-2)", left: "var(--spacing-2)", zIndex: 2, pointerEvents: "none", padding: "var(--spacing-1) var(--spacing-2)", borderRadius: "var(--radius-element)", background: "var(--color-background-card)" }}>
+        <StatusDot label={cameraStatusLabel} variant={!cameraEnabled ? "neutral" : cameraHealthy ? "success" : cameraError ? "warning" : "neutral"} />
+        <Text type="supporting">{cameraStatusLabel}</Text>
+      </HStack>
+    </VStack>
   );
 }

@@ -1314,3 +1314,29 @@
     box-shadow: none;
   }
 }
+
+/* Home contest rows share one frame, consistent insets and a responsive detail grid. */
+@layer components {
+  .dashboard-contest-list > [data-dashboard-contest] + [data-dashboard-contest] {
+    border-top: var(--border-width) solid var(--color-border);
+  }
+  .dashboard-contest-list > [data-dashboard-contest]:first-child { border-start-start-radius: var(--radius-container); border-start-end-radius: var(--radius-container); }
+  .dashboard-contest-list > [data-dashboard-contest]:last-child { border-end-start-radius: var(--radius-container); border-end-end-radius: var(--radius-container); }
+  .dashboard-contest-metadata > dl {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-template-columns: none;
+    gap: var(--spacing-4);
+  }
+  .dashboard-contest-metadata dt { font-size: var(--font-size-xs); }
+  .dashboard-contest-metadata dd { min-width: 0; overflow-wrap: anywhere; }
+  @container (max-width: 440px) {
+    .dashboard-contest-metadata > dl { grid-auto-flow: row; grid-template-columns: 1fr; gap: var(--spacing-3); }
+    .dashboard-contest-metadata .astryx-metadata-list-item {
+      display: grid;
+      grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
+      align-items: baseline;
+      gap: var(--spacing-3);
+    }
+  }
+}

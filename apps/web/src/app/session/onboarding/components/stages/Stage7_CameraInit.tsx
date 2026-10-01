@@ -1,7 +1,10 @@
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/app/home/components/ui-primitives";
 import { useTheme } from "../hooks";
 import { Spinner, StageHeader, StatusBadge } from "../ui";
+import { SetupPermissionInfo } from "../SetupPermissionInfo";
 import { cameraSession } from "@/lib/camera-session";
 import { invoke, waitForVideoReady, withTimeout } from "../../support";
 
@@ -90,17 +93,26 @@ export function Stage7_CameraInit({
   }, [onPass, onCameraReady, retryKey]);
 
   return (
-    <div className="flex flex-col items-center w-full">
-      <StageHeader label="Camera Setup" />
+    <VStack gap={5} width="100%">
+      <VStack gap={2}>
+        <StageHeader label="Set up your camera" />
+        <Text color="secondary">
+          Allow camera access when prompted. Use the preview to find a clear, well-lit position.
+        </Text>
+      </VStack>
 
-      <div
-        className="relative mb-8 overflow-hidden"
+      <SetupPermissionInfo kind="camera" />
+      <VStack
+        width="100%"
+        maxWidth="calc(var(--spacing-10) * 12)"
         style={{
-          width: 240,
-          height: 160,
+          position: "relative",
+          aspectRatio: "3 / 2",
+          overflow: "hidden",
+          alignSelf: "center",
           borderRadius: "var(--radius-sm)",
-          background: "#000",
-          border: `1px solid ${phase === "pass" ? "rgba(34,197,94,0.45)" : phase === "fail" ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.06)"}`,
+          background: "var(--color-background-surface)",
+          border: `var(--border-width) solid ${phase === "pass" ? "var(--color-border-green)" : phase === "fail" ? "var(--color-border-red)" : "var(--color-border)"}`,
           transition: "border-color var(--transition-slow)",
         }}
       >
@@ -108,62 +120,73 @@ export function Stage7_CameraInit({
           ref={videoRef}
           muted
           playsInline
-          className="h-full w-full object-cover"
-          style={{ transform: "scaleX(-1)" }}
+          aria-label="Live camera preview"
+          style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
         />
         {phase === "checking" && (
-          <div
-            className="absolute inset-0 flex items-center justify-center"
-            style={{ background: "rgba(0,0,0,0.55)" }}
+          <VStack
+            hAlign="center"
+            vAlign="center"
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "var(--color-background-surface)",
+            }}
           >
             <Spinner size={28} />
-          </div>
+          </VStack>
         )}
         {phase === "fail" && (
-          <div
-            className="absolute inset-0 flex items-center justify-center"
-            style={{ background: "rgba(0,0,0,0.8)", padding: "16px" }}
+          <VStack
+            hAlign="center"
+            vAlign="center"
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "var(--color-background-surface)",
+              padding: "var(--spacing-4)",
+            }}
           >
-            <p
+            <Text
               style={{
-                fontSize: "11px",
-                fontFamily: "'JetBrains Mono', monospace",
-                color: "#fca5a5",
+                fontSize: "var(--font-size-sm)",
+                fontFamily: "var(--font-family-body)",
+                color: "var(--color-error)",
                 textAlign: "center",
                 lineHeight: 1.6,
               }}
             >
               Camera needs attention
-            </p>
-          </div>
+            </Text>
+          </VStack>
         )}
-      </div>
+      </VStack>
 
       {phase === "checking" && (
         <StatusBadge status="checking" label="Requesting camera access..." />
       )}
       {phase === "pass" && <StatusBadge status="pass" label="Camera ready" />}
       {phase === "fail" && (
-        <div
+        <VStack
           style={{
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: "16px",
-            maxWidth: "320px",
+            gap: "var(--spacing-4)",
+            maxWidth: "100%",
           }}
         >
-          <p
+          <Text
             style={{
-              fontSize: "12px",
-              fontFamily: "'JetBrains Mono', monospace",
-              color: "#f87171",
+              fontSize: "var(--font-size-base)",
+              fontFamily: "var(--font-family-body)",
+              color: "var(--color-error)",
               textAlign: "center",
               lineHeight: 1.65,
             }}
           >
             {error}
-          </p>
+          </Text>
           {isWindows && permissionIssue && (
             <Button
               theme={theme}
@@ -192,12 +215,12 @@ export function Stage7_CameraInit({
             Try again
           </Button>
           {process.env.NODE_ENV === "development" && (
-            <button className="onb-btn onb-btn--secondary" onClick={onPass}>
+            <Button theme={theme} variant="secondary" size="small" onClick={onPass}>
               Skip (dev only)
-            </button>
+            </Button>
           )}
-        </div>
+        </VStack>
       )}
-    </div>
+    </VStack>
   );
 }

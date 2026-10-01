@@ -77,13 +77,15 @@ export function read(
 
   try {
     const parsed = JSON.parse(raw) as Partial<BufferedAnswer>;
-    if (!Array.isArray(parsed.files) || typeof parsed.language !== "string") return null;
+    if (!Array.isArray(parsed.files) || parsed.files.length === 0 || typeof parsed.language !== "string") return null;
+    if (parsed.files.some(file => !file || typeof file.id !== "string" || typeof file.name !== "string" || typeof file.content !== "string")) return null;
+    if (new Set(parsed.files.map(file => file.id)).size !== parsed.files.length) return null;
     return {
       language: parsed.language,
       files: parsed.files as BufferedFile[],
-      activeFileId: typeof parsed.activeFileId === "string" ? parsed.activeFileId : "",
-      savedAtMs: typeof parsed.savedAtMs === "number" ? parsed.savedAtMs : 0,
-      revision: typeof parsed.revision === "number" ? parsed.revision : 0,
+      activeFileId: parsed.files.some(file => file.id === parsed.activeFileId) ? parsed.activeFileId! : parsed.files[0].id,
+      savedAtMs: typeof parsed.savedAtMs === "number" && Number.isFinite(parsed.savedAtMs) ? parsed.savedAtMs : 0,
+      revision: typeof parsed.revision === "number" && Number.isSafeInteger(parsed.revision) && parsed.revision >= 0 ? parsed.revision : 0,
     };
   } catch {
     // Truncated or hand-edited. Treated as absent rather than thrown: a
@@ -133,5 +135,5 @@ export function chooseRestore(
   // must not announce a restore. Differing content at the same revision means
   // the write was in flight when the app died, so the buffer is the later of
   // the two.
-  return activeContent(buffered) === serverDraft.source ? "same" : "buffer";
+  return activeContent(buffered) === serverDraft.source && buffered.language === serverDraft.language ? "same" : "buffer";
 }

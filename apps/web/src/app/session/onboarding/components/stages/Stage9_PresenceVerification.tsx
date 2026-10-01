@@ -9,6 +9,8 @@ import {
   type PresenceVerdict,
 } from "../../presence-check";
 import { StageHeader, StatusBadge } from "../ui";
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
 
 /**
  * Presence check.
@@ -108,22 +110,32 @@ export function Stage9_PresenceVerification({
   const settled = verdict !== null;
   const passing = settled && isPresencePass(verdict);
   const borderColor = !settled
-    ? "rgba(255,255,255,0.06)"
+    ? "var(--color-border)"
     : passing
-      ? "rgba(34,197,94,0.4)"
-      : "rgba(245,158,11,0.4)";
+      ? "var(--color-border-green)"
+      : "var(--color-border-yellow)";
 
   return (
-    <div className="flex flex-col items-center">
-      <StageHeader label="Presence Check" />
+    <VStack gap={5} width="100%">
+      <VStack gap={2}>
+        <StageHeader label="Check your presence" />
+        <Text color="secondary">
+          Stay in view while we take a few brief samples. Keep your face visible and look toward the
+          camera.
+        </Text>
+      </VStack>
 
-      <div
-        className="relative mb-6 overflow-hidden"
+      <VStack
+        width="100%"
+        maxWidth="calc(var(--spacing-10) * 12)"
         style={{
-          width: 240,
-          height: 160,
+          position: "relative",
+          aspectRatio: "3 / 2",
+          overflow: "hidden",
+          alignSelf: "center",
+          background: "var(--color-background-surface)",
           borderRadius: "var(--radius-sm)",
-          border: `1px solid ${borderColor}`,
+          border: `var(--border-width) solid ${borderColor}`,
           transition: "border-color var(--transition-slow)",
         }}
       >
@@ -133,25 +145,13 @@ export function Stage9_PresenceVerification({
           playsInline
           style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
         />
-      </div>
+      </VStack>
 
-      <p
-        style={{
-          fontSize: "12px",
-          fontFamily: "'JetBrains Mono', monospace",
-          color: !settled ? "rgba(255,255,255,0.58)" : passing ? "#22c55e" : "#f59e0b",
-          fontWeight: 400,
-          transition: "color var(--transition-standard)",
-          marginBottom: "18px",
-          maxWidth: 380,
-          textAlign: "center",
-          lineHeight: 1.6,
-        }}
-      >
+      <Text color="secondary">
         {settled
           ? presenceMessage(verdict)
           : `Looking for you — check ${Math.min(taken + 1, SAMPLE_COUNT)} of ${SAMPLE_COUNT}`}
-      </p>
+      </Text>
 
       <StatusBadge
         status={!settled ? "checking" : passing ? "pass" : "warn"}
@@ -163,6 +163,6 @@ export function Stage9_PresenceVerification({
               : "Recorded for your proctor"
         }
       />
-    </div>
+    </VStack>
   );
 }

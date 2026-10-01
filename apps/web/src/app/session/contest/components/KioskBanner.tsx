@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { listen } from "@ams/api-client";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Banner } from "@astryxdesign/core/Banner";
 
 type ResumePayload = {
   kind: string;
@@ -49,32 +51,5 @@ export function KioskBanner() {
 
   if (!msg) return null;
 
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        position: "fixed",
-        // Below the 48px TopBar: at top:16 the banner fully covered the
-        // redesign's centered countdown badge for its whole 8s life — the one
-        // moment (post-lock resume) a candidate most needs the remaining time.
-        top: 56,
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 1000,
-        padding: "10px 18px",
-        borderRadius: "var(--radius-md, 14px)",
-        background: "rgba(21,21,21,0.95)",
-        border: "1px solid rgba(255,255,255,0.12)",
-        boxShadow: "0 10px 40px rgba(0,0,0,0.4)",
-        color: "#F5F7FA",
-        fontSize: 13,
-        letterSpacing: "0.01em",
-        backdropFilter: "blur(6px)",
-        pointerEvents: "none",
-      }}
-    >
-      {msg}
-    </div>
-  );
+  return <VStack role="status" aria-live="polite" style={{ position: "fixed", top: "calc(var(--spacing-10) * 2)", left: "50%", transform: "translateX(-50%)", zIndex: 1000, width: "min(calc(100% - var(--spacing-8)), calc(var(--spacing-10) * 12))", pointerEvents: "none" }}><Banner status="warning" title={msg} /></VStack>;
 }

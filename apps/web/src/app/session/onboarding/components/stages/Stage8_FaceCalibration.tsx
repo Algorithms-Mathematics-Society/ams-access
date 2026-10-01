@@ -1,3 +1,7 @@
+import { Button } from "@astryxdesign/core/Button";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
 import { lumaStats, decideCapture, settlingMessage } from "../../face-frame";
 import { cameraSession } from "@/lib/camera-session";
@@ -804,50 +808,60 @@ export function Stage8_FaceCalibration({
   const displayedLockPct = scanState === "validating" ? 100 : lockPct;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <StageHeader label="Face Scan" />
+    <VStack gap={4} width="100%">
+      <VStack gap={2}>
+        <StageHeader label="Position your face" />
+        <Text color="secondary">
+          Face the camera in good light. Hold still when the guide is centered to capture a clear
+          reference image.
+        </Text>
+      </VStack>
 
-      <div style={{ position: "relative", width: 320, height: 240, marginBottom: "24px" }}>
+      <VStack
+        width="100%"
+        maxWidth={320}
+        style={{ position: "relative", aspectRatio: "4 / 3", alignSelf: "center" }}
+      >
         {flash && (
-          <div
+          <VStack
             style={{
               position: "absolute",
               inset: 0,
               zIndex: 20,
-              background: "rgba(255,255,255,0.6)",
+              background: "var(--color-background-body)",
               borderRadius: "var(--radius-lg)",
-              animation: "face-flash 0.35s ease forwards",
+              opacity: 0.6,
             }}
           />
         )}
 
         {/* Crosshair pulse overlay when face tracked and quality ok */}
         {facePresent && !done && qualityOk && (
-          <div
+          <VStack
             style={{
               position: "absolute",
               left: "50%",
               top: "50%",
               transform: "translate(-50%, -50%)",
-              width: 30,
-              height: 30,
+              width: "var(--spacing-8)",
+              height: "var(--spacing-8)",
               zIndex: 15,
               pointerEvents: "none",
-              animation: "countdown-pulse 1.2s ease-in-out infinite",
+
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
-            <div
+            <VStack
               style={{
-                width: 20,
-                height: 20,
-                border: "1.5px solid rgba(34,197,94,0.7)",
+                width: "var(--spacing-5)",
+                height: "var(--spacing-5)",
+                border: "var(--border-width) solid var(--color-border-green)",
                 borderRadius: "50%",
               }}
             />
-          </div>
+          </VStack>
         )}
         <video
           ref={videoRef}
@@ -869,6 +883,8 @@ export function Stage8_FaceCalibration({
           style={{
             position: "absolute",
             inset: 0,
+            width: "100%",
+            height: "100%",
             borderRadius: "var(--radius-sm)",
             pointerEvents: "none",
           }}
@@ -877,21 +893,20 @@ export function Stage8_FaceCalibration({
         <canvas ref={captureCanvasRef} width={320} height={240} style={{ display: "none" }} />
 
         {/* Rigid border corner elements */}
-        <div
+        <VStack
           style={{
             position: "absolute",
-            inset: "-1px",
+            inset: "calc(var(--border-width) * -1)",
             borderRadius: "var(--radius-sm)",
-            border: `1px solid ${done ? "rgba(34,197,94,0.4)" : qualityOk ? "rgba(34,197,94,0.3)" : lostTracking ? "rgba(239,68,68,0.5)" : facePresent ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.06)"}`,
+            border: `var(--border-width) solid ${done ? "var(--color-border-green)" : qualityOk ? "var(--color-border-green)" : lostTracking ? "var(--color-border-red)" : facePresent ? "var(--color-border)" : "var(--color-border)"}`,
             pointerEvents: "none",
             transition: "border-color var(--transition-standard)",
-            ...(done ? { animation: "capture-border-pulse 0.6s ease forwards" } : {}),
           }}
         />
 
         {/* Model loading overlay */}
         {!detectorReady && !detectorFailed && (
-          <div
+          <VStack
             style={{
               position: "absolute",
               inset: 0,
@@ -900,26 +915,26 @@ export function Stage8_FaceCalibration({
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              background: "#0F0F0F",
+              background: "var(--color-background-surface)",
               borderRadius: "var(--radius-sm)",
-              gap: "12px",
+              gap: "var(--spacing-3)",
             }}
           >
-            <span
+            <Text
               style={{
-                fontSize: "11px",
-                fontFamily: "'JetBrains Mono', monospace",
-                color: "rgba(255,255,255,0.58)",
+                fontSize: "var(--font-size-sm)",
+                fontFamily: "var(--font-family-body)",
+                color: "var(--color-text-secondary)",
               }}
             >
               Preparing face check
-            </span>
-          </div>
+            </Text>
+          </VStack>
         )}
 
         {/* Hard-block overlay — shown when detection is unavailable and stage cannot auto-proceed */}
         {stageBlocked && (
-          <div
+          <VStack
             style={{
               position: "absolute",
               inset: 0,
@@ -928,63 +943,64 @@ export function Stage8_FaceCalibration({
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              background: "rgba(3, 8, 22, 0.94)",
+              background: "var(--color-background-surface)",
               borderRadius: "var(--radius-sm)",
-              gap: "10px",
-              border: "1px solid rgba(239, 68, 68, 0.45)",
+              gap: "var(--spacing-3)",
+              border: "var(--border-width) solid var(--color-border-red)",
             }}
           >
-            <span
+            <Text
               style={{
-                fontSize: "11px",
-                fontFamily: "'JetBrains Mono', monospace",
-                color: "#ef4444",
+                fontSize: "var(--font-size-sm)",
+                fontFamily: "var(--font-family-body)",
+                color: "var(--color-error)",
                 letterSpacing: "0.08em",
               }}
             >
               Face detection unavailable
-            </span>
-            <span
+            </Text>
+            <Text
               style={{
-                fontSize: "11px",
-                fontFamily: "'JetBrains Mono', monospace",
-                color: "rgba(255,255,255,0.58)",
+                fontSize: "var(--font-size-sm)",
+                fontFamily: "var(--font-family-body)",
+                color: "var(--color-text-secondary)",
                 textAlign: "center",
-                maxWidth: "220px",
+                maxWidth: "100%",
+                paddingInline: "var(--spacing-4)",
                 lineHeight: 1.65,
               }}
             >
               Use the option below to continue for a proctor review.
-            </span>
-          </div>
+            </Text>
+          </VStack>
         )}
-      </div>
+      </VStack>
 
       {/* Two-up tracking/progress grid */}
-      <div
+      <VStack
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
-          gap: "12px 16px",
-          width: 320,
-          marginBottom: 16,
-          fontFamily: "'JetBrains Mono', monospace",
+          gap: "var(--spacing-3) var(--spacing-4)",
+          width: "100%",
+
+          fontFamily: "var(--font-family-body)",
         }}
       >
-        <span style={{ fontSize: "var(--text-base)", color: "rgba(255,255,255,0.58)" }}>
+        <Text style={{ fontSize: "var(--text-base)", color: "var(--color-text-secondary)" }}>
           Tracking
-        </span>
-        <span
+        </Text>
+        <Text
           style={{
-            fontSize: "18px",
+            fontSize: "var(--font-size-base)",
             fontWeight: 700,
             color: qualityOk
-              ? "#22c55e"
+              ? "var(--color-success)"
               : lostTracking
-                ? "#ef4444"
+                ? "var(--color-error)"
                 : facePresent
                   ? "var(--color-indicator-warn)"
-                  : "rgba(255,255,255,0.58)",
+                  : "var(--color-text-secondary)",
           }}
         >
           {scanState === "validating"
@@ -992,121 +1008,107 @@ export function Stage8_FaceCalibration({
             : lostTracking
               ? "Face not centered"
               : poseLabel}
-        </span>
-        <span style={{ fontSize: "var(--text-base)", color: "rgba(255,255,255,0.58)" }}>
+        </Text>
+        <Text style={{ fontSize: "var(--text-base)", color: "var(--color-text-secondary)" }}>
           Progress
-        </span>
-        <span
+        </Text>
+        <Text
           style={{
-            fontSize: "18px",
+            fontSize: "var(--font-size-base)",
             fontWeight: 700,
-            color: displayedLockPct >= 100 ? "#22c55e" : "rgba(255,255,255,0.58)",
+            color: displayedLockPct >= 100 ? "var(--color-success)" : "var(--color-text-secondary)",
           }}
         >
           {displayedLockPct}%
-        </span>
-      </div>
+        </Text>
+      </VStack>
 
       {/* Guidance text */}
-      <p
+      <Text
         style={{
-          fontSize: "12px",
-          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: "var(--font-size-base)",
+          fontFamily: "var(--font-family-body)",
           color: qualityOk
-            ? "#FFF"
+            ? "var(--color-text-primary)"
             : lostTracking
-              ? "#ef4444"
+              ? "var(--color-error)"
               : facePresent
-                ? "#FFF"
-                : "rgba(255,255,255,0.58)",
-          marginBottom: "16px",
+                ? "var(--color-text-primary)"
+                : "var(--color-text-secondary)",
+
           textAlign: "center",
-          minHeight: "18px",
+          minHeight: "var(--spacing-5)",
           transition: "color var(--transition-standard)",
           lineHeight: 1.5,
         }}
       >
         {guidance}
-      </p>
+      </Text>
 
       {runtimeNote && (
-        <p
+        <Text
           style={{
-            fontSize: "11px",
-            fontFamily: "'JetBrains Mono', monospace",
-            color: "#f59e0b",
-            marginBottom: "12px",
+            fontSize: "var(--font-size-sm)",
+            fontFamily: "var(--font-family-body)",
+            color: "var(--color-warning)",
+
             textAlign: "center",
-            maxWidth: "280px",
+            maxWidth: "100%",
             lineHeight: 1.6,
           }}
         >
           {runtimeNote}
-        </p>
+        </Text>
       )}
 
       {/* Equity fallback: repeated rejections — or a detector that can't load at
           all — shouldn't trap a real candidate. */}
       {onFaceFallback && !done && (captureRejections >= FACE_FALLBACK_AFTER || detectorFailed) && (
-        <div
+        <VStack
           style={{
-            maxWidth: 320,
+            maxWidth: "100%",
             textAlign: "center",
-            marginBottom: "18px",
+
             display: "flex",
             flexDirection: "column",
-            gap: "10px",
+            gap: "var(--spacing-3)",
           }}
         >
-          <p
+          <Text
             style={{
-              fontSize: "12px",
-              color: "rgba(255,255,255,0.58)",
+              fontSize: "var(--font-size-base)",
+              color: "var(--color-text-secondary)",
               lineHeight: 1.6,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "var(--font-family-body)",
             }}
           >
             Still having trouble with the camera check? You can continue and have a proctor review
             this manually — your contest won&rsquo;t be blocked.
-          </p>
-          <button
+          </Text>
+          <Button
             type="button"
-            className="onb-btn onb-btn--secondary"
+            variant="secondary"
+            label="Continue — request a proctor review"
             onClick={() => onFaceFallback()}
-          >
-            Continue — request a proctor review
-          </button>
-        </div>
+            style={{
+              height: "auto",
+              whiteSpace: "normal",
+              minHeight: "var(--spacing-10)",
+              paddingBlock: "var(--spacing-2)",
+            }}
+          />
+        </VStack>
       )}
 
       {/* Lock progress bar */}
       {(facePresent || scanState === "validating") && !done && (
-        <div
-          style={{
-            width: 320,
-            height: 6,
-            background: "rgba(255,255,255,0.06)",
-            marginBottom: "18px",
-            overflow: "hidden",
-            borderRadius: "var(--radius-sm)",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${displayedLockPct}%`,
-              background: qualityOk ? "#22c55e" : "#FFF",
-              transition: "width 200ms cubic-bezier(0.22,1,0.36,1)",
-              borderRadius: "var(--radius-sm)",
-            }}
-          />
-        </div>
+        <ProgressBar
+          label="Face capture progress"
+          isLabelHidden
+          value={displayedLockPct}
+          variant="accent"
+        />
       )}
-      <style>{`
-        @keyframes face-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
-        @keyframes capture-border-pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); } 60% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } 100% { box-shadow: none; } }
-        @keyframes onb-tick-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-      `}</style>
-    </div>
+    </VStack>
   );
 }

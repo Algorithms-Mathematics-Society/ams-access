@@ -19,6 +19,11 @@
   outline-offset: calc(var(--border-width) * 2);
 }
 
+/* Older WebViews retain the field ring; supporting engines avoid a double ring on the toggle. */
+.fieldControl:has(button:focus-visible) {
+  outline: none;
+}
+
 .fieldInput {
   display: block;
   width: 100%;

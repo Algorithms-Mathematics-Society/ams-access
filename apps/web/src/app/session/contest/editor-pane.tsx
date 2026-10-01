@@ -1,5 +1,10 @@
 "use client";
 
+import { canNavigateDiagnostic, type DiagnosticNavigation } from "./compiler-diagnostics";
+import { toLanguageId } from "./components/language";
+import { editorLockExtensions } from "./editor-lock";
+import { DEFAULT_EDITOR_PREFERENCES, editorPreferenceExtensions, type EditorPreferences } from "./editor-preferences";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cppStdlibCompletions } from "./cpp-stdlib";
 import { cpp } from "@codemirror/lang-cpp";
@@ -45,6 +50,8 @@ import {
 import { tags } from "@lezer/highlight";
 
 type EditorPaneProps = {
+  diagnosticNavigation?: DiagnosticNavigation | null;
+  fileId?: string;
   activeQ: number;
   activeTab: string;
   currentCode: string;
@@ -55,6 +62,7 @@ type EditorPaneProps = {
   /** Read-only once the bell has rung. The candidate keeps their code on
    * screen; they just cannot change it any more. */
   readOnly?: boolean;
+  preferences?: EditorPreferences;
 };
 
 export const CONTEST_EDITOR_THEMES: Array<{ id: ContestEditorThemeId; label: string }> = [
@@ -239,7 +247,7 @@ const contestEditorThemes: Record<ContestEditorThemeId, ContestEditorTheme> = {
     fontSize: "13px",
     line: "1.5",
     gutter: "#0b0b0b",
-    gutterText: "#64748b",
+    gutterText: "var(--color-text-secondary)",
     gutterActive: "#111111",
     activeLine: "rgb(var(--accent-rgb) / 0.08)",
     selection: "rgb(var(--accent-rgb) / 0.4)",
@@ -249,7 +257,7 @@ const contestEditorThemes: Record<ContestEditorThemeId, ContestEditorTheme> = {
     tooltipText: "#dbeafe",
     selected: "rgb(var(--accent-rgb) / 0.4)",
     selectedText: "#ffffff",
-    muted: "#64748b",
+    muted: "var(--color-text-secondary)",
     search: "#111111",
     input: "#0F0F0F",
     inputBorder: "#334155",
@@ -261,7 +269,7 @@ const contestEditorThemes: Record<ContestEditorThemeId, ContestEditorTheme> = {
     variableName: "#e2e8f0",
     string: "#86efac",
     number: "#fca5a5",
-    comment: "#64748b",
+    comment: "var(--color-text-secondary)",
     operator: "#a5b4fc",
   },
   "monaco-dark": {
@@ -371,6 +379,7 @@ const editorThemeCompartment = new Compartment();
 // contest ends would blow away scroll position, selection and undo history.
 const editableCompartment = new Compartment();
 const languageCompartment = new Compartment();
+const preferencesCompartment = new Compartment();
 
 /**
  * Returns the CodeMirror language extension + matching autocomplete for a given
@@ -678,9 +687,9 @@ function createEditorExtensions(
       ...historyKeymap,
       ...defaultKeymap,
     ]),
-    EditorView.lineWrapping,
+    preferencesCompartment.of(editorPreferenceExtensions(DEFAULT_EDITOR_PREFERENCES)),
     editorThemeCompartment.of(createContestEditorTheme(editorTheme)),
-    editableCompartment.of(EditorView.editable.of(true)),
+    editableCompartment.of(editorLockExtensions(false)),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) onCodeChange(update.state.doc.toString());
     }),
@@ -688,6 +697,8 @@ function createEditorExtensions(
 }
 
 export default function EditorPane({
+  diagnosticNavigation,
+  fileId,
   activeQ,
   activeTab,
   currentCode,
@@ -696,6 +707,7 @@ export default function EditorPane({
   selectedLanguage,
   problemId,
   readOnly = false,
+  preferences = DEFAULT_EDITOR_PREFERENCES,
 }: EditorPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -789,16 +801,24 @@ export default function EditorPane({
     view.dispatch({
       effects: editorThemeCompartment.reconfigure(createContestEditorTheme(editorTheme)),
     });
-  }, [editorTheme]);
+  }, [editorTheme, activeQ, activeTab]);
 
-  // Lock the editor at the bell without recreating it.
+  // Preserve the current document, selection, history and read-only compartment.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: preferencesCompartment.reconfigure(editorPreferenceExtensions(preferences)) });
+  }, [preferences.fontSize, preferences.wordWrap, activeQ, activeTab]);
+
+  // Reapply both DOM editing and command-level locks after each file/question
+  // recreation as well as at the bell. External draft restoration still works.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: editableCompartment.reconfigure(EditorView.editable.of(!readOnly)),
+      effects: editableCompartment.reconfigure(editorLockExtensions(readOnly)),
     });
-  }, [readOnly]);
+  }, [readOnly, activeQ, activeTab]);
 
   // Reconfigure language (+ its autocomplete) without recreating the editor.
   useEffect(() => {
@@ -822,6 +842,22 @@ export default function EditorPane({
     });
     applyingExternalUpdateRef.current = false;
   }, [currentCode]);
+
+  // Selection-only navigation: never replaces text, recreates the editor, or changes undo history.
+  useEffect(() => {
+    const view = viewRef.current;
+    const request = diagnosticNavigation;
+    if (!view || !request) return;
+    const current = { questionId: problemId ?? "", fileId: fileId ?? "", filename: activeTab, source: view.state.doc.toString(), language: toLanguageId(selectedLanguage) };
+    if (!canNavigateDiagnostic({ filename: request.filename, line: request.line, column: request.column, message: "" }, request, current)) return;
+    const line = view.state.doc.line(request.line);
+    // Compiler columns may count bytes or expanded tabs; the control promises a line.
+    const position = line.from;
+    view.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: "center" }) });
+    view.focus();
+    // A new request is the only trigger; later edits/tab changes must not replay a jump.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diagnosticNavigation]);
 
   return (
     <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex" }}>

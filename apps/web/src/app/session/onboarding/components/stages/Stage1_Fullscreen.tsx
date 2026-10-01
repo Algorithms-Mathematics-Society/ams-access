@@ -1,5 +1,7 @@
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { useEffect, useState } from "react";
-import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { tauriWindow } from "../../support";
 
@@ -21,8 +23,6 @@ import { tauriWindow } from "../../support";
 export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [done, setDone] = useState(false);
   const [engaged, setEngaged] = useState(true);
-  const theme = useTheme();
-  const isLight = theme === "light";
 
   useEffect(() => {
     let cancelled = false;
@@ -66,67 +66,26 @@ export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
   }, [onPass, onWarn]);
 
   return (
-    <div className="flex flex-col items-start w-full">
-      <StageHeader label="Secure Full-Screen" />
-
-      <div
-        style={{
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          fontSize: "12.5px",
-          lineHeight: 1.8,
-          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
-          width: "100%",
-          padding: "18px 24px",
-          background: isLight ? "#f8fafc" : "#0F0F0F",
-          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "var(--radius-sm)",
-          marginBottom: "20px",
-        }}
-      >
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Window mode:{" "}
-          </span>
-          <span
-            style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}
-          >
-            {!done ? "Starting" : engaged ? "Full-screen" : "Not full-screen"}
-          </span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Focus mode:{" "}
-          </span>
-          <span
-            style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}
-          >
-            {!done ? "Starting" : engaged ? "On" : "Unconfirmed"}
-          </span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Window controls:{" "}
-          </span>
-          <span
-            style={{ color: !done ? "#f59e0b" : engaged ? "#22c55e" : "#f59e0b", fontWeight: 700 }}
-          >
-            {!done ? "Starting" : engaged ? "Hidden" : "Unconfirmed"}
-          </span>
-        </div>
-      </div>
-
-      <div style={{ width: "100%" }}>
-        <CheckLine
-          label={
-            !done
-              ? "Switching to full-screen..."
-              : engaged
-                ? "Full-screen mode active"
-                : "Could not confirm full-screen — recorded for your proctor"
-          }
-          status={!done ? "checking" : engaged ? "pass" : "warn"}
-        />
-      </div>
-    </div>
+    <VStack gap={6} width="100%">
+      <StageHeader label="Secure full-screen" />
+      <Text color="secondary">
+        We’re preparing your contest window so you can focus on your work.
+      </Text>
+      <MetadataList>
+        <MetadataListItem label="Window mode">
+          {!done ? "Switching to full-screen" : engaged ? "Full-screen" : "Not confirmed"}
+        </MetadataListItem>
+      </MetadataList>
+      <CheckLine
+        label={
+          !done
+            ? "Switching to full-screen..."
+            : engaged
+              ? "Full-screen mode active"
+              : "Could not confirm full-screen — recorded for your proctor"
+        }
+        status={!done ? "checking" : engaged ? "pass" : "warn"}
+      />
+    </VStack>
   );
 }

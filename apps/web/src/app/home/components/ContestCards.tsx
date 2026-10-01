@@ -16,6 +16,7 @@ import { Button as AstryxButton } from "@astryxdesign/core/Button";
 import { Token } from "@astryxdesign/core/Token";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
+import { ContestBriefing } from "./ContestBriefing";
 
 export const ScheduledContestCard = memo(
   function ScheduledContestCard({
@@ -283,9 +284,11 @@ export const ActiveContestCard = memo(
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
 
-    // Results visibility for ended contests.
+    // Preserve organizer-facing release timing on Home. The results page
+    // continues to use the existing own-submissions endpoint and access paths.
     const resultsVisibleAt = c.results_visible_at ? new Date(c.results_visible_at).getTime() : null;
     const resultsUnlocked = resultsVisibleAt !== null && now >= resultsVisibleAt;
+    const resultsReady = entryState.phase === "ended" && resultsUnlocked;
     const resultsLockedCountdown = useMemo(() => {
       if (!resultsVisibleAt || resultsUnlocked) return null;
       const diff = resultsVisibleAt - now;
@@ -327,12 +330,7 @@ export const ActiveContestCard = memo(
         return { label: "Time left", value: formatDurationUntil(end, now), big: true };
       if (entryState.phase === "too_early" || entryState.phase === "verification_open")
         return { label: "Starts in", value: formatDurationUntil(start, now), big: true };
-      if (entryState.phase === "ended") {
-        if (resultsUnlocked) return { label: "Results", value: "Ready", big: false };
-        if (resultsLockedCountdown)
-          return { label: "Results in", value: resultsLockedCountdown, big: true };
-        return { label: "Status", value: "Ended", big: false };
-      }
+      if (entryState.phase === "ended") return { label: "Status", value: "Ended", big: false };
       return { label: "Status", value: entryState.statusLabel, big: false };
     })();
 
@@ -354,9 +352,9 @@ export const ActiveContestCard = memo(
     // Human-readable status for the single meta line.
     const metaStatus = (() => {
       if (entryState.phase === "ended") {
-        if (resultsUnlocked) return "Results Ready";
-        if (resultsLockedCountdown) return `Results in ${resultsLockedCountdown}`;
-        return "Session Ended";
+        if (resultsUnlocked) return "Your recorded attempts are available";
+        if (resultsLockedCountdown) return `Results available in ${resultsLockedCountdown}`;
+        return "Contest ended · results release time not announced";
       }
       if (entryState.phase === "live") return `${hero.value} left`;
       if (entryState.phase === "too_early" || entryState.phase === "verification_open")
@@ -365,7 +363,6 @@ export const ActiveContestCard = memo(
     })();
 
     const showHelper = ["blocked", "metadata_unavailable", "draft"].includes(entryState.phase);
-    const resultsReady = entryState.phase === "ended" && resultsUnlocked;
 
     const statusColor =
       entryState.phase === "live" && !c.is_practice
@@ -384,13 +381,14 @@ export const ActiveContestCard = memo(
         tabIndex={-1}
         aria-label={c.title}
         data-highlighted={isHighlighted || undefined}
-        gap={3}
-        paddingBlock={6}
+        gap={5}
+        padding={5}
         style={{
           minWidth: 0,
           scrollMarginBlock: "var(--spacing-6)",
           backgroundColor: isHighlighted ? "var(--color-accent-muted)" : undefined,
-          borderBlockEnd: "var(--border-width) solid var(--color-border)",
+          outlineOffset: "calc(var(--spacing-1) * -1)",
+          containerType: "inline-size",
         }}
       >
         <VStack gap={3} style={{ minWidth: 0 }}>
@@ -405,33 +403,26 @@ export const ActiveContestCard = memo(
           <Heading level={2} accessibilityLevel={3} maxLines={2} wordBreak="break-word">
             {c.title}
           </Heading>
+          {c.description && <Text color="secondary" maxLines={2}>{c.description}</Text>}
         </VStack>
-        <VStack gap={4} style={{ minWidth: 0 }}>
-          {c.description && (
-            <Text color="secondary" maxLines={2}>
-              {c.description}
-            </Text>
-          )}
-          <HStack gap={4} justify="end" align="center" wrap="wrap">
-            <MetadataList
-              orientation="horizontal"
-              style={{ flex: "1 1 calc(var(--spacing-10) * 5)", minWidth: 0 }}
-            >
-              <MetadataListItem label={c.is_practice ? "Format" : "Date"}>
-                {c.is_practice ? "Practice · untimed" : cardDate}
-              </MetadataListItem>
-              {!c.is_practice && (
-                <MetadataListItem label="Starts">
-                  <VStack gap={1}>
-                    <Text hasTabularNumbers>{entryState.contestStartsAt}</Text>
-                    <Text type="supporting" hasTabularNumbers>{metaStatus}</Text>
-                  </VStack>
-                </MetadataListItem>
-              )}
-              <MetadataListItem label="Questions">
-                {c.question_count} {c.question_count === 1 ? "question" : "questions"}
-              </MetadataListItem>
-            </MetadataList>
+        <MetadataList columns={c.is_practice ? 2 : 3} label={{ position: "top" }} className="dashboard-contest-metadata">
+          <MetadataListItem label={c.is_practice ? "Format" : "Date"}>
+            <Text hasTabularNumbers>{c.is_practice ? "Practice · untimed" : cardDate}</Text>
+          </MetadataListItem>
+          {!c.is_practice && <MetadataListItem label="Starts">
+            <Text hasTabularNumbers>{entryState.contestStartsAt}</Text>
+          </MetadataListItem>}
+          <MetadataListItem label="Questions">
+            <Text hasTabularNumbers>{c.question_count} {c.question_count === 1 ? "question" : "questions"}</Text>
+          </MetadataListItem>
+        </MetadataList>
+        <ContestBriefing contest={c} entryState={entryState} />
+        <HStack gap={4} justify="between" align="center" wrap="wrap" style={{
+          borderTop: "var(--border-width) solid var(--color-border)", paddingTop: "var(--spacing-4)",
+        }}>
+          <Text type="supporting" style={{ flex: "1 1 calc(var(--spacing-10) * 3)", minWidth: 0 }}>
+            {showHelper ? entryState.actionHelper : c.is_practice ? "Practice at your own pace." : metaStatus}
+          </Text>
             <AstryxButton
               onClick={() => {
                 if (entering) return;
@@ -455,7 +446,7 @@ export const ActiveContestCard = memo(
                 entering
                   ? "Opening..."
                   : entryState.phase === "ended"
-                    ? "View Results"
+                    ? "View my submissions"
                     : entryState.phase === "draft"
                       ? "Not published yet"
                       : entryState.ctaLabel
@@ -463,11 +454,9 @@ export const ActiveContestCard = memo(
               isDisabled={(!canEnter && !resultsReady) || entering}
               isLoading={entering}
               variant={canEnter || resultsReady ? "primary" : "secondary"}
-              tooltip={!canEnter && !resultsReady ? (entryState.phase === "draft" ? "This contest is not published yet" : entryState.disabledTitle) : undefined}
+              tooltip={!canEnter && !resultsReady ? (entryState.phase === "ended" ? metaStatus : entryState.phase === "draft" ? "This contest is not published yet" : entryState.disabledTitle) : undefined}
             />
-          </HStack>
-          {showHelper && <Text type="supporting">{entryState.actionHelper}</Text>}
-        </VStack>
+        </HStack>
       </VStack>
     );
   },

@@ -122,7 +122,11 @@ export function ContestsPanel({
           </VStack>
         </VStack>
       ) : visible.length ? (
-        <List hasDividers density="spacious">
+        <List density="spacious" className="dashboard-contest-list" style={{
+          border: "var(--border-width) solid var(--color-border)",
+          borderRadius: "var(--radius-container)",
+          background: "var(--color-background-surface)",
+        }}>
           {visible.map((c) => (
             <ActiveContestCard
               key={c.id}

@@ -1,5 +1,10 @@
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { HStack } from "@astryxdesign/core/HStack";
 import { useEffect, useState } from "react";
-import { useTheme } from "../hooks";
 import { StageHeader, StatusBadge } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
@@ -17,8 +22,6 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
   const [lockFailed, setLockFailed] = useState(false);
   const [accessibilityDenied, setAccessibilityDenied] = useState(false);
   const [pollElapsed, setPollElapsed] = useState(0);
-  const theme = useTheme();
-  const isLight = theme === "light";
 
   const POLL_TIMEOUT_S = 60;
 
@@ -108,56 +111,26 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
   if (accessibilityDenied) {
     const timedOut = pollElapsed >= POLL_TIMEOUT_S;
     return (
-      <div
-        style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}
-      >
-        <StageHeader label="Keyboard Setup" />
-        <div
-          style={{
-            width: "100%",
-            padding: "20px",
-            borderRadius: "var(--radius-sm)",
-            background: isLight ? "#fff7ed" : "#1c1007",
-            border: `1px solid ${isLight ? "#fed7aa" : "#78350f"}`,
-            marginBottom: "20px",
-          }}
-        >
-          <p
-            style={{
-              margin: "0 0 6px",
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: "13px",
-              fontWeight: 700,
-              color: isLight ? "#9a3412" : "#fb923c",
-            }}
-          >
-            Accessibility permission is required
-          </p>
-          <p
-            style={{
-              margin: "0 0 18px",
-              fontSize: "12.5px",
-              lineHeight: 1.6,
-              color: isLight ? "#7c2d12" : "#fdba74",
-            }}
-          >
-            AMS Access needs Accessibility permission to block exam keyboard shortcuts. This
-            prevents switching apps or using system shortcuts during the contest.
-          </p>
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <button
-              className="onb-btn onb-btn--primary"
-              onClick={() => void invoke("open_accessibility_settings")}
-            >
-              Open System Settings
-            </button>
-            {timedOut && (
-              <button className="onb-btn onb-btn--secondary" onClick={() => void recheck()}>
-                Re-check
-              </button>
-            )}
-          </div>
-        </div>
+      <VStack gap={6} width="100%">
+        <StageHeader label="Keyboard setup" />
+        <Banner
+          status="warning"
+          title="Allow Accessibility access"
+          description="AMS Access needs Accessibility permission to restrict app switching and system shortcuts during the contest."
+        />
+        <Text color="secondary">
+          Open System Settings and allow Accessibility access for AMS Access, then return here.
+        </Text>
+        <HStack gap={3} wrap="wrap">
+          <Button
+            variant="primary"
+            label="Open System Settings"
+            onClick={() => void invoke("open_accessibility_settings")}
+          />
+          {timedOut && (
+            <Button variant="secondary" label="Re-check" onClick={() => void recheck()} />
+          )}
+        </HStack>
         <StatusBadge
           status="warn"
           label={
@@ -166,98 +139,33 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
               : `Waiting for permission… checking again in ${2 - (pollElapsed % 2)}s`
           }
         />
-      </div>
+      </VStack>
     );
   }
 
-  // ── Normal flow ───────────────────────────────────────────────────────────
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-      <StageHeader label="Keyboard Setup" />
-
-      {/* Robust CSS grid container that isolates items from the footer status badge */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
-          gap: "10px",
-          width: "100%",
-          marginBottom: "28px",
-        }}
-      >
+    <VStack gap={6} width="100%">
+      <StageHeader label="Keyboard setup" />
+      <Text color="secondary">
+        We’re preparing shortcut controls to keep your contest workspace in focus.
+      </Text>
+      <MetadataList>
         {keys.map(({ label, locked }) => (
-          <div
-            key={label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              padding: "10px 14px",
-              borderRadius: "var(--radius-sm)",
-              background: isLight
-                ? locked
-                  ? "#f8fafc"
-                  : "#ffffff"
-                : locked
-                  ? "#1F1F1F"
-                  : "#0F0F0F",
-              border: `1px solid ${
-                locked
-                  ? isLight
-                    ? "rgba(0,0,0,0.12)"
-                    : "rgba(255,255,255,0.08)"
-                  : isLight
-                    ? "rgba(0,0,0,0.08)"
-                    : "rgba(255,255,255,0.06)"
-              }`,
-              transition:
-                "background var(--transition-standard), border-color var(--transition-standard)",
-            }}
-          >
-            <span
-              style={{
-                color: locked ? "#22c55e" : settled ? "#f59e0b" : "rgba(255,255,255,0.58)",
-                fontWeight: 700,
-                fontSize: "11px",
-                flexShrink: 0,
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              {locked ? "Ready" : settled ? "Not locked" : "Checking"}
-            </span>
-            <span
-              style={{
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                fontSize: "12.5px",
-                fontWeight: 600,
-                letterSpacing: "-0.01em",
-                color: locked
-                  ? isLight
-                    ? "#1e293b"
-                    : "#f8fafc"
-                  : isLight
-                    ? "rgba(255,255,255,0.58)"
-                    : "#4b5563",
-              }}
-            >
-              {label}
-            </span>
-          </div>
+          <MetadataListItem key={label} label={label}>
+            {locked ? "Ready" : settled ? "Not locked" : "Checking"}
+          </MetadataListItem>
         ))}
-      </div>
-
-      <div style={{ width: "100%", display: "flex", justifyContent: "center", marginTop: "8px" }}>
-        <StatusBadge
-          status={phase >= 4 ? (lockFailed ? "warn" : "pass") : "checking"}
-          label={
-            phase >= 4
-              ? lockFailed
-                ? "Keyboard lock unavailable on this desktop environment"
-                : "Keyboard controls active"
-              : "Setting up keyboard controls..."
-          }
-        />
-      </div>
-    </div>
+      </MetadataList>
+      <StatusBadge
+        status={phase >= 4 ? (lockFailed ? "warn" : "pass") : "checking"}
+        label={
+          phase >= 4
+            ? lockFailed
+              ? "Keyboard lock unavailable on this desktop environment"
+              : "Keyboard controls active"
+            : "Setting up keyboard controls..."
+        }
+      />
+    </VStack>
   );
 }

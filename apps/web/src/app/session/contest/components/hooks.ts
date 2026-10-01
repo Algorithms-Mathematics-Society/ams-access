@@ -57,7 +57,11 @@ export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: 
     document.addEventListener("keydown", handleKeyDown, true);
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
-      previousFocus?.focus({ preventScroll: true });
+      // A higher-priority dialog may already own focus when this trap pauses.
+      // Restore only if focus still belongs to this dialog (or its removed DOM).
+      if (trappedRoot.contains(document.activeElement) || document.activeElement === document.body) {
+        previousFocus?.focus({ preventScroll: true });
+      }
     };
   }, [active, onEscape]);
 

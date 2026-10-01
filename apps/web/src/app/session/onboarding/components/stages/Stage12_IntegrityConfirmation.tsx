@@ -1,3 +1,7 @@
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Text } from "@astryxdesign/core/Text";
+import { VStack } from "@astryxdesign/core/Stack";
 import { CheckLine, StageHeader } from "../ui";
 import { REVIEW_STAGE, STAGES, type StageStatus } from "../../support";
 
@@ -43,8 +47,10 @@ export function Stage12_IntegrityConfirmation({
   results,
   onPass,
   blocked = false,
+  warningDetails = {},
 }: {
   results: Record<number, StageStatus>;
+  warningDetails?: Record<number, string>;
   onPass(): void;
   /** True when the orchestrator is showing a block. The summary still
    * renders — it is the useful part — but nothing advances. */
@@ -55,7 +61,7 @@ export function Stage12_IntegrityConfirmation({
   const items = STAGES.filter((s) => s.id < REVIEW_STAGE).map((s) => ({
     stage: s.id,
     label: OUTCOME_LABEL[s.label] ?? s.label,
-  }));
+  })).sort((a, b) => Number(results[b.stage] === "warn" || results[b.stage] === "fail") - Number(results[a.stage] === "warn" || results[a.stage] === "fail"));
 
   const warnCount = items.filter(({ stage }) => results[stage] === "warn").length;
   const hasWarns = warnCount > 0;
@@ -63,72 +69,40 @@ export function Stage12_IntegrityConfirmation({
     ({ stage }) => results[stage] === undefined || results[stage] === "pending"
   ).length;
 
+  const hasFailures = items.some(({ stage }) => results[stage] === "fail");
+  const hasPending = items.some(({ stage }) => results[stage] === "checking");
+
   return (
-    <div className="flex flex-col items-center">
-      <StageHeader label="Almost Ready" />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          columnGap: "40px",
-          rowGap: "14px",
-          width: "100%",
-          maxWidth: "380px",
-          marginBottom: "28px",
-        }}
-      >
-        {items.map(({ label, stage }, i) => (
+    <VStack gap={5} style={{ width: "100%", minWidth: 0 }}>
+      <StageHeader label="Review your setup" />
+      <Banner
+        status={blocked || hasFailures ? "error" : hasWarns || notRun > 0 || hasPending ? "warning" : "success"}
+        title={blocked ? "Contest entry is blocked" : hasFailures ? "Some checks need attention" : notRun > 0 ? `${notRun} check${notRun > 1 ? "s" : ""} did not run` : hasPending ? "Some checks are still in progress" : hasWarns ? `${warnCount} advisory warning${warnCount > 1 ? "s" : ""}` : "Your setup checks passed"}
+        description={blocked ? "Follow the guidance above before trying again." : "Review your results, then continue. Your contest’s entry requirements are checked before the workspace opens."}
+      />
+      <VStack gap={0}>
+        {items.map(({ label, stage }) => <VStack key={label} style={{ borderBottom: "var(--border-width) solid var(--color-border)", paddingBlock: "var(--spacing-1)" }}>
           <CheckLine
-            key={label}
-            label={label}
-            // Absent means the stage never ran. It used to render as a pass,
-            // which is how a blocked candidate was told everything was fine.
-            // Absent means the stage never ran, and `pending` means it was
-            // reached but never resolved. Neither is a pass — that mapping is
-            // how a blocked candidate was told everything was fine.
-            status={
-              results[stage] === undefined || results[stage] === "pending"
-                ? "unknown"
-                : results[stage]
-            }
-            delay={i * 120}
+            label={STAGES.find(s => s.id === stage)?.label ?? label}
+            status={results[stage] === undefined || results[stage] === "pending" ? "unknown" : results[stage]}
           />
-        ))}
-      </div>
-
-      <div
-        style={{
-          borderRadius: "var(--radius-sm)",
-          padding: "12px 24px",
-          background: hasWarns ? "rgba(245,158,11,0.05)" : "rgba(34,197,94,0.05)",
-          border: `1px solid ${hasWarns ? "rgba(245,158,11,0.22)" : "rgba(34,197,94,0.18)"}`,
-        }}
-      >
-        <p
-          style={{
-            fontSize: "11px",
-            fontFamily: "'JetBrains Mono', monospace",
-            color: hasWarns ? "#fcd34d" : "#22c55e",
-            fontWeight: 700,
-            letterSpacing: "0.05em",
-          }}
-        >
-          {notRun > 0
-            ? `${notRun} check${notRun > 1 ? "s" : ""} did not run`
-            : hasWarns
-              ? `${warnCount} advisory warning${warnCount > 1 ? "s" : ""} — proceeding with recorded warnings`
-              : "All checks passed — ready to begin"}
-        </p>
-      </div>
-
-      {/* An explicit step, not a timer. Whether to go on is the candidate's
-          call, and when they are blocked there is nothing to go on to. */}
-      {!blocked && (
-        <button type="button" onClick={onPass} className="onboarding-continue">
-          Continue
-        </button>
-      )}
-    </div>
+          {results[stage] === "warn" && <Text type="supporting" color="secondary" style={{ paddingInline: "var(--spacing-3)", paddingBottom: "var(--spacing-3)" }}>
+            {warningDetails[stage] ?? WARNING_GUIDANCE[stage] ?? "This check completed with a warning. Ask your invigilator if you need help; contest entry requirements are checked before your workspace opens."}
+          </Text>}
+        </VStack>)}
+      </VStack>
+      {!blocked && <Button type="button" variant="primary" label="Continue" onClick={onPass} />}
+    </VStack>
   );
 }
+
+const WARNING_GUIDANCE: Record<number, string> = {
+  1: "Full-screen setup needs attention. Keep this app in the foreground. Your contest’s required screen controls are checked again before entry.",
+  3: "Keyboard controls need attention. Check your system permissions or ask an invigilator. Required keyboard controls are verified before entry.",
+  5: "The application check reported a warning. Close other apps before entry and ask an invigilator if you need help.",
+  6: "Virtualization was detected. Ask your invigilator whether this device is permitted. Continuing does not bypass contest entry requirements.",
+  8: "The face scan used the invigilator review option. Ask an invigilator for help if you need to confirm your setup.",
+  9: "Presence could not be confirmed cleanly. Stay alone in the camera frame with your face clearly visible, and ask an invigilator if needed.",
+  10: "Microphone access was unavailable. Check microphone permissions and close other apps using it. Ask your invigilator if access remains unavailable.",
+  11: "The connection or network controls reported a warning. Check your connection and ask an invigilator for help with any system permission request. Required network controls are verified before entry.",
+};

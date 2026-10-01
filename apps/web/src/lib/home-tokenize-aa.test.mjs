@@ -105,7 +105,7 @@ for (const mode of ['light','dark']) {
 }
 
 test('legacy inline solid action styles preserve on-accent pairing', () => {
-  for(const [file,minimum] of [['../app/home/page.tsx',0],['../app/home/components/SessionReadinessModal.tsx',0],['../app/home/components/ResolveModal.tsx',0],['../app/session/contest/client.tsx',4],['../app/session/contest/components/EditorPanel.tsx',1]]) {
+  for(const [file,minimum] of [['../app/home/page.tsx',0],['../app/home/components/SessionReadinessModal.tsx',0],['../app/home/components/ResolveModal.tsx',0],['../app/session/contest/client.tsx',0],['../app/session/contest/components/EditorPanel.tsx',0]]) {
     const source=readFileSync(new URL(file,import.meta.url),'utf8');
     const styles=[...source.matchAll(/style=\{\{([\s\S]*?)\}\}/g)].map(m=>m[1]);
     const solid=styles.filter(style=>/\bcolor:/.test(style) && /background:\s*[^,]*(?:var\(--color-accent-(?:base|deep)\)|c\.accent)/.test(style));

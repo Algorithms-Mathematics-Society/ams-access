@@ -12,7 +12,7 @@
  * typing errors easier to spot before submitting.
  */
 
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { Field } from "@astryxdesign/core/Field";
@@ -45,6 +45,8 @@ export function SlipForm({
   onSubmit: (event: FormEvent) => void;
 }) {
   const errorDescription = error ? "login-error" : undefined;
+  // Slip credentials start visible so candidates can spot typing errors; hiding is their choice.
+  const [passwordVisible, setPasswordVisible] = useState(true);
 
   return (
     <form onSubmit={onSubmit} data-login-form noValidate>
@@ -100,8 +102,7 @@ export function SlipForm({
             <input
               id="login-password"
               name="login-password"
-              // Preserve the visible-password behavior so typos are easy to correct.
-              type="text"
+              type={passwordVisible ? "text" : "password"}
               className={styles.fieldInput}
               value={password}
               onChange={(event) => setPassword(formatPassword(event.target.value))}
@@ -113,6 +114,16 @@ export function SlipForm({
               maxLength={14}
               aria-describedby={errorDescription}
               required
+            />
+            <Button
+              type="button"
+              label={passwordVisible ? "Hide" : "Show"}
+              aria-label={passwordVisible ? "Hide password" : "Show password"}
+              aria-controls="login-password"
+              variant="ghost"
+              size="sm"
+              onClick={() => setPasswordVisible((visible) => !visible)}
+              style={{ flexShrink: 0, marginInlineEnd: "var(--spacing-2)" }}
             />
           </HStack>
         </Field>

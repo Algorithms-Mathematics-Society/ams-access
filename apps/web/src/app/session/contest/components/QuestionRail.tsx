@@ -1,5 +1,11 @@
 import { type Dispatch, type SetStateAction } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { type Question } from "./questions";
 
 export interface QuestionStatus {
@@ -18,267 +24,62 @@ export interface QuestionRailProps {
   setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
   questionStatusMap: Record<string, QuestionStatus>;
   acceptedQuestionCount: number;
+  markedQuestionIds: string[];
 }
 
-export function QuestionRail({
-  questions,
-  activeQ,
-  switchQuestion,
-  sidebarCollapsed,
-  setSidebarCollapsed,
-  questionStatusMap,
-  acceptedQuestionCount,
-}: QuestionRailProps) {
+export function QuestionRail({ questions, activeQ, switchQuestion, sidebarCollapsed,
+  setSidebarCollapsed, questionStatusMap, acceptedQuestionCount, markedQuestionIds }: QuestionRailProps) {
+  const markedCount = questions.filter((question) => markedQuestionIds.includes(question.id)).length;
   return (
-    <aside
-      style={{
-        width: sidebarCollapsed ? "52px" : "220px",
-        flexShrink: 0,
-        // Visible divider + subtle elevation so the collapsed strip reads as a container
-        // (the badge no longer floats on the bare canvas now the camera left the rail).
-        borderRight: "1px solid #1F1F1F",
-        display: "flex",
-        flexDirection: "column",
-        background: sidebarCollapsed ? "#111111" : "#0F0F0F",
-        boxShadow: "none",
-        overflow: "hidden",
-        transition: "width 250ms, background-color 250ms",
-      }}
-    >
-      <div
-        style={{
-          padding: sidebarCollapsed ? "12px 0" : "16px 14px 14px",
-          borderBottom: "1px solid #1F1F1F",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: sidebarCollapsed ? "center" : "space-between",
-          gap: "8px",
-        }}
-      >
-        {!sidebarCollapsed && (
-          <div style={{ minWidth: 0, flex: 1 }}>
-            {/* One quiet line: label left, solved-counter right. The loud purple
-                "N / M SOLVED" line is gone — the counter + segmented bar carry it. */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                justifyContent: "space-between",
-                gap: "8px",
-              }}
-            >
-              <p
-                style={{
-                  fontSize: "10px",
-                  color: "#64748b",
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  fontWeight: 600,
-                  fontFamily: "Inter, system-ui, sans-serif",
-                  margin: 0,
-                }}
-              >
-                Questions
-              </p>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  color:
-                    questions.length > 0 && acceptedQuestionCount === questions.length
-                      ? "var(--verdict-ac)"
-                      : "#64748b",
-                  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-                  fontVariantNumeric: "tabular-nums",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {acceptedQuestionCount}/{questions.length}
-              </p>
-            </div>
-            {/* Segmented progress bar */}
-            <div
-              style={{
-                display: "flex",
-                gap: "3px",
-                marginTop: "10px",
-              }}
-            >
-              {questions.map((q) => {
-                const qStatus = questionStatusMap[q.id];
-                return (
-                  <div
-                    key={q.id}
-                    style={{
-                      flex: 1,
-                      height: "3px",
-                      borderRadius: "var(--radius-pill)",
-                      // Binary: solved (accepted) = green, everything else = gray. The
-                      // saved/attempted nuance stays on the row dots, not the summary bar.
-                      background:
-                        qStatus.label === "Accepted" ? "var(--verdict-ac)" : "var(--text-dim)",
-                    }}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "#64748b",
-            cursor: "pointer",
-            padding: "2px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-          title={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
-        >
-          {sidebarCollapsed ? (
-            <ChevronRight size={14} strokeWidth={2} />
-          ) : (
-            <ChevronLeft size={14} strokeWidth={2} />
-          )}
-        </button>
-      </div>
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          // Clear the docked camera tile at the rail bottom (expanded only; hidden collapsed).
-          padding: sidebarCollapsed ? "8px" : "12px 8px 162px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "6px",
-        }}
-      >
-        {questions.length === 0 && !sidebarCollapsed && (
-          <p
-            style={{
-              fontSize: "12px",
-              color: "#475569",
-              textAlign: "center",
-              marginTop: "24px",
-              fontFamily: "Inter, system-ui, sans-serif",
-            }}
-          >
-            No questions
-          </p>
-        )}
+    <VStack as="aside" className="contest-question-rail" aria-label="Contest questions"
+      width={sidebarCollapsed ? 52 : 220}
+      style={{ flexShrink: 0, minHeight: 0, minWidth: 0, overflow: "hidden",
+        borderRight: "var(--border-width) solid var(--color-border)", background: "var(--color-background-body)" }}>
+      <HStack padding={sidebarCollapsed ? 2 : 4} gap={2} align="center" justify={sidebarCollapsed ? "center" : "between"}
+        style={{ flexShrink: 0, borderBottom: "var(--border-width) solid var(--color-border)" }}>
+        {!sidebarCollapsed && <VStack gap={2} style={{ flex: 1, minWidth: 0 }}>
+          <Text type="label">Questions</Text>
+          <Text type="supporting" hasTabularNumbers>{acceptedQuestionCount} of {questions.length} accepted</Text>
+          <ProgressBar label="Accepted questions" isLabelHidden value={acceptedQuestionCount}
+            max={Math.max(1, questions.length)} variant="accent"
+            formatValueLabel={() => `${acceptedQuestionCount} of ${questions.length} accepted`} />
+          <Text type="supporting" hasTabularNumbers aria-live="polite">{markedCount} marked for later</Text>
+        </VStack>}
+        <IconButton label={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
+          tooltip={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"} variant="ghost" size="sm"
+          icon={sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      </HStack>
+      <VStack as="nav" aria-label="Choose a question" gap={1} padding={2} isScrollable
+        style={{ flex: 1, minHeight: 0, paddingBottom: sidebarCollapsed ? "var(--spacing-2)" : "calc(var(--spacing-10) * 4 + var(--spacing-2) + var(--spacing-0-5))" }}>
+        {questions.length === 0 && !sidebarCollapsed && <Text type="supporting">No questions</Text>}
         {questions.map((q, i) => {
           const qStatus = questionStatusMap[q.id];
           const letter = String.fromCharCode(65 + i);
-          // Don't print the letter twice: organizers often title problems
-          // "A. Foo" — the row already renders its own letter chip.
           const displayTitle = q.title.replace(new RegExp(`^${letter}[.)]\\s+`), "");
-          return (
-            <button
-              key={q.id}
-              type="button"
-              onClick={() => switchQuestion(i)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                width: "100%",
-                padding: sidebarCollapsed ? "6px 0" : "11px 12px",
-                borderRadius: "var(--radius-md)",
-                // Collapsed: the badge itself is the single active pill — no outer box, so it
-                // doesn't read as a pill-inside-a-pill. Expanded keeps the row highlight.
-                border: `1px solid ${!sidebarCollapsed && activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
-                background:
-                  !sidebarCollapsed && activeQ === i
-                    ? "rgb(var(--accent-rgb) / 0.08)"
-                    : "transparent",
-                cursor: "pointer",
-                fontFamily: "Inter, system-ui, sans-serif",
-                textAlign: "left",
-                color: activeQ === i ? "var(--color-accent-light)" : "var(--text-dim)",
-                transition:
-                  "background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast)",
-                position: "relative",
-              }}
-              title={`${q.title} · ${qStatus.label}`}
-            >
-              {sidebarCollapsed ? (
-                <span
-                  style={{
-                    width: "34px",
-                    height: "30px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: "var(--radius-md)",
-                    // Active = a single clean pill; others = plain status-coloured letter
-                    // (solved green / unsolved gray), matching the collapsed mockup.
-                    border: `1px solid ${activeQ === i ? "rgb(var(--accent-rgb) / 0.5)" : "transparent"}`,
-                    background: activeQ === i ? "rgb(var(--accent-rgb) / 0.12)" : "transparent",
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    color: activeQ === i ? "var(--color-accent-light)" : qStatus.color,
-                  }}
-                >
-                  {String.fromCharCode(65 + i)}
-                </span>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    width: "100%",
-                    minWidth: 0,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      fontWeight: 600,
-                      fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-                      color: activeQ === i ? "var(--color-accent-light)" : "#64748b",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {letter}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: 500,
-                      color: activeQ === i ? "#ffffff" : "var(--text-soft)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                  >
-                    {displayTitle}
-                  </span>
-                  <span
-                    style={{
-                      width: "7px",
-                      height: "7px",
-                      borderRadius: "var(--radius-pill)",
-                      // Active-first: the viewed question reads purple even if solved;
-                      // non-active falls back to its status colour (solved=green, etc.).
-                      background: activeQ === i ? "var(--color-accent-base)" : qStatus.color,
-                      flexShrink: 0,
-                    }}
-                  />
-                </div>
-              )}
-            </button>
-          );
+          const marked = markedQuestionIds.includes(q.id);
+          const accessibleLabel = `${q.title} · ${qStatus.label}${marked ? " · Marked for later" : ""}`;
+          return <Button key={q.id} label={accessibleLabel} tooltip={accessibleLabel}
+            aria-current={activeQ === i ? "page" : undefined} variant={activeQ === i ? "secondary" : "ghost"}
+            onClick={() => switchQuestion(i)} width="100%"
+            style={{ height: "auto", minHeight: "var(--spacing-10)", textAlign: "left", padding: "var(--spacing-2)", justifyContent: sidebarCollapsed ? "center" : "start" }}>
+            {sidebarCollapsed ? <VStack gap={0.5} align="center">
+              <Text type="label">{letter}</Text>
+              {marked && <Bookmark size={12} fill="currentColor" aria-hidden="true" />}
+            </VStack> : <HStack gap={3} align="center" width="100%">
+              <Text type="code" color="secondary">{letter}</Text>
+              <VStack gap={0.5} style={{ flex: 1, minWidth: 0 }}>
+                <Text type="label" maxLines={1} hasTruncateTooltip={false}>{displayTitle}</Text>
+                <Text type="supporting">{qStatus.label}</Text>
+              </VStack>
+              <VStack gap={2} align="center" style={{ flexShrink: 0 }}>
+                {marked && <Bookmark size={12} fill="currentColor" aria-hidden="true" />}
+                <StatusDot label={qStatus.label} variant={qStatus.shortLabel === "AC" ? "success" : qStatus.label === "Needs review" || qStatus.label === "Unsaved" ? "warning" : "neutral"} />
+              </VStack>
+            </HStack>}
+          </Button>;
         })}
-      </div>
-    </aside>
+      </VStack>
+    </VStack>
   );
 }

@@ -1,7 +1,10 @@
+import { VStack } from "@astryxdesign/core/VStack";
+import { Text } from "@astryxdesign/core/Text";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
 import { useCallback, useEffect, useState } from "react";
 import { fetchOrganizerOverrides } from "@ams/api-client";
-import { Button } from "@/app/home/components/ui-primitives";
-import { useTheme } from "../hooks";
 import { CheckLine, StageHeader } from "../ui";
 import { API_URL, availableMonitors, getOrCreateDeviceId, type MonitorInfo } from "../../support";
 import { participantToken } from "@/lib/candidate-auth";
@@ -21,8 +24,6 @@ export function Stage2_MonitorDetection({
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanIndeterminate, setScanIndeterminate] = useState(false);
-  const theme = useTheme();
-  const isLight = theme === "light";
 
   // Windows-only hard-block: a second / wireless display is a contest-integrity
   // violation we enforce at the gate (mirrors the `external_display` block in
@@ -120,66 +121,30 @@ export function Stage2_MonitorDetection({
   }, [blocked, onPass]);
 
   return (
-    <div className="flex flex-col items-start w-full">
-      <StageHeader label="Display Check" />
-
-      <div
-        style={{
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          fontSize: "12.5px",
-          lineHeight: 1.8,
-          color: isLight ? "#334155" : "rgba(255,255,255,0.58)",
-          width: "100%",
-          padding: "18px 24px",
-          background: isLight ? "#f8fafc" : "#0F0F0F",
-          border: `1px solid ${isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)"}`,
-          borderRadius: "var(--radius-sm)",
-          marginBottom: "20px",
-        }}
-      >
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Primary screen:{" "}
-          </span>
-          <span style={{ color: "#22c55e", fontWeight: 700 }}>Primary display</span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Resolution:{" "}
-          </span>
-          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
-            {monitors[0]?.size.width ?? window.screen.width}x
-            {monitors[0]?.size.height ?? window.screen.height}
-          </span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Color depth:{" "}
-          </span>
-          <span style={{ color: isLight ? "#0f172a" : "#f8fafc" }}>
-            {window.screen.colorDepth}-bit
-          </span>
-        </div>
-        <div>
-          <span style={{ color: isLight ? "rgba(255,255,255,0.58)" : "rgba(255,255,255,0.45)" }}>
-            Screen check:{" "}
-          </span>
-          <span style={{ color: "#22c55e", fontWeight: 700 }}>Active</span>
-        </div>
-      </div>
-
+    <VStack gap={6} width="100%">
+      <StageHeader label="Display check" />
+      <Text color="secondary">
+        Use one screen for your contest. Disconnect extra monitors and wireless displays.
+      </Text>
+      <MetadataList>
+        <MetadataListItem label="Primary display">
+          {monitors[0]?.name ?? "Checking display"}
+        </MetadataListItem>
+        <MetadataListItem label="Resolution">
+          {monitors[0]?.size.width ?? window.screen.width} ×{" "}
+          {monitors[0]?.size.height ?? window.screen.height}
+        </MetadataListItem>
+        <MetadataListItem label="Color depth">{window.screen.colorDepth}-bit</MetadataListItem>
+      </MetadataList>
+      {!done && <CheckLine label="Checking connected displays..." status="checking" />}
       {done && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "10px",
-            textAlign: "left",
-            width: "100%",
-          }}
-        >
+        <VStack gap={4}>
           <CheckLine
-            label={`${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`}
+            label={
+              scanIndeterminate
+                ? "Display count could not be verified"
+                : `${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`
+            }
             status={
               multiDisplay ? (hardBlock ? "fail" : "warn") : scanIndeterminate ? "fail" : "pass"
             }
@@ -195,18 +160,11 @@ export function Stage2_MonitorDetection({
                 status={hardBlock ? "fail" : "warn"}
               />
               {hardBlock && (
-                <div
-                  style={{
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                    fontSize: "12px",
-                    lineHeight: 1.7,
-                    color: "#ef4444",
-                    marginTop: "4px",
-                  }}
-                >
-                  A second or wireless display is connected. A secured contest requires a single
-                  screen — disconnect the extra display, then re-scan.
-                </div>
+                <Banner
+                  status="error"
+                  title="One screen is required"
+                  description="Disconnect the extra display, then check again. Contact your proctor if you need help."
+                />
               )}
               {externalDisplayOverride && (
                 <CheckLine
@@ -215,15 +173,11 @@ export function Stage2_MonitorDetection({
                 />
               )}
               <Button
-                theme={theme}
-                variant="danger"
-                size="small"
+                variant="secondary"
+                label={scanning ? "Checking displays..." : "Check displays again"}
                 onClick={runDetection}
-                disabled={scanning}
-                style={{ marginTop: "16px" }}
-              >
-                {scanning ? "Checking displays..." : "Check displays again"}
-              </Button>
+                isDisabled={scanning}
+              />
             </>
           ) : (
             !scanIndeterminate && (
@@ -232,33 +186,21 @@ export function Stage2_MonitorDetection({
           )}
           {scanIndeterminate && !multiDisplay && (
             <>
-              <CheckLine label="Could not verify your display setup" status="fail" />
-              <div
-                style={{
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  fontSize: "12px",
-                  lineHeight: 1.7,
-                  color: "#ef4444",
-                  marginTop: "4px",
-                }}
-              >
-                We couldn&apos;t confirm how many screens are connected. Re-run the scan; if it
-                keeps failing, contact your proctor to be waived in.
-              </div>
+              <Banner
+                status="error"
+                title="Could not verify your display setup"
+                description="Run the check again. If it keeps failing, ask your proctor to review your setup."
+              />
               <Button
-                theme={theme}
-                variant="danger"
-                size="small"
+                variant="secondary"
+                label={scanning ? "Scanning..." : "Re-scan displays"}
                 onClick={() => void runDetection()}
-                disabled={scanning}
-                style={{ marginTop: "12px" }}
-              >
-                {scanning ? "Scanning..." : "Re-scan displays"}
-              </Button>
+                isDisabled={scanning}
+              />
             </>
           )}
-        </div>
+        </VStack>
       )}
-    </div>
+    </VStack>
   );
 }

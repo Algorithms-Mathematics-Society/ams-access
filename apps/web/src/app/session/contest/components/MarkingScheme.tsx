@@ -16,6 +16,9 @@
 
 import { ruleText } from "../family-summary";
 import type { Question } from "./questions";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 
 export function MarkingScheme({ question }: { question: Question }) {
   const families = question.families;
@@ -24,19 +27,13 @@ export function MarkingScheme({ question }: { question: Question }) {
   const symbolic = families.symbolic;
   const rules = symbolic?.rules ?? [];
 
-  // A projection reconstructed from the pre-v2 columns knows the statement
-  // but not the marking scheme. Saying "no rules" there would be a claim we
-  // cannot support — and the one direction in which being wrong is unfair.
   if (question.backfilled) {
-    return (
-      <section className="pb-marking" aria-label="How this is marked">
-        <h2 className="pb-marking-title">How this is marked</h2>
-        <p className="pb-marking-note">
-          The full marking breakdown isn&rsquo;t available for this problem. Read the statement
-          carefully for any restrictions on what you may use.
-        </p>
-      </section>
-    );
+    return <VStack as="section" gap={3} aria-label="How this is marked"
+      style={{ borderTop: "var(--border-width) solid var(--color-border)", paddingTop: "var(--spacing-5)" }}>
+      <Heading level={4} accessibilityLevel={2}>How this is marked</Heading>
+      <Text type="supporting">The full marking breakdown isn&rsquo;t available for this problem. Read the statement
+        carefully for any restrictions on what you may use.</Text>
+    </VStack>;
   }
 
   const graded = [
@@ -44,39 +41,24 @@ export function MarkingScheme({ question }: { question: Question }) {
     { label: "Behaviour tests", family: families.behavior },
   ].filter((entry) => entry.family && entry.family.count > 0);
 
-  return (
-    <section className="pb-marking" aria-label="How this is marked">
-      <h2 className="pb-marking-title">How this is marked</h2>
-
-      {graded.length > 0 && (
-        <ul className="pb-marking-list">
-          {graded.map(({ label, family }) => (
-            <li key={label}>
-              {family.count} {label.toLowerCase()}
-              {family.weight > 1 && <span className="pb-marking-weight"> ×{family.weight}</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {rules.length > 0 && (
-        <div className="pb-marking-gate">
-          <h3 className="pb-marking-gate-title">Restrictions</h3>
-          <ul className="pb-marking-gate-list">
-            {rules.map((rule) => (
-              <li key={`${rule.kind}:${rule.pattern}`}>
-                <code>{rule.pattern}</code> — {ruleText(rule)}
-              </li>
-            ))}
-          </ul>
-          {/* The consequence, in the same breath as the rule. Knowing a
-              restriction exists is not the same as knowing it is absolute. */}
-          <p className="pb-marking-gate-note">
-            These aren&rsquo;t scored on their own. Breaking one scores{" "}
-            <strong>zero for this problem</strong>, however well your code runs.
-          </p>
-        </div>
-      )}
-    </section>
-  );
+  return <VStack as="section" gap={4} aria-label="How this is marked"
+    style={{ borderTop: "var(--border-width) solid var(--color-border)", paddingTop: "var(--spacing-5)" }}>
+    <Heading level={4} accessibilityLevel={2}>How this is marked</Heading>
+    {graded.length > 0 && <MetadataList label={{ position: "start", width: "50%" }}>
+      {graded.map(({ label, family }) => <MetadataListItem key={label} label={label}>
+        <Text type="supporting" hasTabularNumbers>{family.count} {family.count === 1 ? "test" : "tests"}{family.weight > 1 && ` · ×${family.weight} weight`}</Text>
+      </MetadataListItem>)}
+    </MetadataList>}
+    {rules.length > 0 && <VStack gap={3}>
+      <Heading level={5} accessibilityLevel={3}>Restrictions</Heading>
+      <VStack as="ul" gap={2} style={{ paddingInlineStart: "var(--spacing-5)", margin: 0 }}>
+        {rules.map((rule) => <li key={`${rule.kind}:${rule.pattern}`}>
+          <Text type="code">{rule.pattern}</Text><Text> — {ruleText(rule)}</Text>
+        </li>)}
+      </VStack>
+      <Text type="supporting" style={{ color: "var(--color-text-yellow)" }}>
+        These aren&rsquo;t scored on their own. Breaking one scores <strong>zero for this problem</strong>, however well your code runs.
+      </Text>
+    </VStack>}
+  </VStack>;
 }
