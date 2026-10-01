@@ -837,59 +837,68 @@ fn set_touchpad_enabled(enabled: bool) {
         return;
     }
 
-    // KDE: the xinput fallback below covers KDE on X11, but does nothing on
-    // Wayland. On KDE Wayland the touchpad is driven by the KDED `touchpad`
-    // module — ask it to disable/enable over DBus. BEST-EFFORT: the method lives
-    // under `org.kde.kded6` (Plasma 6) or `org.kde.kded5` (Plasma 5); a missing
-    // service / wrong version simply no-ops (no regression vs today). This path
-    // is unverified on a live KDE Wayland session and should be smoke-tested
-    // there. Runtime-only (not persisted) — `unlock` re-enables; matches xinput.
     let is_kde = desktop.contains("kde") || desktop.contains("plasma");
-    if is_kde {
-        let method = if enabled {
-            "org.kde.touchpad.enable"
-        } else {
-            "org.kde.touchpad.disable"
-        };
-        // Try both the `qdbus`/`qdbus6` binary names and the Plasma 6/5 KDED
-        // service names; the wrong combinations just no-op.
-        for bin in ["qdbus", "qdbus6"] {
-            for kded in ["org.kde.kded6", "org.kde.kded5"] {
-                let _ = std::process::Command::new(bin)
-                    .args([kded, "/modules/touchpad", method])
-                    .bounded_output();
+    set_optional_touchpad_enabled_with(enabled, is_kde, |program, args| {
+        std::process::Command::new(program)
+            .args(args)
+            .bounded_output()
+    });
+}
+
+// Only runtime, best-effort KDE/X11 touchpad controls are optional. Keep the
+// journaled GNOME branch above and required keyboard setup outside this scope.
+fn set_optional_touchpad_enabled_with(
+    enabled: bool,
+    is_kde: bool,
+    mut run: impl FnMut(&str, &[&str]) -> std::io::Result<std::process::Output>,
+) {
+    crate::process_runner::optional(|| {
+        // KDE: the xinput fallback below covers KDE on X11, but does nothing on
+        // Wayland. On KDE Wayland the touchpad is driven by the KDED `touchpad`
+        // module — ask it to disable/enable over DBus. BEST-EFFORT: the method lives
+        // under `org.kde.kded6` (Plasma 6) or `org.kde.kded5` (Plasma 5); a missing
+        // service / wrong version simply no-ops (no regression vs today). This path
+        // is unverified on a live KDE Wayland session and should be smoke-tested
+        // there. Runtime-only (not persisted) — `unlock` re-enables; matches xinput.
+        if is_kde {
+            let method = if enabled {
+                "org.kde.touchpad.enable"
+            } else {
+                "org.kde.touchpad.disable"
+            };
+            // Try both the `qdbus`/`qdbus6` binary names and the Plasma 6/5 KDED
+            // service names; the wrong combinations just no-op.
+            for bin in ["qdbus", "qdbus6"] {
+                for kded in ["org.kde.kded6", "org.kde.kded5"] {
+                    let _ = run(bin, &[kded, "/modules/touchpad", method]);
+                }
             }
+            // fall through to xinput as well (covers KDE on X11).
         }
-        // fall through to xinput as well (covers KDE on X11).
-    }
 
-    // X11 fallback — xinput does nothing on Wayland but won't panic.
-    let Ok(out) = std::process::Command::new("xinput")
-        .arg("list")
-        .bounded_output()
-    else {
-        return;
-    };
-    let ids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|line| line.to_lowercase().contains("touchpad"))
-        .filter_map(|line| {
-            // line format: "  ↳ Synaptics TouchPad   id=14   [slave  pointer  (2)]"
-            line.split("id=")
-                .nth(1)?
-                .split_whitespace()
-                .next()?
-                .parse::<u32>()
-                .ok()
-        })
-        .collect();
+        // X11 fallback — xinput does nothing on Wayland but won't panic.
+        let Ok(out) = run("xinput", &["list"]) else {
+            return;
+        };
+        let ids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|line| line.to_lowercase().contains("touchpad"))
+            .filter_map(|line| {
+                // line format: "  ↳ Synaptics TouchPad   id=14   [slave  pointer  (2)]"
+                line.split("id=")
+                    .nth(1)?
+                    .split_whitespace()
+                    .next()?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .collect();
 
-    let action = if enabled { "enable" } else { "disable" };
-    for id in ids {
-        let _ = std::process::Command::new("xinput")
-            .args([action, &id.to_string()])
-            .bounded_output();
-    }
+        let action = if enabled { "enable" } else { "disable" };
+        for id in ids {
+            let _ = run("xinput", &[action, &id.to_string()]);
+        }
+    });
 }
 
 // ── Process kill shield ───────────────────────────────────────────────────────
@@ -2039,5 +2048,87 @@ mod required_probe_review_tests {
         assert_eq!(systemd_virtualization(true, b"none\n"), None);
         assert_eq!(systemd_virtualization(true, b""), None);
         assert_eq!(systemd_virtualization(false, b"permission denied"), None);
+    }
+}
+
+#[cfg(test)]
+mod optional_touchpad_tests {
+    use super::set_optional_touchpad_enabled_with;
+    use crate::process_runner::{record_failure, Budget};
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::Duration;
+
+    fn output(stdout: &[u8]) -> std::process::Output {
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn missing_alternatives_do_not_poison_successful_kde_entry_or_restore() {
+        for enabled in [false, true] {
+            let budget = Budget::new(Duration::from_secs(2));
+            let mut usable_calls = 0;
+            set_optional_touchpad_enabled_with(enabled, true, |program, _| {
+                if program == "qdbus6" {
+                    usable_calls += 1;
+                    Ok(output(b""))
+                } else {
+                    // Mirrors the runner recording a failed spawn. No native
+                    // desktop commands are invoked by this regression.
+                    record_failure(format!("{program}: executable not found"));
+                    Err(std::io::ErrorKind::NotFound.into())
+                }
+            });
+            assert_eq!(usable_calls, 2);
+            assert!(budget.failure().is_none());
+        }
+    }
+
+    #[test]
+    fn optional_controls_preserve_required_failures_before_and_after_them() {
+        let budget = Budget::new(Duration::from_secs(2));
+        record_failure("required keyboard snapshot failed");
+        set_optional_touchpad_enabled_with(false, true, |_, _| {
+            record_failure("optional tool timed out");
+            Err(std::io::ErrorKind::TimedOut.into())
+        });
+        assert_eq!(
+            budget.failure().as_deref(),
+            Some("required keyboard snapshot failed")
+        );
+        drop(budget);
+
+        let budget = Budget::new(Duration::from_secs(2));
+        set_optional_touchpad_enabled_with(false, false, |_, _| Ok(output(b"")));
+        record_failure("required restoration failed");
+        assert_eq!(
+            budget.failure().as_deref(),
+            Some("required restoration failed")
+        );
+    }
+
+    #[test]
+    fn xinput_fallback_still_applies_the_requested_action() {
+        for (enabled, action) in [(false, "disable"), (true, "enable")] {
+            let budget = Budget::new(Duration::from_secs(2));
+            let mut calls = Vec::new();
+            set_optional_touchpad_enabled_with(enabled, false, |program, args| {
+                assert_eq!(program, "xinput");
+                calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+                Ok(output(if args == ["list"] {
+                    b"Synaptics TouchPad id=14 [slave pointer (2)]\n"
+                } else {
+                    b""
+                }))
+            });
+            assert_eq!(
+                calls,
+                vec![vec!["list".to_string()], vec![action.into(), "14".into()]]
+            );
+            assert!(budget.failure().is_none());
+        }
     }
 }

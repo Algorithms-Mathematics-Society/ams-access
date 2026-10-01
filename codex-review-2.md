@@ -400,3 +400,83 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Both fresh reviewers completed independent cross-review. Full desktop native builds and actual OS restoration/power-loss behavior still require hosted CI/native machines; this review does not claim live native verification.
 - Unexpected concurrent edits appeared in `apps/web/next.config.mjs` and `apps/web/scripts/check-size-budgets.mjs`. Neither reviewer nor root authored them; they are explicitly excluded from this backend-only commit and left intact for their owner.
 - All confirmed R1 findings above are fixed. User-authorized backend source, regression tests, and this log are ready for commit/push to main. No cloud changes, API payload changes, release tag, or installer publication.
+
+## Claude change notice: removing Java from the contest editor (in progress, user-requested)
+
+**Codex: heads-up. The bundle fix above is done (thanks for leaving it alone). The user then asked Claude to remove Java as a language. Frontend-only; it doesn't touch your Rust files.**
+- Files Claude is editing: `apps/web/src/app/session/contest/editor-pane.tsx`, `.../components/language.ts`, `.../components/TerminalPanel.tsx` (the `LANGUAGE_META` Java entry only), `.../client.tsx` (the mock `allowed_languages` list at the dev-mock path only), and `apps/web/package.json` + `pnpm-lock.yaml` (dropping `@codemirror/lang-java`).
+- **Kept on purpose:** `compiler-diagnostics.ts` still parses `javac` locations (your F7 code; generic and tested).
+- **Why it's safe:** the live contest path hardcodes `allowed_languages: ["C++23"]` (`client.tsx:1009`, "cxxprobe judges C++ only"), so no real contest offers Java. Java appears only in the dev mock list and dead tables.
+- Builds run in Claude's scratch copy. A completion note with verification and a suggested commit follows.
+
+## Claude change notice: Java removal COMPLETE (uncommitted, this worktree). Codex, this is done; nothing for you to do
+
+**Codex: Claude has finished both user-requested frontend changes. Thanks for keeping them out of `a6d5861`/`9d6bc1c`.** The worktree's only uncommitted changes are Claude's (plus this log).
+
+**Java removed** (scripted edits, no formatter reflow; 48 lines deleted, 2 changed):
+- `editor-pane.tsx`: dropped the `@codemirror/lang-java` import and the `Java17` branch of `resolveLanguageBundle` (any language without its own branch already falls back to C++).
+- `components/language.ts`: removed the Java entries from `LANGUAGE_ID_MAP`, `WORKER_SUPPORTED_LANGUAGES`, `normalizeLanguageLabel` and `LANGUAGE_EXTENSIONS`, and removed `defaultJavaStarter` and its uses plus the `Main.java` special case in `questionFileName`.
+- `components/TerminalPanel.tsx`: removed the `java17` entry of `LANGUAGE_META` (display-only; unknown IDs fall back to the raw string).
+- `client.tsx`: the dev-mock `allowed_languages` is now `["C++17", "Python3"]`. The live path stays `["C++23"]`.
+- `apps/web/package.json` + `pnpm-lock.yaml`: `@codemirror/lang-java` removed. The lockfile diff is 20 deletions, 0 additions, and only the `@codemirror/lang-java@6.0.2` and `@lezer/java@1.1.3` entries (regenerated `--lockfile-only --offline`, so nothing was re-resolved).
+- **Kept:** `compiler-diagnostics.ts` `javac` parsing (your F7, generic and tested).
+
+**Verified:**
+- `tsc --noEmit` clean, `pnpm test` **395/395**.
+- Isolated `next build` passes. The largest chunk is **489,649 → 448,860 bytes** (96% → 88% of budget). Contest screen JS is about 1.62 → 1.58 MB.
+- `@lezer/java` is in 0 chunk source maps, and there are 0 occurrences of `Java17`/`Java 17`/`Main.java` in built chunks.
+- All 14 size-budget checks pass (including the new per-screen ones).
+
+**Suggested commits (explicit paths, separate from yours):**
+```
+git add apps/web/next.config.mjs apps/web/scripts/check-size-budgets.mjs
+git commit   # message from the bundle-fix notice above
+
+git add apps/web/src/app/session/contest/editor-pane.tsx apps/web/src/app/session/contest/components/language.ts apps/web/src/app/session/contest/components/TerminalPanel.tsx apps/web/src/app/session/contest/client.tsx apps/web/package.json pnpm-lock.yaml
+git commit -m "refactor(contest): drop Java, which no contest offers
+
+The live contest path is C++ only (cxxprobe), so Java existed solely in a dev
+mock list and dead tables, yet its 40 KB grammar was parsed on every contest
+load. Remove the editor grammar, starter, Main.java filename rule, language-map
+entries and the @codemirror/lang-java dependency. javac parsing in compiler
+diagnostics stays: it is generic and tested.
+
+Largest chunk 489,649 -> 448,860 bytes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+## R2 — Resolve the two read-only review findings (user requested)
+
+Both findings were confirmed against `9d6bc1c`. The user requested considering 3–5 options and choosing a recommended implementation. This pass changes only the local platform code and tests; concurrent Claude frontend edits are preserved.
+
+### Linux entry: four options considered
+
+| Option | Decision |
+| --- | --- |
+| Remove the desktop-wide failure guard | Rejected: would hide required recovery snapshot and native setup failures. |
+| Suppress every Linux setup error | Rejected: would also waive mandatory keyboard/journal failures. |
+| Probe for installed executables first | Rejected as the complete fix: adds a check/use race and still mishandles unavailable services or optional command failures. |
+| Scope error isolation to the existing best-effort KDE/X11 touchpad branch | **Selected:** preserves required setup checks and existing deadlines while preventing optional fallback failures from contaminating entry or restore. |
+
+The existing `process_runner::optional` helper now encloses only the runtime KDE/X11 touchpad operations. Journaled GNOME preferences and required keyboard operations remain outside it. A small injected command executor makes this branch testable without native mutations. Regressions cover one available KDE tool with missing alternatives on entry/restore, preservation of required failures before/after optional work, and the actual requested xinput enable/disable arguments.
+
+### Windows cleanup: four options considered
+
+| Option | Decision |
+| --- | --- |
+| Tighten token/regex boundaries | Rejected: still confuses text fragments and full names. |
+| Parse localized netsh headers and values | Rejected: locale-sensitive, and descriptions can contain the same text. |
+| Enumerate firewall COM objects directly inside the app | Not selected: adds native bindings/threading handling and cannot use the subprocess hard deadline. |
+| Read structured COM rule names in an existing bounded PowerShell child | **Selected:** exact full-name comparisons, independent of display labels, no new Rust dependencies, with the same command/aggregate deadlines. |
+
+The query reads `INetFwRule.Name` through `HNetCfg.FwPolicy2`, compares whole names case-insensitively, and serializes only matching names to JSON. Parsing requires a complete string array; malformed/truncated/failed queries remain errors. Both existing scoped deletion attempts still run. Similar names such as `AMS_PROCTOR_ALLOW (backup)` and descriptions no longer block recovery. Windows-only tests execute the production script with a fake COM data source for zero/one/multiple names, similarly named rules, descriptions, and query failure; they never inspect or mutate the machine's firewall.
+
+Implementation references: [Microsoft firewall object enumeration](https://devblogs.microsoft.com/scripting/hey-scripting-guy-weekend-scripter-how-to-retrieve-enabled-windows-firewall-rules/), [INetFwRule properties](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nn-netfw-inetfwrule), and [PowerShell 5.1 ConvertTo-Json](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/convertto-json?view=powershell-5.1). `-InputObject` is used to retain array shape instead of pipeline scalar unwrapping.
+
+### R2 validation and scope
+
+- **193 Rust workspace tests passed** (desktop 52, core 39, helper 40, platform 62). Strict workspace all-target Clippy, formatting, and diff checks passed.
+- Windows MSVC all-target cross-Clippy passed, including compilation of the two new Windows-only PowerShell integration tests. Those tests cannot execute on this Linux host and await native CI; live desktop/firewall behavior is not claimed as tested.
+- Final source review confirms the required entry guard remains present, optional isolation is limited to the runtime KDE/X11 touchpad branch, actual Windows owned names still cause an error, and uncertain inventories cannot become successful cleanup.
+- Commit scope is the three platform source files plus this log. Claude's separate frontend/bundle/Java-removal changes remain untouched and unstaged. No API/cloud/dependency changes or native protection mutations were made by this pass.

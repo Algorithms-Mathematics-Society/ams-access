@@ -1373,6 +1373,29 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 
 mod firewall_recovery;
 
+// Read actual INetFwRule.Name values, not localized netsh display text. Keep COM
+// enumeration in a bounded child so a stalled firewall service cannot strand
+// the app's worker. Filter complete names before serialization to bound output;
+// -InputObject preserves an array for zero, one, or multiple matching rules.
+const FIREWALL_INVENTORY_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+try {
+    $policy = New-Object -ComObject HNetCfg.FwPolicy2
+    $names = @(foreach ($rule in $policy.Rules) {
+        $name = [string]$rule.Name
+        if ([string]::Equals($name, 'AMS_PROCTOR_BLOCK_ALL', [StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($name, 'AMS_PROCTOR_ALLOW', [StringComparison]::OrdinalIgnoreCase)) {
+            $name
+        }
+    })
+    [Console]::WriteLine((ConvertTo-Json -InputObject $names -Compress))
+    exit 0
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+"#;
+
 /// Remove AMS firewall rules and verify their absence before reporting recovery.
 pub fn disable_network_lockdown() -> Result<(), String> {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
@@ -1391,11 +1414,18 @@ pub fn disable_network_lockdown() -> Result<(), String> {
                 .map_err(|error| format!("Cannot delete firewall rule: {error}"))
         },
         || {
-            hidden_command("netsh")
-                .args(["advfirewall", "firewall", "show", "rule", "name=all"])
+            let output = hidden_command("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    FIREWALL_INVENTORY_SCRIPT,
+                ])
                 .bounded_checked_output()
-                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-                .map_err(|error| format!("Cannot verify firewall recovery: {error}"))
+                .map_err(|error| format!("Cannot verify firewall recovery: {error}"))?;
+            String::from_utf8(output.stdout)
+                .map_err(|error| format!("Invalid firewall inventory encoding: {error}"))
         },
     )
 }
@@ -1811,5 +1841,50 @@ mod display_tests {
     fn negative_reads_are_treated_as_failure() {
         let count = resolve_monitor_count(2, || -1, |_| {});
         assert_eq!(count, 0);
+    }
+}
+
+#[cfg(test)]
+mod firewall_inventory_query_tests {
+    use super::{hidden_command, CommandDeadlineExt, FIREWALL_INVENTORY_SCRIPT};
+
+    // Execute the production serialization/filtering in Windows PowerShell,
+    // replacing only its COM data source. Never inspect or mutate host rules.
+    fn mock_inventory(source: &str) -> std::process::Output {
+        let factory = "$policy = New-Object -ComObject HNetCfg.FwPolicy2";
+        assert!(FIREWALL_INVENTORY_SCRIPT.contains(factory));
+        let script = FIREWALL_INVENTORY_SCRIPT.replace(factory, source);
+        hidden_command("powershell.exe")
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ])
+            .bounded_output_with_timeout(std::time::Duration::from_secs(5))
+            .expect("mock inventory script must finish")
+    }
+
+    #[test]
+    fn powershell_inventory_preserves_zero_one_and_multiple_name_arrays() {
+        for (rules, expected) in [
+            ("@()", vec![]),
+            ("@([pscustomobject]@{Name='ams_proctor_allow'})", vec!["ams_proctor_allow"]),
+            ("@([pscustomobject]@{Name='AMS_PROCTOR_ALLOW'}, [pscustomobject]@{Name='AMS_PROCTOR_BLOCK_ALL'})", vec!["AMS_PROCTOR_ALLOW", "AMS_PROCTOR_BLOCK_ALL"]),
+            ("@([pscustomobject]@{Name='AMS_PROCTOR_ALLOW (backup)'}, [pscustomobject]@{Name='Other'; Description='AMS_PROCTOR_ALLOW'})", vec![]),
+        ] {
+            let output = mock_inventory(&format!("$policy = [pscustomobject]@{{Rules={rules}}}"));
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let names: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(names, expected);
+        }
+    }
+
+    #[test]
+    fn powershell_inventory_failure_does_not_serialize_an_empty_success() {
+        let output = mock_inventory("throw 'mock inventory unavailable'");
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
     }
 }
