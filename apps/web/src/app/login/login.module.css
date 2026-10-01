@@ -1,0 +1,45 @@
+.page {
+  min-width: 0;
+}
+
+/* One shared boundary for the field and its optional suffix. Native inputs
+   retain their IDs and attributes while Astryx Field supplies their labels. */
+.fieldControl {
+  width: 100%;
+  min-width: 0;
+  background: var(--color-background-card);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+}
+
+/* A single crisp ring, separated from the border. The accent token has
+   sufficient contrast in both themes; no inset outline or shadow is added. */
+.fieldControl:focus-within {
+  outline: calc(var(--border-width) * 2) solid var(--color-accent);
+  outline-offset: calc(var(--border-width) * 2);
+}
+
+.fieldInput {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: var(--radius-element);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: var(--spacing-3);
+  appearance: none;
+}
+
+.fieldInput:focus,
+.fieldInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.fieldInput::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 1;
+}

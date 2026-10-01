@@ -89,7 +89,7 @@ test("connect-src does not allow arbitrary hosts", () => {
   }
 });
 
-test("the API host cannot be overridden by the environment at all", () => {
+test("the production API host cannot be overridden by the environment", () => {
   // Stronger than the guard this replaces. `resolveApiBase()` no longer reads
   // NEXT_PUBLIC_API_URL, because Next bakes NEXT_PUBLIC_* at build time and a
   // repository secret therefore overrode the constant in every shipped
@@ -98,12 +98,24 @@ test("the API host cannot be overridden by the environment at all", () => {
   // before the localhost branch (see api-base.test.mjs).
   //
   // Setting it must now change nothing.
-  const previous = process.env.NEXT_PUBLIC_API_URL;
+  // Both variables are tried. `NEXT_PUBLIC_API_URL` is the one that caused
+  // the outage and is read nowhere. `NEXT_PUBLIC_DEV_API_URL` IS read, but
+  // only inside the dev-server branch, and Node has no `window`, so this call
+  // takes the production path and must ignore it. That is the safety property
+  // the dev override rests on; if it ever regresses, a repository secret can
+  // redirect a shipped installer again.
+  const saved = {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+    NEXT_PUBLIC_DEV_API_URL: process.env.NEXT_PUBLIC_DEV_API_URL,
+  };
   process.env.NEXT_PUBLIC_API_URL = "https://somewhere-else.example";
+  process.env.NEXT_PUBLIC_DEV_API_URL = "https://also-not-this.example";
   try {
     assert.equal(new URL(resolveApiBase()).origin, apiOrigin);
   } finally {
-    if (previous === undefined) delete process.env.NEXT_PUBLIC_API_URL;
-    else process.env.NEXT_PUBLIC_API_URL = previous;
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });

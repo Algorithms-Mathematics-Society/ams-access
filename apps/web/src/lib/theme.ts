@@ -3,6 +3,8 @@ import { useSyncExternalStore } from "react";
 import { type Theme, isValidTheme, resolveThemeFrom } from "./theme-core";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
+import { syncThemeAttributes } from "./theme-bridge-core";
+
 const KEY = STORAGE_KEYS.THEME; // "ams_theme"
 
 function storedTheme(): Theme | null {
@@ -31,6 +33,7 @@ function apply(t: Theme): void {
   const c = document.documentElement.classList;
   c.remove(t === "dark" ? "light" : "dark");
   c.add(t);
+  syncThemeAttributes();
 }
 
 /** Reads the applied DOM truth (the class the FOUC script / apply() set). */

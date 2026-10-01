@@ -8,17 +8,24 @@ import { decideEntry, shouldRunChecks, blockedMessage } from "@/app/session/onbo
 import { invoke } from "@ams/api-client";
 import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore } from "./utils";
 import { deriveContestantReadiness } from "./readiness-context";
-import { useFocusTrap } from "./hooks";
+import { Button } from "./ui-primitives";
+import { Grid } from "@astryxdesign/core/Grid";
+import { Spinner } from "@astryxdesign/core/Spinner";
+import { AccessDialog } from "@/components/AccessDialog";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { parseLogLine } from "./SecurityOperationsLog";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { ReadinessState, ReadinessStatus } from "./types";
 import type { ReadinessReport } from "@ams/api-client";
 
-// §1 — Telemetry-dot check row: label left, single 6px dot flush right. No status text.
+// Visible text supplements the status dot for every required and advisory check.
 function PreflightCheckItem({
   label,
   status,
-  theme,
+  successLabel,
+  failLabel,
   variant = "required",
 }: {
   label: string;
@@ -28,55 +35,32 @@ function PreflightCheckItem({
   theme: "dark" | "light";
   variant?: "required" | "optional";
 }) {
-  const c = getThemeColors(theme);
-  const failColor =
-    variant === "optional" ? "var(--home-status-warn-dot)" : "var(--home-status-error-dot)";
-  const dotColor =
-    status === "ok" ? "var(--home-status-ok-dot)" : status === "fail" ? failColor : c.accent;
-  const dotAriaLabel =
-    status === "ok"
-      ? "pass"
-      : status === "fail"
-        ? variant === "optional"
-          ? "warning"
-          : "fail"
-        : "checking";
-
+  const stateLabel = status === "ok" ? successLabel : status === "fail" ? failLabel : "Checking...";
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "8px 0",
-        borderBottom: `1px solid ${c.border}`,
-      }}
+    <HStack
+      justify="between"
+      align="center"
+      gap={3}
+      paddingBlock={3}
+      style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
     >
-      <span
-        style={{
-          fontSize: "11px",
-          fontFamily: "'JetBrains Mono', monospace",
-          color: "var(--text-dim)",
-          letterSpacing: "0.02em",
-        }}
-      >
-        {label}
-      </span>
-      {/* Single 6px dot flush right — dot column stays perfectly aligned */}
-      <div
-        role="img"
-        aria-label={dotAriaLabel}
-        style={{
-          width: "6px",
-          height: "6px",
-          borderRadius: "50%",
-          background: dotColor,
-          flexShrink: 0,
-          boxShadow: status !== "checking" ? `0 0 6px ${dotColor}` : "none",
-          animation: status === "checking" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
-        }}
+      <VStack gap={1}>
+        <Text>{label}</Text>
+        <Text type="supporting">{stateLabel}</Text>
+      </VStack>
+      <StatusDot
+        label={stateLabel}
+        variant={
+          status === "ok"
+            ? "success"
+            : status === "checking"
+              ? "neutral"
+              : variant === "optional"
+                ? "warning"
+                : "error"
+        }
       />
-    </div>
+    </HStack>
   );
 }
 
@@ -323,636 +307,285 @@ export function SessionReadinessModal({
   }, [proceedHref, router]);
 
   const currentProgress = scanStatus === "scanning" ? 0 : score;
-  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
 
   // §4 — Technical details: smooth height+opacity reveal
   const techDetailsContentRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="session-readiness-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 9999,
-        background: "rgba(0,0,0,0.6)",
-        backdropFilter: "blur(20px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "24px",
-        animation: "fadeIn var(--transition-standard) forwards",
-      }}
-    >
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        style={{
-          width: "100%",
-          maxWidth: "680px",
-          minHeight: "540px",
-          maxHeight: "calc(100vh - 48px)",
-          background: "var(--theme-card-bg)",
-          border: `1px solid ${c.borderStrong}`,
-          borderRadius: "var(--radius-lg)",
-          padding: "36px",
-          boxShadow: "var(--elevation-3)",
-          position: "relative",
-          overflowX: "hidden",
-          overflowY: "auto",
-          alignSelf: "center",
-          display: "flex",
-          flexDirection: "column",
-          gap: "24px",
-        }}
+    <>
+      <AccessDialog
+        open
+        onClose={onClose}
+        title={modalTitle}
+        subtitle={context.message}
+        labelId="session-readiness-title"
+        width="calc(var(--spacing-10) * 17)"
       >
-        {/* Ambient spotlight */}
-        <div
-          style={{
-            position: "absolute",
-            top: "-40%",
-            left: "-20%",
-            width: "300px",
-            height: "300px",
-            background: `radial-gradient(circle, ${score === 100 ? "var(--home-status-ok-emerald-bg)" : "var(--home-status-warn-bg)"} 0%, transparent 70%)`,
-            pointerEvents: "none",
-          }}
-        />
+        <VStack gap={6} style={{ flexShrink: 0 }}>
+          <VStack as="header" gap={2}>
+            <HStack gap={3} justify="between" align="center" wrap="wrap">
+              <Text type="label" style={{ color: decisionTone.color }}>
+                Device readiness
+              </Text>
+              <Text type="supporting" hasTabularNumbers>
+                {activeReport ? `${Math.round(currentProgress)}% complete` : "Not verified"}
+              </Text>
+            </HStack>
+          </VStack>
 
-        {/* §2 — Header: flat, no border/bg box */}
-        <section
-          style={{
-            position: "relative",
-            padding: "20px 22px",
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: "18px",
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                color: decisionTone.color,
-                fontSize: "11px",
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                margin: "0 0 8px",
-              }}
-            >
-              Device readiness
-            </p>
-            <h3
-              id="session-readiness-title"
-              style={{
-                color: c.text,
-                fontSize: "24px",
-                fontWeight: 750,
-                letterSpacing: 0,
-                lineHeight: 1.2,
-                margin: "0 0 8px",
-              }}
-            >
-              {modalTitle}
-            </h3>
-            <p style={{ color: c.textMutedStrong, fontSize: "13px", lineHeight: 1.55, margin: 0 }}>
-              {context.message}
-            </p>
-          </div>
-          {/* §2 — "100% complete": raw percentage, no border/bg box */}
-          <div
-            style={{
-              flexShrink: 0,
-              minWidth: "86px",
-              textAlign: "right",
-            }}
-          >
-            <div style={{ color: "var(--home-status-ok)", fontSize: "24px", fontWeight: 800 }}>
-              {Math.round(currentProgress)}%
-            </div>
-            <div
-              style={{ color: c.textMuted, fontSize: "11px", fontWeight: 600, marginTop: "2px" }}
-            >
-              complete
-            </div>
-          </div>
-        </section>
+          <Grid columns={{ minWidth: 240, max: 2 }} gap={4} align="start">
+            <VStack as="section" gap={0} style={{ minWidth: 0 }}>
+              <VStack gap={3}>
+                <HStack align="center" justify="between" gap={3} wrap="wrap">
+                  <Heading level={4} accessibilityLevel={3}>
+                    Required checks
+                  </Heading>
+                  <Text type="supporting">
+                    {!activeReport
+                      ? "Not verified"
+                      : context.failedRequired > 0
+                        ? `${context.failedRequired} to fix`
+                        : "Passing"}
+                  </Text>
+                </HStack>
+                <Text type="supporting">
+                  These checks must pass before this device can enter the contest.
+                </Text>
+                <VStack gap={0}>
+                  {!activeReport && scanStatus === "done" ? (
+                    <Text type="supporting" role="status">
+                      Readiness report unavailable. Run checks again or ask your invigilator.
+                    </Text>
+                  ) : (
+                    requiredPreflightItems.map((item) => (
+                      <PreflightCheckItem
+                        key={item.key}
+                        label={item.label}
+                        status={item.status}
+                        successLabel={item.successLabel}
+                        failLabel={item.failLabel}
+                        theme={theme}
+                        variant="required"
+                      />
+                    ))
+                  )}
+                </VStack>
+              </VStack>
+            </VStack>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 0.74fr)",
-            gap: "18px",
-            alignItems: "start",
-          }}
-        >
-          <section
-            style={{
-              border: `1px solid ${c.border}`,
-              background: "var(--theme-inner-bg)",
-              borderRadius: "var(--radius-md)",
-              padding: "16px 18px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                marginBottom: "8px",
-              }}
-            >
-              <h4 style={{ color: c.text, fontSize: "13px", fontWeight: 750, margin: 0 }}>
-                Required checks
-              </h4>
-              {/* §2 — sub-header: plain muted text, no pill */}
-              <span
-                style={{
-                  color: "var(--text-dim)",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                }}
-              >
-                {context.failedRequired > 0 ? `${context.failedRequired} to fix` : "Passing"}
-              </span>
-            </div>
-            <p
-              style={{ color: c.textMuted, fontSize: "11px", lineHeight: 1.5, margin: "0 0 10px" }}
-            >
-              These checks must pass before this device can enter the contest.
-            </p>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {requiredPreflightItems.map((item) => (
-                <PreflightCheckItem
-                  key={item.key}
-                  label={item.label}
-                  status={item.status}
-                  successLabel={item.successLabel}
-                  failLabel={item.failLabel}
-                  theme={theme}
-                  variant="required"
-                />
-              ))}
-            </div>
-          </section>
+            <VStack as="section" gap={0} style={{ minWidth: 0 }}>
+              <VStack gap={3}>
+                <HStack align="center" justify="between" gap={3} wrap="wrap">
+                  <Heading level={4} accessibilityLevel={3}>
+                    Optional warnings
+                  </Heading>
+                  <Text type="supporting">
+                    {optionalWarningCount > 0
+                      ? `${optionalWarningCount} advisory`
+                      : "Advisory only"}
+                  </Text>
+                </HStack>
+                <Text type="supporting">
+                  These do not block entry, but they may help support diagnose issues.
+                </Text>
+                {optionalPreflightItems.length > 0 ? (
+                  <VStack gap={0}>
+                    {optionalPreflightItems.map((item) => (
+                      <PreflightCheckItem
+                        key={item.key}
+                        label={item.label}
+                        status={item.status}
+                        successLabel={item.successLabel}
+                        failLabel={item.failLabel}
+                        theme={theme}
+                        variant="optional"
+                      />
+                    ))}
+                  </VStack>
+                ) : (
+                  <Text type="supporting">
+                    {activeReport
+                      ? "No optional warnings reported."
+                      : "Waiting for a readiness report."}
+                  </Text>
+                )}
+              </VStack>
+            </VStack>
+          </Grid>
 
-          <section
-            style={{
-              border: `1px solid ${optionalWarningCount > 0 ? "var(--home-status-warn-border-24)" : c.border}`,
-              background:
-                optionalWarningCount > 0
-                  ? "var(--home-status-warn-bg-055)"
-                  : "var(--theme-inner-bg)",
-              borderRadius: "var(--radius-md)",
-              padding: "16px 18px",
-            }}
-          >
-            <div
+          {/* macOS accessibility-denied recovery panel — logic untouched */}
+          {showAccessibilityRecovery && (
+            <VStack
+              as="section"
+              gap={0}
+              padding={4}
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                marginBottom: "8px",
+                minWidth: 0,
+                background: "var(--color-background-muted)",
+                borderRadius: "var(--radius-container)",
               }}
             >
-              <h4 style={{ color: c.text, fontSize: "13px", fontWeight: 750, margin: 0 }}>
-                Optional warnings
-              </h4>
-              {/* §2 — sub-header: plain muted text, no pill */}
-              <span
-                style={{
-                  color: "var(--text-dim)",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                }}
-              >
-                {optionalWarningCount > 0 ? `${optionalWarningCount} advisory` : "Advisory only"}
-              </span>
-            </div>
-            <p
-              style={{ color: c.textMuted, fontSize: "11px", lineHeight: 1.5, margin: "0 0 10px" }}
-            >
-              These do not block entry, but they may help support diagnose issues.
-            </p>
-            {optionalPreflightItems.length > 0 ? (
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {optionalPreflightItems.map((item) => (
-                  <PreflightCheckItem
-                    key={item.key}
-                    label={item.label}
-                    status={item.status}
-                    successLabel={item.successLabel}
-                    failLabel={item.failLabel}
+              <VStack gap={3}>
+                <HStack align="center" gap={2}>
+                  <StatusDot variant="error" label="Permission required" />
+                  <Heading level={4} accessibilityLevel={3}>
+                    Grant Accessibility permission
+                  </Heading>
+                </HStack>
+                <Text color="secondary">
+                  AMS Access needs macOS Accessibility permission to lock the keyboard — open
+                  Settings, enable AMS Access under Privacy &amp; Security → Accessibility, then
+                  re-run the checks.
+                </Text>
+                <HStack gap={2} wrap="wrap">
+                  <Button
                     theme={theme}
-                    variant="optional"
-                  />
-                ))}
-              </div>
-            ) : (
-              <p style={{ color: c.textMutedStrong, fontSize: "12px", margin: "6px 0 0" }}>
-                No optional warnings reported.
-              </p>
-            )}
-          </section>
-        </div>
+                    variant="primary"
+                    onClick={() => void invoke("open_accessibility_settings")}
+                  >
+                    Open Accessibility Settings
+                  </Button>
+                  <Button
+                    theme={theme}
+                    variant="secondary"
+                    onClick={handleRescan}
+                    disabled={isRescanning}
+                  >
+                    Run checks again
+                  </Button>
+                </HStack>
+              </VStack>
+            </VStack>
+          )}
 
-        {/* macOS accessibility-denied recovery panel — logic untouched */}
-        {showAccessibilityRecovery && (
-          <section
-            style={{
-              border: "1px solid var(--home-status-error-border-36)",
-              background: "var(--home-status-error-bg-07)",
-              borderRadius: "var(--radius-md)",
-              padding: "16px 18px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "10px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <div
-                style={{
-                  width: "7px",
-                  height: "7px",
-                  borderRadius: "50%",
-                  background: "var(--home-status-error-dot)",
-                  flexShrink: 0,
-                  boxShadow: "0 0 6px var(--home-status-error-dot)",
-                }}
-              />
-              <h4
-                style={{
-                  color: "var(--theme-error-text)",
-                  fontSize: "13px",
-                  fontWeight: 750,
-                  margin: 0,
-                  letterSpacing: "0.01em",
-                }}
-              >
-                Grant Accessibility permission
-              </h4>
-            </div>
-            <p
+          {/* §4 — Technical details: smooth height+opacity CSS transition */}
+          <VStack gap={0} style={{ flexShrink: 0 }}>
+            <Button
+              theme={theme}
+              variant="secondary"
+              type="button"
+              aria-expanded={showTechnicalDetails}
+              onClick={() => setShowTechnicalDetails((v) => !v)}
+            >
+              <Text>Technical details</Text>
+              <Text type="supporting">{showTechnicalDetails ? "Hide" : "Show"}</Text>
+            </Button>
+            <VStack
+              ref={techDetailsContentRef}
+              aria-hidden={!showTechnicalDetails}
               style={{
-                color: c.textMutedStrong,
-                fontSize: "12px",
-                lineHeight: 1.55,
-                margin: 0,
+                maxHeight: showTechnicalDetails ? "calc(var(--spacing-10) * 8.5)" : 0,
+                flexShrink: 0,
+                opacity: showTechnicalDetails ? 1 : 0,
+                overflow: "hidden",
+                transition:
+                  "max-height var(--transition-standard), opacity var(--transition-standard)",
               }}
             >
-              AMS Access needs macOS Accessibility permission to lock the keyboard — open Settings,
-              enable AMS Access under Privacy &amp; Security → Accessibility, then re-run the
-              checks.
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", paddingTop: "2px" }}>
-              <button
-                onClick={() => void invoke("open_accessibility_settings")}
+              <VStack
+                gap={1}
+                padding={3}
+                isScrollable
                 style={{
-                  height: "36px",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--home-status-error-border-50)",
-                  background: "var(--home-status-error-bg-14)",
-                  color: "var(--theme-error-text)",
-                  padding: "0 14px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  cursor: "pointer",
-                  letterSpacing: "0.02em",
+                  borderTop: "var(--border-width) solid var(--color-border)",
+                  maxHeight: "calc(var(--spacing-10) * 7.5)",
+                  flexShrink: 0,
                 }}
               >
-                Open Accessibility Settings
-              </button>
-              <button
+                {consoleLogs.map((log, index) => (
+                  <Text
+                    key={index}
+                    type="code"
+                    style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                  >
+                    {parseLogLine(log, c.dot)}
+                  </Text>
+                ))}
+                {scanStatus === "scanning" && (
+                  <HStack align="center" gap={2}>
+                    <Spinner size="sm" aria-label="Checking your device" />
+                    <Text type="supporting">Checking your device</Text>
+                  </HStack>
+                )}
+              </VStack>
+            </VStack>
+          </VStack>
+
+          <HStack gap={3} wrap="wrap" align="center" justify="end" style={{ flexShrink: 0 }}>
+            {canProceed ? (
+              onProceed ? (
+                /* §3 — Primary: AMS purple, unified radius (matches Validate / app buttons) */
+                <Button theme={theme} variant="primary" onClick={() => void onProceed()}>
+                  {primaryActionLabel}
+                </Button>
+              ) : (
+                <Link
+                  href={proceedHref}
+                  prefetch
+                  onClick={onClose}
+                  style={{
+                    minWidth: "calc(var(--spacing-10) * 4)",
+                    height: "var(--spacing-10)",
+                    borderRadius: "var(--radius-md)",
+                    border: "none",
+                    background: "var(--color-background-inverted)",
+                    color: "var(--color-background-body)",
+                    fontSize: "var(--font-size-base)",
+                    fontWeight: 700,
+                    fontFamily: "inherit",
+                    cursor: "pointer",
+                    transition: "all var(--transition-fast)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    textDecoration: "none",
+                  }}
+                >
+                  {primaryActionLabel}
+                </Link>
+              )
+            ) : scanStatus === "scanning" ? (
+              <Button theme={theme} variant="primary" disabled>
+                {primaryActionLabel}
+              </Button>
+            ) : context.status === "needs_action" || context.status === "advisory_warning" ? (
+              <Button theme={theme} variant="primary" onClick={onSettingsRedirect}>
+                {primaryActionLabel}
+              </Button>
+            ) : (
+              <Button theme={theme} variant="primary" onClick={onClose}>
+                {primaryActionLabel}
+              </Button>
+            )}
+            {/* §3 — Secondary buttons: flat muted text, no border/bg */}
+            {scanStatus !== "scanning" && (
+              <Button
+                theme={theme}
+                variant="secondary"
                 onClick={handleRescan}
                 disabled={isRescanning}
-                style={{
-                  height: "36px",
-                  borderRadius: "var(--radius-md)",
-                  border: `1px solid ${c.border}`,
-                  background: "transparent",
-                  color: c.textMutedStrong,
-                  padding: "0 14px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  fontFamily: "inherit",
-                  cursor: isRescanning ? "not-allowed" : "pointer",
-                  opacity: isRescanning ? 0.62 : 1,
-                }}
               >
                 Run checks again
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* §4 — Technical details: smooth height+opacity CSS transition */}
-        <div
-          style={{
-            border: `1px solid ${c.border}`,
-            background: "var(--theme-inner-bg)",
-            borderRadius: "var(--radius-md)",
-            overflow: "hidden",
-          }}
-        >
-          <button
-            type="button"
-            aria-expanded={showTechnicalDetails}
-            onClick={() => setShowTechnicalDetails((v) => !v)}
-            style={{
-              width: "100%",
-              cursor: "pointer",
-              padding: "12px 14px",
-              color: c.textMutedStrong,
-              fontSize: "12px",
-              fontWeight: 600,
-              background: "transparent",
-              border: "none",
-              fontFamily: "inherit",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: "12px",
-            }}
-          >
-            <span>Technical details</span>
-            <span style={{ color: c.textMuted, fontSize: "11px" }}>
-              {showTechnicalDetails ? "Hide" : "Show"}
-            </span>
-          </button>
-          <div
-            ref={techDetailsContentRef}
-            style={{
-              maxHeight: showTechnicalDetails ? "340px" : "0px",
-              opacity: showTechnicalDetails ? 1 : 0,
-              overflow: "hidden",
-              transition: "max-height 0.28s ease, opacity 0.22s ease",
-            }}
-          >
-            <div
-              style={{
-                borderTop: `1px solid ${c.border}`,
-                padding: "12px 14px",
-                maxHeight: "300px",
-                overflowY: "auto",
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: "11px",
-                color: "var(--text-dim)",
-                display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-              }}
-            >
-              {consoleLogs.map((log, index) => (
-                <div key={index} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                  {parseLogLine(log, c.dot)}
-                </div>
-              ))}
-              {scanStatus === "scanning" && (
-                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                  <span>Checking your device</span>
-                  <span
-                    className="terminal-caret"
-                    style={{
-                      display: "inline-block",
-                      width: "6px",
-                      height: "12px",
-                      background: "currentColor",
-                      animation: "pulse-dot 1s ease infinite",
-                    }}
-                  >
-                    ▎
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* §3 — Button bar */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: "10px",
-            paddingTop: "4px",
-          }}
-        >
-          {canProceed ? (
-            onProceed ? (
-              /* §3 — Primary: AMS purple, unified radius (matches Validate / app buttons) */
-              <button
-                onClick={() => void onProceed()}
-                style={{
-                  minWidth: "170px",
-                  height: "42px",
-                  borderRadius: "var(--radius-md)",
-                  border: "none",
-                  background: "var(--color-accent-base)",
-                  color: "#ffffff",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  cursor: "pointer",
-                  transition: "all var(--transition-fast)",
-                }}
-              >
-                {primaryActionLabel}
-              </button>
-            ) : (
-              <Link
-                href={proceedHref}
-                prefetch
-                onClick={onClose}
-                style={{
-                  minWidth: "170px",
-                  height: "42px",
-                  borderRadius: "var(--radius-md)",
-                  border: "none",
-                  background: "var(--color-accent-base)",
-                  color: "#ffffff",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  cursor: "pointer",
-                  transition: "all var(--transition-fast)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textDecoration: "none",
-                }}
-              >
-                {primaryActionLabel}
-              </Link>
-            )
-          ) : scanStatus === "scanning" ? (
-            <button
-              disabled
-              style={{
-                minWidth: "170px",
-                height: "42px",
-                borderRadius: "0",
-                border: "none",
-                background: "var(--color-accent-base)",
-                color: "#ffffff",
-                fontSize: "13px",
-                fontWeight: 700,
-                fontFamily: "inherit",
-                cursor: "not-allowed",
-                opacity: 0.5,
-              }}
-            >
-              {primaryActionLabel}
-            </button>
-          ) : context.status === "needs_action" || context.status === "advisory_warning" ? (
-            <button
-              onClick={onSettingsRedirect}
-              style={{
-                minWidth: "170px",
-                height: "42px",
-                borderRadius: "0",
-                border: "none",
-                background: "var(--color-accent-base)",
-                color: "#ffffff",
-                fontSize: "13px",
-                fontWeight: 700,
-                fontFamily: "inherit",
-                cursor: "pointer",
-              }}
-            >
-              {primaryActionLabel}
-            </button>
-          ) : (
-            <button
-              onClick={onClose}
-              style={{
-                minWidth: "170px",
-                height: "42px",
-                borderRadius: "0",
-                border: "none",
-                background: "var(--color-accent-base)",
-                color: "#ffffff",
-                fontSize: "13px",
-                fontWeight: 700,
-                fontFamily: "inherit",
-                cursor: "pointer",
-              }}
-            >
-              {primaryActionLabel}
-            </button>
-          )}
-          {/* §3 — Secondary buttons: flat muted text, no border/bg */}
-          {scanStatus !== "scanning" && (
-            <button
-              onClick={handleRescan}
-              disabled={isRescanning}
-              style={{
-                height: "42px",
-                background: "transparent",
-                border: "none",
-                color: "var(--text-dim)",
-                padding: "0 14px",
-                fontSize: "13px",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: isRescanning ? "not-allowed" : "pointer",
-                opacity: isRescanning ? 0.62 : 1,
-                transition: "color 0.15s ease",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
-              }}
-            >
-              Run checks again
-            </button>
-          )}
-          {primaryActionLabel !== "Open settings" && (
-            <button
-              onClick={onSettingsRedirect}
-              style={{
-                height: "42px",
-                background: "transparent",
-                border: "none",
-                color: "var(--text-dim)",
-                padding: "0 14px",
-                fontSize: "13px",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                transition: "color 0.15s ease",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
-              }}
-            >
-              Open settings
-            </button>
-          )}
-          {primaryActionLabel !== "Back to contests" && (
-            <button
-              onClick={onClose}
-              style={{
-                height: "42px",
-                background: "transparent",
-                border: "none",
-                color: "var(--text-dim)",
-                padding: "0 16px",
-                fontSize: "13px",
-                fontWeight: 500,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                transition: "color 0.15s ease",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
-              }}
-            >
-              Back to contests
-            </button>
-          )}
-          {!canProceed && scanStatus !== "scanning" && (
-            <button
-              onClick={() => setHelpOpen(true)}
-              style={{
-                height: "42px",
-                background: "transparent",
-                border: "none",
-                color: "var(--text-dim)",
-                padding: "0 16px",
-                fontSize: "13px",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                transition: "color 0.15s ease",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)";
-              }}
-            >
-              Get help
-            </button>
-          )}
-        </div>
-      </div>
+              </Button>
+            )}
+            {primaryActionLabel !== "Open settings" && (
+              <Button theme={theme} variant="secondary" onClick={onSettingsRedirect}>
+                Open settings
+              </Button>
+            )}
+            {primaryActionLabel !== "Back to contests" && (
+              <Button theme={theme} variant="secondary" onClick={onClose}>
+                Back to contests
+              </Button>
+            )}
+            {!canProceed && scanStatus !== "scanning" && (
+              <Button theme={theme} variant="secondary" onClick={() => setHelpOpen(true)}>
+                Get help
+              </Button>
+            )}
+          </HStack>
+        </VStack>
+      </AccessDialog>
       <HelpRequestModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
@@ -972,11 +605,6 @@ export function SessionReadinessModal({
           diagnostics: consoleLogs,
         }}
       />
-      <style>{`
-        @keyframes spin {
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
-    </div>
+    </>
   );
 }

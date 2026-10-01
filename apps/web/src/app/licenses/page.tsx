@@ -35,6 +35,8 @@ export default function LicensesPage() {
                 "Next.js, React, and React DOM for the web application runtime.",
                 "TypeScript for type checking and development tooling.",
                 "Tailwind CSS for styling infrastructure.",
+                "Astryx component library and neutral theme, licensed under MIT.",
+                "Geist Sans and Geist Mono by Vercel and basement.studio, licensed under the SIL Open Font License 1.1. The full notice is bundled at /licenses/geist-OFL.txt.",
                 "Framer Motion for animation primitives.",
                 "MediaPipe Tasks Vision, TensorFlow.js core, TensorFlow.js CPU backend, and BlazeFace for local camera and face-readiness workflows.",
               ]}

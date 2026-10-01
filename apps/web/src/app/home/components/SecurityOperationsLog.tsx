@@ -1,15 +1,14 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useState } from "react";
 import type { ReactNode } from "react";
-import { getThemeColors } from "./utils";
-import type { SecurityLogEntry, SecurityLogLevel } from "./types";
-
-const LEVEL_COLOR: Record<SecurityLogLevel, string> = {
-  error: "var(--home-status-error)",
-  warn: "var(--home-status-warn)",
-  info: "",
-};
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
+import type { SecurityLogEntry } from "./types";
 
 export function parseLogLine(text: string, statusColor: string): ReactNode {
   let splitIndex = text.indexOf("... ");
@@ -18,84 +17,110 @@ export function parseLogLine(text: string, statusColor: string): ReactNode {
     splitIndex = text.indexOf(": ");
     sep = ": ";
   }
-
-  if (splitIndex === -1) {
-    return <span style={{ color: statusColor }}>{text}</span>;
-  }
-
+  if (splitIndex === -1) return <Text style={{ color: statusColor, font: "inherit" }}>{text}</Text>;
   const prefix = text.substring(0, splitIndex + sep.length);
   const status = text.substring(splitIndex + sep.length);
-
   return (
     <>
-      <span style={{ color: "var(--text-dim)" }}>{prefix}</span>
-      <span style={{ color: statusColor, fontWeight: 700 }}>{status}</span>
+      <Text color="secondary" style={{ font: "inherit" }}>
+        {prefix}
+      </Text>
+      <Text
+        style={{
+          color: statusColor,
+          fontFamily: "inherit",
+          fontSize: "inherit",
+          lineHeight: "inherit",
+          fontWeight: "var(--font-weight-bold)",
+        }}
+      >
+        {status}
+      </Text>
     </>
   );
 }
 
 export const SecurityOperationsLog = memo(function SecurityOperationsLog({
-  theme,
   logs,
 }: {
-  theme: "dark" | "light";
   logs: SecurityLogEntry[];
 }) {
-  const themeColors = useMemo(() => getThemeColors(theme), [theme]);
-
+  const [filter, setFilter] = useState("all");
+  const visible = filter === "attention" ? logs.filter((log) => log.level !== "info") : logs;
   return (
-    <div
-      style={{
-        background: themeColors.cardBg,
-        border: `1px solid ${themeColors.border}`,
-        borderRadius: "var(--radius-md)",
-        padding: "20px 24px",
-      }}
+    <VStack
+      as="section"
+      gap={4}
+      aria-labelledby="device-activity-heading"
+      data-device-activity
+      style={{ minWidth: 0 }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-        <h4
+      <HStack gap={4} justify="between" align="center" wrap="wrap">
+        <VStack gap={2} style={{ flex: "1 1 calc(var(--spacing-10) * 8)", minWidth: 0 }}>
+          <Heading level={4} accessibilityLevel={2} id="device-activity-heading">
+            Recent activity
+          </Heading>
+          <Text type="supporting">
+            Latest local events from this app visit. Earlier issues may already be resolved.
+          </Text>
+        </VStack>
+        <SegmentedControl value={filter} onChange={setFilter} label="Activity filter" size="sm">
+          <SegmentedControlItem value="all" label="All" />
+          <SegmentedControlItem value="attention" label="Needs attention" />
+        </SegmentedControl>
+      </HStack>
+      <Text type="supporting">
+        {visible.length} of {logs.length} {logs.length === 1 ? "event" : "events"}
+      </Text>
+      {visible.length ? (
+        <VStack
+          role="region"
+          aria-label="Recent activity entries"
+          tabIndex={0}
           style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            color: "var(--theme-text-muted)",
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            fontFamily: "'JetBrains Mono', monospace",
+            minWidth: 0,
+            maxHeight: "calc(var(--spacing-10) * 8)",
+            overflowY: "auto",
+            paddingInlineEnd: "var(--spacing-1)",
           }}
         >
-          Session activity
-        </h4>
-      </div>
-      <div
-        style={{
-          background: themeColors.innerBg,
-          border: `1px solid ${themeColors.border}`,
-          borderRadius: "var(--radius-sm)",
-          padding: "16px",
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          fontSize: "12px",
-          color: themeColors.consoleText,
-          lineHeight: 1.6,
-          display: "flex",
-          flexDirection: "column",
-          gap: "6px",
-        }}
-      >
-        {logs.length === 0 ? (
-          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            No local security events observed in this session yet.
-          </div>
-        ) : (
-          logs.map((log) => (
-            <div
-              key={log.id}
-              style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-            >
-              {parseLogLine(log.text, LEVEL_COLOR[log.level] || themeColors.consoleText)}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+          <List hasDividers density="balanced">
+            {visible.map((log) => (
+              <ListItem
+                key={log.id}
+                data-log-id={log.id}
+                data-log-level={log.level}
+                style={{ paddingInline: 0 }}
+                startContent={
+                  <Token
+                    size="sm"
+                    label={
+                      log.level === "error" ? "Error" : log.level === "warn" ? "Warning" : "Info"
+                    }
+                    color={log.level === "error" ? "red" : log.level === "warn" ? "yellow" : "gray"}
+                  />
+                }
+                label={
+                  <Text style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+                    {parseLogLine(log.text, "var(--color-text-primary)")}
+                  </Text>
+                }
+              />
+            ))}
+          </List>
+        </VStack>
+      ) : (
+        <EmptyState
+          isCompact
+          title={logs.length ? "No events need attention" : "No activity yet"}
+          description={
+            logs.length
+              ? "No warnings or errors in the available activity. Device readiness is shown above."
+              : "Local device and setup events will appear here."
+          }
+          style={{ alignItems: "flex-start", textAlign: "start", paddingInline: 0 }}
+        />
+      )}
+    </VStack>
   );
 });

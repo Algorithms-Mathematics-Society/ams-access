@@ -1,34 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle, Loader2, Play, RefreshCw, X } from "lucide-react";
-import { getThemeColors } from "./utils";
-import { Button, Field, InlineAlert } from "./ui-primitives";
+import { Play } from "lucide-react";
+import { VStack, HStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Button } from "@astryxdesign/core/Button";
+import { InlineAlert } from "./ui-primitives";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { ActiveSession, ResumeVerificationState } from "./types";
 
 export function SessionActionsPanel({
   activeSession,
-  onRefresh,
   onResume,
   resumeBusy,
   resumeStatus,
   resumeVerification,
   sessionsError,
-  sessionsRefreshing,
   theme,
 }: {
   activeSession: ActiveSession | null;
-  onRefresh: () => void;
   onResume: () => void;
   resumeBusy: boolean;
   resumeStatus: string | null;
   resumeVerification: ResumeVerificationState;
   sessionsError: string | null;
-  sessionsRefreshing: boolean;
   theme: "dark" | "light";
 }) {
-  const c = getThemeColors(theme);
   const [helpOpen, setHelpOpen] = useState(false);
   const resumeFailed =
     !!resumeStatus && /rejected|expired|failed|not found|mismatch|could not/i.test(resumeStatus);
@@ -44,194 +43,117 @@ export function SessionActionsPanel({
       ? "Validating..."
       : "Resume Active Session";
 
+  const hasQuietEmptyState =
+    !activeSession && !resumeBusy && !resumeChecking && !sessionsError && !resumeStatus;
+
+  if (hasQuietEmptyState) {
+    return (
+      <VStack as="section" aria-label="Session recovery" gap={0}>
+        <Text type="supporting">No active session to resume.</Text>
+      </VStack>
+    );
+  }
+
   return (
-    <div
+    <VStack
+      as="section"
+      aria-label="Session recovery"
+      gap={4}
+      padding={5}
       style={{
-        background: c.cardBg,
-        border: "1px solid var(--theme-border)",
-        borderRadius: "var(--radius-md)",
-        padding: "20px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "16px",
+        background: "var(--color-background-card)",
+        borderRadius: "var(--radius-container)",
       }}
     >
-      {/* No session-code entry. Credentials are contest-scoped: signing in
-          with a printed slip already tells the server which contest this is,
-          so asking for a code as well added a thing to mistype under exam
-          pressure and no security whatsoever. */}
-
-      {/* ── Refresh affordance ────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
-        <Button
-          onClick={onRefresh}
-          disabled={sessionsRefreshing}
-          theme={theme}
-          variant="secondary"
-          size="small"
-          onMouseDown={(e) => {
-            if (!sessionsRefreshing) e.currentTarget.style.transform = "scale(0.98)";
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-        >
-          <RefreshCw
-            size={14}
-            strokeWidth={2}
-            style={{ animation: sessionsRefreshing ? "spin 1s linear infinite" : "none" }}
-          />
-          {sessionsRefreshing ? "Refreshing" : "Refresh Sessions"}
-        </Button>
-        {sessionsError && (
-          <span
-            style={{ alignSelf: "center", color: "var(--home-status-error)", fontSize: "12px" }}
-          >
-            {sessionsError}
-          </span>
-        )}
-      </div>
-
-      {/* ── Resume section (secondary) ────────────────────────────── */}
-      <div
-        style={{
-          borderTop: "1px solid var(--theme-border)",
-          paddingTop: "16px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-        }}
-      >
-        <p
-          style={{
-            fontSize: "11px",
-            color: "var(--theme-text-muted)",
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            fontWeight: 600,
-          }}
-        >
-          Resume
-        </p>
-        {activeSession ? (
-          <>
-            <p
-              style={{
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                fontWeight: 600,
-                fontSize: "13px",
-                color: c.text,
-                lineHeight: 1.3,
-              }}
-            >
-              {activeSession.contest_title ?? `Session ${activeSession.contest_id.slice(0, 8)}`}
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-              <span
-                style={{
-                  fontSize: "11px",
-                  padding: "2px 7px",
-                  borderRadius: "var(--radius-sm)",
-                  fontWeight: 600,
-                  background: resumeRequestPending
-                    ? "var(--home-status-warn-bg-12)"
-                    : resumeVerification === "verified"
-                      ? "var(--home-status-ok-bg-12)"
-                      : resumeVerification === "checking" || resumeVerification === "unverified"
-                        ? "rgb(var(--accent-rgb) / 0.1)"
-                        : "var(--home-status-error-bg-10)",
-                  color: resumeRequestPending
-                    ? "var(--home-status-warn)"
-                    : resumeVerification === "verified"
-                      ? "var(--home-status-ok)"
-                      : resumeVerification === "checking" || resumeVerification === "unverified"
-                        ? c.accentText
-                        : "var(--theme-error-text)",
-                }}
-              >
-                {resumeRequestPending
-                  ? "Approval pending"
-                  : resumeVerification === "verified"
-                    ? "Verified"
-                    : resumeVerification === "checking" || resumeVerification === "unverified"
-                      ? "Checking..."
-                      : "Unverified"}
-              </span>
-              {activeSession.updated_at && resumeVerification === "verified" && (
-                <span style={{ fontSize: "11px", color: c.textMuted }}>
-                  {new Date(activeSession.updated_at).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-              )}
-            </div>
-          </>
-        ) : (
-          <p style={{ color: c.textMuted, fontSize: "13px", lineHeight: 1.45 }}>
-            No active session stored on this device.
-          </p>
-        )}
-        <Button
-          onClick={onResume}
-          disabled={resumeButtonDisabled}
-          theme={theme}
-          variant={resumeAvailable ? "primary" : "secondary"}
-          title={
-            !activeSession
-              ? "No active session to resume"
-              : resumeVerification === "invalid"
-                ? "Session could not be verified"
-                : undefined
-          }
-          onMouseEnter={(e) => {
-            if (resumeButtonDisabled) return;
-            e.currentTarget.style.background = "var(--color-accent-base)";
-            e.currentTarget.style.borderColor = "var(--color-accent-light)";
-            e.currentTarget.style.boxShadow = "0 10px 24px rgb(var(--accent-rgb) / 0.22)";
-          }}
-          onMouseLeave={(e) => {
-            if (resumeButtonDisabled) return;
-            e.currentTarget.style.background = "var(--color-accent-base)";
-            e.currentTarget.style.borderColor = c.accentBorder;
-            e.currentTarget.style.boxShadow = "none";
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-          onMouseDown={(e) => {
-            if (!resumeButtonDisabled) e.currentTarget.style.transform = "scale(0.98)";
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-        >
-          {resumeBusy || resumeChecking ? (
-            <Loader2 size={14} strokeWidth={2} style={{ animation: "spin 1s linear infinite" }} />
+      <Heading level={4} accessibilityLevel={2}>
+        Session recovery
+      </Heading>
+      {sessionsError && (
+        <Text role="alert" type="supporting" style={{ color: "var(--color-error)" }}>
+          {sessionsError}
+        </Text>
+      )}
+      <HStack gap={4} align="center" justify="end" wrap="wrap">
+        <VStack gap={2} style={{ flex: "1 1 calc(var(--spacing-10) * 5)", minWidth: 0 }}>
+          {activeSession ? (
+            <VStack gap={2}>
+              <Text weight="semibold" maxLines={2}>
+                {activeSession.contest_title ?? `Session ${activeSession.contest_id.slice(0, 8)}`}
+              </Text>
+              <HStack gap={3} wrap="wrap" align="center">
+                <Token
+                  size="sm"
+                  color={
+                    resumeRequestPending
+                      ? "yellow"
+                      : resumeVerified
+                        ? "green"
+                        : resumeChecking
+                          ? "gray"
+                          : "red"
+                  }
+                  label={
+                    resumeRequestPending
+                      ? "Approval pending"
+                      : resumeVerified
+                        ? "Verified"
+                        : resumeChecking
+                          ? "Checking..."
+                          : "Unverified"
+                  }
+                />
+                {activeSession.updated_at && resumeVerification === "verified" && (
+                  <Text type="supporting">
+                    Last updated{" "}
+                    {new Date(activeSession.updated_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </Text>
+                )}
+              </HStack>
+            </VStack>
           ) : (
-            <Play size={14} strokeWidth={2} />
+            <Text color="secondary">No active session stored on this device.</Text>
           )}
-          {resumeButtonLabel}
-        </Button>
-        {resumeStatus && (
-          <InlineAlert
-            theme={theme}
-            tone={
-              /verified/i.test(resumeStatus) &&
-              !/failed|not found|expired|mismatch|could not/i.test(resumeStatus)
-                ? "success"
-                : /validat/i.test(resumeStatus)
-                  ? "accent"
-                  : "danger"
+        </VStack>
+        <HStack gap={3} wrap="wrap" justify="end">
+          <Button
+            label={resumeButtonLabel}
+            onClick={onResume}
+            isDisabled={resumeButtonDisabled}
+            isLoading={resumeBusy || resumeChecking}
+            variant="secondary"
+            icon={<Icon icon={Play} size="sm" />}
+            tooltip={
+              !activeSession
+                ? "No active session to resume"
+                : resumeVerification === "invalid"
+                  ? "Session could not be verified"
+                  : undefined
             }
-          >
-            {resumeStatus}
-          </InlineAlert>
-        )}
-        {resumeFailed && (
-          <Button theme={theme} variant="secondary" onClick={() => setHelpOpen(true)}>
-            Get help rejoining
-          </Button>
-        )}
-      </div>
+          />
+          {resumeFailed && <Button label="Get help rejoining" onClick={() => setHelpOpen(true)} />}
+        </HStack>
+      </HStack>
+      {resumeStatus && (
+        /verified/i.test(resumeStatus) &&
+        !/failed|not found|expired|mismatch|could not/i.test(resumeStatus) ? (
+          <Text type="supporting" role="status">{resumeStatus}</Text>
+        ) : <InlineAlert
+          theme={theme}
+          tone={
+            /verified/i.test(resumeStatus) &&
+            !/failed|not found|expired|mismatch|could not/i.test(resumeStatus)
+              ? "success"
+              : /validat/i.test(resumeStatus)
+                ? "accent"
+                : "danger"
+          }
+        >
+          {resumeStatus}
+        </InlineAlert>
+      )}
 
       <HelpRequestModal
         open={helpOpen}
@@ -242,6 +164,6 @@ export function SessionActionsPanel({
         summary="I was disconnected and can't rejoin my contest session."
         details={{ source: "resume_flow", resume_status: resumeStatus }}
       />
-    </div>
+    </VStack>
   );
 }

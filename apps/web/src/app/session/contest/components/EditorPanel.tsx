@@ -543,7 +543,7 @@ export function EditorPanel({
               background: submitDisabled
                 ? "rgb(var(--accent-rgb) / 0.14)"
                 : "var(--color-accent-base)",
-              color: submitDisabled ? "rgba(255,255,255,0.58)" : "#ffffff",
+              color: submitDisabled ? "var(--color-text-secondary)" : "var(--color-on-accent)",
               fontSize: "13px",
               fontWeight: 600,
               fontFamily: "Inter, system-ui, sans-serif",

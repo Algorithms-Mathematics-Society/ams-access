@@ -5,7 +5,7 @@ target/
 **/*.rs.bk
 
 # Node
-node_modules/
+node_modules
 .pnpm-store/
 .turbo/
 *.tsbuildinfo
@@ -55,3 +55,13 @@ contest-area-03.md
 docs/
 markdowns/
 image/product-screens/
+
+# Local review captures and scratch files (not application assets)
+/.playwright-mcp/
+/disk-check.txt
+/*.png
+/*.jpg
+
+# Python review-script caches
+__pycache__/
+*.pyc

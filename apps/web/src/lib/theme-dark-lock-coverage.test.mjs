@@ -1,69 +1,55 @@
-// Regression guard for the .theme-dark-locked lock's TOKEN-COVERAGE completeness.
-//
-// The bug this guards (surfaced by home unification, step 1, as the lock's first all-element
-// consumer): `.theme-dark-locked` re-pins the theme tokens via a co-selector on the `.dark` block —
-// but that block only covers the `--theme-*` subset. The other light-overridden tokens
-// (--accent-rgb / --accent-light-rgb / --surface-* / --text-* / --verdict-*) live in :root + .light,
-// so under `<html class="light theme-dark-locked">` they leaked LIGHT (accents, input surfaces, text
-// tiers). A `--theme-bg`-only runtime check passed and missed it; only an ALL-token check catches it.
-//
-// The fix scopes the whole `.light` block to `html.light:not(.theme-dark-locked)` — so on a locked
-// route NO light token matches and every token falls back to :root + .dark = an exact dark render.
-// This test enforces that exclusion by construction: any `.light`-scoped rule that declares custom
-// properties MUST exclude `.theme-dark-locked`, or a token can leak onto a locked route again.
+// Route policy is tested by theme-bridge-core.test.mjs; this guards the CSS side:
+// no independently light-scoped alias may bypass that effective-mode policy.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { aliases, css, compatibilityCss, tokens, themeCss, value, rgba } from './theme-test-tokens.mjs';
 
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+const rules = [...(css + compatibilityCss).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m=>({selector:m[1],body:m[2]}));
 
-// Strip CSS comments first (so a selector's preceding comment can't satisfy the assertion for it).
-const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8").replace(
-  /\/\*[\s\S]*?\*\//g,
-  ""
-);
-
-// Top-level rule blocks: "selector { declarations }". Declaration bodies have no nested braces
-// (rgb(a / b) uses parens), so this simple split is sufficient for the .light token block.
-const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
-  sel: m[1].trim().replace(/\s+/g, " "),
-  body: m[2],
-}));
-
-// A "light token rule" = selector scoped to the `.light` class AND declaring >=1 custom property.
-const lightTokenRules = rules.filter((r) => /\.light\b/.test(r.sel) && /--[\w-]+\s*:/.test(r.body));
-
-test("guard is not vacuous: at least one .light rule declares custom properties", () => {
-  assert.ok(
-    lightTokenRules.length >= 1,
-    "expected globals.css to have a .light block declaring theme tokens"
-  );
-});
-
-test("no light token can apply on a dark-locked route (coverage-complete by construction)", () => {
-  for (const r of lightTokenRules) {
-    assert.match(
-      r.sel,
-      /:not\(\s*\.theme-dark-locked\s*\)/,
-      `A .light-scoped rule that declares custom properties must exclude locked routes ` +
-        `(":not(.theme-dark-locked)") — otherwise its light tokens leak onto /home, ` +
-        `/session/onboarding, /session/contest for a system-light user. Offending selector: "${r.sel}"`
-    );
+test('light-specific legacy declarations cannot leak onto dark-locked routes', () => {
+  for (const rule of rules.filter(r => /\.light\b/.test(r.selector) && /--[\w-]+\s*:/.test(r.body))) {
+    assert.match(rule.selector, /:not\(\s*\.theme-dark-locked\s*\)/, rule.selector);
+  }
+  // The new guard is non-vacuous even without light-only aliases: every formerly
+  // leaking color/surface/verdict role must resolve to the canonical mode pair.
+  for (const token of ['--surface-2','--text-dim','--verdict-ac','--theme-bg','--theme-accent']) {
+    assert.ok(aliases[token], `${token} lost its migration alias`);
+    assert.notEqual(value(token,'light'),value(token,'dark'), `${token} lost effective-mode coverage`);
   }
 });
 
-test("the previously-leaking tokens are inside the excluded .light block", () => {
-  const lightBody = lightTokenRules.map((r) => r.body).join("\n");
-  for (const tok of [
-    "--accent-rgb",
-    "--accent-light-rgb",
-    "--surface-2",
-    "--text-dim",
-    "--verdict-ac",
-  ]) {
-    assert.match(
-      lightBody,
-      new RegExp(tok + "\\s*:"),
-      `expected ${tok} to be declared in the .light block, so :not(.theme-dark-locked) neutralizes it when locked`
-    );
+test('canonical theme colors are owned by the generated theme, not legacy globals', () => {
+  for (const name of Object.keys(tokens).filter(name=>name.startsWith('--color-'))) {
+    assert.doesNotMatch(css, new RegExp(name+'\\s*:'), `${name} has competing ownership`);
+    assert.ok(themeCss.includes(`${name}: ${tokens[name]};`), `${name} missing from generated stylesheet`);
+  }
+});
+
+test('migration alias graph has no self-reference or cycles', () => {
+  for (const name of Object.keys(aliases)) {
+    const visited = new Set();
+    let current = name;
+    while (aliases[current]) {
+      assert(!visited.has(current), `cyclic alias beginning at ${name}: ${[...visited,current].join(' -> ')}`);
+      visited.add(current);
+      current = aliases[current].slice(4,-1);
+    }
+  }
+});
+
+test('root provider inherits pre-paint policy instead of imposing SSR default dark', () => {
+  assert.ok(rules.some(r => /body\s*>\s*\[data-astryx-theme="access"\]/.test(r.selector) && /color-scheme\s*:\s*inherit/.test(r.body)));
+  assert.match(css, /@layer\s+reset,\s*theme,\s*base,\s*astryx-base,\s*astryx-theme,\s*components,\s*utilities/);
+});
+
+test('legacy accent triplets match canonical mode colors and exclude dark locks', () => {
+  const dark = compatibilityCss.match(/:root\s*\{([^}]+)\}/)?.[1];
+  const light = compatibilityCss.match(/html\.light:not\(\.theme-dark-locked\)\s*\{([^}]+)\}/)?.[1];
+  assert.ok(dark && light, 'Both compatibility facets and the route-lock exclusion must exist');
+  for (const [mode, declarations] of [['light',light],['dark',dark]]) {
+    for (const [alias,canonical] of [['--accent-rgb','--color-accent'],['--accent-light-rgb','--color-text-accent']]) {
+      const actual = declarations.match(new RegExp(alias+':\\s*([^;]+);'))?.[1].trim().split(/\s+/).map(Number);
+      assert.deepEqual(actual,rgba(value(canonical,mode)).slice(0,3));
+    }
   }
 });

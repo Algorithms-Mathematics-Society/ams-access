@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, memo } from "react";
 import { useRouter } from "next/navigation";
-import { Clock3, ListChecks, Loader2, Play, ShieldCheck } from "lucide-react";
+import { Clock3, ListChecks, Loader2, ShieldCheck } from "lucide-react";
 import {
   getThemeColors,
   getContestEntryState,
@@ -10,41 +10,12 @@ import {
   formatDurationUntil,
 } from "./utils";
 import { Button, ContestStatePill } from "./ui-primitives";
-import { STORAGE_KEYS } from "@/constants/storage-keys";
-import type {
-  InvitedContest,
-  ContestantReadinessContext,
-  ContestantReadinessStatus,
-} from "./types";
-
-function readinessDotColor(status: ContestantReadinessStatus): string {
-  switch (status) {
-    case "ready":
-      return "var(--home-status-ok-dot)";
-    case "needs_action":
-      return "var(--home-status-error-dot)";
-    case "advisory_warning":
-      return "var(--home-status-warn-dot)";
-    case "blocked_by_policy":
-      return "var(--home-status-error-dot)";
-    default:
-      return "rgb(var(--accent-rgb) / 0.7)";
-  }
-}
-function readinessTextColor(status: ContestantReadinessStatus): string {
-  switch (status) {
-    case "ready":
-      return "var(--home-status-ok)";
-    case "needs_action":
-      return "var(--theme-error-text)";
-    case "advisory_warning":
-      return "var(--home-status-warn)";
-    case "blocked_by_policy":
-      return "var(--theme-error-text)";
-    default:
-      return "var(--theme-accent-text)";
-  }
-}
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { Token } from "@astryxdesign/core/Token";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
+import type { InvitedContest, ContestantReadinessContext } from "./types";
 
 export const ScheduledContestCard = memo(
   function ScheduledContestCard({
@@ -261,7 +232,7 @@ export const ScheduledContestCard = memo(
                   ? "var(--home-status-warn-bg)"
                   : "var(--home-overlay-disabled)",
               color: canJoin
-                ? "#ffffff"
+                ? "var(--color-on-accent)"
                 : phase === "too_early"
                   ? "var(--home-status-warn)"
                   : themeColors.textMuted,
@@ -297,19 +268,18 @@ export const ActiveContestCard = memo(
     theme,
     col,
     readinessContext,
+    isHighlighted = false,
   }: {
     c: InvitedContest;
     onPreflight: (contestId: string, type: "new" | "resume") => void;
     theme: "dark" | "light";
     col: { dot: string; bg: string; border: string };
     readinessContext?: ContestantReadinessContext;
+    isHighlighted?: boolean;
   }) {
     const router = useRouter();
     const [now, setNow] = useState(() => Date.now());
-    const [hovered, setHovered] = useState(false);
-    const [btnHovered, setBtnHovered] = useState(false);
     const [entering, setEntering] = useState(false);
-    const themeColors = useMemo(() => getThemeColors(theme), [theme]);
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
 
@@ -348,72 +318,6 @@ export const ActiveContestCard = memo(
         if (timerId) clearTimeout(timerId);
       };
     }, [c]);
-
-    const entryTone = useMemo(() => {
-      switch (entryState.phase) {
-        case "too_early":
-          return {
-            rail: "var(--home-status-warn-dot)",
-            statusColor: "var(--home-status-warn)",
-            statusBg: "var(--home-status-warn-bg)",
-            statusBorder: "var(--home-status-warn-border-24)",
-            actionBg: "var(--home-status-warn-bg)",
-            actionBorder: "var(--home-status-warn-border-35)",
-            actionText: "var(--home-status-warn)",
-          };
-        case "verification_open":
-          return {
-            rail: themeColors.accent,
-            statusColor: themeColors.accentText,
-            statusBg: themeColors.accentLight,
-            statusBorder: themeColors.accentBorder,
-            actionBg: "var(--color-accent-base)",
-            actionBorder: "var(--color-accent-base)",
-            actionText: "#ffffff",
-          };
-        case "live":
-          return {
-            rail: col.dot,
-            statusColor: col.dot,
-            statusBg: col.bg,
-            statusBorder: col.border,
-            actionBg: "var(--color-accent-base)",
-            actionBorder: "var(--color-accent-base)",
-            actionText: "#ffffff",
-          };
-        case "ended":
-          return {
-            rail: "var(--home-overlay-rail)",
-            statusColor: themeColors.textMuted,
-            statusBg: "var(--home-overlay-faint)",
-            statusBorder: themeColors.border,
-            actionBg: "var(--home-overlay-faint)",
-            actionBorder: themeColors.border,
-            actionText: themeColors.textMuted,
-          };
-        case "metadata_unavailable":
-        case "blocked":
-          return {
-            rail: "var(--home-status-error-dot)",
-            statusColor: "var(--theme-error-text)",
-            statusBg: "var(--home-status-error-bg)",
-            statusBorder: "var(--home-status-error-border-24)",
-            actionBg: "var(--home-status-error-bg)",
-            actionBorder: "var(--home-status-error-border-28)",
-            actionText: "var(--theme-error-text)",
-          };
-        default:
-          return {
-            rail: themeColors.textMuted,
-            statusColor: themeColors.textMuted,
-            statusBg: "var(--home-overlay-faint)",
-            statusBorder: themeColors.border,
-            actionBg: "var(--home-overlay-faint)",
-            actionBorder: themeColors.border,
-            actionText: themeColors.textMuted,
-          };
-      }
-    }, [col.bg, col.border, col.dot, entryState.phase, themeColors]);
 
     // The time-to-next-state readout used by the meta line.
     const hero = (() => {
@@ -463,206 +367,114 @@ export const ActiveContestCard = memo(
     const showHelper = ["blocked", "metadata_unavailable", "draft"].includes(entryState.phase);
     const resultsReady = entryState.phase === "ended" && resultsUnlocked;
 
+    const statusColor =
+      entryState.phase === "live" && !c.is_practice
+        ? "green"
+        : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable"
+          ? "red"
+          : entryState.phase === "too_early"
+            ? "yellow"
+            : "gray";
+
     return (
-      <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onFocus={() => setHovered(true)}
-        onBlur={() => setHovered(false)}
+      <VStack
+        as="li"
+        data-dashboard-contest
+        id={`home-contest-${encodeURIComponent(c.id)}`}
+        tabIndex={-1}
+        aria-label={c.title}
+        data-highlighted={isHighlighted || undefined}
+        gap={3}
+        paddingBlock={6}
         style={{
-          background: hovered && canEnter ? "var(--surface-2)" : "var(--surface-1)",
-          border: `1px solid ${
-            hovered && canEnter ? "rgb(var(--accent-rgb) / 0.25)" : themeColors.border
-          }`,
-          borderRadius: "var(--radius-md)",
-          padding: "16px 20px",
-          transition: "background var(--transition-fast), border-color var(--transition-fast)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
+          minWidth: 0,
+          scrollMarginBlock: "var(--spacing-6)",
+          backgroundColor: isHighlighted ? "var(--color-accent-muted)" : undefined,
+          borderBlockEnd: "var(--border-width) solid var(--color-border)",
         }}
       >
-        {/* Header row: title + status chip */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: "12px",
-          }}
-        >
-          <h3
-            style={{
-              fontSize: "16px",
-              fontWeight: 600,
-              color: themeColors.text,
-              letterSpacing: "-0.01em",
-              lineHeight: 1.3,
-              margin: 0,
-              fontFamily: "var(--font-sans), system-ui, sans-serif",
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {c.title}
-          </h3>
-          <ContestStatePill phase={entryState.phase} theme={theme}>
-            {entryState.statusLabel}
-          </ContestStatePill>
-        </div>
-
-        {/* Single muted meta line: date · status · N Questions */}
-        <p
-          style={{
-            fontSize: "12px",
-            color: themeColors.textMuted,
-            margin: 0,
-            fontFamily: "'JetBrains Mono', monospace",
-            fontVariantNumeric: "tabular-nums",
-            lineHeight: 1.4,
-          }}
-        >
-          {cardDate} · {metaStatus} · {c.question_count}{" "}
-          {c.question_count === 1 ? "Question" : "Questions"}
-        </p>
-
-        {/* Action row */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: "10px",
-            marginTop: "2px",
-          }}
-        >
-          <Button
-            type="button"
-            onClick={() => {
-              if (entering) return;
-              if (resultsReady) {
-                // No identity in the URL. Results are own-only and the
-                // participant token says whose they are; an `?email=` param
-                // was both redundant and an invitation to change it.
-                router.push(`/results?contestId=${encodeURIComponent(c.id)}`);
-              } else if (canEnter) {
-                setEntering(true);
-                try {
-                  onPreflight(c.id, entryState.sessionType);
-                } finally {
-                  // onPreflight is async-like (navigates away); reset only if still mounted.
-                  // Use a short timeout so the spinner shows during navigation.
-                  setTimeout(() => setEntering(false), 5000);
-                }
-              }
-            }}
-            disabled={(!canEnter && !resultsReady) || entering}
-            theme={theme}
-            variant={
-              canEnter || resultsReady
-                ? "primary"
-                : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable"
-                  ? "danger"
-                  : "secondary"
-            }
-            size="small"
-            onMouseEnter={() => {
-              if (canEnter) setBtnHovered(true);
-            }}
-            onMouseLeave={() => setBtnHovered(false)}
-            onFocus={() => {
-              if (canEnter) setBtnHovered(true);
-            }}
-            onBlur={() => setBtnHovered(false)}
-            style={{
-              border: `1px solid ${btnHovered && canEnter ? "var(--color-accent-light)" : entryTone.actionBorder}`,
-              background: btnHovered && canEnter ? "var(--color-accent-base)" : entryTone.actionBg,
-              color: entryTone.actionText,
-              transition: "background var(--transition-fast), border-color var(--transition-fast)",
-              cursor: entering ? "wait" : undefined,
-            }}
-          >
-            {entering ? (
-              <Loader2
-                size={13}
-                strokeWidth={2}
-                style={{ animation: "spin 600ms linear infinite" }}
-              />
-            ) : (
-              canEnter && (
-                <Play
-                  size={13}
-                  strokeWidth={2}
-                  style={{
-                    transition: "transform var(--transition-fast)",
-                    transform: btnHovered ? "translateX(2px)" : "none",
-                  }}
-                />
-              )
+        <VStack gap={3} style={{ minWidth: 0 }}>
+          <HStack gap={3} wrap="wrap" align="center">
+            <Token label={entryState.phase === "draft" ? "Not published yet" : entryState.statusLabel} color={statusColor} size="sm" />
+            {c.org_name && (
+              <Text type="supporting" maxLines={1} style={{ minWidth: 0, maxWidth: "100%" }}>
+                {c.org_name}
+              </Text>
             )}
-            {entryState.phase === "ended" ? "View Results" : entryState.ctaLabel}
-          </Button>
-        </div>
-
-        {/* Gating helper for blocked / metadata_unavailable / draft */}
-        {showHelper && (
-          <div
-            style={{
-              borderTop: `1px solid ${themeColors.border}`,
-              paddingTop: "10px",
-            }}
-          >
-            <span
-              style={{
-                color: entryTone.statusColor,
-                fontSize: "12px",
-                lineHeight: 1.45,
-              }}
+          </HStack>
+          <Heading level={2} accessibilityLevel={3} maxLines={2} wordBreak="break-word">
+            {c.title}
+          </Heading>
+        </VStack>
+        <VStack gap={4} style={{ minWidth: 0 }}>
+          {c.description && (
+            <Text color="secondary" maxLines={2}>
+              {c.description}
+            </Text>
+          )}
+          <HStack gap={4} justify="end" align="center" wrap="wrap">
+            <MetadataList
+              orientation="horizontal"
+              style={{ flex: "1 1 calc(var(--spacing-10) * 5)", minWidth: 0 }}
             >
-              {entryState.actionHelper}
-            </span>
-          </div>
-        )}
-
-        {/* Readiness context — "fix N checks before entering" gating hint */}
-        {readinessContext && readinessContext.status !== "checking" && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "7px",
-              paddingTop: "10px",
-              borderTop: `1px solid ${themeColors.border}`,
-            }}
-          >
-            <div
-              style={{
-                width: "5px",
-                height: "5px",
-                borderRadius: "50%",
-                background: readinessDotColor(readinessContext.status),
-                flexShrink: 0,
+              <MetadataListItem label={c.is_practice ? "Format" : "Date"}>
+                {c.is_practice ? "Practice · untimed" : cardDate}
+              </MetadataListItem>
+              {!c.is_practice && (
+                <MetadataListItem label="Starts">
+                  <VStack gap={1}>
+                    <Text hasTabularNumbers>{entryState.contestStartsAt}</Text>
+                    <Text type="supporting" hasTabularNumbers>{metaStatus}</Text>
+                  </VStack>
+                </MetadataListItem>
+              )}
+              <MetadataListItem label="Questions">
+                {c.question_count} {c.question_count === 1 ? "question" : "questions"}
+              </MetadataListItem>
+            </MetadataList>
+            <AstryxButton
+              onClick={() => {
+                if (entering) return;
+                if (resultsReady) {
+                  // No identity in the URL. Results are own-only and the
+                  // participant token says whose they are; an `?email=` param
+                  // was both redundant and an invitation to change it.
+                  router.push(`/results?contestId=${encodeURIComponent(c.id)}`);
+                } else if (canEnter) {
+                  setEntering(true);
+                  try {
+                    onPreflight(c.id, entryState.sessionType);
+                  } finally {
+                    // onPreflight is async-like (navigates away); reset only if still mounted.
+                    // Use a short timeout so the spinner shows during navigation.
+                    setTimeout(() => setEntering(false), 5000);
+                  }
+                }
               }}
+              label={
+                entering
+                  ? "Opening..."
+                  : entryState.phase === "ended"
+                    ? "View Results"
+                    : entryState.phase === "draft"
+                      ? "Not published yet"
+                      : entryState.ctaLabel
+              }
+              isDisabled={(!canEnter && !resultsReady) || entering}
+              isLoading={entering}
+              variant={canEnter || resultsReady ? "primary" : "secondary"}
+              tooltip={!canEnter && !resultsReady ? (entryState.phase === "draft" ? "This contest is not published yet" : entryState.disabledTitle) : undefined}
             />
-            <span
-              style={{
-                fontSize: "11px",
-                color: readinessTextColor(readinessContext.status),
-                lineHeight: 1.4,
-              }}
-            >
-              {readinessContext.message}
-            </span>
-          </div>
-        )}
-      </div>
+          </HStack>
+          {showHelper && <Text type="supporting">{entryState.actionHelper}</Text>}
+        </VStack>
+      </VStack>
     );
   },
   (prev, next) =>
     prev.c === next.c &&
     prev.theme === next.theme &&
+    prev.isHighlighted === next.isHighlighted &&
     prev.col.dot === next.col.dot &&
     prev.col.bg === next.col.bg &&
     prev.col.border === next.col.border &&

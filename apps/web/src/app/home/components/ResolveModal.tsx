@@ -3,7 +3,13 @@
 import { useMemo, useState } from "react";
 import { invoke } from "@ams/api-client";
 import { getThemeColors } from "./utils";
-import { useFocusTrap } from "./hooks";
+import { Button } from "./ui-primitives";
+import { AccessDialog } from "@/components/AccessDialog";
+import { VStack, HStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Banner } from "@astryxdesign/core/Banner";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { TelemetryQueryState } from "./types";
 
@@ -261,7 +267,6 @@ export function ResolveModal({
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const c = getThemeColors(theme);
-  const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
   const flow = useMemo(
     () => (checkKey ? buildFlow(checkKey, telemetry) : null),
     [checkKey, telemetry]
@@ -346,289 +351,94 @@ export function ResolveModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="resolve-modal-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 10000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.6)",
-        backdropFilter: "blur(16px)",
-        animation: "fadeIn 280ms var(--ease-cinematic) forwards",
-        padding: "24px",
-      }}
-    >
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        style={{
-          maxWidth: "560px",
-          width: "100%",
-          borderRadius: "var(--radius-lg)",
-          padding: "26px",
-          background: "var(--home-modal-surface)",
-          border: `1px solid ${c.border}`,
-          boxShadow: "var(--elevation-3)",
-        }}
-      >
-        <div
-          style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "18px" }}
-        >
-          <div
-            style={{
-              width: "38px",
-              height: "38px",
-              borderRadius: "var(--radius-md)",
-              background: "var(--home-status-warn-bg-10)",
-              border: "1px solid var(--home-status-warn-border)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-              color: "var(--home-status-warn)",
-              fontWeight: 800,
-            }}
-          >
-            !
-          </div>
-          <div>
-            <h3
-              id="resolve-modal-title"
-              style={{ color: c.text, margin: "0 0 7px", fontSize: "18px", fontWeight: 750 }}
-            >
-              {activeFlow.title}
-            </h3>
-            <p style={{ color: c.textMutedStrong, lineHeight: 1.55, margin: 0, fontSize: "13px" }}>
-              {activeFlow.problem}
-            </p>
-          </div>
-        </div>
+    <>
+      <AccessDialog open={isOpen} onClose={onClose} title={activeFlow.title}
+        subtitle={activeFlow.problem} labelId="resolve-modal-title"
+        width="calc(var(--spacing-10) * 14)">
+        <VStack gap={6}>
+          <VStack as="section" gap={3}>
+            <Heading level={4} accessibilityLevel={3}>What to do</Heading>
+            <List listStyle="decimal" density="balanced">
+              {activeFlow.steps.map((step) => (
+                <ListItem key={step} label={<Text color="secondary">{step}</Text>} />
+              ))}
+            </List>
+          </VStack>
+          <VStack as="section" gap={3}>
+            <Heading level={4} accessibilityLevel={3}>Diagnostic details</Heading>
+            <MetadataList>
+              {activeFlow.details.map((item) => (
+                <MetadataListItem key={item.label} label={item.label}>
+                  <Text style={{ overflowWrap: "anywhere" }}>{item.value}</Text>
+                </MetadataListItem>
+              ))}
+            </MetadataList>
+          </VStack>
+          {actionNotice && <Banner status="warning" title={actionNotice} />}
 
-        <section style={{ marginBottom: "18px" }}>
-          <h4 style={{ color: c.text, fontSize: "12px", fontWeight: 700, margin: "0 0 10px" }}>
-            What to do
-          </h4>
-          <ol
-            style={{
-              margin: 0,
-              paddingLeft: "20px",
-              color: c.textMutedStrong,
-              fontSize: "13px",
-              lineHeight: 1.65,
-            }}
-          >
-            {activeFlow.steps.map((step) => (
-              <li key={step} style={{ marginBottom: "5px" }}>
-                {step}
-              </li>
-            ))}
-          </ol>
-        </section>
-
-        <section
-          style={{
-            border: `1px solid ${c.border}`,
-            borderRadius: "var(--radius-md)",
-            background: "var(--home-modal-inner)",
-            padding: "13px 14px",
-            marginBottom: "20px",
-          }}
-        >
-          <h4 style={{ color: c.text, fontSize: "12px", fontWeight: 700, margin: "0 0 10px" }}>
-            Diagnostic details
-          </h4>
-          <div style={{ display: "grid", gap: "8px" }}>
-            {activeFlow.details.map((item) => (
-              <div
-                key={item.label}
-                style={{ display: "flex", justifyContent: "space-between", gap: "14px" }}
-              >
-                <span style={{ color: c.textMuted, fontSize: "12px" }}>{item.label}</span>
-                <span
-                  style={{
-                    color: c.textMutedStrong,
-                    fontSize: "12px",
-                    textAlign: "right",
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >
-                  {item.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {actionNotice && (
-          <p
-            role="alert"
-            style={{
-              margin: "0 0 14px",
-              padding: "10px 12px",
-              borderRadius: "var(--radius-md)",
-              background: "var(--home-status-warn-bg-10)",
-              border: "1px solid var(--home-status-warn-border-32)",
-              color: "var(--home-status-warn)",
-              fontSize: "12.5px",
-              lineHeight: 1.55,
-            }}
-          >
-            {actionNotice}
-          </p>
-        )}
-
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            onClick={copySupportDetails}
-            style={{
-              height: "40px",
-              padding: "0 14px",
-              background: "transparent",
-              color: c.textMutedStrong,
-              border: `1px solid ${c.border}`,
-              borderRadius: "var(--radius-md)",
-              fontWeight: 600,
-              fontSize: "13px",
-              cursor: "pointer",
-            }}
-          >
+        <HStack gap={3} wrap="wrap" justify="end">
+          <Button theme={theme} variant="secondary" type="button" onClick={copySupportDetails}>
             {copied ? "Copied" : "Copy support details"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setHelpOpen(true)}
-            style={{
-              height: "40px",
-              padding: "0 14px",
-              background: "transparent",
-              color: c.textMutedStrong,
-              border: `1px solid ${c.border}`,
-              borderRadius: "var(--radius-md)",
-              fontWeight: 600,
-              fontSize: "13px",
-              cursor: "pointer",
-            }}
-          >
+          </Button>
+          <Button theme={theme} variant="secondary" type="button" onClick={() => setHelpOpen(true)}>
             Get help
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              height: "40px",
-              padding: "0 14px",
-              background: "transparent",
-              color: c.textMuted,
-              border: `1px solid ${c.border}`,
-              borderRadius: "var(--radius-md)",
-              fontWeight: 500,
-              fontSize: "13px",
-              cursor: "pointer",
-            }}
-          >
+          </Button>
+          <Button theme={theme} variant="secondary" type="button" onClick={onClose}>
             Close
-          </button>
+          </Button>
           {activeFlow.closeAllApps &&
             (confirmingClose ? (
               <>
-                <button
+                <Button
+                  theme={theme}
+                  variant="secondary"
                   type="button"
                   onClick={() => setConfirmingClose(false)}
                   disabled={closingApps}
-                  style={{
-                    height: "40px",
-                    padding: "0 14px",
-                    background: "transparent",
-                    color: c.textMuted,
-                    border: `1px solid ${c.border}`,
-                    borderRadius: "var(--radius-md)",
-                    fontWeight: 500,
-                    fontSize: "13px",
-                    cursor: "pointer",
-                  }}
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
+                  theme={theme}
+                  variant="danger"
                   type="button"
                   onClick={handleCloseAll}
                   disabled={closingApps}
                   aria-label={`Confirm close: ${activeFlow.closeAllApps.join(", ")}`}
-                  style={{
-                    height: "40px",
-                    padding: "0 16px",
-                    background: "var(--home-status-error-bg-12)",
-                    color: "var(--home-status-error)",
-                    border: "1px solid var(--home-status-error-border-35)",
-                    borderRadius: "var(--radius-md)",
-                    fontWeight: 700,
-                    fontSize: "13px",
-                    cursor: closingApps ? "not-allowed" : "pointer",
-                    opacity: closingApps ? 0.72 : 1,
-                  }}
                 >
                   {closingApps
                     ? "Closing…"
                     : `Confirm — close ${activeFlow.closeAllApps.join(", ")}?`}
-                </button>
+                </Button>
               </>
             ) : (
-              <button
+              <Button
+                theme={theme}
+                variant="danger"
                 type="button"
                 onClick={handleCloseAll}
                 disabled={busy || closingApps}
                 aria-label="Close all restricted apps automatically"
-                style={{
-                  height: "40px",
-                  padding: "0 16px",
-                  background: "var(--home-status-error-bg-10)",
-                  color: "var(--home-status-error)",
-                  border: "1px solid var(--home-status-error-border)",
-                  borderRadius: "var(--radius-md)",
-                  fontWeight: 700,
-                  fontSize: "13px",
-                  cursor: busy || closingApps ? "not-allowed" : "pointer",
-                  opacity: busy || closingApps ? 0.72 : 1,
-                }}
               >
                 Close all ▸
-              </button>
+              </Button>
             ))}
-          <button
+          <Button
+            theme={theme}
+            variant="primary"
             type="button"
             onClick={handlePrimaryAction}
             disabled={busy}
-            style={{
-              height: "40px",
-              padding: "0 16px",
-              background:
-                activeFlow.primaryAction === "retry"
-                  ? "var(--home-status-warn-bg-14)"
-                  : "var(--color-accent-base)",
-              color: activeFlow.primaryAction === "retry" ? "var(--home-status-warn)" : "#ffffff",
-              border: `1px solid ${activeFlow.primaryAction === "retry" ? "var(--home-status-warn-border-36)" : "var(--color-accent-base)"}`,
-              borderRadius: "var(--radius-md)",
-              fontWeight: 700,
-              fontSize: "13px",
-              cursor: busy ? "not-allowed" : "pointer",
-              opacity: busy ? 0.72 : 1,
-            }}
           >
             {busy
               ? activeFlow.primaryAction === "elevate"
                 ? "Waiting for approval..."
                 : "Checking..."
               : activeFlow.primaryLabel}
-          </button>
-        </div>
-      </div>
-
+          </Button>
+        </HStack>
+        </VStack>
+      </AccessDialog>
       <HelpRequestModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
@@ -643,6 +453,6 @@ export function ResolveModal({
           ),
         }}
       />
-    </div>
+    </>
   );
 }

@@ -29,10 +29,8 @@ const blackAlpha = (s) => [...s.matchAll(/rgba\(\s*0\s*,\s*0\s*,\s*0/gi)];
 const RAW_STATUS =
   /#(ef4444|fca5a5|f87171|f59e0b|fbbf24|fcd34d|fde047|4ade80|22c55e|86efac|a1a1aa|c084fc)\b/gi;
 const rawStatusHex = (s) => [...s.matchAll(RAW_STATUS)];
-// on-neutral #ffffff = a #ffffff NOT on a var(--color-accent-base) surface. We assert the count of
-// bare #ffffff equals the known KEEP-set count (ledger §4: on-accent only). Any NEW bare #ffffff
-// tips the count and fails — pointing the reviewer at it to classify.
-const KEEP_FFFFFF = 14; // ledger §4 on-accent sites; update deliberately if the accent-button set changes
+// Dashboard buttons now inherit Astryx tokens; no literal white hover exceptions remain.
+const KEEP_FFFFFF = 0;
 const anyFfffff = (s) => [...s.matchAll(/#ffffff\b/gi)];
 
 const files = homeFiles();
@@ -50,14 +48,14 @@ test("NEUTRAL completeness: no opaque zinc/gray hex in app/home", () => {
   );
   assert.equal(hits.length, 0, `opaque zinc remains: ${hits.join(", ")}`);
 });
-test("NEUTRAL completeness: black-alpha rgba(0,0,0,…) only the 2 scrims", () => {
-  assert.equal(blackAlpha(all).length, 2, "black-alpha count != 2 (KEEP scrims only)");
+test("NEUTRAL completeness: no legacy black-alpha scrims", () => {
+  assert.equal(blackAlpha(all).length, 0, "Astryx Dialog owns its tokenized backdrop; no legacy scrims remain");
 });
-test("NEUTRAL completeness: bare #ffffff count == KEEP set (on-accent only)", () => {
+test("NEUTRAL completeness: no bare #ffffff foregrounds", () => {
   assert.equal(
     anyFfffff(all).length,
     KEEP_FFFFFF,
-    "a new bare #ffffff appeared — classify on-accent (keep) vs on-neutral (fold)"
+    "a bare #ffffff appeared — use a theme-aware foreground"
   );
 });
 test("STATUS completeness: no raw status hex literal in app/home", () => {

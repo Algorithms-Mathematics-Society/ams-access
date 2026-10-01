@@ -2,7 +2,7 @@
 // timing utilities, media helpers, and the stage table. Extracted from
 // page.tsx (first tranche of the per-stage split).
 
-import { resolveApiBase } from "@/lib/api-base";
+import { allowlistHostFor, resolveApiBase } from "@/lib/api-base";
 
 export const API_URL = resolveApiBase();
 export const BLAZEFACE_MODEL_URL = "/models/blazeface/model.json";
@@ -13,11 +13,14 @@ export function getNetworkProbeHost() {
   return "www.google.com";
 }
 
+/**
+ * Throws rather than guessing. The previous body fell back to `"localhost"`,
+ * which resolves to a valid IP and therefore built a loopback-only firewall
+ * that reported itself engaged. Every caller is inside a try/catch that fails
+ * closed, which is the right answer when we cannot tell what to allow.
+ */
 export function getNetworkLockdownAllowlistHost() {
-  try {
-    return new URL(API_URL).hostname;
-  } catch {}
-  return "localhost";
+  return allowlistHostFor(API_URL);
 }
 
 export function getOrCreateDeviceId() {

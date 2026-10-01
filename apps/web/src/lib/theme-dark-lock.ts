@@ -1,6 +1,7 @@
 "use client";
 import { useLayoutEffect } from "react";
 import { usePathname } from "next/navigation";
+import { syncThemeAttributes } from "./theme-bridge-core";
 import { isRouteDarkLocked } from "./theme-dark-lock-core";
 
 /** JS facet: a not-yet-tokenized ternary screen clamps its theme read to dark while this is true. */
@@ -20,6 +21,7 @@ export function DarkLockController(): null {
       "theme-dark-locked",
       isRouteDarkLocked(pathname ?? "/")
     );
+    syncThemeAttributes();
   }, [pathname]);
   return null;
 }

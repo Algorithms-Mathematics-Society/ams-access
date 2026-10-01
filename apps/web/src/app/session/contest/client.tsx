@@ -2997,7 +2997,7 @@ export default function ContestPageClient() {
                   style={{
                     padding: "10px 24px",
                     background: "var(--color-accent-base)",
-                    color: "#fff",
+                    color: "var(--color-on-accent)",
                     border: "none",
                     borderRadius: "var(--radius-md)",
                     fontSize: 14,
@@ -3101,7 +3101,7 @@ export default function ContestPageClient() {
                   style={{
                     padding: "10px 24px",
                     background: "var(--color-accent-base)",
-                    color: "#fff",
+                    color: "var(--color-on-accent)",
                     border: "none",
                     borderRadius: "var(--radius-md)",
                     fontSize: 14,
@@ -3158,7 +3158,7 @@ export default function ContestPageClient() {
                   marginTop: 8,
                   padding: "10px 24px",
                   background: "var(--color-accent-deep)",
-                  color: "#fff",
+                  color: "var(--color-on-accent)",
                   border: "none",
                   borderRadius: "var(--radius-sm)",
                   fontSize: 14,
@@ -3181,7 +3181,7 @@ export default function ContestPageClient() {
                   style={{
                     padding: "10px 24px",
                     background: "var(--color-accent-base)",
-                    color: "#fff",
+                    color: "var(--color-on-accent)",
                     border: "none",
                     borderRadius: "var(--radius-md)",
                     fontSize: 14,

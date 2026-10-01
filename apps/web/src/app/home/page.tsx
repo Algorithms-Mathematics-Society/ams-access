@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, LayoutGrid, Settings as SettingsIcon } from "lucide-react";
+
 import {
   applyOrganizerOverrides,
   fetchOrganizerOverrides,
@@ -51,11 +51,16 @@ import {
   getBrowserMediaAvailability,
   fetchWithTimeout,
   readinessFromReport,
-  getThemeColors,
   getVerificationWindowMinutes,
 } from "./components/utils";
 
 // ── Components ─────────────────────────────────────────────────
+import { DashboardShell, DashboardColumns } from "./components/DashboardShell";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { HelpRequestModal } from "@/components/HelpRequestModal";
+import { useHomeContestNavigation } from "./components/use-home-contest-navigation";
+import { ContestCalendar } from "./components/ContestCalendar";
 import { ContestsPanel } from "./components/ContestsPanel";
 import { SessionActionsPanel } from "./components/SessionActionsPanel";
 import { ReadinessWidget } from "./components/ReadinessPanel";
@@ -65,24 +70,6 @@ import { SecurityOperationsLog } from "./components/SecurityOperationsLog";
 import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
 import { deriveContestantReadiness } from "./components/readiness-context";
-
-const NAV_ITEMS = [
-  {
-    id: "overview",
-    label: "Home",
-    icon: <LayoutGrid size={16} strokeWidth={1.8} />,
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    icon: <SettingsIcon size={16} strokeWidth={1.8} />,
-  },
-  {
-    id: "diagnostics",
-    label: "Device",
-    icon: <Activity size={16} strokeWidth={1.8} />,
-  },
-];
 
 /** The participant API's contest shape, in the one the home UI already reads.
  *
@@ -114,12 +101,11 @@ export default function HomePage() {
   // CSS lock can't constrain — so clamp the READ to dark while locked. Read-time derivation, NOT a
   // writer: canonical stays the sole theme state. At the step-3 flip, delete the clamp.
   const theme = darkLocked ? "dark" : canonicalTheme;
-  const [activeNav, setActiveNav] = useState("overview");
+  const [activeNav, setActiveNav] = useState<"overview" | "settings" | "diagnostics">("overview");
   const [signingOut, setSigningOut] = useState(false);
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
-  const [sidebarHovered, setSidebarHovered] = useState(false);
-  // Open when pinned (clicked) or while hovered — collapse otherwise.
-  const sidebarOpen = sidebarExpanded || sidebarHovered;
+  const [contestSearch, setContestSearch] = useState("");
+  const [homeHelpOpen, setHomeHelpOpen] = useState(false);
+  const { highlightedContestId, showContest } = useHomeContestNavigation(setContestSearch, activeNav === "overview");
   const [contests, setContests] = useState<InvitedContest[]>([]);
   const [contestsLoading, setContestsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -257,8 +243,6 @@ export default function HomePage() {
     },
     [appendSecurityEvent]
   );
-
-  const c = useMemo(() => getThemeColors(theme), [theme]);
 
   const contestantReadiness = useMemo(
     () =>
@@ -780,458 +764,116 @@ export default function HomePage() {
     setTimeout(() => router.push("/"), 600);
   }
 
-  // suppress unused-var lint for state vars kept per brief (rendering uses always-open rail)
-  void sidebarOpen;
-  void setSidebarExpanded;
-  void setSidebarHovered;
   void closeFailedApps;
 
-  return (
-    <div
-      className="theme-transition"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        overflow: "hidden",
-        fontFamily: "'Geist', 'Inter', system-ui, sans-serif",
-        background: c.bg,
-        color: c.text,
+  // Match the existing resume guards; keep position stable while the action runs.
+  const prioritizeRecovery = Boolean(activeSession && resumeVerification === "verified" &&
+    String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING");
+  const contestsPanel = (
+    <ContestsPanel
+      key="contests"
+      onRefresh={() => loadContests()}
+      refreshing={sessionsRefreshing}
+      highlightedContestId={highlightedContestId}
+      contests={contests}
+      loading={contestsLoading}
+      theme={theme}
+      searchQuery={contestSearch}
+      onSearchChange={setContestSearch}
+      error={
+        sessionsError ??
+        (invitedContestsQuery.error ? "Could not load your contests." : null)
+      }
+      onPreflight={(contestId, type) => {
+        setPreflightContestId(contestId);
+        setPreflightSessionType(type);
       }}
-    >
-      {/* ── Top Bar — full-width: brand · search · profile ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          height: "56px",
-          flexShrink: 0,
-          borderBottom: `1px solid ${c.border}`,
-          background: c.sidebarBg,
-        }}
-      >
-        {/* Brand — logo + wordmark, width-matched to the static rail */}
-        <div
-          style={{
-            width: "200px",
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            padding: "0 20px",
-            gap: "10px",
-            borderRight: `1px solid ${c.border}`,
-            height: "100%",
-          }}
-        >
-          <svg width="22" height="20" viewBox="0 0 172 164" fill="none">
-            <path
-              d="M2 162L87 2L172 162"
-              stroke="url(#logo-grad-topbar)"
-              strokeWidth="6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+      readinessContext={contestantReadiness}
+    />
+  );
+  const recoveryPanel = (
+    <SessionActionsPanel
+      key="recovery"
+      activeSession={activeSession}
+      onResume={handleResumeActiveSession}
+      resumeBusy={resumeBusy}
+      resumeStatus={resumeStatus}
+      resumeVerification={resumeVerification}
+      sessionsError={sessionsError}
+      theme={theme}
+    />
+  );
+
+  return (
+    <>
+      <DashboardShell
+        activeNav={activeNav}
+        onNavigate={setActiveNav}
+        displayName={displayName}
+        onSignOut={handleSignOut}
+        signingOut={signingOut}
+        calendar={activeNav === "overview" ? (
+          <ContestCalendar contests={contests} loading={contestsLoading} onSelectContest={showContest}
+            error={invitedContestsQuery.error ? "Could not load your contests." : null} />
+        ) : undefined}
+        headerAction={
+          activeNav === "overview" ? (
+            <AstryxButton label="Get help" variant="ghost" onClick={() => setHomeHelpOpen(true)} />
+          ) : activeNav === "settings" ? (
+            <AstryxButton
+              label={telemetryQuery.isLoading ? "Running..." : "Run Full Diagnostic"}
+              isDisabled={telemetryQuery.isLoading}
+              onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
             />
-            <defs>
-              <linearGradient
-                id="logo-grad-topbar"
-                x1="2"
-                y1="82"
-                x2="172"
-                y2="82"
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop stopColor="var(--color-accent-deep)" />
-                <stop offset="0.5" stopColor="var(--color-accent-base)" />
-                <stop offset="1" stopColor="rgb(var(--accent-light-rgb))" />
-              </linearGradient>
-            </defs>
-          </svg>
-          <span
-            style={{
-              fontSize: "12px",
-              fontWeight: 500,
-              letterSpacing: "0.4em",
-              color: "var(--theme-text-muted-strong)",
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-            }}
-          >
-            ACCESS
-          </span>
-        </div>
-
-        {/* Decorative search — read-only, no handler, no state */}
-        <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 24px" }}>
-          <input
-            readOnly
-            tabIndex={-1}
-            placeholder="Search"
-            style={{
-              width: "100%",
-              maxWidth: "280px",
-              background: "var(--surface-2)",
-              border: `1px solid ${c.border}`,
-              borderRadius: "var(--radius-md)",
-              color: c.textMuted,
-              fontSize: "13px",
-              padding: "6px 14px",
-              outline: "none",
-              cursor: "default",
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          />
-        </div>
-
-        {/* Profile + sign-out (avatar button wired to existing handleSignOut) */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            paddingRight: "20px",
-            flexShrink: 0,
-          }}
-        >
-          <p
-            style={{
-              fontSize: "11px",
-              fontWeight: 600,
-              letterSpacing: "0.06em",
-              color: c.textMuted,
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {displayName}
-          </p>
-          <button
-            onClick={handleSignOut}
-            title="Sign out"
-            disabled={signingOut}
-            style={{
-              width: "34px",
-              height: "34px",
-              borderRadius: "var(--radius-pill)",
-              background:
-                "linear-gradient(135deg, rgb(var(--accent-rgb)), rgb(var(--accent-light-rgb)))",
-              border: "none",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "13px",
-              fontWeight: 700,
-              color: "white",
-              cursor: signingOut ? "not-allowed" : "pointer",
-              opacity: signingOut ? 0.6 : 1,
-              flexShrink: 0,
-              transition: "opacity var(--transition-fast)",
-            }}
-          >
-            {(displayName || "?")[0].toUpperCase()}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Body: static rail + content ── */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* ── Static Rail — always expanded, labels always visible ── */}
-        <aside
-          style={{
-            width: "200px",
-            flexShrink: 0,
-            display: "flex",
-            flexDirection: "column",
-            borderRight: `1px solid ${c.border}`,
-            background: c.sidebarBg,
-            padding: "16px 0 0",
-            overflow: "hidden",
-          }}
-        >
-          {/* ── Nav list ── */}
-          <nav
-            style={{
-              flex: 1,
-              padding: "0 8px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
-            }}
-          >
-            {NAV_ITEMS.map((item) => {
-              const active = activeNav === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveNav(item.id)}
-                  title={item.label}
-                  className="home-nav-btn"
-                  data-active={String(active)}
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                    width: "100%",
-                    height: "40px",
-                    padding: 0,
-                    borderRadius: "var(--radius-md)",
-                    border: "none",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    overflow: "hidden",
-                    flexShrink: 0,
-                  }}
-                >
-                  {/* Active bar */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: "0",
-                      top: "8px",
-                      bottom: "8px",
-                      width: "4px",
-                      background: c.accent,
-                      borderRadius: "var(--radius-pill)",
-                      opacity: active ? 1 : 0,
-                      transition: "opacity var(--transition-fast)",
-                    }}
-                  />
-                  {/* Icon — fixed 44px column */}
-                  <span
-                    style={{
-                      width: "44px",
-                      display: "flex",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      flexShrink: 0,
-                      color: active ? c.accent : c.textMuted,
-                      transition: "color var(--transition-fast)",
-                    }}
-                  >
-                    {item.icon}
-                  </span>
-                  {/* Label — always visible in static rail */}
-                  <span
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 400,
-                      color: active ? c.accentText : c.textMuted,
-                      whiteSpace: "nowrap",
-                      pointerEvents: "none",
-                      userSelect: "none",
-                    }}
-                  >
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* ── Rail bottom — avatar circle + pill placeholder ── */}
-          <div style={{ padding: "12px 8px 20px", flexShrink: 0 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                height: "44px",
-                gap: "10px",
-                padding: "0 8px",
-              }}
-            >
-              {/* Avatar */}
-              <div
-                style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "var(--radius-pill)",
-                  background:
-                    "linear-gradient(135deg, rgb(var(--accent-rgb)), rgb(var(--accent-light-rgb)))",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  color: "white",
-                  flexShrink: 0,
-                }}
-              >
-                {(displayName || "?")[0].toUpperCase()}
-              </div>
-              {/* Pill placeholder */}
-              <div
-                style={{
-                  flex: 1,
-                  height: "18px",
-                  borderRadius: "var(--radius-pill)",
-                  background: c.border,
-                  opacity: 0.7,
-                }}
-              />
-            </div>
-          </div>
-        </aside>
-
-        {/* ── Main content panels ── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* Header — settings + diagnostics views only */}
-          {activeNav !== "overview" && (
-            <header
-              className="home-header"
-              style={{
-                background: "var(--surface-0)",
-                borderBottom: "1px solid var(--home-overlay-strong)",
-                flexShrink: 0,
-                transition: "border-color var(--transition-standard)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "16px",
-                }}
-              >
-                <h1
-                  style={{
-                    fontSize: "24px",
-                    fontWeight: 700,
-                    color: c.text,
-                    letterSpacing: "0",
-                  }}
-                >
-                  {activeNav === "settings" && "Settings"}
-                  {activeNav === "diagnostics" && "Diagnostics"}
-                </h1>
-                {activeNav === "settings" && (
-                  <button
-                    onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
-                    disabled={telemetryQuery.isLoading}
-                    style={{
-                      flexShrink: 0,
-                      padding: "0 20px",
-                      minHeight: 40,
-                      background: c.accent,
-                      border: "none",
-                      borderRadius: "var(--radius-sm)",
-                      color: "white",
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      cursor: telemetryQuery.isLoading ? "not-allowed" : "pointer",
-                      opacity: telemetryQuery.isLoading ? 0.7 : 1,
-                      transition: "opacity var(--transition-fast)",
-                    }}
-                  >
-                    {telemetryQuery.isLoading ? "Running..." : "Run Full Diagnostic"}
-                  </button>
-                )}
-              </div>
-              <p style={{ fontSize: "13px", color: c.textMuted, marginTop: "4px" }}>
-                {activeNav === "settings" &&
-                  "Camera, microphone, security policies, and device settings"}
-                {activeNav === "diagnostics" &&
-                  "Network diagnostics, platform telemetry, and security event log"}
-              </p>
-            </header>
-          )}
-
-          {/* Scrollable content views */}
-          <div className="home-content" style={{ flex: 1, overflowY: "auto" }}>
-            {activeNav === "overview" && (
-              <div
-                className="grid grid-cols-1 xl:grid-cols-[1fr_360px]"
-                style={{ gap: "36px", alignItems: "stretch" }}
-              >
-                {/* ── Center column ── */}
-                <div style={{ display: "flex", flexDirection: "column", gap: "36px" }}>
-                  {/* Overview title + subtitle (replaces old header for this view) */}
-                  <div>
-                    <h1
-                      style={{
-                        fontSize: "24px",
-                        fontWeight: 700,
-                        color: c.text,
-                        letterSpacing: "0",
-                      }}
-                    >
-                      Contestant Command Hub
-                    </h1>
-                    <p style={{ fontSize: "13px", color: c.textMuted, marginTop: "4px" }}>
-                      Authenticated Profile:{" "}
-                      <span
-                        style={{
-                          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                          color: c.text,
-                          fontWeight: 500,
-                        }}
-                      >
-                        {displayName}
-                      </span>
-                    </p>
-                  </div>
-
-                  <ContestsPanel
-                    contests={contests}
-                    loading={contestsLoading}
-                    theme={theme}
-                    onPreflight={(contestId, type) => {
-                      setPreflightContestId(contestId);
-                      setPreflightSessionType(type);
-                    }}
-                    readinessContext={contestantReadiness}
-                  />
-                  <SessionActionsPanel
-                    activeSession={activeSession}
-                    onRefresh={() => loadContests()}
-                    onResume={handleResumeActiveSession}
-                    resumeBusy={resumeBusy}
-                    resumeStatus={resumeStatus}
-                    resumeVerification={resumeVerification}
-                    sessionsError={sessionsError}
-                    sessionsRefreshing={sessionsRefreshing}
-                    theme={theme}
-                  />
-                </div>
-
-                {/* ── Right rail — ReadinessWidget ── */}
-                <div style={{ alignSelf: "start" }}>
-                  <ReadinessWidget
-                    readiness={readiness}
-                    onSettingsRedirect={() => setActiveNav("settings")}
-                    theme={theme}
-                    onResolve={(key) => setActiveResolveModal(key)}
-                    context={contestantReadiness}
-                    onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
-                  />
-                </div>
-              </div>
-            )}
-
-            {activeNav === "settings" && (
-              <SettingsPanel
+          ) : undefined
+        }
+      >
+        {activeNav === "overview" && (
+          <DashboardColumns
+            readiness={
+              <ReadinessWidget
                 readiness={readiness}
-                setReadiness={setReadiness}
+                onSettingsRedirect={() => setActiveNav("settings")}
                 theme={theme}
-                onSecurityEvent={appendSecurityEvent}
-                telemetry={telemetryQuery}
-                refreshTelemetry={refreshTelemetry}
+                onResolve={(key) => setActiveResolveModal(key)}
+                context={contestantReadiness}
+                onPracticeRun={() => router.push("/session/onboarding?mode=dry-run")}
               />
-            )}
+            }
+          >
+            {prioritizeRecovery ? [recoveryPanel, contestsPanel] : [contestsPanel, recoveryPanel]}
+          </DashboardColumns>
+        )}
+        {activeNav === "settings" && (
+          <SettingsPanel
+            readiness={readiness}
+            setReadiness={setReadiness}
+            theme={theme}
+            onSecurityEvent={appendSecurityEvent}
+            telemetry={telemetryQuery}
+            refreshTelemetry={refreshTelemetry}
+          />
+        )}
+        {activeNav === "diagnostics" && (
+          <VStack gap={6}>
+            <DiagnosticsPanel
+              onOpenSettings={() => setActiveNav("settings")}
+              readiness={readiness}
+              telemetry={telemetryQuery}
+              refreshTelemetry={refreshTelemetry}
+            />
+            <SecurityOperationsLog logs={securityLogs} />
+          </VStack>
+        )}
+      </DashboardShell>
 
-            {activeNav === "diagnostics" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
-                <DiagnosticsPanel
-                  readiness={readiness}
-                  theme={theme}
-                  telemetry={telemetryQuery}
-                  refreshTelemetry={refreshTelemetry}
-                />
-                <SecurityOperationsLog theme={theme} logs={securityLogs} />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <HelpRequestModal
+        open={homeHelpOpen}
+        onClose={() => setHomeHelpOpen(false)}
+        kind="OTHER"
+        summary="I need help with my assigned contests or home page."
+        details={{ source: "home_dashboard" }}
+      />
 
       {preflightContestId && (
         <SessionReadinessModal
@@ -1274,12 +916,6 @@ export default function HomePage() {
           closingApps={closingApps}
         />
       )}
-      <style>{`
-        @keyframes pulse-dot {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.35; }
-        }
-      `}</style>
-    </div>
+    </>
   );
 }

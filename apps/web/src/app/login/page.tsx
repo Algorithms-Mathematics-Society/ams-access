@@ -3,24 +3,30 @@
 /**
  * Sign-in, by handle.
  *
- * This replaces an email + one-time-code flow that assumed candidates have
- * mailboxes the platform can reach. They do not: a roster of exam candidates
- * arrives as names, credentials are provisioned in bulk, and each person is
- * handed a piece of paper. There is no reset link to click and no inbox to
- * check, so there is nothing for an OTP to be delivered to.
+ * Candidates use organizer-issued credentials rather than an email OTP.
+ * The app does not require a candidate mailbox: organizers can hand out
+ * printed slips or distribute the same handle and password by email.
  *
  * Credentials are contest-scoped, so a successful sign-in already says which
  * contest this is. Nothing here asks for a session code.
  */
 
 import { useState } from "react";
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { Button } from "@astryxdesign/core/Button";
+import { Divider } from "@astryxdesign/core/Divider";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
 import { useRouter } from "next/navigation";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { invoke } from "@ams/api-client";
+import { describeUnreachable } from "@/lib/network-error";
 import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
 import { BrandPane } from "./components/BrandPane";
 import { SlipForm } from "./components/SlipForm";
+import styles from "./login.module.css";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,12 +35,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `host · CODE` for a status-0. Shown small and quiet under the error: the
+  // candidate does not need it, and the person helping them cannot work
+  // without it. See `network-error.ts`.
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (loading) return;
     setError(null);
+    setDiagnostic(null);
     setLoading(true);
 
     try {
@@ -63,7 +74,25 @@ export default function LoginPage() {
         return;
       }
       if (caught.status === 0) {
-        setError("Cannot reach the exam server. Check the network, or ask an invigilator.");
+        // No HTTP response at all. Distinguish "wait" from "get help", and
+        // name the host, so the next person to see this does not repeat the
+        // investigation that produced it.
+        const { message, diagnostic } = describeUnreachable({
+          code: caught.code,
+          apiBase: caught.detail?.api_base,
+        });
+        setError(message);
+        setDiagnostic(diagnostic);
+        // Leave a trace. Login failures previously produced nothing: no
+        // console line, no violation, no proctoring event. This writes
+        // straight to the local JSONL spool, which needs no session, and is
+        // uploaded once one exists.
+        void invoke("log_proctoring_event", {
+          kind: "api_unreachable",
+          detail: diagnostic,
+          timestamp: Date.now(),
+          payload: { api_base: caught.detail?.api_base ?? null, code: caught.code, phase: "login" },
+        }).catch(() => {});
         return;
       }
       // The server's own wording. It already distinguishes "incorrect",
@@ -73,54 +102,114 @@ export default function LoginPage() {
     }
   }
 
+  // Frame budget: 400px form + 400px guidance + 80px gutter on desktop.
+  // Flex wrapping keeps the form first at narrow widths; page scrolling stays
+  // available at short heights and the theme control remains in normal flow.
   return (
-    <div className="login-root">
-      <BrandPane />
-
-      <div className="login-right" style={{ position: "relative" }}>
-        <div style={{ position: "absolute", top: 16, right: 16, zIndex: 1 }}>
-          <ThemeToggle />
-        </div>
-        <div className="login-form-wrap">
-          <div className="login-form-title">Sign in</div>
-          <div className="login-form-sub">Use the handle and password from your email.</div>
-          <div className="login-rule" />
-
-          <SlipForm
-            loginId={loginId}
-            setLoginId={setLoginId}
-            password={password}
-            setPassword={setPassword}
-            loading={loading}
-            error={error}
-            onSubmit={handleSubmit}
-          />
-
-          <p className="login-form-note">
-            This exam is proctored to keep it fair. After you sign in, we&rsquo;ll set up your
-            camera and check your device.
-          </p>
-
-          <div
-            className="login-form-support"
-            style={{ display: "flex", gap: 16, flexWrap: "wrap" }}
-          >
-            {/* No password reset. A passphrase cannot be recovered, only reissued —
-                the server stores a hash and genuinely cannot tell anyone what
-                the password was. An invigilator issues a new one. */}
-            <span className="login-form-hint">
-              Lost your details? An invigilator can reissue them.
-            </span>
-            <button
-              type="button"
-              onClick={() => setHelpOpen(true)}
-              className="login-textlink login-textlink--quiet"
+    <AppShell height="fill" variant="section" contentPadding={0}>
+      <VStack
+        data-login-page
+        className={styles.page}
+        gap={6}
+        style={{
+          width: "100%",
+          maxWidth: "calc(var(--spacing-10) * 28)",
+          minHeight: "100%",
+          marginInline: "auto",
+          padding: "clamp(var(--spacing-4), 4vw, var(--spacing-10))",
+        }}
+      >
+        <HStack as="header" gap={4} justify="between" align="center">
+          <HStack gap={3} align="center">
+            <svg
+              width="var(--spacing-6)"
+              height="var(--spacing-6)"
+              viewBox="0 0 172 162"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
             >
-              Can&apos;t sign in? Get help
-            </button>
-          </div>
-        </div>
-      </div>
+              <path
+                d="M2.00043 162L87.0004 2L172 162"
+                stroke="var(--color-accent-base)"
+                strokeWidth="6"
+                strokeLinecap="square"
+                strokeLinejoin="miter"
+              />
+            </svg>
+            <Text type="large" weight="semibold">
+              Access
+            </Text>
+          </HStack>
+          <ThemeToggle />
+        </HStack>
+
+        <HStack
+          gap={10}
+          wrap="wrap"
+          align="center"
+          justify="between"
+          style={{
+            flex: "1 0 auto",
+            columnGap: "calc(var(--spacing-10) * 2)",
+            paddingBlock: "clamp(var(--spacing-6), 7vh, calc(var(--spacing-10) * 2))",
+          }}
+        >
+          <VStack
+            as="section"
+            aria-labelledby="login-heading"
+            data-login-form-region
+            gap={6}
+            style={{ flex: "1 1 calc(var(--spacing-10) * 10)", minWidth: 0 }}
+          >
+            <VStack
+              gap={6}
+              style={{
+                width: "100%",
+                maxWidth: "calc(var(--spacing-10) * 10)",
+                marginInline: "auto",
+              }}
+            >
+              <VStack gap={2}>
+                <Heading level={1} id="login-heading">
+                  Sign in
+                </Heading>
+                <Text color="secondary">
+                  Use the handle and password from your email or printed sign-in slip.
+                </Text>
+              </VStack>
+
+              <SlipForm
+                loginId={loginId}
+                setLoginId={setLoginId}
+                password={password}
+                setPassword={setPassword}
+                loading={loading}
+                error={error}
+                diagnostic={diagnostic}
+                onSubmit={handleSubmit}
+              />
+
+              <Text type="supporting">
+                This exam is proctored. After signing in, you’ll set up your camera and check your
+                device before entering a contest.
+              </Text>
+              <Divider />
+              <VStack gap={3} align="start">
+                {/* Credentials can be reissued by an invigilator, not recovered here. */}
+                <Text type="supporting">Lost your details? An invigilator can reissue them.</Text>
+                <Button
+                  type="button"
+                  label="Can't sign in? Get help"
+                  variant="ghost"
+                  onClick={() => setHelpOpen(true)}
+                />
+              </VStack>
+            </VStack>
+          </VStack>
+          <BrandPane />
+        </HStack>
+      </VStack>
 
       <HelpRequestModal
         open={helpOpen}
@@ -135,8 +224,11 @@ export default function LoginPage() {
           // included.
           attempted_login_id: loginId.trim() || undefined,
           last_error: error,
+          // Which host the client actually called. If the incident is that it
+          // cannot reach the server, this is the field that says why.
+          last_diagnostic: diagnostic,
         }}
       />
-    </div>
+    </AppShell>
   );
 }

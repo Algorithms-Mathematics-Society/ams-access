@@ -1,10 +1,17 @@
 "use client";
 
-import { useMemo } from "react";
-import { CalendarDays } from "lucide-react";
-import { getThemeColors } from "./utils";
+import { useEffect, useMemo, useState } from "react";
+import { VStack, HStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { List } from "@astryxdesign/core/List";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Skeleton } from "@astryxdesign/core/Skeleton";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
 import { ActiveContestCard } from "./ContestCards";
-import { Panel } from "./ui-primitives";
+import { getContestEntryState, getScheduledContestTickDelay } from "./utils";
+import { sortHomeContests } from "./home-contest-presentation";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
 
 export function ContestsPanel({
@@ -13,161 +20,153 @@ export function ContestsPanel({
   theme,
   onPreflight,
   readinessContext,
+  searchQuery = "",
+  onSearchChange,
+  error,
+  onRefresh,
+  refreshing = false,
+  highlightedContestId,
 }: {
   contests: InvitedContest[];
   loading: boolean;
   theme: "dark" | "light";
   onPreflight: (contestId: string, type: "new" | "resume") => void;
   readinessContext?: ContestantReadinessContext;
+  searchQuery?: string;
+  onSearchChange: (value: string) => void;
+  error?: string | null;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+  highlightedContestId?: string | null;
 }) {
-  const themeColors = getThemeColors(theme);
+  const [now, setNow] = useState(() => Date.now());
 
-  function statusColor(s: string) {
-    if (s === "ACTIVE")
-      return {
-        dot: "var(--theme-dot)",
-        bg: "var(--home-status-ok-bg)",
-        border: "var(--home-status-ok-border)",
-      };
-    if (s === "SCHEDULED")
-      return {
-        dot: "var(--home-accent-dot)",
-        bg: "rgb(var(--accent-rgb) / 0.08)",
-        border: "rgb(var(--accent-rgb) / 0.2)",
-      };
-    if (s === "ENDED")
-      return {
-        dot: "var(--home-dot-ended)",
-        bg: "var(--home-overlay-ended)",
-        border: "var(--home-border-ended)",
-      };
-    return {
-      dot: "var(--home-status-warn-dot)",
-      bg: "var(--home-status-warn-bg)",
-      border: "var(--home-status-warn-border-20)",
-    };
-  }
-
-  if (loading) {
-    return (
-      <div>
-        <p
-          style={{
-            fontSize: "11px",
-            color: "var(--theme-text-muted)",
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            marginBottom: "16px",
-            fontWeight: 600,
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          }}
-        >
-          Contests
-        </p>
-        {[1, 2].map((i) => (
-          <div
-            key={i}
-            style={{
-              height: "90px",
-              borderRadius: "var(--radius-md)",
-              background: "var(--home-overlay-whisper)",
-              border: "1px solid var(--theme-border)",
-              marginBottom: "12px",
-              animation: "pulse-dot 2.5s ease-in-out infinite",
-            }}
-          />
-        ))}
-      </div>
+  // Presentation order follows the existing contest boundaries; entry policy stays in each row.
+  useEffect(() => {
+    if (contests.length === 0) return;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(...contests.map((contest) => getScheduledContestTickDelay(contest, Date.now())))
     );
-  }
+    return () => clearTimeout(timer);
+  }, [contests, now]);
 
-  if (contests.length === 0) {
-    return (
-      <Panel
-        theme={theme}
-        style={{
-          borderStyle: "dashed",
-          padding: "24px 28px",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          gap: "18px",
-        }}
-      >
-        <div
-          style={{
-            width: "40px",
-            height: "40px",
-            borderRadius: "var(--radius-sm)",
-            background: "var(--home-overlay-whisper)",
-            border: `1px solid ${themeColors.border}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          <CalendarDays size={18} strokeWidth={1.9} color={themeColors.accent} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <h4
-            style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              color: themeColors.text,
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              margin: 0,
-              letterSpacing: "0.05em",
-            }}
-          >
-            No contests yet.
-          </h4>
-          <p
-            style={{
-              fontSize: "12px",
-              color: themeColors.textMuted,
-              margin: "4px 0 0",
-              lineHeight: 1.4,
-            }}
-          >
-            If you have an invite code, enter it above. Upcoming contests will appear here after
-            they are added.
-          </p>
-        </div>
-      </Panel>
-    );
-  }
-
+  const ordered = useMemo(
+    () => sortHomeContests(contests, (contest) => getContestEntryState(contest, now).phase),
+    [contests, now]
+  );
+  const query = searchQuery.trim().toLocaleLowerCase();
+  const visible = ordered.filter((contest) =>
+    `${contest.title} ${contest.org_name ?? ""}`.toLocaleLowerCase().includes(query)
+  );
   return (
-    <div>
-      <p
+    <VStack as="section" aria-label="Contests" gap={5} aria-busy={loading}>
+      <HStack justify="between" align="center" gap={3} wrap="wrap">
+        <Heading level={4} accessibilityLevel={2}>
+          Assigned contests
+        </Heading>
+        <HStack gap={3} align="center" wrap="wrap">
+          <Text type="supporting" role="status" aria-live="polite">
+            {loading
+              ? "Loading..."
+              : query
+                ? `${visible.length} of ${contests.length}`
+                : `${contests.length} assigned`}
+          </Text>
+          {onRefresh && (
+            <Button
+              label="Refresh"
+              aria-label="Refresh contests"
+              variant="ghost"
+              size="sm"
+              onClick={onRefresh}
+              isLoading={refreshing}
+              isDisabled={loading}
+            />
+          )}
+        </HStack>
+      </HStack>
+      <TextInput
+        label="Search contests"
+        className="dashboard-contest-search"
+        isLabelHidden
+        placeholder="Find a contest"
+        value={searchQuery}
+        onChange={onSearchChange}
+        startIcon="search"
+        hasClear
+        size="lg"
         style={{
-          fontSize: "11px",
-          color: "var(--theme-text-muted)",
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          marginBottom: "16px",
-          fontWeight: 600,
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          minHeight: "var(--spacing-10)",
+          backgroundColor: "var(--color-background-body)",
         }}
-      >
-        CONTESTS ({contests.length})
-      </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        {contests.map((c) => {
-          const col = statusColor(c.status);
-          return (
+      />
+      {error && visible.length > 0 && (
+        <Banner
+          status="error"
+          title={error}
+          description="Use Refresh above to try again."
+        />
+      )}
+      {loading ? (
+        <VStack paddingBlock={6} gap={6}>
+          <VStack gap={2} role="status">
+            <Text>Loading your contests</Text>
+            <Text type="supporting">Checking the latest schedule.</Text>
+          </VStack>
+          <VStack gap={3} aria-hidden="true">
+            <Skeleton width="30%" height="var(--spacing-5)" radius={1} />
+            <Skeleton width="72%" height="var(--spacing-8)" radius={1} index={1} />
+            <Skeleton width="90%" height="var(--spacing-4)" radius={1} index={2} />
+            <Skeleton width="50%" height="var(--spacing-4)" radius={1} index={3} />
+          </VStack>
+        </VStack>
+      ) : visible.length ? (
+        <List hasDividers density="spacious">
+          {visible.map((c) => (
             <ActiveContestCard
               key={c.id}
               c={c}
-              col={col}
-              onPreflight={onPreflight}
               theme={theme}
+              col={{
+                dot: "var(--color-success)",
+                bg: "var(--color-success-muted)",
+                border: "var(--color-success)",
+              }}
+              onPreflight={onPreflight}
               readinessContext={readinessContext}
+              isHighlighted={highlightedContestId === c.id}
             />
-          );
-        })}
-      </div>
-    </div>
+          ))}
+        </List>
+      ) : error ? (
+        <Banner
+          status="error"
+          title="Contests unavailable"
+          description="Use Refresh above to try again."
+        />
+      ) : (
+        <EmptyState
+          isCompact
+          title={query ? "No matching contests" : "No contests yet"}
+          description={
+            query
+              ? "Try a different contest or organization, or clear your search."
+              : "Contests assigned to your sign-in will appear here. Ask your invigilator if one is missing."
+          }
+          actions={
+            query ? (
+              <Button label="Clear search" variant="secondary" onClick={() => onSearchChange("")} />
+            ) : undefined
+          }
+          style={{
+            paddingBlock: "var(--spacing-8)",
+            paddingInline: 0,
+            alignItems: "flex-start",
+            textAlign: "start",
+          }}
+        />
+      )}
+    </VStack>
   );
 }

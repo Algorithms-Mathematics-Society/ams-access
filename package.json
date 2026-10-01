@@ -3,15 +3,19 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=@ams/desktop",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "check:versions": "node scripts/check-versions.mjs",
     "clean": "turbo run clean && rm -rf node_modules",
-    "prepare": "husky"
+    "prepare": "husky",
+    "theme:build": "node apps/web/src/theme/build-theme.mjs"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.1.8",
+    "@astryxdesign/core": "^0.1.8",
+    "@astryxdesign/theme-neutral": "^0.1.8",
     "@tailwindcss/oxide-linux-x64-gnu": "4.2.4",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.2",

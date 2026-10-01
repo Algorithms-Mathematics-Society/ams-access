@@ -1,5 +1,5 @@
 import { sessionPolicy, type ReadinessCheck, type ReadinessReport } from "@ams/api-client";
-import { resolveApiBase } from "@/lib/api-base";
+import { allowlistHostFor, resolveApiBase } from "@/lib/api-base";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import type {
   InvitedContest,
@@ -90,11 +90,11 @@ export function getNetworkProbeHost() {
   return "www.google.com";
 }
 
+/** See the note on the onboarding copy of this: `allowlistHostFor` throws
+ * rather than falling back to `"localhost"`, which used to build a
+ * loopback-only firewall and call it engaged. */
 export function getNetworkLockdownAllowlistHost() {
-  try {
-    return new URL(API_URL).hostname;
-  } catch {}
-  return "localhost";
+  return allowlistHostFor(API_URL);
 }
 
 // ── Async helpers ─────────────────────────────────────────────
@@ -520,25 +520,26 @@ export function getScheduledContestTickDelay(contest: InvitedContest, now: numbe
 
 // ── Theme ─────────────────────────────────────────────────────
 
+// Compatibility keys for existing pages; the root Astryx theme owns values.
 export function getThemeColors(_theme: "dark" | "light") {
   return {
-    bg: "var(--theme-bg)",
-    sidebarBg: "var(--theme-sidebar-bg)",
-    cardBg: "var(--theme-card-bg)",
-    innerBg: "var(--theme-inner-bg)",
-    border: "var(--theme-border)",
-    borderStrong: "var(--theme-border-strong)",
-    text: "var(--theme-text)",
-    textMuted: "var(--theme-text-muted)",
-    textMutedStrong: "var(--theme-text-muted-strong)",
-    accent: "var(--theme-accent)",
-    accentLight: "var(--theme-accent-light)",
-    accentBorder: "var(--theme-accent-border)",
-    accentText: "var(--theme-accent-text)",
-    consoleText: "var(--theme-console-text)",
-    shadow: "var(--theme-shadow)",
-    shadowHover: "var(--theme-shadow-hover)",
-    dot: "var(--theme-dot)",
+    bg: "var(--color-background-body)",
+    sidebarBg: "var(--color-background-body)",
+    cardBg: "var(--color-background-card)",
+    innerBg: "var(--color-background-surface)",
+    border: "var(--color-border)",
+    borderStrong: "var(--color-border-emphasized)",
+    text: "var(--color-text-primary)",
+    textMuted: "var(--color-text-secondary)",
+    textMutedStrong: "var(--color-text-secondary)",
+    accent: "var(--color-accent)",
+    accentLight: "var(--color-accent-muted)",
+    accentBorder: "var(--color-border-purple)",
+    accentText: "var(--color-text-accent)",
+    consoleText: "var(--color-text-secondary)",
+    shadow: "var(--shadow-low)",
+    shadowHover: "var(--shadow-med)",
+    dot: "var(--color-success)",
   };
 }
 
