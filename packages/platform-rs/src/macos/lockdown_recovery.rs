@@ -30,6 +30,91 @@ pub(super) fn explicitly_absent(stderr: &[u8], domain: &str, key: &str) -> bool 
     ))
 }
 
+/// A failed read is not evidence that an original preference was absent.
+/// These gesture keys are integer preferences; decline entry if their original
+/// type cannot be restored by our integer writer.
+pub(super) fn snapshot_value(
+    success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+    domain: &str,
+    key: &str,
+) -> Result<Option<String>, String> {
+    if !success {
+        return if explicitly_absent(stderr, domain, key) {
+            Ok(None)
+        } else {
+            Err(format!(
+                "Could not read original desktop preference {domain}/{key}"
+            ))
+        };
+    }
+    let value = std::str::from_utf8(stdout)
+        .map_err(|_| "Desktop preference is not valid UTF-8")?
+        .trim();
+    value
+        .parse::<i64>()
+        .map_err(|_| "Desktop preference is not an integer")?;
+    Ok(Some(value.to_owned()))
+}
+
+/// Publish a complete, private recovery journal before changing preferences.
+/// Linking the synced temporary file refuses to replace an existing journal,
+/// including a symlink or one created by another app instance.
+pub(super) fn save(path: &Path, state: &LockdownState) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Missing journal directory"))?;
+    // Capture missing directories before creation so every new directory entry
+    // is durably linked from its parent, not just the final journal entry.
+    let mut missing = Vec::new();
+    let mut directory = parent;
+    while !directory.try_exists()? {
+        missing.push(directory);
+        directory = directory
+            .parent()
+            .ok_or_else(|| std::io::Error::other("Missing journal ancestor"))?;
+    }
+    std::fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    for directory in missing.iter().rev() {
+        std::fs::File::open(
+            directory
+                .parent()
+                .ok_or_else(|| std::io::Error::other("Missing journal ancestor"))?,
+        )?
+        .sync_all()?;
+    }
+    let temporary = parent.join(format!(
+        ".lockdown-state-{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
+    let result = (|| {
+        serde_json::to_writer(&mut file, state)?;
+        file.flush()?;
+        file.sync_all()?;
+        std::fs::hard_link(&temporary, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    drop(file);
+    let _ = std::fs::remove_file(temporary);
+    result
+}
+
 /// False means the journal is positively absent. All failures retain the
 /// journal and return true, preventing the caller's no-journal fallback from
 /// overwriting the user's saved preferences.
@@ -86,6 +171,93 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn snapshot_only_accepts_integer_or_explicitly_missing_original() {
+        assert_eq!(
+            snapshot_value(true, b"2\n", b"", "test", "one"),
+            Ok(Some("2".into()))
+        );
+        assert_eq!(
+            snapshot_value(
+                false,
+                b"",
+                b"The domain/default pair of (test, one) does not exist",
+                "test",
+                "one"
+            ),
+            Ok(None)
+        );
+        assert!(snapshot_value(false, b"", b"permission denied", "test", "one").is_err());
+        assert!(snapshot_value(
+            false,
+            b"",
+            b"The domain/default pair of (test, two) does not exist",
+            "test",
+            "one"
+        )
+        .is_err());
+        assert!(snapshot_value(true, b"not an integer", b"", "test", "one").is_err());
+    }
+
+    #[test]
+    fn journal_publication_is_complete_private_and_never_overwrites_originals() {
+        let fixture = Fixture::new();
+        let state = LockdownState {
+            gestures: vec![GesturePref {
+                domain: "test".into(),
+                key: "one".into(),
+                value: Some("2".into()),
+            }],
+            caffeinate_pid: None,
+        };
+        save(&fixture.path(), &state).unwrap();
+        let original = std::fs::read(fixture.path()).unwrap();
+        let parsed: LockdownState = serde_json::from_slice(&original).unwrap();
+        assert_eq!(parsed.gestures[0].value.as_deref(), Some("2"));
+        assert_eq!(
+            save(
+                &fixture.path(),
+                &LockdownState {
+                    gestures: vec![],
+                    caffeinate_pid: None
+                }
+            )
+            .unwrap_err()
+            .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(fixture.path()).unwrap(), original);
+        assert_eq!(std::fs::read_dir(&fixture.0).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(fixture.path())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn failed_journal_creation_does_not_publish_partial_state() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.path(), b"directory blocked").unwrap();
+        let nested = fixture.path().join("journal.json");
+        assert!(save(
+            &nested,
+            &LockdownState {
+                gestures: vec![],
+                caffeinate_pid: None
+            }
+        )
+        .is_err());
+        assert!(!nested.exists());
     }
 
     #[test]

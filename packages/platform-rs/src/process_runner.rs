@@ -72,11 +72,28 @@ pub fn optional<T>(work: impl FnOnce() -> T) -> T {
 pub trait CommandDeadlineExt {
     fn bounded_output(&mut self) -> io::Result<Output>;
     fn bounded_status(&mut self) -> io::Result<ExitStatus>;
+    /// Required probes must distinguish an unsuccessful command from a clean,
+    /// empty result. Queries where nonzero means "absent" use bounded_output.
+    fn bounded_checked_output(&mut self) -> io::Result<Output>;
     fn bounded_output_with_timeout(&mut self, timeout: Duration) -> io::Result<Output>;
 }
 impl CommandDeadlineExt for Command {
     fn bounded_output(&mut self) -> io::Result<Output> {
         output(self, Duration::from_secs(3), None)
+    }
+    fn bounded_checked_output(&mut self) -> io::Result<Output> {
+        let out = self.bounded_output()?;
+        if out.status.success() {
+            Ok(out)
+        } else {
+            let message = format!(
+                "{} exited unsuccessfully ({})",
+                self.get_program().to_string_lossy(),
+                out.status
+            );
+            record_failure(message.clone());
+            Err(io::Error::other(message))
+        }
     }
     fn bounded_status(&mut self) -> io::Result<ExitStatus> {
         self.bounded_output().map(|out| out.status)
@@ -261,6 +278,17 @@ fn drain_with(
 
 /// Captures at most 1 MiB per output stream. Unix input is written without
 /// blocking and capped at 64 KiB; Windows probes do not use stdin input.
+/// Propagate required native/file probe failures to an enclosing readiness
+/// budget, even when a compatibility return type cannot itself carry errors.
+pub fn record_failure(error: impl Into<String>) {
+    FAILURE.with(|slot| {
+        let mut failure = slot.borrow_mut();
+        if failure.is_none() {
+            *failure = Some(error.into());
+        }
+    });
+}
+
 pub fn output(
     command: &mut Command,
     timeout: Duration,
@@ -268,15 +296,10 @@ pub fn output(
 ) -> io::Result<Output> {
     let result = output_inner(command, timeout, input);
     if let Err(error) = &result {
-        FAILURE.with(|slot| {
-            let mut failure = slot.borrow_mut();
-            if failure.is_none() {
-                *failure = Some(format!(
-                    "{}: {error}",
-                    command.get_program().to_string_lossy()
-                ));
-            }
-        });
+        record_failure(format!(
+            "{}: {error}",
+            command.get_program().to_string_lossy()
+        ));
     }
     result
 }
@@ -404,6 +427,27 @@ mod tests {
         assert_eq!(out.stderr, b"error");
         assert_eq!(out.status.code(), Some(7));
     }
+    #[test]
+    fn required_nonzero_probe_propagates_failure_to_outer_budget() {
+        let outer = Budget::new(Duration::from_secs(2));
+        {
+            let inner = Budget::new(Duration::from_secs(1));
+            assert!(shell("printf partial; exit 7")
+                .bounded_checked_output()
+                .is_err());
+            assert!(inner.failure().unwrap().contains("exited unsuccessfully"));
+        }
+        assert!(outer.failure().unwrap().contains("exited unsuccessfully"));
+    }
+
+    #[test]
+    fn query_nonzero_exit_remains_available_for_absence_checks() {
+        let budget = Budget::new(Duration::from_secs(2));
+        let out = shell("exit 1").bounded_output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(budget.failure().is_none());
+    }
+
     #[test]
     fn hanging_child_is_terminated_and_reaped_at_deadline() {
         let started = Instant::now();

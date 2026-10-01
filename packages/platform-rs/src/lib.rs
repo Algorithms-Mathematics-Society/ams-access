@@ -17,3 +17,8 @@ cfg_if::cfg_if! {
 #[cfg(all(test, not(target_os = "macos")))]
 #[path = "macos/lockdown_recovery.rs"]
 mod macos_lockdown_recovery_tests;
+
+// Verify Windows cleanup decisions without invoking real firewall commands.
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/firewall_recovery.rs"]
+mod windows_firewall_recovery_tests;

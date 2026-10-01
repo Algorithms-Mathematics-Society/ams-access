@@ -14,9 +14,9 @@ with tempfile.TemporaryDirectory(prefix="ams-prerm-review-") as work:
     mock.mkdir()
     # Shell text tools are harmless. No real firewall or service binary is put
     # into PATH; the command implementations below operate only on temp files.
-    for name in ("grep", "rm", "rmdir"):
+    for name in ("grep", "rm", "rmdir", "timeout"):
         (mock / name).symlink_to(Path("/usr/bin") / name)
-    fixture = source
+    fixture = source.replace("--kill-after=1s 8s", "--kill-after=0.1s 0.2s")
     for old, new in [("/etc/", str(root / "etc") + "/"), ("/usr/local/", str(root / "usr/local") + "/"),
                      ("/run/", str(root / "run") + "/"), ("/proc/sys/net/ipv6", str(root / "ipv6"))]:
         fixture = fixture.replace(old, new)
@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix="ams-prerm-review-") as work:
     unrelated = root / "etc/ams-access/unrelated.conf"
     (root / "ipv6").mkdir()
     driver = f'''#!{sys.executable}
-import os, sys
+import os, sys, time
 from pathlib import Path
 root = Path(os.environ["FIXTURE_ROOT"])
 name = Path(sys.argv[0]).name
@@ -37,6 +37,12 @@ args = sys.argv[1:]
 with (root / "calls").open("a") as log: log.write(name + " " + " ".join(args) + "\\n")
 mode = os.environ.get("FAIL_MODE", "")
 if name == "systemctl":
+    if mode == "hang-stop" and args[0] == "stop": time.sleep(60)
+    if args[0] == "show":
+        if mode == "hang-show": time.sleep(60)
+        if mode == "show-error": sys.exit(1)
+        print("loaded" if (root / "etc/systemd/system/ams-proctor-helper.service").exists() else "not-found")
+        sys.exit(0)
     if args[0] in ("cat", "stop", "disable") and not (root / "etc/systemd/system/ams-proctor-helper.service").exists():
         sys.exit(5 if args[0] == "stop" else 1)
     sys.exit(1 if mode == "stop" and args[0] == "stop" else 0)
@@ -44,6 +50,7 @@ if name == "udevadm": sys.exit(0)
 state = root / (name + ".state")
 values = state.read_text().split() if state.exists() else []
 operation = args[2]
+if mode == "hang-inspect" and operation == "-S": time.sleep(60)
 if mode == "inspect" and operation == "-S": sys.exit(2)
 if mode == "ipv6" and name == "ip6tables": sys.exit(2)
 if operation == "-S":
@@ -53,7 +60,7 @@ if operation == "-S":
 elif operation == "-C": sys.exit(0 if "jump" in values else 1)
 elif operation == "-D":
     if mode == "detach": sys.exit(2)
-    values.remove("jump")
+    if mode != "stuck-jump": values.remove("jump")
 elif operation == "-F": pass
 elif operation == "-X":
     if mode == "delete": sys.exit(2)
@@ -74,7 +81,7 @@ state.write_text(" ".join(values))
         (root / "calls").write_text("")
     def run(action, mode=""):
         env = dict(os.environ, PATH=str(mock), FIXTURE_ROOT=str(root), FAIL_MODE=mode)
-        return subprocess.run(["/bin/sh", str(script), action], env=env, capture_output=True, text=True)
+        return subprocess.run(["/bin/sh", str(script), action], env=env, capture_output=True, text=True, timeout=15)
     prepare()
     assert run("remove").returncode == 0
     assert all(not p.exists() for p in (helper, config, unit, marker))
@@ -83,7 +90,7 @@ state.write_text(" ".join(values))
     assert calls.index("systemctl stop") < calls.index("iptables -w 5 -S") < calls.index("systemctl disable")
     assert (root / "iptables.state").read_text() == ""
     assert (root / "ip6tables.state").read_text() == ""
-    for mode in ("stop", "inspect", "detach", "delete", "ipv6"):
+    for mode in ("stop", "inspect", "detach", "delete", "ipv6", "hang-stop", "hang-inspect", "stuck-jump"):
         prepare()
         result = run("remove", mode)
         assert result.returncode != 0, (mode, result.stdout, result.stderr)
@@ -113,5 +120,12 @@ state.write_text(" ".join(values))
         assert not marker.exists() and not (root / "run/ams-proctor.sock").exists()
         assert (root / "iptables.state").read_text() == ""
         assert (root / "ip6tables.state").read_text() == ""
-    print("prerm: 13 mocked scenarios passed; no host service/firewall commands executed")
+    for mode in ("hang-show", "show-error"):
+        prepare()
+        unit.unlink()
+        result = run("remove", mode)
+        assert result.returncode != 0, (mode, result.stderr)
+        assert all(p.exists() for p in (helper, config, marker))
+        assert "iptables" not in (root / "calls").read_text()
+    print("prerm: 18 mocked scenarios passed; no host service/firewall commands executed")
 PY

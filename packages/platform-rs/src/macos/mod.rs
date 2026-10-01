@@ -700,7 +700,7 @@ fn set_swipe_gesture_enabled(enabled: bool) {
         for key in GESTURE_KEYS {
             let _ = Command::new("defaults")
                 .args(["write", domain, key, "-int", value])
-                .bounded_output();
+                .bounded_checked_output();
         }
     }
     // Flush the preferences daemon so the new values are read by the Dock.
@@ -723,50 +723,38 @@ fn lockdown_state_path() -> Option<std::path::PathBuf> {
     home_dir().map(|h| h.join("Library/Application Support/AMS Access/lockdown-state.json"))
 }
 
-fn read_default(domain: &str, key: &str) -> Option<String> {
+fn read_default(domain: &str, key: &str) -> Result<Option<String>, String> {
     let out = Command::new("defaults")
         .args(["read", domain, key])
         .bounded_output()
-        .ok()?;
-    if !out.status.success() {
-        // Non-zero exit means the key is not set in this domain.
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .map_err(|error| format!("Could not read original desktop preference: {error}"))?;
+    lockdown_recovery::snapshot_value(out.status.success(), &out.stdout, &out.stderr, domain, key)
 }
 
-/// Snapshot the pre-lockdown gesture prefs and caffeinate pid.
-///
-/// If a state file already exists (previous crash, re-entrant lock), it is kept
-/// — it holds the *original* user values and must not be overwritten with our
-/// own lockdown values.
-fn save_lockdown_state(caffeinate_pid: Option<u32>) {
-    let Some(path) = lockdown_state_path() else {
-        return;
-    };
-    if path.exists() {
-        return;
+/// Capture originals and durably publish them before any persistent change.
+fn save_lockdown_state(caffeinate_pid: Option<u32>) -> Result<(), String> {
+    let path = lockdown_state_path().ok_or("Desktop recovery directory is unavailable")?;
+    if lockdown_recovery::pending(&path) {
+        return Err("Previous desktop preferences still need restoration".into());
     }
-    let gestures = GESTURE_DOMAINS
-        .iter()
-        .flat_map(|domain| {
-            GESTURE_KEYS.iter().map(move |key| GesturePref {
-                domain: (*domain).to_string(),
-                key: (*key).to_string(),
-                value: read_default(domain, key),
-            })
-        })
-        .collect();
-    let state = LockdownState {
-        gestures,
-        caffeinate_pid,
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    let mut gestures = Vec::new();
+    for domain in GESTURE_DOMAINS {
+        for key in GESTURE_KEYS {
+            gestures.push(GesturePref {
+                domain: domain.to_string(),
+                key: key.to_string(),
+                value: read_default(domain, key)?,
+            });
+        }
     }
-    if let Ok(json) = serde_json::to_string(&state) {
-        let _ = std::fs::write(&path, json);
-    }
+    lockdown_recovery::save(
+        &path,
+        &LockdownState {
+            gestures,
+            caffeinate_pid,
+        },
+    )
+    .map_err(|error| format!("Could not preserve original desktop preferences: {error}"))
 }
 
 /// Kill `pid` only if it is still a caffeinate process — guards against pid
@@ -1020,7 +1008,10 @@ pub fn lock_desktop() -> bool {
     // Journal the user's original gesture prefs (and caffeinate pid) BEFORE
     // touching them, so unlock or crash recovery can restore them faithfully.
     let caffeinate = caffeinate_pid().lock().ok().and_then(|guard| *guard);
-    save_lockdown_state(caffeinate);
+    if let Err(error) = save_lockdown_state(caffeinate) {
+        crate::process_runner::record_failure(error);
+        return false;
+    }
     // Layer 1: disable the OS-level gesture so Dock never sees the swipe.
     set_swipe_gesture_enabled(false);
     let result = enable_keyboard_intercept();
@@ -1038,11 +1029,10 @@ pub fn lock_desktop() -> bool {
 pub fn unlock_desktop() {
     disable_keyboard_intercept();
     remove_space_observer();
-    // Layer 1: restore the user's original gesture prefs from the journal;
-    // fall back to force-enabling if no journal exists (e.g. lock never ran).
-    if !restore_lockdown_state() {
-        set_swipe_gesture_enabled(true);
-    }
+    // No journal means no saved gesture changes to undo. In particular, a
+    // failed entry or an idle Restore action must not replace user preferences
+    // with guessed enabled defaults.
+    restore_lockdown_state();
     // The journal restore already reaped caffeinate; this clears the in-memory
     // guard and covers the no-journal path.
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
@@ -1065,7 +1055,7 @@ pub fn scan_processes() -> ProcessScanResult {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
     let output = Command::new("ps")
         .args(["-axo", "comm="])
-        .bounded_output()
+        .bounded_checked_output()
         .unwrap_or_else(|_| std::process::Output {
             status: std::process::ExitStatus::default(),
             stdout: vec![],
@@ -1091,7 +1081,7 @@ pub fn scan_processes() -> ProcessScanResult {
         .collect();
 
     ProcessScanResult {
-        clean: found.is_empty(),
+        clean: found.is_empty() && _budget.failure().is_none(),
         found,
     }
 }
@@ -1125,13 +1115,13 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 
     let hw_output = Command::new("system_profiler")
         .arg("SPHardwareDataType")
-        .bounded_output()
+        .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
     let ioreg_output = Command::new("ioreg")
         .args(["-l"])
-        .bounded_output()
+        .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
@@ -1177,7 +1167,7 @@ pub fn detect_remote_desktop() -> bool {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
     let ps = Command::new("ps")
         .args(["-axo", "command="])
-        .bounded_output()
+        .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default()
         .to_string();

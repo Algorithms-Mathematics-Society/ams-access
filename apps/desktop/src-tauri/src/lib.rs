@@ -1637,7 +1637,14 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
             .set_fullscreen(true)
             .map_err(|error| error.to_string())?;
         self.platform_attempted = true;
-        if !platform_dispatch!(lock_desktop(), else false) {
+        let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+        let protected = platform_dispatch!(lock_desktop(), else false);
+        // Organizer exceptions may waive unavailable keyboard interception,
+        // but cannot waive a failed recovery snapshot or incomplete OS command.
+        if let Some(error) = budget.failure() {
+            return Err(format!("Desktop setup could not complete safely: {error}"));
+        }
+        if !protected {
             if self.require_keyboard {
                 return Err("Native keyboard lockdown failed".into());
             }

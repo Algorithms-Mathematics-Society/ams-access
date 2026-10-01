@@ -23,8 +23,13 @@ impl Lifecycle {
             );
         }
         self.generation = self.generation.wrapping_add(1);
+        // Native engagement may panic after changing OS state. Keep recovery
+        // required until successful engagement or verified rollback, even if
+        // the caller recovers the poisoned lifecycle mutex after an unwind.
+        self.recovery_required = true;
         match operations.engage() {
             Ok(()) => {
+                self.recovery_required = false;
                 self.active = true;
                 Ok(true)
             }
@@ -165,6 +170,34 @@ mod tests {
         state.stop(&mut ops).unwrap();
         assert_eq!(state.start(&mut ops), Ok(true));
     }
+    #[test]
+    fn panicked_engagement_requires_verified_recovery_before_retry() {
+        struct Panicking;
+        impl Operations for Panicking {
+            fn engage(&mut self) -> Result<(), String> {
+                panic!("native setup changed settings then panicked");
+            }
+            fn rollback(&mut self) -> Result<(), String> {
+                panic!("unwind bypasses rollback");
+            }
+            fn release(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let mut state = Lifecycle::default();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = state.start(&mut Panicking);
+        }))
+        .is_err());
+        assert!(!state.active);
+        let mut retry = Fake::default();
+        assert!(state.start(&mut retry).is_err());
+        assert!(retry.calls.is_empty());
+        state.stop(&mut retry).unwrap();
+        assert_eq!(state.start(&mut retry), Ok(true));
+        assert_eq!(retry.calls, vec!["release", "start"]);
+    }
+
     #[test]
     fn new_session_invalidates_old_monitor_generation() {
         let mut state = Lifecycle::default();

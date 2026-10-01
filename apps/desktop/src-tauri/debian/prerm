@@ -16,20 +16,30 @@ fail_cleanup() {
     exit 1
 }
 
+# iptables -w bounds only its lock wait, not the whole process. Coreutils
+# timeout is available on Debian; retain all recovery files on uncertainty.
+bounded() {
+    command -v timeout >/dev/null 2>&1 || fail_cleanup "timeout is unavailable."
+    timeout --signal=TERM --kill-after=1s 8s "$@"
+}
+
 # Remove only our named chain and its OUTPUT jumps. Never flush a table or
 # change its policy. A failed probe is not proof that a chain is absent.
 remove_chain() {
     tool="$1"
     command -v "$tool" >/dev/null 2>&1 || fail_cleanup "$tool is unavailable."
-    rules=$("$tool" -w 5 -S) || fail_cleanup "Cannot inspect $tool rules."
+    rules=$(bounded "$tool" -w 5 -S) || fail_cleanup "Cannot inspect $tool rules."
     if printf '%s\n' "$rules" | grep -Fx -- '-N AMS_PROCTOR' >/dev/null; then
-        while "$tool" -w 5 -C OUTPUT -j AMS_PROCTOR 2>/dev/null; do
-            "$tool" -w 5 -D OUTPUT -j AMS_PROCTOR || fail_cleanup "Cannot detach $tool chain."
+        removed=0
+        while bounded "$tool" -w 5 -C OUTPUT -j AMS_PROCTOR 2>/dev/null; do
+            [ "$removed" -lt 64 ] || fail_cleanup "Too many $tool OUTPUT jumps; inspect cleanup."
+            bounded "$tool" -w 5 -D OUTPUT -j AMS_PROCTOR || fail_cleanup "Cannot detach $tool chain."
+            removed=$((removed + 1))
         done
-        "$tool" -w 5 -F AMS_PROCTOR || fail_cleanup "Cannot clear $tool chain."
-        "$tool" -w 5 -X AMS_PROCTOR || fail_cleanup "Cannot remove $tool chain."
+        bounded "$tool" -w 5 -F AMS_PROCTOR || fail_cleanup "Cannot clear $tool chain."
+        bounded "$tool" -w 5 -X AMS_PROCTOR || fail_cleanup "Cannot remove $tool chain."
     fi
-    rules=$("$tool" -w 5 -S) || fail_cleanup "Cannot verify $tool cleanup."
+    rules=$(bounded "$tool" -w 5 -S) || fail_cleanup "Cannot verify $tool cleanup."
     if printf '%s\n' "$rules" | grep -E -- '(^-N AMS_PROCTOR$| -(j|g) AMS_PROCTOR( |$))' >/dev/null; then
         fail_cleanup "$tool still refers to AMS_PROCTOR."
     fi
@@ -44,30 +54,39 @@ case "$1" in
             unit_known=false
             if [ -e "$HELPER_UNIT_PATH" ]; then
                 unit_known=true
-            elif command -v systemctl >/dev/null 2>&1 && systemctl cat "$HELPER_UNIT" >/dev/null 2>&1; then
-                unit_known=true
+            elif command -v systemctl >/dev/null 2>&1; then
+                # A failed lookup is not proof that systemd forgot a running
+                # unit whose file disappeared. Require a positive load state.
+                load_state=$(bounded systemctl show --property=LoadState --value "$HELPER_UNIT") || fail_cleanup "Cannot determine helper service state."
+                case "$load_state" in
+                    not-found) ;;
+                    loaded|masked|error|bad-setting|merged|stub) unit_known=true ;;
+                    *) fail_cleanup "Unknown helper service state." ;;
+                esac
+            else
+                fail_cleanup "Cannot determine helper service state without systemctl."
             fi
             if [ "$unit_known" = true ]; then
                 command -v systemctl >/dev/null 2>&1 || fail_cleanup "systemctl is unavailable."
-                systemctl stop "$HELPER_UNIT" || fail_cleanup "Cannot stop the helper."
+                bounded systemctl stop "$HELPER_UNIT" || fail_cleanup "Cannot stop the helper."
             fi
             remove_chain iptables
             if [ -d "$IPV6_STACK" ]; then
                 remove_chain ip6tables
             fi
             if [ "$unit_known" = true ]; then
-                systemctl disable "$HELPER_UNIT" || fail_cleanup "Cannot disable the helper."
+                bounded systemctl disable "$HELPER_UNIT" || fail_cleanup "Cannot disable the helper."
             fi
             rm -f "$HELPER_UNIT_PATH" "$HELPER_BIN" "$HELPER_CONFIG" "$HELPER_MARKER" "$HELPER_SOCKET"
             # Never recursively delete shared directories or unrelated files.
             rmdir /usr/local/lib/ams-access /etc/ams-access 2>/dev/null || true
             if [ "$unit_known" = true ]; then
-                systemctl daemon-reload
+                bounded systemctl daemon-reload
             fi
         fi
         rm -f "$UDEV_RULE_PATH"
         if command -v udevadm >/dev/null 2>&1; then
-            udevadm control --reload-rules 2>/dev/null || true
+            bounded udevadm control --reload-rules 2>/dev/null || true
         fi
         ;;
     deconfigure)
@@ -75,7 +94,7 @@ case "$1" in
         # helper/recovery state until an actual removal is requested.
         rm -f "$UDEV_RULE_PATH"
         if command -v udevadm >/dev/null 2>&1; then
-            udevadm control --reload-rules 2>/dev/null || true
+            bounded udevadm control --reload-rules 2>/dev/null || true
         fi
         ;;
     upgrade|failed-upgrade)

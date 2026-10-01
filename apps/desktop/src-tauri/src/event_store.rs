@@ -564,6 +564,12 @@ fn validate_checkpoint(file: &mut File, checkpoint: &Checkpoint) -> io::Result<(
         return Err(invalid("event spool was truncated below its checkpoint"));
     }
     if checkpoint.offset == 0 {
+        if checkpoint.last_line_start != 0
+            || !checkpoint.last_line_hash.is_empty()
+            || checkpoint.discarding_oversized_line
+        {
+            return Err(invalid("nonempty state in an initial event checkpoint"));
+        }
         return Ok(());
     }
     let length = checkpoint
@@ -574,7 +580,7 @@ fn validate_checkpoint(file: &mut File, checkpoint: &Checkpoint) -> io::Result<(
     file.seek(SeekFrom::Start(checkpoint.last_line_start))?;
     let mut line = vec![0; length as usize];
     file.read_exact(&mut line)?;
-    if (!checkpoint.discarding_oversized_line && !line.ends_with(b"\n"))
+    if checkpoint.discarding_oversized_line == line.ends_with(b"\n")
         || hex::encode(Sha256::digest(&line)) != checkpoint.last_line_hash
     {
         return Err(invalid("event checkpoint does not match spool contents"));
@@ -586,34 +592,66 @@ fn invalid(message: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.to_string())
 }
 fn private_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
     #[cfg(unix)]
-    {
+    let options = {
         use std::os::unix::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
         options.mode(0o600);
-    }
+        options
+    };
+    #[cfg(not(unix))]
+    let options = OpenOptions::new();
     options
 }
 fn private_directory(path: &Path) -> io::Result<()> {
+    // A synced file and leaf directory are insufficient when their ancestors
+    // were just created: their names must also survive a power failure. Record
+    // missing entries first, then publish them durably from the leaf upwards.
+    let mut missing = Vec::new();
+    let mut ancestor = path;
+    loop {
+        match fs::metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing.push(ancestor);
+                ancestor = ancestor
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+            }
+            Err(error) => return Err(error),
+        }
+    }
     fs::create_dir_all(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     }
-    Ok(())
-}
-fn tighten_permissions(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    for created in missing {
+        let parent = created
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        sync_directory(parent)?;
     }
     Ok(())
 }
+#[cfg(unix)]
+fn tighten_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+#[cfg(not(unix))]
+fn tighten_permissions(_: &Path) -> io::Result<()> {
+    Ok(())
+}
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    File::open(path)?.sync_all()?;
+    File::open(path)?.sync_all()
+}
+#[cfg(not(unix))]
+fn sync_directory(_: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -806,6 +844,63 @@ mod tests {
         assert!(replay.notices[0].contains("checkpoint_replay"));
         assert!(batch.path.with_extension("quarantine").exists());
     }
+    #[test]
+    fn corrupt_initial_checkpoint_cannot_discard_valid_events() {
+        for checkpoint in [
+            Checkpoint {
+                discarding_oversized_line: true,
+                ..Checkpoint::default()
+            },
+            Checkpoint {
+                last_line_start: 1,
+                ..Checkpoint::default()
+            },
+            Checkpoint {
+                last_line_hash: "unexpected".into(),
+                ..Checkpoint::default()
+            },
+        ] {
+            let fixture = Fixture::new();
+            let store = fixture.store("run");
+            let a = binding("a");
+            store
+                .append(Some(&a), EventStream::Violation, &event(1))
+                .unwrap();
+            let original = pending(&store, &a);
+            write_checkpoint(&original.path, &checkpoint).unwrap();
+            let replay = pending(&store, &a);
+            assert_eq!(replay.events, original.events);
+            assert!(replay.notices[0].contains("checkpoint_replay"));
+            store.acknowledge(&a, &replay).unwrap();
+            assert!(store
+                .next_batch(&a, 200, MAX_BATCH_BYTES)
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn corrupt_continuation_flag_cannot_discard_the_next_complete_record() {
+        let fixture = Fixture::new();
+        let store = fixture.store("run");
+        let a = binding("a");
+        store
+            .append(Some(&a), EventStream::Violation, &event(1))
+            .unwrap();
+        let first = pending(&store, &a);
+        store.acknowledge(&a, &first).unwrap();
+        let mut checkpoint = first.checkpoint.clone();
+        checkpoint.discarding_oversized_line = true;
+        write_checkpoint(&first.path, &checkpoint).unwrap();
+        store
+            .append(Some(&a), EventStream::Violation, &event(2))
+            .unwrap();
+        let replay = pending(&store, &a);
+        assert_eq!(replay.events.len(), 2);
+        assert_eq!(replay.events[1]["seq"], 2);
+        assert!(replay.notices[0].contains("checkpoint_replay"));
+    }
+
     #[test]
     fn checkpoint_detects_file_replacement_and_truncation() {
         let fixture = Fixture::new();

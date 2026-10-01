@@ -152,11 +152,27 @@ pub fn scan_processes() -> ProcessScanResult {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
     let mut found: Vec<String> = Vec::new();
 
-    let Ok(proc_dir) = std::fs::read_dir("/proc") else {
-        return ProcessScanResult { found, clean: true };
+    let proc_dir = match std::fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(error) => {
+            crate::process_runner::record_failure(format!("Cannot enumerate processes: {error}"));
+            return ProcessScanResult {
+                found,
+                clean: false,
+            };
+        }
     };
 
-    for entry in proc_dir.flatten() {
+    for entry in proc_dir {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                crate::process_runner::record_failure(format!(
+                    "Cannot enumerate a process entry: {error}"
+                ));
+                continue;
+            }
+        };
         if _budget.expired() {
             break;
         }
@@ -171,8 +187,14 @@ pub fn scan_processes() -> ProcessScanResult {
         }
     }
 
-    let clean = found.is_empty();
+    let clean = found.is_empty() && _budget.failure().is_none();
     ProcessScanResult { found, clean }
+}
+
+/// systemd-detect-virt prints the detected technology only without --quiet.
+fn systemd_virtualization(success: bool, stdout: &[u8]) -> Option<String> {
+    let name = String::from_utf8_lossy(stdout).trim().to_string();
+    (success && !name.is_empty() && name != "none").then_some(name)
 }
 
 /// Detect virtualisation via DMI and cpuinfo.
@@ -237,19 +259,13 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     }
 
     // Check systemd-detect-virt
-    if let Ok(output) = std::process::Command::new("systemd-detect-virt")
-        .arg("--quiet")
-        .bounded_output()
-    {
-        if output.status.success() {
-            let virt = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !virt.is_empty() && virt != "none" {
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(virt),
-                    confidence: "high".to_string(),
-                };
-            }
+    if let Ok(output) = std::process::Command::new("systemd-detect-virt").bounded_output() {
+        if let Some(virt) = systemd_virtualization(output.status.success(), &output.stdout) {
+            return VirtDetectionResult {
+                detected: true,
+                platform: Some(virt),
+                confidence: "high".to_string(),
+            };
         }
     }
 
@@ -2009,5 +2025,19 @@ mod tests {
         );
         // Empty → None.
         assert_eq!(match_restricted(&[]), None);
+    }
+}
+
+#[cfg(test)]
+mod required_probe_review_tests {
+    use super::systemd_virtualization;
+
+    #[test]
+    fn systemd_fallback_requires_success_and_detected_technology() {
+        assert_eq!(systemd_virtualization(true, b"kvm\n"), Some("kvm".into()));
+        assert_eq!(systemd_virtualization(false, b"none\n"), None);
+        assert_eq!(systemd_virtualization(true, b"none\n"), None);
+        assert_eq!(systemd_virtualization(true, b""), None);
+        assert_eq!(systemd_virtualization(false, b"permission denied"), None);
     }
 }

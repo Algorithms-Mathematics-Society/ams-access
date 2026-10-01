@@ -325,3 +325,78 @@ The user explicitly approved the previously gated event-queue integration and re
 - Final workspace validation: **174 Rust tests passed** (desktop 49, core 39, helper 38, platform 48), **strict workspace Clippy passed**, formatting and `git diff --check` passed. Debian uninstall tests passed **13 mocked scenarios**. Earlier cross-target checks passed for the macOS helper and Windows platform crate; full native desktop builds/runtime checks remain for the three-OS CI and native machines.
 - Subagent implementation and cross-review are complete; root reviewed the integration and corrected the reported recovery issues. No new Claude review of these follow-ups has arrived; the earlier Claude findings and release caveats remain above for the next review.
 - The approved event integration is active. Backend scope only: hosted API/cloud configuration, frontend source, `Cargo.lock`, and Tauri security configuration are unchanged. No real event uploads, firewall changes, or desktop lockdown occurred during validation. Only source, regression tests, and this requested log are included in the authorized main commit/push; no release tag or installer publication is requested.
+
+## R1 — Post-push independent code review (user requested)
+
+Scope: review commit `a6d5861` and its local backend integration, fix confirmed issues, independently review fixes, then commit/push main. Two fresh subagents reviewed event durability and native recovery/probes; root reviewed helper admission, lifecycle integration, uninstall, and the actual GitHub CI logs. No live lockdown, hosted API uploads, cloud changes, or frontend edits.
+
+Completed findings (cause/rationale below distinguishes source evidence from inferred intent):
+
+1. **CI atomic API incompatibility:** hosted stable deprecated `AtomicUsize::fetch_update`; `-D warnings` failed the macOS helper job. The same call existed in network probe admission. Both now use equivalent compare/exchange loops, keeping contention limits and permit release. The original API was valid on our installed compiler; CI's floating stable exposed the version mismatch. Existing concurrent admission tests exercise the replacement. Evidence: CI run `36933076240`, macOS job `110606861612`.
+2. **Event directory durability:** file/leaf-directory fsync did not persist newly created directory entries in ancestors. Directory creation now syncs affected parents. Likely original assumption: syncing the spool and its immediate directory covered creation; filesystem directory entries require their own synchronization. Native power-loss behavior cannot be fully emulated by ordinary tests.
+3. **Corrupt checkpoint metadata could skip a valid event:** zero offsets were accepted regardless of other fields, and an oversized-continuation flag could contradict an acknowledged newline. Inconsistent state now triggers preserved-checkpoint replay; original events/hashes stay intact. Two regressions pass; event-store suite is **23 tests**. Likely original intent was bounded oversized-record recovery; validation covered byte/hash identity but missed state consistency.
+4. **Panic during engagement could permit unsafe reentry:** recovery-required was set only after `engage` returned an error, which an unwind bypassed. It is now set before native work and cleared only after success or verified rollback. A pure panic/retry/restore regression checks this. The original state machine correctly handled Result errors but omitted panic exit paths.
+5. **Uninstall timeout gap:** `iptables -w 5` bounds lock acquisition, not command execution. Firewall/service commands now have an actual process timeout, and repeated jump removal is capped at 64. Subagent review additionally found that a failed service lookup was mistaken for a missing unit; cleanup now requires an explicit systemd LoadState, preserving helper/recovery files on timeout/error. Mock scenarios exercise hanging commands, stuck jumps, and uncertain service lookups. Original rationale: lock waits and success-returning deletions were assumed sufficient to bound work; `systemctl cat` failure had been used as a convenience existence check.
+
+Native snapshot, required-probe, and Windows restoration findings are under final implementation/review; final validation and the push result will be recorded after source freezes.
+
+## Claude change notice: frontend bundle fix in this worktree (in progress, 2026-10-02 ~04:00)
+
+**Codex: heads-up, no action needed. Do not revert or reformat these.** At the user's request, Claude is making two small frontend-only changes **directly in this worktree on `main`**. They are uncommitted, alongside your uncommitted Rust work, so we share one tree and nothing diverges.
+
+- Files Claude is editing (only these): `apps/web/next.config.mjs`, `apps/web/scripts/check-size-budgets.mjs`.
+- No overlap with your files (Rust, `debian/`, helper, `platform-rs`). Claude will not touch them.
+- **Why:** a measured production build of `a20c3fc` showed the 257 KiB KaTeX JS chunk loading on **every** screen (Welcome/Login/Home/Onboarding/Results). The `katex` splitChunks cache group's test `/node_modules/katex/` also matched `katex.min.css`, which the root layout imports, so `/layout` depended on the whole `katex` chunk. The fix narrows the test to JS only. The budget script gains a per-screen JS budget so this class of leak fails the build.
+- Builds/verification run in an isolated scratch copy, so no `.next/` or `out/` writes in this worktree.
+- **When committing:** stage your paths and Claude's two web paths as separate commits (explicit paths, no `git add -A`). Claude's commit message is suggested in the completion note below.
+
+### R1 native findings and cross-review completed
+
+6. **macOS backup was best-effort:** any failed `defaults read` became “originally absent,” and a failed journal write did not stop preference changes. Recovery could therefore delete a real preference or have no saved originals. Capture now distinguishes explicit absence, rejects unreadable/non-integer originals, publishes a private synced journal without replacing an existing one, and checks required preference writes. Entry treats snapshot/command failure as an error even when keyboard interception is advisory. Idle restore no longer invents enabled defaults. Source history shows the best-effort capture originated before this backend work (`a42f713`); the recent timeout conversion retained its unsafe assumptions.
+7. **Required scans accepted failed commands:** nonzero `ps`, `tasklist`, and required system probes were interpreted as empty successful results. The common runner intentionally preserved exit status for queries where nonzero legitimately means absence; required consumers failed to check it. A checked-output variant now propagates failure without changing absence-query semantics. Linux `/proc` enumeration errors likewise no longer yield clean scans.
+8. **Linux VM fallback contradicted its own parsing:** `systemd-detect-virt --quiet` suppressed the technology label that the code required to detect a VM. The fallback now requests the label and tests success/none/error cases. Likely intent was an inexpensive yes/no probe; it was incorrectly combined with label-based parsing.
+9. **Windows network restoration always returned success:** ignored delete results made cleanup idempotent when rules were absent but also hid permission/command failures. Both owned rule deletions are still attempted, followed by a required successful inventory proving the AMS rules absent. Failed/empty/unsupported inventory or surviving AMS rules prevents success. New lockdown requires verified pre-cleanup. Four mock tests cover these cases without touching the host firewall.
+
+Native agent validation: **58 platform tests**, strict Linux all-target Clippy, and Windows MSVC all-target cross-Clippy passed. Root independently reviewed native changes; event reviewer independently approved the lifecycle panic fix and caught the service-state ambiguity, which was corrected and added to the **18 passing mocked uninstall scenarios**. Native reviewer independently checked root's desktop budget guard, admission CAS loop, and revised uninstall. No current findings rely on hypothetical cloud changes or frontend work.
+
+Windows CI also exposed Unix-only variables in the event store (`unused_mut` and unused `path` parameters under `-D warnings`); these conditional-compilation issues are being corrected before the final check. This was missed by Linux-only compilation of the desktop crate, while prior Windows cross-checks covered only platform-rs.
+
+## Claude change notice: frontend bundle fix COMPLETE (uncommitted, this worktree)
+
+**Codex: FYI only. These two files are Claude's, finished and verified. Please leave them as they are and keep them out of your Rust commits.**
+
+Changed (uncommitted on `main`, 57 insertions / 2 changed lines):
+1. `apps/web/next.config.mjs`: the `katex` cacheGroup test is narrowed to `/[\\/]node_modules[\\/]katex[\\/].*\.m?js$/` (JS only), with an explanatory comment.
+2. `apps/web/scripts/check-size-budgets.mjs`: new **per-screen JS budget**. It sums every `<script src>` each exported page loads, excluding `noModule` polyfills, against a per-route map (`/` 600, `/login/` 680, `/home/` 960, `/session/onboarding/` 770, `/results/` 640, `/session/contest/` 1900 KiB; others `AMS_BUDGET_ROUTE_JS_KB`, default 460). Existing checks are unchanged.
+
+Verified by Claude in an isolated scratch build (no writes to this worktree's `.next/` or `out/`):
+- KaTeX JS now appears only in `/session/contest/page` (app-build-manifest). Initial JS per screen: Welcome 780→522 KiB (−33%), Login 849→590 (−31%), Home 1095→837 (−24%), Onboarding 927→669 (−28%), Results 810→552 (−32%), Contest 1664→1663 (unchanged; it needs KaTeX).
+- **Zero visual change:** all CSS files are byte-identical, all 62 media/font files are byte-identical, and every screen links the same stylesheets.
+- The new check **passes** on the fixed build (exit 0) and **fails on 10 of 11 screens** on the pre-fix build (exit 1). The old largest-chunk check stayed green on both, which is the blind spot this closes.
+
+Not done (left for the user's decision): lazy per-language CodeMirror grammars (low-to-medium risk, touches the exam editor). The largest chunk is still 0.47/0.49 MB because of it.
+
+Suggested separate commit (explicit paths only):
+```
+git add apps/web/next.config.mjs apps/web/scripts/check-size-budgets.mjs
+git commit -m "perf(web): keep KaTeX off every screen but the contest, and budget each screen's JS
+
+The katex splitChunks test also matched katex.min.css, which the root layout
+imports, so /layout depended on the whole 257 KiB library and Welcome, Login,
+Home, Onboarding and Results all parsed it. Narrow the test to JS. Initial JS
+drops 24-33% on those screens; CSS and fonts are byte-identical.
+
+check-size-budgets only checked the largest chunk, which stayed green through
+the leak. Add a per-screen budget (scripts each page loads, minus noModule
+polyfills); it fails 10 of 11 screens on the pre-fix build.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+### R1 final validation and commit scope
+
+- **189 Rust workspace tests passed**: desktop 52, core 39, helper 40, platform 58. Strict workspace all-target Clippy, Rust formatting, shell syntax, and diff checks passed. **18 mocked uninstall scenarios passed**.
+- Windows-only event-store declarations are fixed without lint suppression. The reviewer compiled the actual event-store source as an isolated temporary library with Windows MSVC all-target Clippy: passed. Windows platform all-target Clippy and macOS helper all-target Clippy also passed. Repository manifests/lockfiles were not altered by these checks.
+- Both fresh reviewers completed independent cross-review. Full desktop native builds and actual OS restoration/power-loss behavior still require hosted CI/native machines; this review does not claim live native verification.
+- Unexpected concurrent edits appeared in `apps/web/next.config.mjs` and `apps/web/scripts/check-size-budgets.mjs`. Neither reviewer nor root authored them; they are explicitly excluded from this backend-only commit and left intact for their owner.
+- All confirmed R1 findings above are fixed. User-authorized backend source, regression tests, and this log are ready for commit/push to main. No cloud changes, API payload changes, release tag, or installer publication.

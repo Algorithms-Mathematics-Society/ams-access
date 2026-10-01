@@ -88,12 +88,21 @@ impl ConnectionLimiter {
         }
     }
     fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
-        self.active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < self.limit).then_some(active + 1)
-            })
-            .ok()
-            .map(|_| ConnectionPermit(self.clone()))
+        // A CAS loop supports both the pinned local compiler and newer CI
+        // compilers without relying on the renamed fetch_update/try_update API.
+        let mut active = self.active.load(Ordering::Acquire);
+        while active < self.limit {
+            match self.active.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(ConnectionPermit(self.clone())),
+                Err(current) => active = current,
+            }
+        }
+        None
     }
 }
 struct ConnectionPermit(Arc<ConnectionLimiter>);

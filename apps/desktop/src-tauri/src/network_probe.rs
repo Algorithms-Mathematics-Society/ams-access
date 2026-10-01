@@ -17,12 +17,19 @@ static DNS_WORKERS: AtomicUsize = AtomicUsize::new(0);
 struct Permit<'a>(&'a AtomicUsize);
 impl<'a> Permit<'a> {
     fn acquire(counter: &'a AtomicUsize, maximum: usize) -> Option<Self> {
-        counter
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < maximum).then_some(active + 1)
-            })
-            .ok()
-            .map(|_| Self(counter))
+        let mut active = counter.load(Ordering::Acquire);
+        while active < maximum {
+            match counter.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(Self(counter)),
+                Err(current) => active = current,
+            }
+        }
+        None
     }
 }
 impl Drop for Permit<'_> {

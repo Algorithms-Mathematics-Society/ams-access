@@ -304,7 +304,7 @@ pub fn scan_processes_with_pids() -> Vec<FoundProcess> {
     let mut found = Vec::new();
     let Ok(out) = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
-        .bounded_output()
+        .bounded_checked_output()
     else {
         return found;
     };
@@ -334,7 +334,7 @@ pub fn scan_processes_with_pids() -> Vec<FoundProcess> {
 pub fn scan_processes() -> ProcessScanResult {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
     let procs = scan_processes_with_pids();
-    let clean = procs.is_empty();
+    let clean = procs.is_empty() && _budget.failure().is_none();
     let found = procs
         .into_iter()
         .map(|p| p.name.trim_end_matches(".exe").to_string())
@@ -352,7 +352,7 @@ pub fn detect_screen_capture() -> bool {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
     let ps = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
-        .bounded_output()
+        .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
@@ -723,7 +723,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     // Confidence is "medium" because this relies on loose string matching of
     // English-localised systeminfo output.
     {
-        if let Ok(out) = hidden_command("systeminfo").bounded_output() {
+        if let Ok(out) = hidden_command("systeminfo").bounded_checked_output() {
             let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
             for vm in &[
                 "vmware",
@@ -777,7 +777,7 @@ pub fn detect_remote_desktop() -> bool {
     // (belt-and-suspenders — RESTRICTED kill-shield covers these too)
     let ps = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
-        .bounded_output()
+        .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
@@ -1296,7 +1296,7 @@ pub fn harden_dll_search_path() {
 ///
 /// Does NOT touch the global outbound policy so other processes keep internet.
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
-    let _ = disable_network_lockdown(); // idempotent cleanup
+    disable_network_lockdown()?; // Verified cleanup before replacing prior rules
 
     let exe = std::env::current_exe()
         .map_err(|e| e.to_string())?
@@ -1371,27 +1371,33 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove all AMS firewall rules and restore unrestricted outbound access.
+mod firewall_recovery;
+
+/// Remove AMS firewall rules and verify their absence before reporting recovery.
 pub fn disable_network_lockdown() -> Result<(), String> {
-    let _ = hidden_command("netsh")
-        .args([
-            "advfirewall",
-            "firewall",
-            "delete",
-            "rule",
-            "name=AMS_PROCTOR_BLOCK_ALL",
-        ])
-        .bounded_output();
-    let _ = hidden_command("netsh")
-        .args([
-            "advfirewall",
-            "firewall",
-            "delete",
-            "rule",
-            "name=AMS_PROCTOR_ALLOW",
-        ])
-        .bounded_output();
-    Ok(())
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
+    firewall_recovery::cleanup(
+        |name| {
+            hidden_command("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={name}"),
+                ])
+                .bounded_output()
+                .map(|_| ())
+                .map_err(|error| format!("Cannot delete firewall rule: {error}"))
+        },
+        || {
+            hidden_command("netsh")
+                .args(["advfirewall", "firewall", "show", "rule", "name=all"])
+                .bounded_checked_output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .map_err(|error| format!("Cannot verify firewall recovery: {error}"))
+        },
+    )
 }
 
 /// Returns true if `name` (without .exe) is in the Windows RESTRICTED list.
