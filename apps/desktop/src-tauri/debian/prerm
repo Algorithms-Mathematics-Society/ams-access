@@ -1,24 +1,85 @@
 #!/bin/sh
 set -e
 
-# Remove the udev rule added by postinst.
 UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
+HELPER_UNIT="ams-proctor-helper.service"
+HELPER_UNIT_PATH="/etc/systemd/system/${HELPER_UNIT}"
+HELPER_BIN="/usr/local/lib/ams-access/ams-access-networkhelper"
+HELPER_CONFIG="/etc/ams-access/network-helper-client.conf"
+HELPER_MARKER="/run/ams-proctor.lock"
+HELPER_SOCKET="/run/ams-proctor.sock"
+IPV6_STACK="/proc/sys/net/ipv6"
+
+fail_cleanup() {
+    echo "AMS Access: helper cleanup failed; keeping helper files and recovery marker. $*" >&2
+    echo "Ask an administrator to inspect the AMS_PROCTOR chain. If confirmed stale, detach OUTPUT jumps and remove only AMS_PROCTOR using iptables -D OUTPUT -j AMS_PROCTOR; iptables -F AMS_PROCTOR; iptables -X AMS_PROCTOR (also ip6tables when IPv6 is enabled), then retry removal." >&2
+    exit 1
+}
+
+# Remove only our named chain and its OUTPUT jumps. Never flush a table or
+# change its policy. A failed probe is not proof that a chain is absent.
+remove_chain() {
+    tool="$1"
+    command -v "$tool" >/dev/null 2>&1 || fail_cleanup "$tool is unavailable."
+    rules=$("$tool" -w 5 -S) || fail_cleanup "Cannot inspect $tool rules."
+    if printf '%s\n' "$rules" | grep -Fx -- '-N AMS_PROCTOR' >/dev/null; then
+        while "$tool" -w 5 -C OUTPUT -j AMS_PROCTOR 2>/dev/null; do
+            "$tool" -w 5 -D OUTPUT -j AMS_PROCTOR || fail_cleanup "Cannot detach $tool chain."
+        done
+        "$tool" -w 5 -F AMS_PROCTOR || fail_cleanup "Cannot clear $tool chain."
+        "$tool" -w 5 -X AMS_PROCTOR || fail_cleanup "Cannot remove $tool chain."
+    fi
+    rules=$("$tool" -w 5 -S) || fail_cleanup "Cannot verify $tool cleanup."
+    if printf '%s\n' "$rules" | grep -E -- '(^-N AMS_PROCTOR$| -(j|g) AMS_PROCTOR( |$))' >/dev/null; then
+        fail_cleanup "$tool still refers to AMS_PROCTOR."
+    fi
+}
 
 case "$1" in
-    remove|deconfigure)
+    remove)
+        # The helper is installed out of band by the app. Stop it before
+        # removing its firewall so it cannot reapply a marked session. Abort
+        # removal on uncertainty instead of stranding a user without recovery.
+        if [ -e "$HELPER_UNIT_PATH" ] || [ -e "$HELPER_BIN" ] || [ -e "$HELPER_MARKER" ] || [ -S "$HELPER_SOCKET" ]; then
+            unit_known=false
+            if [ -e "$HELPER_UNIT_PATH" ]; then
+                unit_known=true
+            elif command -v systemctl >/dev/null 2>&1 && systemctl cat "$HELPER_UNIT" >/dev/null 2>&1; then
+                unit_known=true
+            fi
+            if [ "$unit_known" = true ]; then
+                command -v systemctl >/dev/null 2>&1 || fail_cleanup "systemctl is unavailable."
+                systemctl stop "$HELPER_UNIT" || fail_cleanup "Cannot stop the helper."
+            fi
+            remove_chain iptables
+            if [ -d "$IPV6_STACK" ]; then
+                remove_chain ip6tables
+            fi
+            if [ "$unit_known" = true ]; then
+                systemctl disable "$HELPER_UNIT" || fail_cleanup "Cannot disable the helper."
+            fi
+            rm -f "$HELPER_UNIT_PATH" "$HELPER_BIN" "$HELPER_CONFIG" "$HELPER_MARKER" "$HELPER_SOCKET"
+            # Never recursively delete shared directories or unrelated files.
+            rmdir /usr/local/lib/ams-access /etc/ams-access 2>/dev/null || true
+            if [ "$unit_known" = true ]; then
+                systemctl daemon-reload
+            fi
+        fi
         rm -f "$UDEV_RULE_PATH"
-
-        if command -v udevadm > /dev/null 2>&1; then
+        if command -v udevadm >/dev/null 2>&1; then
             udevadm control --reload-rules 2>/dev/null || true
         fi
         ;;
-
-    # On an upgrade the new postinst rewrites the rule immediately, so
-    # removing it here would open a window where a camera check could fail
-    # for no reason.
+    deconfigure)
+        # dpkg may deconfigure while leaving this package installed. Keep the
+        # helper/recovery state until an actual removal is requested.
+        rm -f "$UDEV_RULE_PATH"
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload-rules 2>/dev/null || true
+        fi
+        ;;
     upgrade|failed-upgrade)
         ;;
-
     *)
         echo "prerm called with unknown argument \`$1'" >&2
         exit 1

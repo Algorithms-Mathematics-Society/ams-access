@@ -19,16 +19,89 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
 use std::net::{IpAddr, Ipv4Addr};
-#[cfg(target_os = "macos")]
-use std::process::Stdio;
 
 #[cfg(target_os = "macos")]
 use std::os::fd::AsRawFd;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+
+// Peer authorization happens inline before admission, without reading request
+// bytes. Only authorized clients can occupy the bounded worker pool.
+const MAX_CONNECTIONS: usize = 8;
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const FIREWALL_TIMEOUT: Duration = Duration::from_secs(8);
+thread_local! {
+    static FIREWALL_DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+struct FirewallDeadline(Option<Instant>);
+impl FirewallDeadline {
+    fn begin() -> Self {
+        Self(FIREWALL_DEADLINE.with(|slot| slot.replace(Some(Instant::now() + FIREWALL_TIMEOUT))))
+    }
+}
+impl Drop for FirewallDeadline {
+    fn drop(&mut self) {
+        FIREWALL_DEADLINE.with(|slot| slot.set(self.0));
+    }
+}
+fn command_budget() -> std::io::Result<Duration> {
+    FIREWALL_DEADLINE.with(|slot| match slot.get() {
+        Some(deadline) => deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .map(|left| left.min(COMMAND_TIMEOUT))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "firewall operation timed out; restore system settings to retry",
+                )
+            }),
+        None => Ok(COMMAND_TIMEOUT),
+    })
+}
+fn command_output(
+    command: &mut Command,
+    input: Option<&[u8]>,
+) -> std::io::Result<std::process::Output> {
+    crate::process_runner::output(command, command_budget()?, input)
+}
+
+struct ConnectionLimiter {
+    active: AtomicUsize,
+    limit: usize,
+}
+impl ConnectionLimiter {
+    fn new(limit: usize) -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            limit,
+        }
+    }
+    fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
+        self.active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < self.limit).then_some(active + 1)
+            })
+            .ok()
+            .map(|_| ConnectionPermit(self.clone()))
+    }
+}
+struct ConnectionPermit(Arc<ConnectionLimiter>);
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 // ── Socket path (per-OS) ──────────────────────────────────────────────────────
 
@@ -85,6 +158,9 @@ struct Marker {
     /// Corrupt, which would leave a live exam's rules untouched.
     #[serde(default)]
     resolvers: Vec<String>,
+    /// Durable cleanup intent: a timed-out restore must not be re-applied on restart.
+    #[serde(default)]
+    disabling: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -116,6 +192,7 @@ enum DisableDecision {
 #[cfg(target_os = "linux")]
 fn startup_action(state: MarkerState) -> StartupAction {
     match state {
+        MarkerState::Present(m) if m.disabling => StartupAction::Flush,
         MarkerState::Present(m) => StartupAction::ReApply(m.ips, m.resolvers),
         MarkerState::Absent => StartupAction::Flush,
         MarkerState::Corrupt => StartupAction::LeaveAsIs,
@@ -169,8 +246,12 @@ fn write_marker_at(path: &std::path::Path, marker: &Marker) -> std::io::Result<(
 }
 
 #[cfg(target_os = "linux")]
-fn remove_marker_at(path: &std::path::Path) {
-    let _ = std::fs::remove_file(path);
+fn remove_marker_at(path: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -184,8 +265,9 @@ fn write_marker(marker: &Marker) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn remove_marker() {
+fn remove_marker() -> Result<(), String> {
     remove_marker_at(std::path::Path::new(MARKER_PATH))
+        .map_err(|error| format!("firewall restored but recovery marker cleanup failed: {error}"))
 }
 
 #[derive(Deserialize)]
@@ -242,6 +324,7 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     {
         let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _deadline = FirewallDeadline::begin();
         match startup_action(read_marker()) {
             StartupAction::ReApply(ips, resolvers) => {
                 let full: Vec<String> = ips
@@ -253,10 +336,12 @@ pub fn run() {
                     eprintln!("AMS helper: startup re-apply failed (rules left as-is): {e}");
                 }
             }
-            StartupAction::Flush => {
-                teardown_chain(IPTABLES);
-                teardown_chain(IP6TABLES);
-            }
+            StartupAction::Flush => match finish_cleanup(iptables_disable, remove_marker) {
+                Ok(()) => (),
+                Err(error) => eprintln!(
+                    "AMS helper: startup cleanup incomplete; recovery marker retained: {error}"
+                ),
+            },
             StartupAction::LeaveAsIs => {
                 eprintln!(
                     "AMS helper: lock file unreadable at startup; leaving existing \
@@ -268,12 +353,25 @@ pub fn run() {
 
     eprintln!("AMS network helper ready on {socket_path}");
 
+    let connections = Arc::new(ConnectionLimiter::new(MAX_CONNECTIONS));
     for stream in listener.incoming() {
         match stream {
-            // Spawn per connection — firewall calls can block for tens of ms
-            // under a kernel lock; a single-threaded loop would stall accept.
+            // Authenticate without reading peer-controlled data, before taking
+            // a worker slot. Unauthorized peers get no blocking response write.
             Ok(s) => {
-                std::thread::spawn(move || handle_client(s));
+                let Some(permit) = admit_client(&s, &connections, authorize_client) else {
+                    continue;
+                };
+                if let Err(e) = std::thread::Builder::new()
+                    .name("ams-helper-client".into())
+                    .spawn(move || {
+                        let _permit = permit;
+                        handle_client(s);
+                    })
+                {
+                    // A failed spawn drops its closure, releasing the permit.
+                    eprintln!("AMS helper worker spawn error: {e}");
+                }
             }
             Err(e) => eprintln!("AMS helper accept error: {e}"),
         }
@@ -306,9 +404,10 @@ fn secure_socket(socket_path: &str) {
         // is checked against the root-installed app executable path before any
         // command runs (see authorize_client).
         let _ = std::fs::set_permissions(socket_path, PermissionsExt::from_mode(0o660));
-        let _ = Command::new("/usr/sbin/chown")
-            .args(["root:staff", socket_path])
-            .output();
+        let _ = command_output(
+            Command::new("/usr/sbin/chown").args(["root:staff", socket_path]),
+            None,
+        );
     }
     #[cfg(target_os = "linux")]
     {
@@ -328,7 +427,41 @@ fn secure_socket(socket_path: &str) {
     }
 }
 
+fn admit_client(
+    stream: &UnixStream,
+    connections: &Arc<ConnectionLimiter>,
+    authorize: impl FnOnce(&UnixStream) -> Result<(), String>,
+) -> Option<ConnectionPermit> {
+    authorize(stream).ok()?;
+    let permit = connections.try_acquire();
+    if permit.is_none() {
+        // A small nonblocking reply to an authenticated peer. The accept loop
+        // never waits for it, and no request has been read or dispatched.
+        if stream.set_nonblocking(true).is_ok() {
+            let _ = (&*stream).write_all(b"{\"ok\":false,\"error\":\"helper_busy\"}\n");
+        }
+    }
+    permit
+}
+
 fn handle_client(stream: UnixStream) {
+    serve_client(stream, REQUEST_TIMEOUT, authorize_client, dispatch);
+}
+
+/// Authorization precedes request reads and dispatch. Callbacks allow tests to
+/// exercise framing/lifecycle without inspecting real peers or running firewall
+/// commands. OS socket deadlines cover both authorized and denied peers.
+fn serve_client(
+    stream: UnixStream,
+    request_timeout: Duration,
+    authorize: impl FnOnce(&UnixStream) -> Result<(), String>,
+    mut execute: impl FnMut(&str) -> String,
+) {
+    if stream.set_read_timeout(Some(request_timeout)).is_err()
+        || stream.set_write_timeout(Some(WRITE_TIMEOUT)).is_err()
+    {
+        return;
+    }
     let mut writer = match stream.try_clone() {
         Ok(writer) => writer,
         Err(e) => {
@@ -336,17 +469,81 @@ fn handle_client(stream: UnixStream) {
             return;
         }
     };
-
-    if let Err(e) = authorize_client(&stream) {
+    if let Err(e) = authorize(&stream) {
         let _ = writeln!(writer, "{}", json_err(&e));
         return;
     }
+    let mut reader = BufReader::new(stream);
+    loop {
+        match read_request(&mut reader, request_timeout) {
+            Ok(Some(line)) => {
+                let response = execute(&line);
+                if writeln!(writer, "{response}").is_err() {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                // Do not echo attacker-controlled bytes or keep consuming an
+                // oversized frame. Discard the connection after one error.
+                let _ = writeln!(writer, "{}", json_err(&error.to_string()));
+                break;
+            }
+        }
+    }
+}
 
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
-        let response = dispatch(&line);
-        let _ = writeln!(writer, "{response}");
+/// Read one complete newline-delimited request with bounded allocation and a
+/// total framing deadline. Resetting only an idle timeout would allow a peer
+/// sending one byte at a time to retain its slot indefinitely.
+fn read_request(
+    reader: &mut BufReader<UnixStream>,
+    timeout: Duration,
+) -> std::io::Result<Option<String>> {
+    let deadline = Instant::now() + timeout;
+    let mut line = Vec::new();
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "request timed out")
+            })?;
+        reader.get_ref().set_read_timeout(Some(remaining))?;
+        let available = match reader.fill_buf() {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if available.is_empty() {
+            return if line.is_empty() {
+                Ok(None)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "incomplete request",
+                ))
+            };
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let count = newline.map_or(available.len(), |position| position + 1);
+        if line.len() + count > MAX_REQUEST_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "request exceeds size limit",
+            ));
+        }
+        line.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if newline.is_some() {
+            line.pop(); // newline
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return String::from_utf8(line).map(Some).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "request is not UTF-8")
+            });
+        }
     }
 }
 
@@ -391,9 +588,9 @@ fn authorize_client(stream: &UnixStream) -> Result<(), String> {
 ///
 /// Honest residual weakness in the fallback (no-config) mode: a local process
 /// whose exe basename matches `EXPECTED_CLIENT_BASENAMES` on the same host could
-/// impersonate the client. The mode-0600 root-owned socket still blocks non-root
-/// users at the filesystem layer, and the strong mode removes the weakness
-/// entirely whenever a stable path was pinned at install time.
+/// impersonate the client. Linux permits user-session clients to connect at
+/// the filesystem layer; that fallback therefore relies on the basename check.
+/// Pinning a stable executable path removes this particular fallback weakness.
 #[cfg(target_os = "linux")]
 fn authorize_client(stream: &UnixStream) -> Result<(), String> {
     // Expected basenames for the AMS Access client binary. `ams-access` is the
@@ -516,6 +713,7 @@ fn pid_path(pid: libc::pid_t) -> Result<String, String> {
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 fn dispatch(json: &str) -> String {
+    let _deadline = FirewallDeadline::begin();
     match serde_json::from_str::<Request>(json.trim()) {
         Ok(Request::Ping) => json_ok(),
         Ok(Request::Enable {
@@ -562,25 +760,37 @@ fn dispatch(json: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn firewall_enable(ips: &[String]) -> Result<(), String> {
+    let _guard = acquire_firewall(&FIREWALL_LOCK)?;
     let ips = validate_ipv4_allowlist(ips)?;
     pfctl_enable(&ips)
 }
 
 #[cfg(target_os = "macos")]
 fn firewall_disable() -> Result<(), String> {
+    let _guard = acquire_firewall(&FIREWALL_LOCK)?;
     pfctl_disable()
 }
 
-#[cfg(target_os = "linux")]
 static FIREWALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn acquire_firewall(lock: &std::sync::Mutex<()>) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+    match lock.try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(std::sync::TryLockError::WouldBlock) => Err("helper_busy".into()),
+        // A prior worker panic must not permanently prevent explicit recovery.
+        // Each transaction re-reads its durable marker and verifies OS results.
+        Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
+    }
+}
+
 /// Marker-first enable: persist intent, then apply. A crash between the two
-/// leaves a marker → next startup re-applies (fail-closed). On apply failure
-/// remove the marker so we never claim locked while open.
+/// leaves a marker → next startup re-applies (fail-closed). An apply failure
+/// persists cleanup intent and retains the recovery capability.
 #[cfg(target_os = "linux")]
 fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<(), String> {
-    let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = acquire_firewall(&FIREWALL_LOCK)?;
     let marker = Marker {
+        disabling: false,
         token: token.to_string(),
         ips: ips.to_vec(),
         resolvers: resolvers.to_vec(),
@@ -598,18 +808,23 @@ fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<
         .collect();
 
     if let Err(e) = iptables_enable(&full, resolvers) {
-        remove_marker();
+        // The deadline may have stopped rollback midway. Preserve the token
+        // and cleanup intent; never hide potentially surviving kernel rules.
+        let mut cleanup = marker;
+        cleanup.disabling = true;
+        if let Err(journal) = write_marker(&cleanup) {
+            return Err(format!("{e}; could not persist cleanup intent: {journal}"));
+        }
         return Err(e);
     }
     Ok(())
 }
 
-/// Token-gated, marker-first disable: only the owning session lifts the
-/// lockdown. Remove the marker before the rules so a crash mid-disable lands
-/// on 'no marker → flush → open' at the next startup.
+/// Token-gated restore. Journal cleanup intent before mutation and clear the
+/// marker only after verified teardown. Restart retries cleanup, never reapply.
 #[cfg(target_os = "linux")]
 fn firewall_disable(token: &str) -> Result<(), String> {
-    let _guard = FIREWALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = acquire_firewall(&FIREWALL_LOCK)?;
     let state = read_marker();
     let stored = match &state {
         MarkerState::Present(m) => Some(m),
@@ -618,13 +833,24 @@ fn firewall_disable(token: &str) -> Result<(), String> {
         MarkerState::Corrupt => return Err("disable refused: lock state unreadable".to_string()),
     };
     match authorize_disable(stored, token) {
-        DisableDecision::NoOp => Ok(()),
+        DisableDecision::NoOp => iptables_disable(),
         DisableDecision::Reject => Err("unauthorized disable: token mismatch".to_string()),
         DisableDecision::Proceed => {
-            remove_marker();
-            iptables_disable()
+            let mut cleanup = stored.expect("authorized marker exists").clone();
+            cleanup.disabling = true;
+            write_marker(&cleanup).map_err(|error| format!("persist cleanup intent: {error}"))?;
+            finish_cleanup(iptables_disable, remove_marker)
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn finish_cleanup(
+    cleanup: impl FnOnce() -> Result<(), String>,
+    clear: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    cleanup()?;
+    clear()
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -676,24 +902,11 @@ fn validate_ipv4_allowlist(ips: &[String]) -> Result<Vec<Ipv4Addr>, String> {
 
 #[cfg(target_os = "macos")]
 fn pfctl_load_anchor(anchor: &str, rules: &str) -> Result<(), String> {
-    let mut child = Command::new(PFCTL)
-        .args(["-a", anchor, "-f", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("pfctl -f: {e}"))?;
-
-    child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "pfctl stdin unavailable".to_string())?
-        .write_all(rules.as_bytes())
-        .map_err(|e| format!("write pf rules: {e}"))?;
-
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("pfctl wait: {e}"))?;
+    let out = command_output(
+        Command::new(PFCTL).args(["-a", anchor, "-f", "-"]),
+        Some(rules.as_bytes()),
+    )
+    .map_err(|e| format!("pfctl -f: {e}"))?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -702,7 +915,18 @@ fn pfctl_load_anchor(anchor: &str, rules: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
-    let _ = Command::new(PFCTL).arg("-e").output();
+    let enabled = command_output(Command::new(PFCTL).arg("-e"), None)
+        .map_err(|error| format!("pfctl enable: {error}"))?;
+    if !enabled.status.success()
+        && !String::from_utf8_lossy(&enabled.stderr)
+            .to_ascii_lowercase()
+            .contains("already enabled")
+    {
+        return Err(format!(
+            "pfctl enable failed: {}",
+            String::from_utf8_lossy(&enabled.stderr).trim()
+        ));
+    }
 
     let ip_list = ips
         .iter()
@@ -725,38 +949,90 @@ fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn pfctl_disable() -> Result<(), String> {
+    let mut errors = Vec::new();
     for anchor in [ANCHOR, LEGACY_ANCHOR, "com.amsaccess.proctor6"] {
-        let out = Command::new(PFCTL)
-            .args(["-a", anchor, "-F", "all"])
-            .output()
-            .map_err(|e| format!("pfctl flush: {e}"))?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.to_lowercase().contains("anchor") {
-                return Err(stderr.trim().to_string());
-            }
+        let flushed = command_output(Command::new(PFCTL).args(["-a", anchor, "-F", "all"]), None);
+        // A missing/empty anchor is harmless only when a read confirms it has
+        // no filter rules. Error text mentioning "anchor" is not confirmation.
+        let verified = command_output(Command::new(PFCTL).args(["-a", anchor, "-sr"]), None);
+        let empty = verified.as_ref().is_ok_and(|out| {
+            out.status.success() && out.stdout.iter().all(u8::is_ascii_whitespace)
+        });
+        if !empty {
+            errors.push(format!(
+                "could not verify restoration of {anchor}: flush={flushed:?}; verify={verified:?}"
+            ));
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 // ── Linux firewall (iptables + ip6tables) ─────────────────────────────────────
 
 #[cfg(target_os = "linux")]
 fn run_tables(bin: &str, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new(bin)
-        .args(args)
-        .output()
+    command_output(Command::new(bin).args(args), None)
         .map_err(|e| format!("{bin} {}: {e}", args.join(" ")))
 }
 
-/// Tear down any leftover AMS_PROCTOR chain in `bin`'s OUTPUT table. Best-effort
-/// and idempotent — every step is allowed to fail (e.g. chain absent).
+/// Verify scoped chain removal. A failed command is not proof of absence.
 #[cfg(target_os = "linux")]
-fn teardown_chain(bin: &str) {
-    let _ = run_tables(bin, &["-D", "OUTPUT", "-j", CHAIN]);
-    let _ = run_tables(bin, &["-F", CHAIN]);
-    let _ = run_tables(bin, &["-X", CHAIN]);
+fn teardown_chain(bin: &str) -> Result<(), String> {
+    teardown_with(|args| run_tables(bin, args))
+}
+
+#[cfg(target_os = "linux")]
+fn teardown_with(
+    mut run: impl FnMut(&[&str]) -> Result<std::process::Output, String>,
+) -> Result<(), String> {
+    let initial = run(&["-S"])?;
+    if !initial.status.success() {
+        return Err("cannot inspect firewall rules".into());
+    }
+    let rules = String::from_utf8_lossy(&initial.stdout);
+    let jumps = rules
+        .lines()
+        .filter(|line| *line == "-A OUTPUT -j AMS_PROCTOR")
+        .count();
+    if jumps > 64 {
+        return Err("unexpected number of AMS firewall jumps; recovery required".into());
+    }
+    for _ in 0..jumps {
+        let result = run(&["-D", "OUTPUT", "-j", CHAIN])?;
+        if !result.status.success() {
+            return Err("could not detach AMS firewall chain".into());
+        }
+    }
+    if rules.lines().any(|line| line == "-N AMS_PROCTOR") {
+        for operation in ["-F", "-X"] {
+            let result = run(&[operation, CHAIN])?;
+            if !result.status.success() {
+                return Err(format!("firewall cleanup {operation} failed"));
+            }
+        }
+    }
+    let final_rules = run(&["-S"])?;
+    if !final_rules.status.success() {
+        return Err("cannot verify firewall restoration".into());
+    }
+    if String::from_utf8_lossy(&final_rules.stdout)
+        .lines()
+        .any(|line| {
+            line == "-N AMS_PROCTOR"
+                || line
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .any(|pair| matches!(pair[0], "-j" | "-g") && pair[1] == CHAIN)
+        })
+    {
+        return Err("AMS firewall rules remain; retry restoring system settings".into());
+    }
+    Ok(())
 }
 
 /// Build the AMS_PROCTOR chain in `bin` (iptables OR ip6tables), allowing only
@@ -944,13 +1220,12 @@ fn iptables_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
     }
 
     // Idempotent: clear any leftovers in both tables first.
-    teardown_chain(IPTABLES);
-    teardown_chain(IP6TABLES);
+    iptables_disable()?;
 
     // Build v4. If this fails, roll back so we never leave a half-applied
     // (and therefore unpredictable) firewall. v4 failure is ALWAYS fatal.
     if let Err(e) = build_chain(IPTABLES, &v4, &r4) {
-        teardown_chain(IPTABLES);
+        let _ = teardown_chain(IPTABLES);
         return Err(e);
     }
 
@@ -965,8 +1240,7 @@ fn iptables_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
     //     IPv6 egress leaks. A v6 failure rolls back BOTH tables.
     if should_build_v6_chain(ipv6_stack_present()) {
         if let Err(e) = build_chain(IP6TABLES, &v6, &r6) {
-            teardown_chain(IPTABLES);
-            teardown_chain(IP6TABLES);
+            let _ = iptables_disable();
             return Err(e);
         }
     } else {
@@ -982,9 +1256,17 @@ fn iptables_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
 /// Remove the AMS_PROCTOR chain from BOTH tables.
 #[cfg(target_os = "linux")]
 fn iptables_disable() -> Result<(), String> {
-    teardown_chain(IPTABLES);
-    teardown_chain(IP6TABLES);
-    Ok(())
+    let v4 = teardown_chain(IPTABLES);
+    let v6 = if ipv6_stack_present() {
+        teardown_chain(IP6TABLES)
+    } else {
+        Ok(())
+    };
+    match (v4, v6) {
+        (Err(first), Err(second)) => Err(format!("{first}; {second}")),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -1037,6 +1319,7 @@ mod tests {
     #[test]
     fn startup_reapplies_when_marker_present() {
         let m = Marker {
+            disabling: false,
             token: "t".into(),
             ips: vec!["1.2.3.4".into()],
             resolvers: vec![],
@@ -1053,6 +1336,7 @@ mod tests {
         // resolver split here would silently widen every nameserver back to
         // full egress on every restart — the bypass returning by the back door.
         let m = Marker {
+            disabling: false,
             token: "t".into(),
             ips: vec!["1.2.3.4".into(), "9.9.9.9".into()],
             resolvers: vec!["9.9.9.9".into()],
@@ -1093,6 +1377,7 @@ mod tests {
     #[test]
     fn disable_proceeds_only_on_exact_token_match() {
         let m = Marker {
+            disabling: false,
             token: "secret".into(),
             ips: vec![],
             resolvers: vec![],
@@ -1114,6 +1399,7 @@ mod tests {
     #[test]
     fn marker_json_round_trips() {
         let m = Marker {
+            disabling: false,
             token: "abc".into(),
             ips: vec!["10.0.0.1".into(), "::1".into()],
             resolvers: vec![],
@@ -1128,13 +1414,14 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ams-marker-rt-{}.lock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let m = Marker {
+            disabling: false,
             token: "tok".into(),
             ips: vec!["1.1.1.1".into()],
             resolvers: vec![],
         };
         write_marker_at(&path, &m).expect("write");
         assert_eq!(read_marker_at(&path), MarkerState::Present(m));
-        remove_marker_at(&path);
+        remove_marker_at(&path).unwrap();
         assert_eq!(read_marker_at(&path), MarkerState::Absent);
     }
 
@@ -1155,6 +1442,7 @@ mod tests {
         write_marker_at(
             &path,
             &Marker {
+                disabling: false,
                 token: "t".into(),
                 ips: vec![],
                 resolvers: vec![],
@@ -1164,5 +1452,300 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn admission_is_bounded_and_released_on_drop_and_panic() {
+        let limit = Arc::new(ConnectionLimiter::new(2));
+        let first = limit.try_acquire().unwrap();
+        let second = limit.try_acquire().unwrap();
+        assert!(limit.try_acquire().is_none());
+        drop(first);
+        let replacement = limit.try_acquire().unwrap();
+        drop(second);
+        let panic_permit = limit.try_acquire().unwrap();
+        assert!(std::panic::catch_unwind(move || {
+            let _permit = panic_permit;
+            panic!("test worker unwind");
+        })
+        .is_err());
+        assert!(limit.try_acquire().is_some());
+        drop(replacement);
+        assert_eq!(limit.active.load(Ordering::Acquire), 0);
+    }
+    #[test]
+    fn idle_unauthorized_peers_never_take_recovery_worker_slots() {
+        let limit = Arc::new(ConnectionLimiter::new(2));
+        let mut clients = Vec::new();
+        for _ in 0..16 {
+            let (client, server) = UnixStream::pair().unwrap();
+            clients.push(client); // No request bytes; peer remains connected.
+            assert!(admit_client(&server, &limit, |_| Err("unauthorized".into())).is_none());
+            assert_eq!(limit.active.load(Ordering::Acquire), 0);
+        }
+        let (_client, server) = UnixStream::pair().unwrap();
+        assert!(admit_client(&server, &limit, |_| Ok(())).is_some());
+    }
+
+    #[test]
+    fn admission_remains_bounded_under_concurrent_attempts() {
+        let limit = Arc::new(ConnectionLimiter::new(2));
+        let barrier = Arc::new(std::sync::Barrier::new(9));
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let limit = limit.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let permit = limit.try_acquire();
+                    barrier.wait();
+                    permit.is_some()
+                })
+            })
+            .collect();
+        barrier.wait();
+        let admitted = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap() as usize)
+            .sum::<usize>();
+        assert_eq!(admitted, 2);
+        assert_eq!(limit.active.load(Ordering::Acquire), 0);
+    }
+    #[test]
+    fn complete_requests_preserve_multiple_frames_and_crlf() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client
+            .write_all(b"{\"cmd\":\"ping\"}\r\n{\"cmd\":\"ping\"}\n")
+            .unwrap();
+        let mut reader = BufReader::new(server);
+        for _ in 0..2 {
+            assert_eq!(
+                read_request(&mut reader, Duration::from_secs(1))
+                    .unwrap()
+                    .as_deref(),
+                Some("{\"cmd\":\"ping\"}")
+            );
+        }
+    }
+    #[test]
+    fn oversized_request_is_rejected_without_waiting_for_newline() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let writer = std::thread::spawn(move || {
+            let _ = client.write_all(&vec![b'x'; MAX_REQUEST_BYTES + 1]);
+        });
+        let error = read_request(&mut BufReader::new(server), Duration::from_secs(1)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        writer.join().unwrap();
+    }
+    #[test]
+    fn incomplete_eof_is_not_dispatched_as_a_request() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client.write_all(b"{\"cmd\":\"ping\"}").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let error = read_request(&mut BufReader::new(server), Duration::from_secs(1)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+    #[test]
+    fn idle_connection_times_out() {
+        let (_client, server) = UnixStream::pair().unwrap();
+        let start = Instant::now();
+        let error =
+            read_request(&mut BufReader::new(server), Duration::from_millis(30)).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+    #[test]
+    fn trickled_bytes_do_not_reset_total_request_deadline() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let writer = std::thread::spawn(move || {
+            for _ in 0..20 {
+                if client.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let error =
+            read_request(&mut BufReader::new(server), Duration::from_millis(60)).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        writer.join().unwrap();
+    }
+    #[test]
+    fn rejected_peer_never_reads_or_dispatches_request() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        serve_client(
+            server,
+            Duration::from_millis(30),
+            |_| Err("unauthorized".into()),
+            |_| panic!("must not dispatch"),
+        );
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.contains("unauthorized"));
+    }
+    #[test]
+    fn authorized_peer_receives_response_without_firewall_calls() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client.write_all(b"{\"cmd\":\"ping\"}\n").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        serve_client(
+            server,
+            Duration::from_millis(30),
+            |_| Ok(()),
+            |line| {
+                assert_eq!(line, "{\"cmd\":\"ping\"}");
+                "{\"ok\":true}".into()
+            },
+        );
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert_eq!(response, "{\"ok\":true}\n");
+    }
+}
+
+#[cfg(test)]
+mod bounded_firewall_tests {
+    use super::*;
+
+    #[test]
+    fn overload_returns_explicit_predispatch_busy_to_authorized_peer() {
+        let limits = Arc::new(ConnectionLimiter::new(0));
+        let (client, server) = UnixStream::pair().unwrap();
+        assert!(admit_client(&server, &limits, |_| Ok(())).is_none());
+        let mut line = String::new();
+        BufReader::new(client).read_line(&mut line).unwrap();
+        assert_eq!(line, "{\"ok\":false,\"error\":\"helper_busy\"}\n");
+    }
+
+    #[test]
+    fn contention_is_busy_before_any_firewall_mutation() {
+        let _held = FIREWALL_LOCK.lock().unwrap();
+        assert!(
+            dispatch(r#"{"cmd":"enable","ips":["127.0.0.1"],"token":"t"}"#).contains("helper_busy")
+        );
+        assert!(dispatch(r#"{"cmd":"disable","token":"t"}"#).contains("helper_busy"));
+    }
+
+    #[test]
+    fn poisoned_transaction_lock_does_not_permanently_block_recovery() {
+        let lock = std::sync::Mutex::new(());
+        let _ = std::panic::catch_unwind(|| {
+            let _held = lock.lock().unwrap();
+            panic!("mock transaction panic");
+        });
+        assert!(acquire_firewall(&lock).is_ok());
+    }
+
+    #[test]
+    fn aggregate_deadline_prevents_starting_another_command_and_restores_scope() {
+        let before = FIREWALL_DEADLINE.with(|slot| slot.get());
+        {
+            let _scope = FirewallDeadline::begin();
+            assert!(command_budget().unwrap() <= COMMAND_TIMEOUT);
+            FIREWALL_DEADLINE
+                .with(|slot| slot.set(Some(Instant::now() - Duration::from_millis(1))));
+            assert_eq!(
+                command_budget().unwrap_err().kind(),
+                std::io::ErrorKind::TimedOut
+            );
+        }
+        assert_eq!(FIREWALL_DEADLINE.with(|slot| slot.get()), before);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn output(success: bool, stdout: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(if success { 0 } else { 256 }),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn teardown_checks_every_step_and_proves_absence() {
+        let mut calls = Vec::new();
+        let mut initial = true;
+        teardown_with(|args| {
+            calls.push(args.join(" "));
+            if args == ["-S"] && initial {
+                initial = false;
+                Ok(output(
+                    true,
+                    "-N AMS_PROCTOR\n-A OUTPUT -j AMS_PROCTOR\n-A OUTPUT -j AMS_PROCTOR\n",
+                ))
+            } else {
+                Ok(output(true, "-P OUTPUT ACCEPT\n"))
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            [
+                "-S",
+                "-D OUTPUT -j AMS_PROCTOR",
+                "-D OUTPUT -j AMS_PROCTOR",
+                "-F AMS_PROCTOR",
+                "-X AMS_PROCTOR",
+                "-S"
+            ]
+        );
+        assert!(teardown_with(|_| Err("command timed out".into())).is_err());
+        assert!(teardown_with(|_| Ok(output(false, ""))).is_err());
+        assert!(teardown_with(|args| Ok(output(
+            true,
+            if args == ["-S"] {
+                "-N AMS_PROCTOR\n"
+            } else {
+                ""
+            }
+        )))
+        .is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn failed_or_timed_out_restore_keeps_marker_and_restart_cleanup_intent() {
+        let cleared = std::cell::Cell::new(false);
+        assert!(finish_cleanup(
+            || Err("deadline expired".into()),
+            || {
+                cleared.set(true);
+                Ok(())
+            }
+        )
+        .is_err());
+        assert!(!cleared.get());
+        finish_cleanup(
+            || Ok(()),
+            || {
+                cleared.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(cleared.get());
+        let old: Marker = serde_json::from_str(r#"{"token":"t","ips":[],"resolvers":[]}"#).unwrap();
+        assert!(!old.disabling);
+        let cleanup = Marker {
+            disabling: true,
+            ..old
+        };
+        assert_eq!(
+            startup_action(MarkerState::Present(cleanup)),
+            StartupAction::Flush
+        );
     }
 }

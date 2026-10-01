@@ -1,4 +1,7 @@
+#[cfg(unix)]
+mod helper_client;
 pub mod kiosk;
+pub mod process_runner;
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
@@ -9,3 +12,8 @@ cfg_if::cfg_if! {
         pub mod macos;
     }
 }
+
+// Exercise macOS journal failure paths without invoking native commands.
+#[cfg(all(test, not(target_os = "macos")))]
+#[path = "macos/lockdown_recovery.rs"]
+mod macos_lockdown_recovery_tests;

@@ -9,6 +9,10 @@
 
 #[cfg(unix)]
 mod helper;
+#[cfg(unix)]
+#[allow(dead_code)] // Shared budget/extension APIs are also consumed by platform-rs.
+#[path = "../../platform-rs/src/process_runner.rs"]
+mod process_runner;
 
 #[cfg(unix)]
 fn main() {

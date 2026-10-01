@@ -1,3 +1,8 @@
+mod blocking_probe;
+mod event_store;
+mod lockdown_lifecycle;
+mod network_probe;
+
 use base64::Engine as _;
 use core_rs::exam::{
     evaluate_readiness, CheckOutcome, CloseAppsResult, DeviceState, EnforcementDecision,
@@ -6,11 +11,10 @@ use core_rs::exam::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
-use std::io::Write;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
@@ -85,20 +89,25 @@ struct ProctoringEventEntry {
     hash: String,
 }
 
-static VIOLATION_LOG: OnceLock<Mutex<Vec<ViolationEntry>>> = OnceLock::new();
-static PROCTORING_LOG: OnceLock<Mutex<Vec<ProctoringEventEntry>>> = OnceLock::new();
+static VIOLATION_LOG: OnceLock<Mutex<RecentEventLog<ViolationEntry>>> = OnceLock::new();
+static PROCTORING_LOG: OnceLock<Mutex<RecentEventLog<ProctoringEventEntry>>> = OnceLock::new();
 // True while a real exam lockdown (lock_desktop) owns the keyboard intercept.
 // Readiness probes consult this so they never tear down a live exam lockdown,
 // and release the intercept otherwise (a probe must not leave Cmd+Tab/Cmd+Q
 // blocked while the candidate is still on the home screen).
 static LOCKDOWN_ENGAGED: AtomicBool = AtomicBool::new(false);
-
-fn violation_log() -> &'static Mutex<Vec<ViolationEntry>> {
-    VIOLATION_LOG.get_or_init(|| Mutex::new(Vec::new()))
+static LOCKDOWN_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LOCKDOWN_LIFECYCLE: OnceLock<Mutex<lockdown_lifecycle::Lifecycle>> = OnceLock::new();
+fn lockdown_lifecycle() -> &'static Mutex<lockdown_lifecycle::Lifecycle> {
+    LOCKDOWN_LIFECYCLE.get_or_init(|| Mutex::new(lockdown_lifecycle::Lifecycle::default()))
 }
 
-fn proctoring_log() -> &'static Mutex<Vec<ProctoringEventEntry>> {
-    PROCTORING_LOG.get_or_init(|| Mutex::new(Vec::new()))
+fn violation_log() -> &'static Mutex<RecentEventLog<ViolationEntry>> {
+    VIOLATION_LOG.get_or_init(|| Mutex::new(RecentEventLog::default()))
+}
+
+fn proctoring_log() -> &'static Mutex<RecentEventLog<ProctoringEventEntry>> {
+    PROCTORING_LOG.get_or_init(|| Mutex::new(RecentEventLog::default()))
 }
 
 fn unix_ts_ms() -> u64 {
@@ -110,8 +119,8 @@ fn unix_ts_ms() -> u64 {
 
 // ── SEC-4: tamper-evident event chain ─────────────────────────────────────────
 //
-// A single monotonic sequence + hash chain spans BOTH the violation and
-// proctoring streams (they share one counter). The chain is anchored by a
+// Within each origin/session, one monotonic hash chain spans BOTH violation
+// and proctoring streams. Pre-session events have their own separate chain. The chain is anchored by a
 // per-run nonce (the genesis `prev_hash`), so chains from different app runs are
 // distinguishable and cannot be spliced together. The server merges both
 // streams by `seq`, then verifies: `seq` is contiguous from 0 (a gap that never
@@ -128,7 +137,45 @@ struct EventChainState {
     prev_hash: String,
 }
 
-static EVENT_CHAIN: OnceLock<Mutex<EventChainState>> = OnceLock::new();
+static EVENT_CHAIN: OnceLock<Mutex<HashMap<Option<event_store::SessionBinding>, EventChainState>>> =
+    OnceLock::new();
+// Serialize config changes with reservation + append, preventing relabel races.
+static EVENT_RECORD_LOCK: Mutex<()> = Mutex::new(());
+static EVENT_STORE: OnceLock<event_store::EventStore> = OnceLock::new();
+static EVENT_PERSISTENCE_STATUS: OnceLock<Mutex<EventPersistenceStatus>> = OnceLock::new();
+const RECENT_EVENT_LIMIT: usize = 1000;
+
+#[derive(Default, Clone, Serialize)]
+struct EventPersistenceStatus {
+    failed_writes: u64,
+    last_error: Option<String>,
+    last_error_at: Option<u64>,
+    legacy_unbound_preserved: bool,
+    quarantine_notices: u64,
+}
+fn event_status() -> &'static Mutex<EventPersistenceStatus> {
+    EVENT_PERSISTENCE_STATUS.get_or_init(|| Mutex::new(EventPersistenceStatus::default()))
+}
+fn note_event_error(operation: &str, error: impl std::fmt::Display) {
+    let message = format!("{operation}: {error}");
+    eprintln!("AMS local event storage: {message}");
+    let mut status = event_status()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    status.last_error = Some(message);
+    status.last_error_at = Some(unix_ts_ms());
+}
+#[tauri::command]
+fn get_event_persistence_status() -> EventPersistenceStatus {
+    event_status()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+fn local_event_store(app: Option<&tauri::AppHandle>) -> &'static event_store::EventStore {
+    EVENT_STORE
+        .get_or_init(|| event_store::EventStore::new(proctoring_log_dir(app), &gen_run_nonce()))
+}
 
 /// Per-run anchor for the event chain. Unique per process run so the server can
 /// tell runs apart; not secret (integrity comes from the server already holding
@@ -146,13 +193,8 @@ fn gen_run_nonce() -> String {
     hex::encode(hasher.finalize())
 }
 
-fn event_chain() -> &'static Mutex<EventChainState> {
-    EVENT_CHAIN.get_or_init(|| {
-        Mutex::new(EventChainState {
-            seq: 0,
-            prev_hash: gen_run_nonce(),
-        })
-    })
+fn event_chain() -> &'static Mutex<HashMap<Option<event_store::SessionBinding>, EventChainState>> {
+    EVENT_CHAIN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Reserve the next `(seq, prev_hash, hash)` for an event and advance the chain.
@@ -164,10 +206,30 @@ fn next_chain_link(
     detail: &str,
     payload_digest: &str,
 ) -> (u64, String, String) {
-    // Poison-tolerant: a panic elsewhere must not stop the audit chain.
-    let mut chain = event_chain()
+    // Caller holds EVENT_RECORD_LOCK; scope cannot change before append.
+    let binding = event_sync_config()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .map(|config| config.binding.clone());
+    let mut chains = event_chain()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    chain_link_for(&mut chains, binding, ts, kind, detail, payload_digest)
+}
+
+fn chain_link_for(
+    chains: &mut HashMap<Option<event_store::SessionBinding>, EventChainState>,
+    binding: Option<event_store::SessionBinding>,
+    ts: u64,
+    kind: &str,
+    detail: &str,
+    payload_digest: &str,
+) -> (u64, String, String) {
+    let chain = chains.entry(binding).or_insert_with(|| EventChainState {
+        seq: 0,
+        prev_hash: gen_run_nonce(),
+    });
     let seq = chain.seq;
     let prev_hash = chain.prev_hash.clone();
 
@@ -226,32 +288,72 @@ fn persist_proctoring_event(app: Option<&tauri::AppHandle>, entry: &ProctoringEv
 }
 
 fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, entry: &T) {
-    let dir = proctoring_log_dir(app);
-    if std::fs::create_dir_all(&dir).is_err() {
+    let binding = event_sync_config()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .map(|config| config.binding.clone());
+    let stream = if filename == "violations.jsonl" {
+        event_store::EventStream::Violation
+    } else {
+        event_store::EventStream::Proctoring
+    };
+    if let Err(error) = local_event_store(app).append(binding.as_ref(), stream, entry) {
+        event_status()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .failed_writes += 1;
+        note_event_error("append audit event", error);
+    }
+}
+
+const RECENT_EVENT_BYTES: usize = 4 * 1024 * 1024;
+struct RecentEventLog<T> {
+    entries: VecDeque<(T, usize)>,
+    bytes: usize,
+}
+impl<T> Default for RecentEventLog<T> {
+    fn default() -> Self {
+        Self {
+            entries: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+}
+impl<T> RecentEventLog<T> {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.bytes = 0;
+    }
+    fn push(&mut self, entry: T, size: usize) {
+        if size > event_store::MAX_EVENT_BYTES {
+            return;
+        }
+        self.bytes += size;
+        self.entries.push_back((entry, size));
+        while self.entries.len() > RECENT_EVENT_LIMIT || self.bytes > RECENT_EVENT_BYTES {
+            if let Some((_, size)) = self.entries.pop_front() {
+                self.bytes -= size;
+            }
+        }
+    }
+}
+impl<T: Clone> RecentEventLog<T> {
+    fn snapshot(&self) -> Vec<T> {
+        self.entries
+            .iter()
+            .map(|(entry, _)| entry.clone())
+            .collect()
+    }
+}
+fn remember_event<T: Serialize>(log: &Mutex<RecentEventLog<T>>, entry: T) {
+    // Track serialized bytes once per append; cap both records and memory.
+    let Ok(raw) = serde_json::to_vec(&entry) else {
         return;
-    }
-    let path = dir.join(filename);
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).append(true);
-    // SEC-4: the spool can hold sensitive proctoring detail; keep it readable
-    // and writable only by the owning user (0600) so other local accounts can't
-    // read it or tamper with the audit trail. Applied on the create path; an
-    // existing file's mode is left as-is (idempotent re-tightening below).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    if let Ok(mut file) = options.open(&path) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
-        if let Ok(line) = serde_json::to_string(entry) {
-            let _ = writeln!(file, "{line}");
-        }
-    }
+    };
+    log.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(entry, raw.len());
 }
 
 // ── F4: pinned HTTP client ─────────────────────────────────────────────────────
@@ -318,26 +420,20 @@ fn pinned_http_client_builder() -> reqwest::ClientBuilder {
 }
 
 fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
+    let _scope = EVENT_RECORD_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let entry = violation_entry(kind, detail);
-    if let Ok(mut log) = violation_log().lock() {
-        log.push(entry.clone());
-    }
     persist_violation(app, &entry);
+    remember_event(violation_log(), entry);
 }
 
-// ── Event streaming (organizer visibility) ────────────────────────────────────
-//
-// The JSONL files written by persist_violation / persist_proctoring_event are
-// the durable offline spool. A background task tails them from a persisted
-// byte offset ("high-water mark" in sync-state.json) and uploads batches to
-// `POST {api_url}/sessions/{session_id}/events` every 5 s, with exponential
-// backoff on failure. Offsets only advance after a 2xx response, so nothing
-// is ever lost — a crash, an offline stretch, or a webview reload just delays
-// delivery. The frontend arms the stream via `configure_event_stream` once a
-// session id exists; without a config the tail consumes nothing.
-
+// ── Session-bound event streaming ────────────────────────────────────────────
+// Scope is fixed when recorded; only delivery acknowledgment advances its
+// cursor. Legacy/unbound data is preserved and never assigned to a new session.
 #[derive(Clone)]
 struct EventSyncConfig {
+    binding: event_store::SessionBinding,
     api_url: String,
     session_id: String,
     /// Participant bearer token. Every session endpoint requires it — this
@@ -353,12 +449,6 @@ fn event_sync_config() -> &'static Mutex<Option<EventSyncConfig>> {
     EVENT_SYNC_CONFIG.get_or_init(|| Mutex::new(None))
 }
 
-#[derive(Serialize, Deserialize, Default)]
-struct EventSyncState {
-    violations_offset: u64,
-    proctoring_offset: u64,
-}
-
 const EVENT_SYNC_INTERVAL_SECS: u64 = 5;
 const EVENT_SYNC_MAX_BACKOFF_SECS: u64 = 60;
 const EVENT_SYNC_MAX_BATCH: usize = 200;
@@ -367,145 +457,164 @@ const EVENT_SYNC_MAX_BATCH: usize = 200;
 /// uploader. Called by the frontend as soon as a server session id exists.
 #[tauri::command]
 fn configure_event_stream(api_url: String, session_id: Option<String>, token: Option<String>) {
-    if let Ok(mut config) = event_sync_config().lock() {
-        let token = token.unwrap_or_default();
-        *config = match session_id {
-            // Without a token the uploads would 401 for ever and the spool
-            // would grow unbounded, so an unarmed stream is the honest state.
-            Some(session_id)
-                if !session_id.trim().is_empty()
-                    && !api_url.trim().is_empty()
-                    && !token.trim().is_empty() =>
-            {
-                Some(EventSyncConfig {
-                    api_url: api_url.trim().trim_end_matches('/').to_string(),
-                    session_id: session_id.trim().to_string(),
-                    token: token.trim().to_string(),
+    let _scope = EVENT_RECORD_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut config = event_sync_config()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let token = token.unwrap_or_default();
+    let next = session_id
+        .filter(|session| !session.trim().is_empty())
+        .filter(|_| !api_url.trim().is_empty() && !token.trim().is_empty())
+        .and_then(|session| {
+            event_store::SessionBinding::new(&api_url, &session)
+                .ok()
+                .map(|binding| EventSyncConfig {
+                    binding,
+                    api_url: api_url.trim().trim_end_matches('/').into(),
+                    session_id: session.trim().into(),
+                    token: token.trim().into(),
                 })
+        });
+    if config.as_ref().map(|config| &config.binding) != next.as_ref().map(|config| &config.binding)
+    {
+        if let (Some(previous), Some(store)) = (config.as_ref(), EVENT_STORE.get()) {
+            if let Err(error) = store.close_binding(&previous.binding) {
+                note_event_error("close previous event run", error);
             }
-            _ => None,
-        };
+        }
+        violation_log()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        proctoring_log()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
+    *config = next;
 }
 
-/// Read complete JSONL lines from `path` starting at `*offset`, append them to
-/// `out` tagged with `stream`, and advance `*offset` past every consumed line.
-///
-/// - A trailing line without '\n' is a write in progress — left for next time.
-/// - Unparseable lines are consumed but skipped, so a corrupt line can never
-///   stall the stream (no poison pill).
-/// - `*offset` beyond the file length means the file was replaced — restart
-///   from the beginning.
-fn read_new_jsonl_events(
-    path: &Path,
-    offset: &mut u64,
-    stream: &str,
-    out: &mut Vec<serde_json::Value>,
-) {
-    use std::io::{Read, Seek, SeekFrom};
-
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return;
-    };
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    if *offset > len {
-        *offset = 0;
-    }
-    if *offset == len || file.seek(SeekFrom::Start(*offset)).is_err() {
-        return;
-    }
-    let mut buf = String::new();
-    if file.read_to_string(&mut buf).is_err() {
-        return;
-    }
-
-    let mut consumed = 0usize;
-    for line in buf.split_inclusive('\n') {
-        if !line.ends_with('\n') || out.len() >= EVENT_SYNC_MAX_BATCH {
-            break;
-        }
-        consumed += line.len();
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if let Some(object) = value.as_object_mut() {
-                object.insert("stream".to_string(), serde_json::json!(stream));
-            }
-            out.push(value);
-        }
-    }
-    *offset += consumed as u64;
-}
-
-/// Background uploader: tails the JSONL spool and ships batches to the
-/// backend. Runs for the lifetime of the process; idles cheaply when no
-/// session is configured or nothing is pending.
 fn spawn_event_sync_task(app: tauri::AppHandle) {
+    let store = local_event_store(Some(&app));
+    let dir = proctoring_log_dir(Some(&app));
+    let legacy = [
+        "violations.jsonl",
+        "proctoring-events.jsonl",
+        "sync-state.json",
+    ]
+    .iter()
+    .any(|name| dir.join(name).exists());
+    event_status()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .legacy_unbound_preserved = legacy;
+    if legacy {
+        eprintln!(
+            "AMS event storage: legacy unbound audit files preserved; not assigned to this session"
+        );
+    }
     tauri::async_runtime::spawn(async move {
-        let Ok(client) = pinned_http_client_builder()
+        let client = match pinned_http_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
-        else {
-            return;
+        {
+            Ok(client) => client,
+            Err(error) => {
+                note_event_error("construct event uploader", error);
+                return;
+            }
         };
         let mut delay = EVENT_SYNC_INTERVAL_SECS;
+        let mut next_cleanup = Instant::now();
         loop {
             tokio::time::sleep(Duration::from_secs(delay)).await;
-
-            let Some(config) = event_sync_config().lock().ok().and_then(|c| c.clone()) else {
+            if Instant::now() >= next_cleanup {
+                match tauri::async_runtime::spawn_blocking(move || {
+                    store.cleanup_acknowledged(std::time::SystemTime::now())
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    error => note_event_error("acknowledged spool retention", format!("{error:?}")),
+                }
+                next_cleanup = Instant::now() + Duration::from_secs(60 * 60);
+            }
+            let config = event_sync_config()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let Some(config) = config else {
                 delay = EVENT_SYNC_INTERVAL_SECS;
                 continue;
             };
-
-            let dir = proctoring_log_dir(Some(&app));
-            let state_path = dir.join("sync-state.json");
-            let mut state: EventSyncState = std::fs::read_to_string(&state_path)
-                .ok()
-                .and_then(|raw| serde_json::from_str(&raw).ok())
-                .unwrap_or_default();
-
-            let mut events = Vec::new();
-            let mut violations_offset = state.violations_offset;
-            let mut proctoring_offset = state.proctoring_offset;
-            read_new_jsonl_events(
-                &dir.join("violations.jsonl"),
-                &mut violations_offset,
-                "violation",
-                &mut events,
-            );
-            read_new_jsonl_events(
-                &dir.join("proctoring-events.jsonl"),
-                &mut proctoring_offset,
-                "proctoring",
-                &mut events,
-            );
-
-            if events.is_empty() {
-                delay = EVENT_SYNC_INTERVAL_SECS;
-                continue;
-            }
-
-            let url = format!("{}/sessions/{}/events", config.api_url, config.session_id);
-            let delivered = client
-                .post(&url)
-                .bearer_auth(&config.token)
-                .json(&serde_json::json!({ "events": events }))
-                .send()
-                .await
-                .map(|response| response.status().is_success())
-                .unwrap_or(false);
-
-            if delivered {
-                state.violations_offset = violations_offset;
-                state.proctoring_offset = proctoring_offset;
-                if let Ok(raw) = serde_json::to_string(&state) {
-                    let _ = std::fs::write(&state_path, raw);
+            let binding = config.binding.clone();
+            let read = tauri::async_runtime::spawn_blocking(move || {
+                store.next_batch(&binding, EVENT_SYNC_MAX_BATCH, event_store::MAX_BATCH_BYTES)
+            })
+            .await;
+            let batch = match read {
+                Ok(Ok(Some(batch))) => batch,
+                Ok(Ok(None)) => {
+                    delay = EVENT_SYNC_INTERVAL_SECS;
+                    continue;
                 }
-                delay = EVENT_SYNC_INTERVAL_SECS;
+                error => {
+                    note_event_error("read event batch", format!("{error:?}"));
+                    delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                    continue;
+                }
+            };
+            for notice in &batch.notices {
+                event_status()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .quarantine_notices += 1;
+                note_event_error("audit evidence quarantined / explicit gap", notice);
+            }
+            // Existing destination, bearer authentication, TLS and event JSON
+            // are unchanged. Both endpoint and batch retain the same binding.
+            let url = format!("{}/sessions/{}/events", config.api_url, config.session_id);
+            let delivered = if batch.events.is_empty() {
+                // Only preserved quarantine bytes moved the cursor; no server
+                // event is falsely acknowledged and no empty POST is needed.
+                true
             } else {
-                // Offsets NOT persisted — the same batch retries after backoff.
+                match client
+                    .post(&url)
+                    .bearer_auth(&config.token)
+                    .json(&serde_json::json!({ "events": batch.events }))
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => true,
+                    Ok(response) => {
+                        note_event_error(
+                            "upload event batch",
+                            format!("HTTP {}", response.status().as_u16()),
+                        );
+                        false
+                    }
+                    Err(error) => {
+                        note_event_error("upload event batch", error.without_url());
+                        false
+                    }
+                }
+            };
+            if delivered {
+                match tauri::async_runtime::spawn_blocking(move || {
+                    store.acknowledge(&config.binding, &batch)
+                })
+                .await
+                {
+                    Ok(Ok(())) => delay = EVENT_SYNC_INTERVAL_SECS,
+                    error => {
+                        note_event_error("acknowledge event batch", format!("{error:?}"));
+                        delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                    }
+                }
+            } else {
                 delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
             }
         }
@@ -518,6 +627,9 @@ fn record_proctoring_event(
     detail: &str,
     payload: serde_json::Value,
 ) {
+    let _scope = EVENT_RECORD_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let ts = unix_ts_ms();
     let digest = payload_digest(&payload);
     let (seq, prev_hash, hash) = next_chain_link(ts, kind, detail, &digest);
@@ -530,10 +642,8 @@ fn record_proctoring_event(
         prev_hash,
         hash,
     };
-    if let Ok(mut log) = proctoring_log().lock() {
-        log.push(entry.clone());
-    }
     persist_proctoring_event(app, &entry);
+    remember_event(proctoring_log(), entry);
 }
 
 #[cfg(target_os = "windows")]
@@ -683,11 +793,37 @@ fn platform_label() -> String {
     }
 }
 
+/// Dispatch `platform_rs::<os>::$func(args…)` for the compiled target OS,
+/// with `$fallback` as the expression for unsupported platforms. Exactly one
+/// branch survives cfg-stripping, so the macro is usable in expression
+/// position and replaces the hand-rolled `#[cfg(target_os = …)]` ladders that
+/// every cross-platform command used to repeat.
+macro_rules! platform_dispatch {
+    ($func:ident ( $($arg:expr),* $(,)? ), else $fallback:expr) => {{
+        #[cfg(target_os = "linux")]
+        {
+            platform_rs::linux::$func($($arg),*)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            platform_rs::windows::$func($($arg),*)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            platform_rs::macos::$func($($arg),*)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            $fallback
+        }
+    }};
+}
+
 fn collect_fast_device_state() -> DeviceState {
     let platform = Some(platform_label());
 
-    let restricted_processes = Some(scan_processes());
-    let virtualization = Some(detect_virtualization());
+    let restricted_processes = Some(native_scan_processes());
+    let virtualization = Some(native_detect_virtualization());
 
     // Windows-only native probes for the readiness policy: extra/wireless displays
     // and an active inbound RDP listener. Left None on every other platform so the
@@ -723,72 +859,42 @@ async fn collect_device_state_inner(
     camera_available: Option<bool>,
     microphone_available: Option<bool>,
     activate_keyboard: bool,
-) -> DeviceState {
-    let mut state = collect_fast_device_state();
-    state.camera_available = camera_available;
-    state.microphone_available = microphone_available;
-    state.keyboard = if activate_keyboard {
-        // Transactional probe: prove the intercept can engage, then release it
-        // immediately — unless an exam lockdown currently owns it (rescans
-        // during a locked session must not tear the lockdown down).
-        let result = enable_keyboard_intercept();
-        if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
-            disable_keyboard_intercept();
-        }
-        Some(result)
-    } else {
-        None
-    };
-
-    if let Some(host) = network_host.filter(|host| !host.trim().is_empty()) {
-        state.network = Some(check_network_stability_with_fallback(host, api_url).await);
-    }
-
-    // Linux egress lockdown runs through the privileged helper; surface whether
-    // it is installed/reachable so the readiness policy can hard-block a strict
-    // contest that would otherwise run with unrestricted egress (core-rs
-    // CheckKind::Network gate). Other platforms leave this None (inert).
-    #[cfg(target_os = "linux")]
-    {
-        match platform_rs::linux::network_helper_status() {
-            Ok(()) => state.network_helper_ready = Some(true),
-            Err(reason) => {
-                // Log the precise reason (socket down, auth rejected, etc.) — without
-                // this the readiness gate only ever shows a bool, which hid a daemon
-                // capability bug behind a generic "not running" for a long time.
-                eprintln!("[ams][network-helper] readiness ping failed: {reason}");
-                state.network_helper_ready = Some(false);
+) -> Result<DeviceState, String> {
+    let mut state = blocking_probe::run(blocking_probe::Priority::Readiness, move || -> Result<DeviceState, String> {
+        let mut state = {
+            let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+            let state = collect_fast_device_state();
+            if let Some(error) = budget.failure() { return Err(format!("Device scan could not complete: {error}. Retry device setup.")); }
+            state
+        };
+        state.camera_available = camera_available;
+        state.microphone_available = microphone_available;
+        if activate_keyboard {
+            // Setup/teardown and this entire probe share one owner lock. A probe
+            // cannot release an intercept while a real entry is in flight.
+            let owner = lockdown_lifecycle().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let result = native_enable_keyboard_intercept();
+            if !owner.active {
+                platform_dispatch!(disable_keyboard_intercept(), else ());
+                #[cfg(target_os = "linux")]
+                if platform_rs::linux::keyboard_recovery_pending() {
+                    return Err("Keyboard probe cleanup is incomplete. Restore system controls before retrying.".into());
+                }
             }
+            state.keyboard = Some(result);
         }
-    }
-
-    state
-}
-
-/// Dispatch `platform_rs::<os>::$func(args…)` for the compiled target OS,
-/// with `$fallback` as the expression for unsupported platforms. Exactly one
-/// branch survives cfg-stripping, so the macro is usable in expression
-/// position and replaces the hand-rolled `#[cfg(target_os = …)]` ladders that
-/// every cross-platform command used to repeat.
-macro_rules! platform_dispatch {
-    ($func:ident ( $($arg:expr),* $(,)? ), else $fallback:expr) => {{
+        // This IPC can block on the privileged helper, so it belongs on the
+        // bounded blocking pool too. Policy still decides its consequence.
         #[cfg(target_os = "linux")]
         {
-            platform_rs::linux::$func($($arg),*)
+            state.network_helper_ready = Some(platform_rs::linux::network_helper_status().is_ok());
         }
-        #[cfg(target_os = "windows")]
-        {
-            platform_rs::windows::$func($($arg),*)
-        }
-        #[cfg(target_os = "macos")]
-        {
-            platform_rs::macos::$func($($arg),*)
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-        {
-            $fallback
-        }
-    }};
+        Ok(state)
+    }).await??;
+    if let Some(host) = network_host.filter(|host| !host.trim().is_empty()) {
+        state.network = Some(check_network_stability(host, api_url).await);
+    }
+    Ok(state)
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -801,7 +907,7 @@ async fn collect_device_state(
     camera_available: Option<bool>,
     microphone_available: Option<bool>,
     activate_keyboard: Option<bool>,
-) -> DeviceState {
+) -> Result<DeviceState, String> {
     collect_device_state_inner(
         network_host,
         api_url,
@@ -850,7 +956,10 @@ async fn start_secure_session(
             serde_json::to_string(&report).unwrap_or_else(|_| "readiness blocked".to_string())
         );
     }
-    let _ = lock_desktop(app).await;
+    let require_keyboard = lockdown_lifecycle::keyboard_required(&policy, &device_state);
+    engage_desktop(app, require_keyboard).await.map_err(|reason| format!(
+        "We couldn't prepare the required desktop protections. In Settings, select Restore system settings, then run device setup again. If it still fails, ask your invigilator for help. Details: {reason}"
+    ))?;
     Ok(report)
 }
 
@@ -959,9 +1068,30 @@ async fn deliver_readiness_report(
     );
 }
 
+async fn checked_informational_probe<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    blocking_probe::run(blocking_probe::Priority::Informational, move || {
+        let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+        let result = work();
+        if let Some(error) = budget.failure() {
+            Err(format!(
+                "Device scan could not complete: {error}. Retry device setup."
+            ))
+        } else {
+            Ok(result)
+        }
+    })
+    .await?
+}
+
 /// Scan running processes for known restricted applications.
 #[tauri::command]
-fn scan_processes() -> ProcessScanResult {
+async fn scan_processes() -> Result<ProcessScanResult, String> {
+    checked_informational_probe(native_scan_processes).await
+}
+
+fn native_scan_processes() -> ProcessScanResult {
     platform_dispatch!(scan_processes(), else ProcessScanResult {
         found: vec![],
         clean: true,
@@ -1002,7 +1132,11 @@ fn close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
 
 /// Detect virtualisation / VM environment.
 #[tauri::command]
-fn detect_virtualization() -> VirtDetectionResult {
+async fn detect_virtualization() -> Result<VirtDetectionResult, String> {
+    checked_informational_probe(native_detect_virtualization).await
+}
+
+fn native_detect_virtualization() -> VirtDetectionResult {
     platform_dispatch!(detect_virtualization(), else VirtDetectionResult {
         detected: false,
         platform: None,
@@ -1012,7 +1146,17 @@ fn detect_virtualization() -> VirtDetectionResult {
 
 /// Install platform-level keyboard intercept.
 #[tauri::command]
-fn enable_keyboard_intercept() -> KeyboardInterceptResult {
+async fn enable_keyboard_intercept() -> Result<KeyboardInterceptResult, String> {
+    blocking_probe::run(blocking_probe::Priority::Readiness, || {
+        let _owner = lockdown_lifecycle()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        native_enable_keyboard_intercept()
+    })
+    .await
+}
+
+fn native_enable_keyboard_intercept() -> KeyboardInterceptResult {
     platform_dispatch!(enable_keyboard_intercept(), else KeyboardInterceptResult {
         active: false,
         method: "none".to_string(),
@@ -1022,8 +1166,30 @@ fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 
 /// Release keyboard intercept (called on exit / crash recovery).
 #[tauri::command]
-fn disable_keyboard_intercept() {
-    platform_dispatch!(disable_keyboard_intercept(), else ())
+async fn disable_keyboard_intercept() -> Result<(), String> {
+    // Recovery must not wait behind ordinary readiness scans.
+    tauri::async_runtime::spawn_blocking(|| {
+        let _owner = lockdown_lifecycle()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+        platform_dispatch!(disable_keyboard_intercept(), else ());
+        if let Some(error) = budget.failure() {
+            return Err(format!(
+                "Keyboard restoration could not complete: {error}. Retry Restore system settings."
+            ));
+        }
+        #[cfg(target_os = "linux")]
+        if platform_rs::linux::keyboard_recovery_pending() {
+            return Err(
+                "Some keyboard settings could not be restored. Retry restoring system controls."
+                    .into(),
+            );
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Check whether Accessibility permission is granted (macOS only).
@@ -1264,146 +1430,21 @@ fn open_privacy_settings(section: String) -> Result<(), String> {
     }
 }
 
-/// Measure network reachability and latency using a multi-probe strategy
-/// that is resilient to Linux iptables rules and restrictive firewall policies.
-///
-/// Strategy (in priority order):
-///   1. Localhost / loopback hosts get a synthetic "excellent" result immediately —
-///      no real probe needed and avoids false negatives in dev environments.
-///   2. DNS resolution timing gives an instant low-overhead latency signal.
-///   3. TCP connect is attempted on ports 443 → 80 → 53 with a 1500ms timeout.
-///      Using multiple ports avoids iptables-DROP hangs that occur when a single
-///      port is firewalled and the kernel never sends RST/ICMP.
-///   4. If all TCP probes fail but DNS succeeded, the host is considered reachable
-///      with the DNS latency as the reported value.
+/// Measure the configured server transport. DNS success and another public
+/// host cannot establish that the exam server is reachable.
 #[tauri::command]
 async fn check_network_stability(host: String, api_url: Option<String>) -> NetworkCheckResult {
-    let host = host.trim().to_string();
-
-    // ── 1. Localhost shortcut ──────────────────────────────────────────────────
-    let is_loopback =
-        host == "localhost" || host.starts_with("127.") || host == "::1" || host.is_empty();
-
-    if is_loopback {
-        return NetworkCheckResult {
-            reachable: true,
-            latency_ms: Some(1),
-            jitter_ms: Some(0),
-            quality: "excellent".to_string(),
-            // Same machine as the dev API — the clock cannot disagree with itself.
-            clock_skew_ms: Some(0),
-        };
-    }
-
-    // ── 2. DNS resolution latency ─────────────────────────────────────────────
-    let dns_addr = format!("{}:443", host);
-    let dns_start = Instant::now();
-    let dns_resolved = tokio::time::timeout(
-        Duration::from_millis(2000),
-        tokio::task::spawn_blocking({
-            let a = dns_addr.clone();
-            move || a.to_socket_addrs().map(|mut it| it.next())
-        }),
-    )
-    .await
-    .ok()
-    .and_then(|r| r.ok())
-    .and_then(|r| r.ok())
-    .flatten();
-
-    let dns_latency_ms = dns_start.elapsed().as_millis() as u64;
-
-    // ── 3. TCP probes on multiple ports ───────────────────────────────────────
-    // Try ports in order; return on the first success. This avoids iptables-DROP
-    // hangs on Linux where a blocked port causes connect() to hang for the full
-    // timeout rather than immediately failing.
-    let probe_ports: &[u16] = &[443, 80, 53];
-    let mut tcp_latency: Option<u64> = None;
-
-    'outer: for &port in probe_ports {
-        let sample_addr = format!("{}:{}", host, port);
-        // Take 2 samples per port and use the minimum
-        for _ in 0..2u32 {
-            let addr = sample_addr.clone();
-            let start = Instant::now();
-            let connected = tokio::time::timeout(
-                Duration::from_millis(1500),
-                tokio::net::TcpStream::connect(&addr),
-            )
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .is_some();
-
-            if connected {
-                tcp_latency = Some(start.elapsed().as_millis() as u64);
-                break 'outer;
-            }
+    let mut result = network_probe::check(host, api_url.clone()).await;
+    if result.reachable {
+        if let Some(api) = api_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|api| !api.is_empty())
+        {
+            result.clock_skew_ms = measure_clock_skew(api).await;
         }
     }
-
-    // ── 4. Decide reachability and quality ────────────────────────────────────
-    let (reachable, latency_ms) = match (tcp_latency, dns_resolved) {
-        (Some(tcp), _) => (true, tcp),
-        (None, Some(_)) => (true, dns_latency_ms), // DNS worked but TCP blocked
-        (None, None) => {
-            return NetworkCheckResult {
-                reachable: false,
-                latency_ms: None,
-                jitter_ms: None,
-                quality: "unreachable".to_string(),
-                clock_skew_ms: None,
-            };
-        }
-    };
-
-    // The previous cutoff marked anything above 500ms as "poor", which caused
-    // normal-but-slow home networks to fail readiness too aggressively inside
-    // Proctor. Widen the acceptable band so only very sluggish links are
-    // flagged as poor.
-    let quality = match latency_ms {
-        0..=80 => "excellent",
-        81..=200 => "good",
-        201..=1000 => "fair",
-        _ => "poor",
-    };
-
-    // ── 5. Clock-integrity signal ──────────────────────────────────────────────
-    // The device clock drives report and submission timestamps; compare it to
-    // the contest server via the HTTP Date header. Only attempted when the
-    // caller supplied the API base URL, and never fails the probe by itself —
-    // core-rs decides whether the measured skew blocks readiness.
-    let clock_skew_ms = match api_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
-        Some(api) => measure_clock_skew(api).await,
-        None => None,
-    };
-
-    NetworkCheckResult {
-        reachable,
-        latency_ms: Some(latency_ms),
-        jitter_ms: Some(0),
-        quality: quality.to_string(),
-        clock_skew_ms,
-    }
-}
-
-async fn check_network_stability_with_fallback(
-    host: String,
-    api_url: Option<String>,
-) -> NetworkCheckResult {
-    let primary = check_network_stability(host, api_url.clone()).await;
-    if primary.reachable {
-        return primary;
-    }
-
-    // If the AMS API host is unavailable, verify that the client can still
-    // reach the public internet before reporting a hard network failure.
-    let fallback = check_network_stability("www.google.com".to_string(), None).await;
-    if fallback.reachable {
-        return fallback;
-    }
-
-    primary
+    result
 }
 
 /// Measure device-clock skew (server − local, ms) from the HTTP `Date` header
@@ -1412,10 +1453,20 @@ async fn check_network_stability_with_fallback(
 /// one RTT of error, which is far finer than the 120 s readiness bound.
 /// Returns `None` when no trustworthy signal could be obtained.
 async fn measure_clock_skew(api_url: &str) -> Option<i64> {
-    let client = pinned_http_client_builder()
-        .timeout(Duration::from_secs(3))
-        .build()
+    static CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+    static CAPACITY: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    let _permit = CAPACITY
+        .get_or_init(|| tokio::sync::Semaphore::new(4))
+        .try_acquire()
         .ok()?;
+    let client = CLIENT
+        .get_or_init(|| {
+            pinned_http_client_builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+                .ok()
+        })
+        .as_ref()?;
     let response = client.get(api_url).send().await.ok()?;
     let date = response
         .headers()
@@ -1497,39 +1548,198 @@ pub struct FullTelemetry {
 }
 
 #[tauri::command]
-async fn get_full_telemetry(network_host: Option<String>) -> FullTelemetry {
-    let platform = PlatformInfo {
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        family: std::env::consts::FAMILY.to_string(),
-        elevated: process_elevated(),
-    };
-    let env = get_security_environment();
-    let processes = scan_processes();
-    let virt = detect_virtualization();
+async fn get_full_telemetry(network_host: Option<String>) -> Result<FullTelemetry, String> {
+    let (platform, env, processes, virt) =
+        blocking_probe::run(blocking_probe::Priority::Informational, || {
+            let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+            let platform = PlatformInfo {
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+                family: std::env::consts::FAMILY.to_string(),
+                elevated: process_elevated(),
+            };
+            let env = get_security_environment();
+            let processes = native_scan_processes();
+            let virt = native_detect_virtualization();
+            if let Some(error) = budget.failure() {
+                return Err::<_, String>(format!(
+                    "Device scan could not complete: {error}. Retry device setup."
+                ));
+            }
+            Ok((platform, env, processes, virt))
+        })
+        .await??;
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
-        Some(host) => Some(check_network_stability_with_fallback(host, None).await),
+        Some(host) => Some(check_network_stability(host, None).await),
         None => None,
     };
 
-    FullTelemetry {
+    Ok(FullTelemetry {
         platform,
         env,
         processes,
         virt,
         network,
+    })
+}
+
+struct DesktopOperations {
+    app: tauri::AppHandle,
+    previous_window: Option<(bool, bool)>,
+    platform_attempted: bool,
+    require_keyboard: bool,
+}
+
+impl DesktopOperations {
+    fn new(app: tauri::AppHandle, require_keyboard: bool) -> Self {
+        Self {
+            app,
+            previous_window: None,
+            platform_attempted: false,
+            require_keyboard,
+        }
+    }
+    fn restore_window(&self, previous: (bool, bool)) -> Result<(), String> {
+        let window = self
+            .app
+            .get_webview_window("main")
+            .ok_or("Exam window unavailable during cleanup")?;
+        let fullscreen = window
+            .set_fullscreen(previous.1)
+            .map_err(|error| error.to_string());
+        let top = window
+            .set_always_on_top(previous.0)
+            .map_err(|error| error.to_string());
+        fullscreen.and(top)
     }
 }
 
-/// Full exam lockdown — always-on-top + keyboard intercept + sleep prevention + capture protection.
+impl lockdown_lifecycle::Operations for DesktopOperations {
+    fn engage(&mut self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if platform_rs::macos::desktop_recovery_pending() {
+            return Err("Previous desktop settings still need restoration. In Settings, select Restore system settings before starting again.".into());
+        }
+        let window = self
+            .app
+            .get_webview_window("main")
+            .ok_or("Exam window unavailable")?;
+        self.previous_window = Some((
+            window
+                .is_always_on_top()
+                .map_err(|error| error.to_string())?,
+            window.is_fullscreen().map_err(|error| error.to_string())?,
+        ));
+        window
+            .set_always_on_top(true)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_fullscreen(true)
+            .map_err(|error| error.to_string())?;
+        self.platform_attempted = true;
+        if !platform_dispatch!(lock_desktop(), else false) {
+            if self.require_keyboard {
+                return Err("Native keyboard lockdown failed".into());
+            }
+            record_proctoring_event(
+                Some(&self.app),
+                "keyboard_lockdown_advisory",
+                "Keyboard protection unavailable; entry policy permits this limitation",
+                serde_json::json!({}),
+            );
+        }
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), String> {
+        let native = if self.platform_attempted {
+            release_native_desktop()
+        } else {
+            Ok(())
+        };
+        let window = self
+            .previous_window
+            .map_or(Ok(()), |previous| self.restore_window(previous));
+        lockdown_lifecycle::combine_cleanup(native, window)
+    }
+    fn release(&mut self) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        platform_rs::windows::stop_clipboard_monitor();
+        let native = release_native_desktop();
+        purge_face_captures();
+        let window = self.restore_window((false, false));
+        lockdown_lifecycle::combine_cleanup(native, window)
+    }
+}
+
+/// Legacy direct command: native platform defaults, without organizer policy.
+/// The supported contest entry path is start_secure_session, which passes the
+/// evaluated policy (including unsupported-platform and organizer exceptions).
 #[tauri::command]
 async fn lock_desktop(app: tauri::AppHandle) -> bool {
-    use tauri::Manager;
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_always_on_top(true);
-        let _ = win.set_fullscreen(true);
-    }
+    engage_desktop(app, !cfg!(target_os = "macos"))
+        .await
+        .is_ok()
+}
 
+fn release_native_desktop() -> Result<(), String> {
+    let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+    platform_dispatch!(unlock_desktop(), else ());
+    if let Some(error) = budget.failure() {
+        return Err(format!(
+            "Desktop restoration could not complete: {error}. Retry Restore system settings."
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    if platform_rs::linux::keyboard_recovery_pending() {
+        return Err(
+            "Some keyboard settings could not be restored. Retry restoring system controls.".into(),
+        );
+    }
+    #[cfg(target_os = "macos")]
+    if platform_rs::macos::desktop_recovery_pending() {
+        return Err(
+            "Some desktop preferences could not be restored. Retry Restore system settings.".into(),
+        );
+    }
+    Ok(())
+}
+
+async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut state = lockdown_lifecycle()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut operations = DesktopOperations::new(app.clone(), require_keyboard);
+        match state.start(&mut operations) {
+            Ok(started) => {
+                LOCKDOWN_GENERATION.store(state.generation, Ordering::SeqCst);
+                LOCKDOWN_ENGAGED.store(true, Ordering::SeqCst);
+                #[cfg(target_os = "windows")]
+                if started {
+                    start_windows_monitors(&app, state.generation);
+                }
+                #[cfg(not(target_os = "windows"))]
+                let _ = started;
+                Ok(())
+            }
+            Err(error) => {
+                LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
+                record_proctoring_event(
+                    Some(&app),
+                    "lockdown_failed",
+                    &error,
+                    serde_json::json!({"cleanup_requested":true}),
+                );
+                Err(error)
+            }
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
     // Apply DWM capture exclusion (black screen in all capture APIs) and start the
     // virtual desktop guard (moves exam window to any desktop the user switches to).
     #[cfg(target_os = "windows")]
@@ -1567,10 +1777,7 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
             // them and never auto-end a contest. All decision logic is the pure,
             // unit-tested platform_rs::kiosk::decide(); this thread only observes
             // and executes. Drains any open episode via on_teardown() on exit.
-            // NOTE: the loop sleeps BEFORE its first LOCKDOWN_ENGAGED check — this
-            // thread is spawned just before LOCKDOWN_ENGAGED is set true, so an
-            // immediate check would observe false and exit at once. Do not move
-            // the sleep below the flag check.
+            // Each watchdog belongs to exactly one lifecycle generation.
             let app_handle = app.clone();
             let hwnd_raw = hwnd.0 as isize;
             std::thread::spawn(move || {
@@ -1580,7 +1787,9 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
                 loop {
                     std::thread::sleep(Duration::from_millis(750));
                     let now_ms = start.elapsed().as_millis() as u64;
-                    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+                    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst)
+                        || LOCKDOWN_GENERATION.load(Ordering::SeqCst) != generation
+                    {
                         for action in platform_rs::kiosk::on_teardown(&mut state, now_ms) {
                             execute_kiosk_action(&app_handle, hwnd_raw, action);
                         }
@@ -1607,6 +1816,17 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
                         is_fullscreen: is_fs,
                         is_always_on_top: is_aot,
                     };
+                    // Serialize the final ownership check and mutations with
+                    // teardown. An earlier observation may outlive its session.
+                    let owner = lockdown_lifecycle()
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if !owner.active || owner.generation != generation {
+                        for action in platform_rs::kiosk::on_teardown(&mut state, now_ms) {
+                            execute_kiosk_action(&app_handle, hwnd_raw, action);
+                        }
+                        break;
+                    }
                     for action in platform_rs::kiosk::decide(&mut state, input) {
                         execute_kiosk_action(&app_handle, hwnd_raw, action);
                     }
@@ -1614,30 +1834,29 @@ async fn lock_desktop(app: tauri::AppHandle) -> bool {
             });
         }
     }
-
-    let locked = platform_dispatch!(lock_desktop(), else false);
-
-    // Only a successful lockdown owns the intercept; on failure readiness
-    // probes keep releasing it after each scan.
-    LOCKDOWN_ENGAGED.store(locked, Ordering::SeqCst);
-    locked
 }
 
-/// Release full exam lockdown.
 #[tauri::command]
-async fn unlock_desktop(app: tauri::AppHandle) {
-    use tauri::Manager;
-    LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_always_on_top(false);
-        let _ = win.set_fullscreen(false);
-    }
-    #[cfg(target_os = "windows")]
-    platform_rs::windows::stop_clipboard_monitor();
-    // The session is over, so the enrolment snapshots have nothing left to be
-    // for. See purge_face_captures.
-    purge_face_captures();
-    platform_dispatch!(unlock_desktop(), else ())
+async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut state = lockdown_lifecycle()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
+        LOCKDOWN_GENERATION.fetch_add(1, Ordering::SeqCst);
+        let result = state.stop(&mut DesktopOperations::new(app.clone(), false));
+        if let Err(error) = &result {
+            record_proctoring_event(
+                Some(&app),
+                "lockdown_cleanup_failed",
+                error,
+                serde_json::json!({}),
+            );
+        }
+        result
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Read-only probe: is a real exam lockdown (lock_desktop) currently engaged?
@@ -1650,30 +1869,59 @@ fn is_lockdown_engaged() -> bool {
     LOCKDOWN_ENGAGED.load(Ordering::SeqCst)
 }
 
-/// Return all recorded violations for this session.
-#[tauri::command]
-fn get_violation_log(app: tauri::AppHandle) -> Vec<ViolationEntry> {
-    let mut entries = violation_log()
+/// Merge bounded recent in-memory/disk diagnostics for the current binding.
+fn recent_event_history<T: for<'de> Deserialize<'de> + Serialize + Clone>(
+    app: &tauri::AppHandle,
+    stream: &str,
+    mut entries: Vec<T>,
+) -> Vec<T> {
+    let binding = event_sync_config()
         .lock()
-        .ok()
-        .map(|v| v.clone())
-        .unwrap_or_default();
-
-    let path = proctoring_log_dir(Some(&app)).join("violations.jsonl");
-    if let Ok(raw) = std::fs::read_to_string(path) {
-        for line in raw.lines() {
-            if let Ok(entry) = serde_json::from_str::<ViolationEntry>(line) {
-                if !entries
-                    .iter()
-                    .any(|existing| existing.ts == entry.ts && existing.kind == entry.kind)
-                {
-                    entries.push(entry);
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .map(|config| config.binding.clone());
+    let mut seen: HashSet<String> = entries
+        .iter()
+        .filter_map(|entry| event_store::event_identity(entry).ok())
+        .collect();
+    match local_event_store(Some(app)).recent_history(binding.as_ref(), RECENT_EVENT_LIMIT) {
+        Ok(history) => {
+            for value in history {
+                if value.get("stream").and_then(serde_json::Value::as_str) != Some(stream) {
+                    continue;
+                }
+                if let Ok(entry) = serde_json::from_value::<T>(value) {
+                    if let Ok(identity) = event_store::event_identity(&entry) {
+                        if seen.insert(identity) {
+                            entries.push(entry);
+                        }
+                    }
                 }
             }
         }
+        Err(error) => note_event_error("read diagnostic history", error),
     }
-    entries.sort_by_key(|entry| entry.ts);
+    entries.sort_by_cached_key(|entry| {
+        serde_json::to_value(entry)
+            .ok()
+            .and_then(|value| value.get("ts").and_then(serde_json::Value::as_u64))
+            .unwrap_or(0)
+    });
+    if entries.len() > RECENT_EVENT_LIMIT {
+        entries.drain(..entries.len() - RECENT_EVENT_LIMIT);
+    }
     entries
+}
+#[tauri::command]
+fn get_violation_log(app: tauri::AppHandle) -> Vec<ViolationEntry> {
+    let _scope = EVENT_RECORD_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let entries = violation_log()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .snapshot();
+    recent_event_history(&app, "violation", entries)
 }
 
 /// Record a violation from the frontend (blocked app opened during exam, focus lost, etc).
@@ -1708,31 +1956,17 @@ fn log_proctoring_event(
     record_proctoring_event(Some(&app), &event_kind, &event_detail, event_payload);
 }
 
-/// Return persisted structured proctoring events for this session.
+/// Return bounded persisted structured events for the current session.
 #[tauri::command]
 fn get_proctoring_log(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
-    let mut entries = proctoring_log()
+    let _scope = EVENT_RECORD_LOCK
         .lock()
-        .ok()
-        .map(|v| v.clone())
-        .unwrap_or_default();
-    let mut seen: HashSet<(u64, String)> = entries
-        .iter()
-        .map(|entry| (entry.ts, entry.kind.clone()))
-        .collect();
-
-    let path = proctoring_log_dir(Some(&app)).join("proctoring-events.jsonl");
-    if let Ok(raw) = std::fs::read_to_string(path) {
-        for line in raw.lines() {
-            if let Ok(entry) = serde_json::from_str::<ProctoringEventEntry>(line) {
-                if seen.insert((entry.ts, entry.kind.clone())) {
-                    entries.push(entry);
-                }
-            }
-        }
-    }
-    entries.sort_by_key(|entry| entry.ts);
-    entries
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let entries = proctoring_log()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .snapshot();
+    recent_event_history(&app, "proctoring", entries)
 }
 
 /// Lock outbound network to `allowed_domains` only (resolved to IPs at call time).
@@ -2504,6 +2738,7 @@ pub fn run() {
             unlock_desktop,
             is_lockdown_engaged,
             get_violation_log,
+            get_event_persistence_status,
             get_proctoring_log,
             log_violation,
             log_proctoring_event,
@@ -2531,6 +2766,8 @@ pub fn run() {
             configure_event_stream,
         ])
         .setup(|app| {
+            // Establish AppData before any callback can choose a fallback.
+            local_event_store(Some(app.handle()));
             // Anything left in the face-capture directory belongs to a run
             // that did not shut down cleanly — a crash, a kill, a power cut.
             // Teardown cannot clear those, so startup does. See
@@ -2784,5 +3021,131 @@ mod pinning_tests {
         let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
             .expect("embedded roots must parse");
         assert_eq!(certs.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod event_integration_tests {
+    use super::*;
+    #[test]
+    fn chains_are_session_bound_and_resume_without_unbound_gaps() {
+        let mut chains = HashMap::new();
+        let a = event_store::SessionBinding::new("https://exam.invalid", "a").unwrap();
+        let b = event_store::SessionBinding::new("https://exam.invalid", "b").unwrap();
+        let unbound = chain_link_for(&mut chains, None, 1, "focus", "", "");
+        let first = chain_link_for(&mut chains, Some(a.clone()), 1, "focus", "", "");
+        let other = chain_link_for(&mut chains, Some(b), 1, "focus", "", "");
+        let resumed = chain_link_for(&mut chains, Some(a), 2, "camera", "", "payload-digest");
+        assert_eq!(unbound.0, 0);
+        assert_eq!(first.0, 0);
+        assert_eq!(other.0, 0);
+        assert_eq!(resumed.0, 1);
+        assert_eq!(resumed.1, first.2);
+        assert_ne!(first.1, other.1);
+    }
+    #[test]
+    fn actual_config_switch_keeps_inflight_destination_and_ack_binding() {
+        configure_event_stream(
+            "https://first.invalid".into(),
+            Some("one".into()),
+            Some("token-one".into()),
+        );
+        let first = event_sync_config().lock().unwrap().clone().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "ams-config-switch-{}-{}",
+            std::process::id(),
+            gen_run_nonce()
+        ));
+        let store = event_store::EventStore::new(root.clone(), "test-run");
+        store
+            .append(
+                Some(&first.binding),
+                event_store::EventStream::Violation,
+                &serde_json::json!({"seq":0,"kind":"focus","detail":"test","ts":1}),
+            )
+            .unwrap();
+        let batch = store
+            .next_batch(&first.binding, 200, event_store::MAX_BATCH_BYTES)
+            .unwrap()
+            .unwrap();
+        configure_event_stream(
+            "https://second.invalid".into(),
+            Some("two".into()),
+            Some("token-two".into()),
+        );
+        let second = event_sync_config().lock().unwrap().clone().unwrap();
+        assert_eq!(
+            format!("{}/sessions/{}/events", first.api_url, first.session_id),
+            "https://first.invalid/sessions/one/events"
+        );
+        assert_ne!(first.binding, second.binding);
+        assert!(store.acknowledge(&second.binding, &batch).is_err());
+        store.acknowledge(&first.binding, &batch).unwrap();
+        assert!(store
+            .next_batch(&second.binding, 200, event_store::MAX_BATCH_BYTES)
+            .unwrap()
+            .is_none());
+        configure_event_stream(String::new(), None, None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn chain_digest_keeps_the_existing_wire_definition() {
+        let mut chains = HashMap::new();
+        chains.insert(
+            None,
+            EventChainState {
+                seq: 7,
+                prev_hash: "known-anchor".into(),
+            },
+        );
+        let link = chain_link_for(&mut chains, None, 42, "focus", "detail", "digest");
+        let mut hash = Sha256::new();
+        hash.update(7u64.to_le_bytes());
+        hash.update(42u64.to_le_bytes());
+        hash.update(b"focus");
+        hash.update([0]);
+        hash.update(b"detail");
+        hash.update([0]);
+        hash.update(b"digest");
+        hash.update([0]);
+        hash.update(b"known-anchor");
+        assert_eq!(link.2, hex::encode(hash.finalize()));
+    }
+    #[test]
+    fn recent_cache_enforces_byte_and_count_limits_and_clear() {
+        let mut log = RecentEventLog::default();
+        for i in 0..RECENT_EVENT_LIMIT + 4 {
+            log.push(i, 1);
+        }
+        assert_eq!(log.snapshot().len(), RECENT_EVENT_LIMIT);
+        assert_eq!(log.snapshot()[0], 4);
+        log.clear();
+        for i in 0..100 {
+            log.push(i, event_store::MAX_EVENT_BYTES);
+        }
+        assert!(log.bytes <= RECENT_EVENT_BYTES);
+        assert_eq!(
+            log.snapshot().len(),
+            RECENT_EVENT_BYTES / event_store::MAX_EVENT_BYTES
+        );
+        log.clear();
+        assert_eq!(log.bytes, 0);
+        assert!(log.snapshot().is_empty());
+    }
+    #[test]
+    fn local_status_exposes_quarantine_and_persistence_failures_without_secrets() {
+        let status = EventPersistenceStatus {
+            failed_writes: 2,
+            last_error: Some("explicit hash-chain gap".into()),
+            last_error_at: Some(7),
+            legacy_unbound_preserved: true,
+            quarantine_notices: 1,
+        };
+        let json = serde_json::to_value(status).unwrap();
+        assert_eq!(json["failed_writes"], 2);
+        assert_eq!(json["quarantine_notices"], 1);
+        assert_eq!(json["legacy_unbound_preserved"], true);
+        assert!(json.get("token").is_none());
+        assert!(json.get("api_url").is_none());
     }
 }

@@ -1,3 +1,4 @@
+use crate::process_runner::{Budget, CommandDeadlineExt};
 use core_rs::exam::{
     CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
 };
@@ -299,10 +300,11 @@ pub struct FoundProcess {
 
 /// Returns restricted processes with their PIDs for precise kill-by-PID.
 pub fn scan_processes_with_pids() -> Vec<FoundProcess> {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
     let mut found = Vec::new();
     let Ok(out) = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
-        .output()
+        .bounded_output()
     else {
         return found;
     };
@@ -330,6 +332,7 @@ pub fn scan_processes_with_pids() -> Vec<FoundProcess> {
 }
 
 pub fn scan_processes() -> ProcessScanResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
     let procs = scan_processes_with_pids();
     let clean = procs.is_empty();
     let found = procs
@@ -346,9 +349,10 @@ pub fn scan_processes() -> ProcessScanResult {
 /// `apply_capture_protection()` is the prevention layer (makes window black).
 /// This function is the detection layer for logging and UI warnings.
 pub fn detect_screen_capture() -> bool {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
     let ps = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
-        .output()
+        .bounded_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
@@ -425,7 +429,7 @@ pub fn apply_capture_protection(hwnd_raw: isize) -> bool {
 fn reg_dword_nonzero(key: &str, value: &str) -> bool {
     let Ok(out) = hidden_command("reg")
         .args(["query", key, "/v", value])
-        .output()
+        .bounded_output()
     else {
         return false;
     };
@@ -445,7 +449,7 @@ fn reg_key_exists(key: &str) -> bool {
         .args(["query", key])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
+        .bounded_status()
         .map(|s| s.success())
         .unwrap_or(false)
 }
@@ -463,13 +467,13 @@ fn reg_set(key: &str, value_name: &str, data: &str) {
             data,
             "/f",
         ])
-        .output();
+        .bounded_output();
 }
 
 fn reg_delete_value(key: &str, value_name: &str) {
     let _ = hidden_command("reg")
         .args(["delete", key, "/v", value_name, "/f"])
-        .output();
+        .bounded_output();
 }
 
 // ── Sleep prevention ──────────────────────────────────────────────────────────
@@ -568,7 +572,7 @@ pub fn recover_registry_if_crashed() {
             .args(["query", key, "/v", name])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status()
+            .bounded_status()
             .map(|s| s.success())
             .unwrap_or(false)
     }
@@ -615,7 +619,7 @@ pub fn lock_desktop() -> bool {
                 // Kill by PID — avoids name collision with legitimate same-named processes
                 let _ = hidden_command("taskkill")
                     .args(["/F", "/PID", &proc.pid.to_string()])
-                    .output();
+                    .bounded_output();
             }
         }
     });
@@ -636,6 +640,7 @@ pub fn unlock_desktop() {
 // ── Virtualization detection (fast: registry + CPUID + ACPI, systeminfo fallback) ──
 
 pub fn detect_virtualization() -> VirtDetectionResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(6));
     // Method 1: Specific registry keys left by VM guest tools (<100 ms total).
     // Hyper-V VM guest key is checked here — critical for the MicrosoftHyperV CPUID
     // exclusion in Method 2 to be correct.
@@ -699,7 +704,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     // Method 3: ACPI table name scan (~30ms) — catches QEMU / bochs without guest tools.
     if let Ok(out) = hidden_command("reg")
         .args(["query", r"HKLM\HARDWARE\ACPI\DSDT"])
-        .output()
+        .bounded_output()
     {
         let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
         for vm in &["vbox", "vmware", "qemu", "bochs", "xen", "bxpc"] {
@@ -718,13 +723,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     // Confidence is "medium" because this relies on loose string matching of
     // English-localised systeminfo output.
     {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let _ = std::thread::Builder::new()
-            .name("ams-sysinfo-vm".into())
-            .spawn(move || {
-                let _ = tx.send(hidden_command("systeminfo").output());
-            });
-        if let Ok(Ok(out)) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        if let Ok(out) = hidden_command("systeminfo").bounded_output() {
             let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
             for vm in &[
                 "vmware",
@@ -757,6 +756,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 // ── Remote desktop detection ──────────────────────────────────────────────────
 
 pub fn detect_remote_desktop() -> bool {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
     // Method 1: SESSIONNAME for built-in Windows RDP
     if std::env::var("SESSIONNAME")
         .map(|s| s.to_uppercase().contains("RDP"))
@@ -777,7 +777,7 @@ pub fn detect_remote_desktop() -> bool {
     // (belt-and-suspenders — RESTRICTED kill-shield covers these too)
     let ps = hidden_command("tasklist")
         .args(["/FO", "CSV", "/NH"])
-        .output()
+        .bounded_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
@@ -922,7 +922,7 @@ fn detect_wireless_display() -> bool {
 pub fn detect_rdp_server() -> bool {
     let svc_running = hidden_command("sc")
         .args(["query", "TermService"])
-        .output()
+        .bounded_output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .to_uppercase()
@@ -935,7 +935,7 @@ pub fn detect_rdp_server() -> bool {
 
     let listening_3389 = hidden_command("netstat")
         .args(["-ano"])
-        .output()
+        .bounded_output()
         .map(|o| {
             let text = String::from_utf8_lossy(&o.stdout).to_uppercase();
             text.lines()
@@ -1020,6 +1020,7 @@ fn spawn_hook_watchdog() {
 }
 
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     if HOOK_ACTIVE.load(Ordering::SeqCst) {
         return KeyboardInterceptResult {
             active: true,
@@ -1040,6 +1041,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 }
 
 pub fn disable_keyboard_intercept() {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     HOOK_ACTIVE.store(false, Ordering::SeqCst);
     set_sleep_prevention(false);
     let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
@@ -1318,7 +1320,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
             "profile=any",
             &program_arg,
         ])
-        .output()
+        .bounded_output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(format!(
@@ -1350,7 +1352,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
                 &format!("remoteip={}", ip),
                 &program_arg,
             ])
-            .output()
+            .bounded_output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
             return Err(format!(
@@ -1379,7 +1381,7 @@ pub fn disable_network_lockdown() -> Result<(), String> {
             "rule",
             "name=AMS_PROCTOR_BLOCK_ALL",
         ])
-        .output();
+        .bounded_output();
     let _ = hidden_command("netsh")
         .args([
             "advfirewall",
@@ -1388,7 +1390,7 @@ pub fn disable_network_lockdown() -> Result<(), String> {
             "rule",
             "name=AMS_PROCTOR_ALLOW",
         ])
-        .output();
+        .bounded_output();
     Ok(())
 }
 
@@ -1407,6 +1409,7 @@ pub fn is_restricted_name(name: &str) -> bool {
 /// zoom subprocesses) are also terminated.
 /// Discord respawn guard: retry up to 3 times with a 600 ms gap.
 pub fn close_apps(names: &[String]) -> CloseAppsResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     let mut closed = Vec::new();
     let mut failed = Vec::new();
 
@@ -1417,7 +1420,7 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
         for _ in 0..3 {
             let _ = hidden_command("taskkill")
                 .args(["/IM", &exe, "/F", "/T"])
-                .output();
+                .bounded_output();
             std::thread::sleep(std::time::Duration::from_millis(600));
             if !win_process_alive(name) {
                 killed = true;

@@ -6,6 +6,7 @@
 //! Process scanning: `ps -axco comm`.
 //! VM detection: `system_profiler SPHardwareDataType` + `ioreg`.
 
+use crate::process_runner::{Budget, CommandDeadlineExt};
 use block2::RcBlock;
 use core_rs::exam::{
     CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
@@ -501,6 +502,7 @@ fn prompt_accessibility_permission() -> bool {
 /// Requires Accessibility permission in System Preferences → Privacy & Security.
 /// Spawns a dedicated thread that runs the CoreFoundation run loop.
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     if !check_accessibility_permission() {
         // First denial in this run: fire the system consent dialog (which also
         // registers the app in the Accessibility list) and open System Settings
@@ -668,6 +670,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 
 /// Stop the CGEventTap run loop and deactivate keyboard intercept.
 pub fn disable_keyboard_intercept() {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     INTERCEPT_ACTIVE.store(false, Ordering::SeqCst);
     if let Ok(mut guard) = tap_runloop().lock() {
         if let Some(SendPtr(rl)) = guard.take() {
@@ -697,11 +700,11 @@ fn set_swipe_gesture_enabled(enabled: bool) {
         for key in GESTURE_KEYS {
             let _ = Command::new("defaults")
                 .args(["write", domain, key, "-int", value])
-                .output();
+                .bounded_output();
         }
     }
     // Flush the preferences daemon so the new values are read by the Dock.
-    let _ = Command::new("killall").arg("cfprefsd").output();
+    let _ = Command::new("killall").arg("cfprefsd").bounded_output();
 }
 
 // ── Crash-safe lockdown state ─────────────────────────────────────────────────
@@ -713,19 +716,8 @@ fn set_swipe_gesture_enabled(enabled: bool) {
 // caffeinate pid) before lockdown touches them; unlock — or crash recovery on
 // the next launch — restores from it.
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct GesturePref {
-    domain: String,
-    key: String,
-    /// Original value as printed by `defaults read`; None = key was unset.
-    value: Option<String>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct LockdownState {
-    gestures: Vec<GesturePref>,
-    caffeinate_pid: Option<u32>,
-}
+mod lockdown_recovery;
+use lockdown_recovery::{GesturePref, LockdownState};
 
 fn lockdown_state_path() -> Option<std::path::PathBuf> {
     home_dir().map(|h| h.join("Library/Application Support/AMS Access/lockdown-state.json"))
@@ -734,7 +726,7 @@ fn lockdown_state_path() -> Option<std::path::PathBuf> {
 fn read_default(domain: &str, key: &str) -> Option<String> {
     let out = Command::new("defaults")
         .args(["read", domain, key])
-        .output()
+        .bounded_output()
         .ok()?;
     if !out.status.success() {
         // Non-zero exit means the key is not set in this domain.
@@ -782,7 +774,7 @@ fn save_lockdown_state(caffeinate_pid: Option<u32>) {
 fn kill_if_caffeinate(pid: u32) {
     let is_caffeinate = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
-        .output()
+        .bounded_output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .trim()
@@ -790,42 +782,62 @@ fn kill_if_caffeinate(pid: u32) {
         })
         .unwrap_or(false);
     if is_caffeinate {
-        let _ = Command::new("kill").arg(pid.to_string()).output();
+        let _ = Command::new("kill").arg(pid.to_string()).bounded_output();
     }
 }
 
 /// Restore gesture prefs and reap caffeinate from the state file.
 ///
-/// Returns true if a state file was found and processed.
+/// Returns false only when the journal is positively absent. A failed restore
+/// must retain the originals and must not trigger force-enabling preferences.
 fn restore_lockdown_state() -> bool {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     let Some(path) = lockdown_state_path() else {
-        return false;
+        return true;
     };
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return false;
-    };
-    if let Ok(state) = serde_json::from_str::<LockdownState>(&raw) {
-        for pref in &state.gestures {
-            match &pref.value {
-                Some(value) => {
-                    let _ = Command::new("defaults")
-                        .args(["write", &pref.domain, &pref.key, "-int", value])
-                        .output();
+    lockdown_recovery::restore(
+        &path,
+        |pref| match &pref.value {
+            Some(value) => Command::new("defaults")
+                .args(["write", &pref.domain, &pref.key, "-int", value])
+                .bounded_output()
+                .is_ok_and(|output| output.status.success()),
+            None => {
+                // A previous partial restore may already have deleted this
+                // originally absent key. Read first to distinguish that case
+                // from a failed deletion or a failed/expired command.
+                let Ok(current) = Command::new("defaults")
+                    .args(["read", &pref.domain, &pref.key])
+                    .bounded_output()
+                else {
+                    return false;
+                };
+                if !current.status.success() {
+                    return lockdown_recovery::explicitly_absent(
+                        &current.stderr,
+                        &pref.domain,
+                        &pref.key,
+                    );
                 }
-                None => {
-                    let _ = Command::new("defaults")
-                        .args(["delete", &pref.domain, &pref.key])
-                        .output();
-                }
+                Command::new("defaults")
+                    .args(["delete", &pref.domain, &pref.key])
+                    .bounded_output()
+                    .is_ok_and(|output| output.status.success())
             }
-        }
-        let _ = Command::new("killall").arg("cfprefsd").output();
-        if let Some(pid) = state.caffeinate_pid {
-            kill_if_caffeinate(pid);
-        }
-    }
-    let _ = std::fs::remove_file(&path);
-    true
+        },
+        |pid| {
+            let _ = Command::new("killall").arg("cfprefsd").bounded_output();
+            if let Some(pid) = pid {
+                kill_if_caffeinate(pid);
+            }
+        },
+    )
+}
+
+/// Whether saved desktop preferences still need restoration. Unknown access
+/// failures count as pending rather than claiming the desktop was restored.
+pub fn desktop_recovery_pending() -> bool {
+    lockdown_state_path().is_none_or(|path| lockdown_recovery::pending(&path))
 }
 
 /// Run once at app startup, before any lockdown call: if a state file is
@@ -1050,9 +1062,10 @@ pub fn unlock_desktop() {
 /// approach truncated that to "QuickTime" and never matched. `-axco comm=`
 /// is also wrong: `-c` reports p_comm, which macOS truncates to 16 chars.)
 pub fn scan_processes() -> ProcessScanResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
     let output = Command::new("ps")
         .args(["-axo", "comm="])
-        .output()
+        .bounded_output()
         .unwrap_or_else(|_| std::process::Output {
             status: std::process::ExitStatus::default(),
             stdout: vec![],
@@ -1088,6 +1101,7 @@ pub fn scan_processes() -> ProcessScanResult {
 /// Checks CPUID hypervisor leaf first (cannot be spoofed without paravirt config),
 /// then `system_profiler SPHardwareDataType` and `ioreg -l` for hypervisor markers.
 pub fn detect_virtualization() -> VirtDetectionResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(6));
     // CPUID leaf 0x40000000 — x86/x86_64 only; ARM Macs skip this path
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
@@ -1111,13 +1125,13 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 
     let hw_output = Command::new("system_profiler")
         .arg("SPHardwareDataType")
-        .output()
+        .bounded_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
     let ioreg_output = Command::new("ioreg")
         .args(["-l"])
-        .output()
+        .bounded_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
@@ -1160,9 +1174,10 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 
 /// Check whether any remote desktop or screen-sharing session is active.
 pub fn detect_remote_desktop() -> bool {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
     let ps = Command::new("ps")
         .args(["-axo", "command="])
-        .output()
+        .bounded_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default()
         .to_string();
@@ -1252,7 +1267,7 @@ do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchc
 
     let out = Command::new("osascript")
         .args(["-e", &script])
-        .output()
+        .bounded_output_with_timeout(std::time::Duration::from_secs(120))
         .map_err(|e| format!("osascript: {e}"))?;
 
     if !out.status.success() {
@@ -1291,7 +1306,7 @@ pub fn uninstall_network_helper() -> Result<(), String> {
     );
     let out = Command::new("osascript")
         .args(["-e", &script])
-        .output()
+        .bounded_output_with_timeout(std::time::Duration::from_secs(120))
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).to_string());
@@ -1301,36 +1316,10 @@ pub fn uninstall_network_helper() -> Result<(), String> {
 
 /// Send a JSON command to the helper and return its response.
 fn helper_send(json: &str) -> Result<(), String> {
-    use std::io::{BufRead, BufReader, Write};
-
-    let stream = std::os::unix::net::UnixStream::connect(HELPER_SOCKET)
-        .map_err(|e| format!("connect to helper: {e}"))?;
-
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-        .ok();
-
-    let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
-    writeln!(writer, "{json}").map_err(|e| format!("send: {e}"))?;
-
-    let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader
-        .read_line(&mut response)
-        .map_err(|e| format!("read response: {e}"))?;
-
-    let parsed: serde_json::Value = serde_json::from_str(response.trim())
-        .map_err(|e| format!("invalid helper response: {e}"))?;
-
-    if parsed.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        Ok(())
-    } else {
-        Err(parsed
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("helper command failed")
-            .to_string())
-    }
+    crate::helper_client::send(json, || {
+        crate::helper_client::connect(std::path::Path::new(HELPER_SOCKET))
+            .map_err(|e| format!("connect to helper: {e}"))
+    })
 }
 
 /// Restrict outbound network traffic via the privileged helper.
@@ -1470,7 +1459,7 @@ fn running_app_with_screen_capture_grant(running_basenames: &[String]) -> Option
 fn running_process_basenames() -> Vec<String> {
     Command::new("ps")
         .args(["-axo", "comm="])
-        .output()
+        .bounded_output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
@@ -1556,7 +1545,7 @@ fn pids_by_basename(name: &str) -> Vec<u32> {
     let own_pid = std::process::id();
     Command::new("ps")
         .args(["-axo", "pid=,comm="])
-        .output()
+        .bounded_output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
@@ -1578,7 +1567,7 @@ fn signal_by_basename(name: &str, signal: &str) {
     for pid in pids_by_basename(name) {
         let _ = Command::new("kill")
             .args([signal, &pid.to_string()])
-            .output();
+            .bounded_output();
     }
 }
 
@@ -1592,6 +1581,7 @@ fn signal_by_basename(name: &str, signal: &str) {
 ///         argument (e.g. an editor with "Teams.txt" open).
 /// Returns which apps were closed and which could not be terminated.
 pub fn close_apps(names: &[String]) -> CloseAppsResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
     let mut closed = Vec::new();
     let mut failed = Vec::new();
 
@@ -1599,7 +1589,7 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
         // Graceful quit via AppleScript.
         let _ = Command::new("osascript")
             .args(["-e", &format!("tell application {:?} to quit", name)])
-            .output();
+            .bounded_output();
 
         // Wait up to 800 ms for the process to exit (80 ms polling).
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
@@ -1644,7 +1634,7 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
 fn process_alive_by_name(name: &str) -> bool {
     Command::new("ps")
         .args(["-axo", "comm="])
-        .output()
+        .bounded_output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout).lines().any(|line| {
                 let line = line.trim();
