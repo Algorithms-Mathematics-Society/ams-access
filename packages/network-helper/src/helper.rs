@@ -518,7 +518,17 @@ fn read_request(
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::TimedOut, "request timed out")
             })?;
-        reader.get_ref().set_read_timeout(Some(remaining))?;
+        if let Err(error) = reader.get_ref().set_read_timeout(Some(remaining)) {
+            // macOS can return EINVAL after the peer has finished writing and
+            // disconnected, even while unread bytes remain queued. Continue
+            // so those bytes still reach the framing/size checks below. A read
+            // from that disconnected socket cannot wait for more peer data;
+            // production streams also retain serve_client's initial bounded
+            // timeout if this narrower deadline update fails.
+            if error.kind() != std::io::ErrorKind::InvalidInput {
+                return Err(error);
+            }
+        }
         let available = match reader.fill_buf() {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
