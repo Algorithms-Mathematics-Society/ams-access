@@ -3,7 +3,7 @@
 ## Source decision
 
 Canonical checkout: `/home/user/AccessSoftware/ams-access-main`.
-Candidate branch: `reconcile/demo-ready-20261002`, based on fetched `origin/main` at `b6d360b`. No newer remote-main commit existed when reconciliation started. Nothing in this task is authorized for pushing yet.
+Candidate branch: `reconcile/demo-ready-20261002`, based on fetched `origin/main` at `b6d360b`. No newer remote-main commit existed when reconciliation started. The initial reconciliation pass ended without publishing; the user subsequently authorized a final independent review and push to main (see the publication review below).
 
 The reported two undeployed worktrees were an outdated description of source state. The Astryx redesign and subsequent native/web fixes had already been published in `a2d3640`, `a20c3fc`, `a6d5861`, `9d6bc1c`, `2f49cf3`, and `b6d360b`. Main was clean. The old dirty checkout still represented an earlier UI snapshot.
 
@@ -67,4 +67,15 @@ Production UI preview: `http://127.0.0.1:3010/`, served from the canonical check
 
 **Live-demo limitation:** the read-only `https://api.amsaccess.com/` check timed out during DNS resolution from this machine. Real sign-in, assignment retrieval, judging, and end-to-end native enforcement are not claimed verified. Backend/DNS access and a prepared exam account are still required for that rehearsal. Windows/macOS builds need their own platform validation.
 
-No deployment, privileged installation, cloud changes, or push was performed. The backup reference stays local; publish only the reviewed reconciliation branch.
+The initial reconciliation pass performed no deployment, privileged installation, cloud changes, or push. The backup reference stays local; only the reviewed reconciliation history is intended for main.
+
+## Publication review — 2026-10-02
+
+The user authorized a second subagent review, correction of confirmed defects, and publication to `main`. The review target was `2fede0a` against freshly fetched `origin/main` at `b6d360b`; no intervening remote commits existed.
+
+- `final_packaging_review`: **no findings** after inspecting the complete merge diff, Cargo target resolution, platform staging branches, and Tauri/CI/release call sites. Independently reran all five helper-staging tests and checked real locked Cargo metadata.
+- `final_reconcile_review`: **no findings** after checking the complete diff, preserved stash and branch provenance, API routing, runbook, installer hash and browser manifests. Confirmed no identified unique application work was lost.
+- Parent checks: all five helper tests passed, release manifests agree on 2.0.9, merge diff has no whitespace errors, both app worktrees were clean, and the installer hash remains the value recorded above.
+- No additional source fixes were required. The earlier 673-test, production-build and browser results still apply to unchanged application source; they were not represented as rerun in this follow-up. This follow-up changes review documentation only.
+
+Publication uses a normal fast-forward push, preserving remote history. Native execution, Windows/macOS validation and live API verification remain the limitations stated above. The existing installer was built from `2fede0a`; this documentation-only follow-up does not change its application source.

@@ -615,3 +615,11 @@ User requested a careful branch/worktree review, subagent review, corrections, c
 - Independent audits and final review reported no remaining findings. **673 tests passed**, along with type validation, strict Rust Clippy, formatting, production frontend export and all size budgets. Production browser performance checks passed 5/5; current Welcome verification passed 143 checks across 14 captures. The older P0 runner's obsolete welcome selector is documented as historical rather than used as a current regression gate.
 - A Linux release `.deb` was built and inspected, with artifact and SHA-256 recorded in the reconciliation report. No installer or native desktop protection test was run. API hostname resolution timed out, so live sign-in/contest execution remains externally unverified; no cloud changes were attempted.
 - Ready for local commit and user review before pushing. Earlier R3/R4 no-push statuses and publication authorization describe their own historical passes, not this candidate's current publication status.
+
+## R6 — Independent publication review (2026-10-02)
+
+- User authorized a fresh subagent review, any required corrections, then pushing the reconciled work to main.
+- `final_packaging_review` inspected the full merge diff, helper packaging and platform call sites: **no findings**. `final_reconcile_review` independently checked the full diff, preservation of old work, API routing, runbook and evidence: **no findings**.
+- All five helper tests were rerun successfully; version manifests agree on 2.0.9; diff checks and working-tree cleanliness passed. The release installer SHA-256 still matches its recorded value. Prior full-suite/build evidence remains applicable to unchanged source.
+- No source correction was needed. Clarified the historical no-push status in `reconciliation-review.md`; this follow-up is documentation only.
+- Freshly fetched origin/main was still `b6d360b` with no intervening collaborator commits. Publish by normal fast-forward; preserve the local backup reference. Existing native runtime, cross-platform and live API validation limitations remain unchanged.
