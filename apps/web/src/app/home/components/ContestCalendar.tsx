@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Calendar, type ISODateString } from "@astryxdesign/core/Calendar";
 import { Card } from "@astryxdesign/core/Card";
 import { Button } from "@astryxdesign/core/Button";
@@ -9,6 +9,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { Icon } from "@astryxdesign/core/Icon";
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import type { InvitedContest } from "./types";
 
 /** Calendar dates and agenda times use the device's local time zone together. */
@@ -24,7 +25,7 @@ export type ContestCalendarProps = {
 };
 
 /** Presentation-only schedule browser. Selecting a date never changes entry eligibility. */
-export function ContestCalendar({ contests, loading, error, onSelectContest }: ContestCalendarProps) {
+export const ContestCalendar = memo(function ContestCalendar({ contests, loading, error, onSelectContest }: ContestCalendarProps) {
   const [selectedDate, setSelectedDate] = useState<ISODateString>(() => localDateKey(new Date()));
   const [focusDate, setFocusDate] = useState<ISODateString>(selectedDate);
   const schedule = useMemo(() => contests.flatMap((contest) => {
@@ -37,10 +38,21 @@ export function ContestCalendar({ contests, loading, error, onSelectContest }: C
   const selectedEvents = schedule.filter((event) => event.day === selectedDate);
   const practiceCount = contests.filter((contest) => contest.is_practice).length;
   const missingDates = contests.length - practiceCount - schedule.length;
-  const nextEvent = schedule.find((event) => event.startsAt.getTime() >= Date.now());
-  const selectedLabel = new Date(`${selectedDate}T12:00:00`).toLocaleDateString(undefined, {
-    weekday: "short", month: "short", day: "numeric",
-  });
+  const [now, setNow] = useState(() => Date.now());
+  const nextEvent = schedule.find((event) => event.startsAt.getTime() >= now);
+  // Memoization must not freeze "next contest" after a start time passes.
+  useEffect(() => {
+    const current = Date.now();
+    if (now < current && schedule.some((event) => event.startsAt.getTime() >= now && event.startsAt.getTime() < current)) {
+      setNow(current);
+      return;
+    }
+    if (!nextEvent) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(2_147_483_647, Math.max(1, nextEvent.startsAt.getTime() - current + 1)));
+    return () => clearTimeout(timer);
+  }, [schedule, nextEvent, now]);
+  const selectedLabel = dateTimeFormatter({ weekday: "short", month: "short", day: "numeric" })
+    .format(new Date(`${selectedDate}T12:00:00`));
   function selectDate(date: ISODateString) {
     setSelectedDate(date);
     setFocusDate(date);
@@ -86,7 +98,7 @@ export function ContestCalendar({ contests, loading, error, onSelectContest }: C
                       onClick={() => onSelectContest(contest.id)}
                       endContent={<Icon icon="chevronRight" size="sm" color="secondary" />}
                       label={<Text maxLines={2} style={{ overflowWrap: "anywhere" }}><VisuallyHidden>Show contest: </VisuallyHidden>{contest.title}</Text>}
-                      description={startsAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                      description={dateTimeFormatter({ hour: "numeric", minute: "2-digit" }).format(startsAt)}
                     />
                   ))}
                 </List>
@@ -117,4 +129,4 @@ export function ContestCalendar({ contests, loading, error, onSelectContest }: C
       </VStack>
     </Card>
   );
-}
+});

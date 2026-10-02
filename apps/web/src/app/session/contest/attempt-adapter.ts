@@ -102,3 +102,13 @@ export function toAttemptRecords(submissions: SubmissionResult[]): AttemptRecord
     }))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 }
+
+/** Reuse results from list refreshes without discarding separately polled runs. */
+export function mergeAttemptTestResults(
+  previous: Record<string, TestcaseResult[]>,
+  attempts: AttemptRecord[]
+): Record<string, TestcaseResult[]> {
+  const next = { ...previous };
+  for (const attempt of attempts) next[attempt.id] = attempt.testcases;
+  return next;
+}

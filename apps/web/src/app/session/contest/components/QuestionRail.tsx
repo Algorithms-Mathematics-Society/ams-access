@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction } from "react";
+import { memo, type Dispatch, type SetStateAction } from "react";
 import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
@@ -7,6 +7,8 @@ import { Text } from "@astryxdesign/core/Text";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { type Question } from "./questions";
+
+const QUESTION_PREFIX = /^[A-Z][.)]\s+/;
 
 export interface QuestionStatus {
   label: string;
@@ -27,7 +29,7 @@ export interface QuestionRailProps {
   markedQuestionIds: string[];
 }
 
-export function QuestionRail({ questions, activeQ, switchQuestion, sidebarCollapsed,
+export const QuestionRail = memo(function QuestionRail({ questions, activeQ, switchQuestion, sidebarCollapsed,
   setSidebarCollapsed, questionStatusMap, acceptedQuestionCount, markedQuestionIds }: QuestionRailProps) {
   const markedCount = questions.filter((question) => markedQuestionIds.includes(question.id)).length;
   return (
@@ -56,7 +58,7 @@ export function QuestionRail({ questions, activeQ, switchQuestion, sidebarCollap
         {questions.map((q, i) => {
           const qStatus = questionStatusMap[q.id];
           const letter = String.fromCharCode(65 + i);
-          const displayTitle = q.title.replace(new RegExp(`^${letter}[.)]\\s+`), "");
+          const displayTitle = q.title.startsWith(letter) ? q.title.replace(QUESTION_PREFIX, "") : q.title;
           const marked = markedQuestionIds.includes(q.id);
           const accessibleLabel = `${q.title} · ${qStatus.label}${marked ? " · Marked for later" : ""}`;
           return <Button key={q.id} label={accessibleLabel} tooltip={accessibleLabel}
@@ -82,4 +84,4 @@ export function QuestionRail({ questions, activeQ, switchQuestion, sidebarCollap
       </VStack>
     </VStack>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import { sessionPolicy, type ReadinessCheck, type ReadinessReport } from "@ams/api-client";
 import { allowlistHostFor, resolveApiBase } from "@/lib/api-base";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -109,30 +110,7 @@ export function withUiTimeout<T>(promise: Promise<T>, ms: number): Promise<T | n
   });
 }
 
-export async function getBrowserMediaAvailability() {
-  // Use getUserMedia() instead of enumerateDevices() so that:
-  //   1. On macOS (WKWebView), the OS permission dialog is shown on first run.
-  //      enumerateDevices() alone never triggers the dialog and returns an
-  //      empty list until permission is granted at least once.
-  //   2. We confirm the device is actually usable for proctoring (access
-  //      granted), not just that the hardware exists.
-  // 30 s timeout gives the user time to respond to the system prompt.
-  const [camResult, micResult] = await Promise.allSettled([
-    getUserMediaWithTimeout({ video: true }, 30_000),
-    getUserMediaWithTimeout({ audio: true }, 30_000),
-  ]);
-
-  const cameraAvailable = camResult.status === "fulfilled";
-  const microphoneAvailable = micResult.status === "fulfilled";
-
-  // Stop tracks immediately — we only needed the permission grant.
-  if (cameraAvailable)
-    (camResult as PromiseFulfilledResult<MediaStream>).value.getTracks().forEach((t) => t.stop());
-  if (microphoneAvailable)
-    (micResult as PromiseFulfilledResult<MediaStream>).value.getTracks().forEach((t) => t.stop());
-
-  return { cameraAvailable, microphoneAvailable };
-}
+export { getBrowserMediaAvailability, getUserMediaWithTimeout } from "./media-availability";
 
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -146,31 +124,6 @@ export async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
-}
-
-export function getUserMediaWithTimeout(
-  constraints: MediaStreamConstraints,
-  ms = 8000
-): Promise<MediaStream> {
-  let timedOut = false;
-  const request = navigator.mediaDevices.getUserMedia(constraints);
-  request.then((stream) => {
-    if (timedOut) {
-      stream.getTracks().forEach((track) => track.stop());
-    }
-  });
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      timedOut = true;
-      reject(new Error("Camera request timed out"));
-    }, ms);
-
-    request
-      .then(resolve)
-      .catch(reject)
-      .finally(() => clearTimeout(timer));
-  });
 }
 
 export function sleep(ms: number) {
@@ -337,9 +290,9 @@ function formatContestDateTime(
   const date = new Date(value);
   const withTimezone = timezone ? { ...options, timeZone: timezone } : options;
   try {
-    return new Intl.DateTimeFormat(undefined, withTimezone).format(date);
+    return dateTimeFormatter(withTimezone).format(date);
   } catch {
-    return new Intl.DateTimeFormat(undefined, options).format(date);
+    return dateTimeFormatter(options).format(date);
   }
 }
 

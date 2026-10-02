@@ -90,7 +90,7 @@ import { saveErrorAfterEdit } from "./save-edit-state";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
-import { toAttemptRecords } from "./attempt-adapter";
+import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
 import { flush as flushViolationQueue } from "@/lib/violation-queue";
 import {
   activeContent,
@@ -517,7 +517,11 @@ export default function ContestPageClient() {
       // resolves last, and fetches outlive the problem they were started for.
       // Submit on A (which arms a 2s poll), switch to B, and A's reply would
       // land and repaint B's Attempts panel with A's history.
-      setAllSubmissionsList(toAttemptRecords(await listMySubmissions(sessionId)));
+      const attempts = toAttemptRecords(await listMySubmissions(sessionId));
+      setAllSubmissionsList(attempts);
+      // Each list response already contains the per-case results. Refresh the
+      // cache as pending attempts complete, preserving separately polled runs.
+      setTestResults(previous => mergeAttemptTestResults(previous, attempts));
       setSubmissionHistoryStatus("available");
       // Nothing here refreshes the run panel any more. This list excludes
       // runs by construction — the server filters on `mode` — so searching it
@@ -561,32 +565,11 @@ export default function ContestPageClient() {
     return () => clearInterval(interval);
   }, [submissionsList, fetchSubmissions]);
 
-  const fetchTestResults = async (attemptId: string) => {
-    if (!sessionId) return;
-    try {
-      // The per-case breakdown arrives on the submission itself. There is no
-      // separate test-results endpoint any more: two sources for one judging
-      // pass could disagree, and the one that renders is the one the
-      // candidate would believe.
-      const submissions = await listMySubmissions(sessionId);
-      const match = submissions.find((submission) => submission.uid === attemptId);
-      setTestResults((prev) => ({
-        ...prev,
-        [attemptId]: (match?.testcases ?? []) as unknown as any[],
-      }));
-    } catch (err) {
-      console.error("Failed to fetch test results:", err);
-    }
-  };
-
   const toggleExpandAttempt = (attemptId: string) => {
     if (expandedAttemptId === attemptId) {
       setExpandedAttemptId(null);
     } else {
       setExpandedAttemptId(attemptId);
-      if (!testResults[attemptId]) {
-        fetchTestResults(attemptId);
-      }
     }
   };
 
@@ -597,7 +580,6 @@ export default function ContestPageClient() {
       const prevLatest = prevSubmissionsRef.current[0];
       if (shouldAutoExpandAttempt(latest, prevLatest)) {
         setExpandedAttemptId(latest.id);
-        fetchTestResults(latest.id);
       }
     }
     prevSubmissionsRef.current = submissionsList;
@@ -677,10 +659,10 @@ export default function ContestPageClient() {
     }
   }
 
-  function cancelMediaToggle() {
+  const cancelMediaToggle = useCallback(() => {
     setShowMediaToggleWarning(false);
     setPendingMediaToggle(null);
-  }
+  }, []);
 
   useEffect(() => {
     const storedTheme = localStorage.getItem(EDITOR_THEME_KEY);
@@ -700,12 +682,12 @@ export default function ContestPageClient() {
     catch { setMarkedQuestionIds([]); }
   }, [sessionId]);
 
-  function toggleQuestionMark(id: string) {
+  const toggleQuestionMark = useCallback((id: string) => {
     if (!sessionId) return;
     const next = markedQuestionIds.includes(id) ? markedQuestionIds.filter(item => item !== id) : [...markedQuestionIds, id];
     setMarkedQuestionIds(next);
     try { localStorage.setItem(`ams_contest_marks:${sessionId}`, JSON.stringify(next)); } catch { /* Keep the in-memory mark. */ }
-  }
+  }, [sessionId, markedQuestionIds]);
 
   function handleEditorThemeChange(value: string) {
     if (isContestEditorTheme(value) === false) return;
@@ -753,7 +735,7 @@ export default function ContestPageClient() {
     }));
   }
 
-  function handleProblemBodyClick(event: ReactMouseEvent<HTMLDivElement>) {
+  const handleProblemBodyClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target instanceof HTMLElement ? event.target : null;
     const button = target?.closest<HTMLButtonElement>("[data-copy-sample]");
     if (!button) return;
@@ -769,7 +751,7 @@ export default function ContestPageClient() {
       () => setCopiedSampleKey((current) => (current === key ? null : current)),
       1400
     );
-  }
+  }, []);
 
   // Monitor faceStatus to trigger face grace period countdown
   useEffect(() => {
@@ -925,7 +907,7 @@ export default function ContestPageClient() {
         title: titles[contestId],
         end_at: mockEnd,
         status: "ACTIVE",
-        allowed_languages: ["C++17", "Python3", "Java17"],
+        allowed_languages: ["C++17", "Python3"],
       };
       setContest(mockMeta);
       setSelectedLanguage(mockMeta.allowed_languages![0]);
@@ -1179,6 +1161,11 @@ export default function ContestPageClient() {
     resetRunPanelState();
   }
 
+  // Stable child prop, while question switching still saves the latest draft.
+  const switchQuestionRef = useRef(switchQuestion);
+  switchQuestionRef.current = switchQuestion;
+  const onSwitchQuestion = useCallback((idx: number) => switchQuestionRef.current(idx), []);
+
   function selectEditorFile(fileId: string) {
     if (fileId === activeFileId) return;
     if (!editorLocked) {
@@ -1305,7 +1292,6 @@ export default function ContestPageClient() {
       setRunResultAttemptId(resolvedId);
       // Keep results in the Output panel — runs never appear under Attempts.
       setTerminalTab("stdout");
-      void fetchSubmissions();
     } catch (caught) {
       if (runVisit !== runVisitRef.current) return;
       setIsRunning(false);
@@ -1351,7 +1337,6 @@ export default function ContestPageClient() {
             // Run records carry their own results. The submissions endpoint
             // excludes runs, so it cannot supply this attempt's sample output.
             setTestResults(prev => ({ ...prev, [attemptId]: polled.testcases ?? [] }));
-            await fetchSubmissions();
             return;
           }
         }
@@ -1368,7 +1353,6 @@ export default function ContestPageClient() {
     // Keep the timed-out state visible in the Output panel — the run is never an
     // Attempts row to navigate to.
     setTerminalTab("stdout");
-    void fetchSubmissions();
   }
 
   // Persist the current editor content locally so an unconfirmed network save
@@ -1640,6 +1624,11 @@ export default function ContestPageClient() {
     // as a save failure.
     void handleSave();
   }
+
+  // CountdownBadge can stay memoized without capturing an outdated save handler.
+  const expiryHandlerRef = useRef(handleContestExpiry);
+  expiryHandlerRef.current = handleContestExpiry;
+  const onContestExpiry = useCallback(() => expiryHandlerRef.current(), []);
 
   useEffect(() => {
     if (loading) return; // Wait for contest load to ensure <video> ref is in DOM
@@ -2286,21 +2275,21 @@ export default function ContestPageClient() {
     [problemSections]
   );
   const activeProblemTab = availableProblemTabs.includes(problemTab) ? problemTab : "statement";
+  const parsedProblemHtml = useMemo(
+    () => parseDescription(
+      problemSections[activeProblemTab] || currentDescriptionMd,
+      currentQuestion?.cxxprobe
+        ? {
+            statementPath: currentQuestion.cxxprobe.statement.path,
+            assets: currentQuestion.cxxprobe.assets,
+          }
+        : undefined
+    ),
+    [activeProblemTab, currentDescriptionMd, currentQuestion, problemSections]
+  );
   const problemBodyHtml = useMemo(
-    () =>
-      enhanceSampleBlocks(
-        parseDescription(
-          problemSections[activeProblemTab] || currentDescriptionMd,
-          currentQuestion?.cxxprobe
-            ? {
-                statementPath: currentQuestion.cxxprobe.statement.path,
-                assets: currentQuestion.cxxprobe.assets,
-              }
-            : undefined
-        ),
-        copiedSampleKey
-      ),
-    [activeProblemTab, copiedSampleKey, currentDescriptionMd, currentQuestion, problemSections]
+    () => enhanceSampleBlocks(parsedProblemHtml, copiedSampleKey),
+    [parsedProblemHtml, copiedSampleKey]
   );
   const editorContest = useMemo(
     () =>
@@ -2427,7 +2416,7 @@ export default function ContestPageClient() {
   });
   const submissionSource = latestAttempt ? submittedSources[latestAttempt.id] : undefined;
   const compilerText = runResult ? runResult.compile_output : latestAttempt?.compile_output;
-  const compilerDiagnostic = compilerText ? firstCompilerError(compilerText) : null;
+  const compilerDiagnostic = useMemo(() => compilerText ? firstCompilerError(compilerText) : null, [compilerText]);
   const diagnosticContext = { questionId: currentQId, fileId: activeFileId, filename: activeFile?.name ?? "main.cpp", source: currentCode, language: toLanguageId(selectedLanguage) };
   // Historical submissions omit source/file identity; only a matching run can navigate safely.
   const canJumpToCompilerError = Boolean(!isRunning && runResult && compilerDiagnostic && canNavigateDiagnostic(compilerDiagnostic, runSourceSnapshot, diagnosticContext));
@@ -2599,7 +2588,7 @@ export default function ContestPageClient() {
         workspaceControls={<WorkspaceControls suspended={criticalOverlayActive || submitConfirm || showSupportModal || showMediaToggleWarning || timeUpState !== "idle"} focused={editorFocused} onFocus={toggleEditorFocus} onReset={resetWorkspaceLayout} onNavigate={navigateWorkspace} />}
         contest={contest}
         clock={clock}
-        handleContestExpiry={handleContestExpiry}
+        handleContestExpiry={onContestExpiry}
         setShowSupportModal={setShowSupportModal}
         submitConfirm={submitConfirm}
         setSubmitConfirm={setSubmitConfirm}
@@ -2612,14 +2601,14 @@ export default function ContestPageClient() {
         finishDraftStatus={`${activeFile?.name ?? "Active file"}: ${activeDraftStatus.label}. Other tabs are not included in this server draft.`}
         finishDraftNeedsAttention={!activeDraftStatus.confirmed}
         finishReviewSuspended={criticalOverlayActive || showSupportModal || showMediaToggleWarning || timeUpState !== "idle"}
-        onReviewQuestion={switchQuestion}
+        onReviewQuestion={onSwitchQuestion}
       />
       <HStack gap={0} className="contest-body" data-editor-focus={editorFocused ? "true" : "false"} align="stretch" style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}>
         <QuestionRail
           markedQuestionIds={markedQuestionIds}
           questions={questions}
           activeQ={activeQ}
-          switchQuestion={switchQuestion}
+          switchQuestion={onSwitchQuestion}
           sidebarCollapsed={sidebarCollapsed}
           setSidebarCollapsed={setSidebarCollapsed}
           questionStatusMap={questionStatusMap}

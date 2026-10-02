@@ -247,8 +247,12 @@ export const SettingsPanel = memo(function SettingsPanel({
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
 
-        const drawMicStats = () => {
+        let lastMeterUpdate = -Infinity;
+        const drawMicStats = (timestamp: number) => {
           if (!analyserRef.current) return;
+          animationFrameRef.current = requestAnimationFrame(drawMicStats);
+          if (timestamp - lastMeterUpdate < 125) return;
+          lastMeterUpdate = timestamp;
           analyserRef.current.getByteFrequencyData(dataArray);
           let sum = 0;
           for (let i = 0; i < bufferLength; i++) {
@@ -257,9 +261,8 @@ export const SettingsPanel = memo(function SettingsPanel({
           const average = sum / bufferLength;
           const scaledVal = Math.min(Math.round((average / 90) * 100), 100);
           setMicLevel(scaledVal);
-          animationFrameRef.current = requestAnimationFrame(drawMicStats);
         };
-        drawMicStats();
+        animationFrameRef.current = requestAnimationFrame(drawMicStats);
         setMicActive(true);
         setReadiness((r) => ({ ...r, mic: "ok" }));
         onSecurityEvent("HARDWARE: Microphone stream verified");

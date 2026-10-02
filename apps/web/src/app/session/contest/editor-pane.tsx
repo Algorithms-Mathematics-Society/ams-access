@@ -9,7 +9,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cppStdlibCompletions } from "./cpp-stdlib";
 import { cpp } from "@codemirror/lang-cpp";
 import { python } from "@codemirror/lang-python";
-import { java } from "@codemirror/lang-java";
 import {
   autocompletion,
   closeBrackets,
@@ -390,9 +389,6 @@ function resolveLanguageBundle(language: string): Extension[] {
   if (language === "Python3") {
     return [python(), autocompletion({ activateOnTyping: true, maxRenderedOptions: 14 })];
   }
-  if (language === "Java17") {
-    return [java(), autocompletion({ activateOnTyping: true, maxRenderedOptions: 14 })];
-  }
   // Default: C++ (covers C++17, C++20, and any unknown language)
   return [
     cpp(),
@@ -404,9 +400,14 @@ function resolveLanguageBundle(language: string): Extension[] {
   ];
 }
 
+// CodeMirror retains mounted style modules; reuse the four immutable themes.
+const editorThemeCache = new Map<ContestEditorThemeId, Extension>();
 function createContestEditorTheme(themeId: ContestEditorThemeId): Extension {
-  const theme = contestEditorThemes[themeId] ?? contestEditorThemes["ams-terminal"];
-  return [
+  const key = CONTEST_EDITOR_THEMES.some(theme => theme.id === themeId) ? themeId : "ams-terminal";
+  const cached = editorThemeCache.get(key);
+  if (cached) return cached;
+  const theme = contestEditorThemes[key];
+  const extensions: Extension = [
     EditorView.theme(
       {
         "&": {
@@ -509,6 +510,8 @@ function createContestEditorTheme(themeId: ContestEditorThemeId): Extension {
       { fallback: true }
     ),
   ];
+  editorThemeCache.set(key, extensions);
+  return extensions;
 }
 
 /// Tell the native keyboard hook whether bare Escape should be swallowed.
@@ -713,6 +716,7 @@ export default function EditorPane({
   const viewRef = useRef<EditorView | null>(null);
   const onCodeChangeRef = useRef(onCodeChange);
   const applyingExternalUpdateRef = useRef(false);
+  const documentTextRef = useRef(currentCode);
   // Ref so the init effect can read the current language without being in its
   // dep array (which would destroy and recreate the editor on every language change).
   const selectedLanguageRef = useRef(selectedLanguage);
@@ -757,6 +761,7 @@ export default function EditorPane({
     () =>
       createEditorExtensions(
         (value) => {
+          documentTextRef.current = value;
           if (!applyingExternalUpdateRef.current) onCodeChangeRef.current(value);
         },
         editorTheme,
@@ -777,6 +782,7 @@ export default function EditorPane({
       state: EditorState.create({ doc: currentCode, extensions }),
     });
     viewRef.current = view;
+    documentTextRef.current = currentCode;
 
     // Seed the correct language on recreation — the memoised extensions carry the
     // language from mount time; subsequent question/tab switches need the current one.
@@ -833,14 +839,16 @@ export default function EditorPane({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const existing = view.state.doc.toString();
-    if (existing === currentCode) return;
+    if (documentTextRef.current === currentCode) return;
 
     applyingExternalUpdateRef.current = true;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: currentCode },
-    });
-    applyingExternalUpdateRef.current = false;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: currentCode },
+      });
+    } finally {
+      applyingExternalUpdateRef.current = false;
+    }
   }, [currentCode]);
 
   // Selection-only navigation: never replaces text, recreates the editor, or changes undo history.

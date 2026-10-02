@@ -11,6 +11,10 @@ export function listen<T>(event: string, handler: (payload: T) => void): Promise
   return tauriListen<T>(event, (e) => handler(e.payload as T));
 }
 
+// Only process-constant metadata is cached. Live telemetry and enforcement
+// commands always reach native. Keying by bridge also isolates preview/test shells.
+const metadataByBridge = new WeakMap<Function, Map<string, Promise<unknown>>>();
+
 export async function invoke<T = unknown>(
   command: string,
   args?: Record<string, unknown>
@@ -25,6 +29,18 @@ export async function invoke<T = unknown>(
   const fn = tauri?.core?.invoke;
   if (!fn) {
     throw new Error("Tauri bridge unavailable");
+  }
+  if (args === undefined && (command === "get_platform" || command === "plugin:app|version")) {
+    let cache = metadataByBridge.get(fn);
+    if (!cache) { cache = new Map(); metadataByBridge.set(fn, cache); }
+    const existing = cache.get(command);
+    if (existing) return existing as Promise<T>;
+    const request = fn(command).catch((error: unknown) => {
+      cache.delete(command); // A transient bridge failure must remain retryable.
+      throw error;
+    });
+    cache.set(command, request);
+    return request;
   }
   return fn(command, args);
 }
@@ -397,13 +413,16 @@ export async function fetchOrganizerOverrides(
   // the two collided, and the collision surfaced as a 403 from staff auth,
   // which is a confusing way to discover a routing bug.
   if (!token) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
   try {
     const res = await fetch(
       `${apiUrl}/participant/contests/${encodeURIComponent(contestId)}/overrides?device_id=${encodeURIComponent(deviceId)}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal }
     );
     if (!res.ok) return [];
     const body: unknown = await res.json();
+    if (controller.signal.aborted) return [];
     const list = Array.isArray(body)
       ? body
       : Array.isArray((body as { overrides?: unknown[] })?.overrides)
@@ -427,6 +446,8 @@ export async function fetchOrganizerOverrides(
   } catch {
     // Offline, or no overrides endpoint — readiness proceeds on base policy.
     return [];
+  } finally {
+    clearTimeout(timer); // Includes reading the body, not just receiving headers.
   }
 }
 

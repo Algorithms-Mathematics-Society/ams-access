@@ -58,3 +58,19 @@ test("presentation changes cannot unlock a read-only editor", () => {
     assert.equal(classes.includes("cm-lineWrapping"), wordWrap);
   }
 });
+
+test("equivalent preferences reuse bounded style modules across editor recreations", () => {
+  const entries = new Set();
+  for (let fontSize = 12; fontSize <= 20; fontSize++) {
+    for (const wordWrap of [false, true]) {
+      const extension = editorPreferenceExtensions({ fontSize, wordWrap });
+      entries.add(extension);
+      assert.equal(editorPreferenceExtensions({ fontSize, wordWrap }), extension);
+    }
+  }
+  assert.equal(entries.size, 18);
+  for (const fontSize of [0, 100, 100000, NaN, Infinity]) {
+    assert.equal(editorPreferenceExtensions({ fontSize, wordWrap: true }),
+      editorPreferenceExtensions(DEFAULT_EDITOR_PREFERENCES));
+  }
+});

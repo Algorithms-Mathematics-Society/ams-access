@@ -1,3 +1,4 @@
+import { observeWorkspaceGeometry } from "../workspace-geometry-observer";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ResizeHandle, useResizable } from '@astryxdesign/core/Resizable';
 
@@ -27,19 +28,9 @@ export function WorkspaceResizeHandle({ direction, value, min, max, onChange, la
       const ceiling = direction === 'vertical' && code ? Math.max(minimumCode, next - chrome - minimumCode - (ref.current?.getBoundingClientRect().height ?? 0)) : Infinity;
       if (next > 0) setGeometry(previous => previous.extent === next && previous.outputFloor === floor && (previous.outputCeiling === ceiling || Math.abs(previous.outputCeiling - ceiling) < 0.5) ? previous : { extent: next, outputFloor: floor, outputCeiling: ceiling });
     };
-    const observer = new ResizeObserver(measure);
-    observer.observe(container);
-    // CodeMirror mounts lazily, and banners can change the toolbar budget.
-    const mutation = new MutationObserver(() => {
-      const editor = container.querySelector('[aria-label="Code editor"]');
-      const code = container.querySelector('.cm-editor');
-      if (editor) observer.observe(editor);
-      if (code) observer.observe(code);
-      measure();
-    });
-    mutation.observe(container, { childList: true, subtree: true });
-    measure();
-    return () => { observer.disconnect(); mutation.disconnect(); };
+    // Toolbar/banner sizes are observed directly; text edits do not trigger
+    // synchronous measurements, and replaced editors are explicitly released.
+    return observeWorkspaceGeometry(container, measure);
   }, [containerSelector, direction]);
   const effectiveMax = Math.min(max, outputCeiling / extent * 100);
   const effectiveMin = Math.min(Math.max(min, outputFloor / extent * 100), effectiveMax);

@@ -69,6 +69,8 @@ import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { SecurityOperationsLog } from "./components/SecurityOperationsLog";
 import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
+import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import { deriveContestantReadiness } from "./components/readiness-context";
 
 /** The participant API's contest shape, in the one the home UI already reads.
@@ -110,7 +112,12 @@ export default function HomePage() {
   const [contestsLoading, setContestsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
-  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  const [activeSession, setActiveSessionState] = useState<ActiveSession | null>(null);
+  const activeSessionRef = useRef<ActiveSession | null>(null);
+  const setActiveSession = useCallback((session: ActiveSession | null) => {
+    activeSessionRef.current = session;
+    setActiveSessionState(session);
+  }, []);
   const [resumeStatus, setResumeStatus] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
   const [resumeVerification, setResumeVerification] = useState<ResumeVerificationState>("none");
@@ -125,6 +132,8 @@ export default function HomePage() {
   const [closeFailedApps, setCloseFailedApps] = useState<string[]>([]);
   const resumeInFlightRef = useRef(false);
   const resumeConsumeInFlightRef = useRef(false);
+  const resumePollInFlightRef = useRef(false);
+  const scanGenerationRef = useRef(0);
   const [readiness, setReadiness] = useState<ReadinessState>({
     camera: "checking",
     mic: "checking",
@@ -143,7 +152,7 @@ export default function HomePage() {
   const lastScannedAtRef = useRef<number | null>(null);
 
   const appendSecurityEvent = useCallback((event: string, level: SecurityLogLevel = "info") => {
-    const time = new Date().toLocaleTimeString([], { hour12: false });
+    const time = dateTimeFormatter({ hour: "numeric", minute: "numeric", second: "numeric", hour12: false }).format(new Date());
     setSecurityLogs((prev) => {
       const next = [
         ...prev,
@@ -278,7 +287,7 @@ export default function HomePage() {
     }
   }, [invitedContestsQuery.data, invitedContestsQuery.error]);
 
-  async function loadContests(mode: "initial" | "refresh" = "refresh") {
+  const loadContests = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
     if (mode === "initial") setContestsLoading(true);
     else setSessionsRefreshing(true);
     appendSecurityEvent("SESSION: Contest list refresh requested");
@@ -300,10 +309,16 @@ export default function HomePage() {
       setContestsLoading(false);
       setSessionsRefreshing(false);
     }
-  }
+  }, [invitedContestsQuery.mutate, appendSecurityEvent]);
+  const refreshContests = useCallback(() => { void loadContests(); }, [loadContests]);
+  const openPreflight = useCallback((contestId: string, type: "new" | "resume") => {
+    setPreflightContestId(contestId);
+    setPreflightSessionType(type);
+  }, []);
 
   async function runIntegrityScan(cancelledRef?: { current: boolean }, contestId?: string | null) {
-    const isCancelled = () => cancelledRef?.current ?? false;
+    const generation = ++scanGenerationRef.current;
+    const isCancelled = () => Boolean(cancelledRef?.current) || generation !== scanGenerationRef.current;
 
     if (!isCancelled()) {
       setReadinessReport(null);
@@ -412,10 +427,17 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    if (preflightContestId) {
-      void runIntegrityScan(undefined, preflightContestId);
-    }
-  }, [preflightContestId]);
+    if (!identityHydrated) return;
+    const cancelled = { current: false };
+    // Closing preflight starts a fresh baseline; cancelling its strict scan
+    // alone would otherwise leave Home's shared summary stuck on checking.
+    void runIntegrityScan(cancelled, preflightContestId);
+    return () => {
+      cancelled.current = true;
+      // Also invalidate a manual rescan when this preflight closes or changes.
+      scanGenerationRef.current += 1;
+    };
+  }, [preflightContestId, identityHydrated]);
 
   async function handleCloseRestrictedApps(foundApps: string[]) {
     setClosingApps(true);
@@ -451,28 +473,6 @@ export default function HomePage() {
     setResumeStatus(reason);
   }
 
-  function mergeResumeRequestIntoSession(
-    session: ActiveSession,
-    request:
-      | {
-          id?: string;
-          status?: string;
-          requested_at?: string;
-          review_note?: string | null;
-        }
-      | null
-      | undefined
-  ): ActiveSession {
-    if (!request) return session;
-    return {
-      ...session,
-      resume_request_id: request.id ?? session.resume_request_id,
-      resume_request_status: request.status ?? session.resume_request_status,
-      resume_request_requested_at: request.requested_at ?? session.resume_request_requested_at,
-      resume_request_review_note: request.review_note ?? session.resume_request_review_note ?? null,
-    };
-  }
-
   async function consumeApprovedResume(session: ActiveSession) {
     if (!session.id || !session.contest_id || resumeConsumeInFlightRef.current) return;
     resumeConsumeInFlightRef.current = true;
@@ -499,20 +499,27 @@ export default function HomePage() {
     }
   }
 
-  async function refreshResumeRequest(session: ActiveSession) {
-    if (!session.id) return;
+  async function refreshResumeRequest(session: ActiveSession, isCancelled = () => false) {
+    if (!session.id || resumePollInFlightRef.current || resumeConsumeInFlightRef.current) return;
+    resumePollInFlightRef.current = true;
+    const isStale = () => isCancelled() || activeSessionRef.current?.id !== session.id ||
+      activeSessionRef.current?.resume_request_id !== session.resume_request_id ||
+      activeSessionRef.current?.resume_request_status !== session.resume_request_status;
     try {
       const latest = await latestResumeRequest(session.id);
-      if (!latest) return;
+      if (!latest || isStale()) return;
       const request = {
         id: latest.uid,
         status: latest.status,
         requested_at: latest.created_at,
         review_note: latest.review_note,
       };
-      const nextSession = mergeResumeRequestIntoSession(session, request);
-      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
-      setActiveSession(nextSession);
+      const currentSession = activeSessionRef.current!;
+      const nextSession = mergeResumeRequestIntoSession(currentSession, request);
+      if (nextSession !== currentSession) {
+        localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+        setActiveSession(nextSession);
+      }
 
       const requestStatus = String(request.status ?? "").toUpperCase();
       if (requestStatus === "PENDING") {
@@ -528,9 +535,13 @@ export default function HomePage() {
         await consumeApprovedResume(nextSession);
       }
     } catch {
-      setResumeStatus("Waiting for organizer approval.");
+      if (!isStale()) setResumeStatus("Waiting for organizer approval.");
+    } finally {
+      resumePollInFlightRef.current = false;
     }
   }
+  const refreshResumeRequestRef = useRef(refreshResumeRequest);
+  refreshResumeRequestRef.current = refreshResumeRequest;
 
   async function submitResumeRequest(session: ActiveSession) {
     if (!session.id) return;
@@ -690,7 +701,6 @@ export default function HomePage() {
     restoreToken();
     setDisplayName(localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "");
     setIdentityHydrated(true);
-    const cancelledRef = { current: false };
     const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
     if (storedSession) {
       try {
@@ -709,10 +719,8 @@ export default function HomePage() {
       }
     }
 
-    void runIntegrityScan(cancelledRef);
-
     return () => {
-      cancelledRef.current = true;
+      scanGenerationRef.current += 1;
     };
   }, []);
 
@@ -725,10 +733,11 @@ export default function HomePage() {
     if (!activeSession?.id) return;
     const requestStatus = String(activeSession.resume_request_status ?? "").toUpperCase();
     if (requestStatus !== "PENDING" && requestStatus !== "APPROVED") return;
-    const timer = setInterval(() => void refreshResumeRequest(activeSession), 3000);
-    void refreshResumeRequest(activeSession);
-    return () => clearInterval(timer);
-  }, [activeSession]);
+    return startResumePolling((isCancelled) => {
+      const current = activeSessionRef.current;
+      if (current) return refreshResumeRequestRef.current(current, isCancelled);
+    });
+  }, [activeSession?.id, activeSession?.resume_request_id, activeSession?.resume_request_status]);
 
   async function handleResumeActiveSession() {
     setResumeStatus(null);
@@ -772,7 +781,7 @@ export default function HomePage() {
   const contestsPanel = (
     <ContestsPanel
       key="contests"
-      onRefresh={() => loadContests()}
+      onRefresh={refreshContests}
       refreshing={sessionsRefreshing}
       highlightedContestId={highlightedContestId}
       contests={contests}
@@ -784,10 +793,7 @@ export default function HomePage() {
         sessionsError ??
         (invitedContestsQuery.error ? "Could not load your contests." : null)
       }
-      onPreflight={(contestId, type) => {
-        setPreflightContestId(contestId);
-        setPreflightSessionType(type);
-      }}
+      onPreflight={openPreflight}
       readinessContext={contestantReadiness}
     />
   );

@@ -11,7 +11,7 @@
  * contest this is. Nothing here asks for a session code.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
@@ -40,6 +40,13 @@ export default function LoginPage() {
   // without it. See `network-error.ts`.
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  const homePrefetched = useRef(false);
+  useEffect(() => {
+    if (!loginId || homePrefetched.current) return;
+    homePrefetched.current = true;
+    router.prefetch("/home");
+  }, [loginId, router]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

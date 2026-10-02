@@ -106,8 +106,7 @@ const VM_STRINGS: &[&str] = &[
 
 /// Lowercase basename of a path-like string (after the last '/').
 fn lower_basename(path: &str) -> String {
-    let lower = path.to_lowercase();
-    lower.rsplit('/').next().unwrap_or(&lower).to_string()
+    path.rsplit('/').next().unwrap_or(path).to_lowercase()
 }
 
 /// Collect the identifying basenames for a pid: argv[0] from `/proc/<pid>/cmdline`
@@ -118,8 +117,9 @@ fn lower_basename(path: &str) -> String {
 /// this is defense-in-depth, not a guarantee. `/proc/<pid>/exe` is only readable
 /// for same-user (or root) processes; an unreadable link is skipped.
 fn proc_identity_names(pid: u32) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    if let Ok(raw) = std::fs::read(format!("/proc/{}/cmdline", pid)) {
+    let mut names: Vec<String> = Vec::with_capacity(2);
+    let mut path = std::path::PathBuf::from(format!("/proc/{pid}/cmdline"));
+    if let Ok(raw) = std::fs::read(&path) {
         if !raw.is_empty() {
             let argv0 = raw.split(|&b| b == 0).next().unwrap_or(&[]);
             let b = lower_basename(&String::from_utf8_lossy(argv0));
@@ -128,9 +128,11 @@ fn proc_identity_names(pid: u32) -> Vec<String> {
             }
         }
     }
-    if let Ok(target) = std::fs::read_link(format!("/proc/{}/exe", pid)) {
-        // readlink may append " (deleted)" if the binary was replaced after exec.
-        let b = lower_basename(&target.to_string_lossy().replace(" (deleted)", ""));
+    path.set_file_name("exe");
+    if let Ok(target) = std::fs::read_link(&path) {
+        // readlink appends the suffix only when a running binary was replaced.
+        let target = target.to_string_lossy();
+        let b = lower_basename(target.strip_suffix(" (deleted)").unwrap_or(&target));
         if !b.is_empty() && !names.contains(&b) {
             names.push(b);
         }
@@ -176,8 +178,8 @@ pub fn scan_processes() -> ProcessScanResult {
         if _budget.expired() {
             break;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
-        let Ok(pid) = name.parse::<u32>() else {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|name| name.parse::<u32>().ok()) else {
             continue;
         };
         if let Some(r) = match_restricted(&proc_identity_names(pid)) {
@@ -914,8 +916,8 @@ fn scan_restricted_pids() -> Vec<(String, u32)> {
         if budget.expired() {
             break;
         }
-        let fname = entry.file_name().to_string_lossy().to_string();
-        let Ok(pid) = fname.parse::<u32>() else {
+        let fname = entry.file_name();
+        let Some(pid) = fname.to_str().and_then(|name| name.parse::<u32>().ok()) else {
             continue;
         };
         if let Some(r) = match_restricted(&proc_identity_names(pid)) {
@@ -954,12 +956,33 @@ fn spawn_kill_shield(generation: u64) {
 // On X11 a touchpad swipe can still slip through on non-WPT drivers — the watchdog
 // detects the drift and moves the exam window to whichever workspace became active.
 
-fn xdotool_int(args: &[&str]) -> Option<u32> {
-    let out = std::process::Command::new("xdotool")
-        .args(args)
-        .bounded_output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+fn desktop_pair(output: &std::process::Output) -> Option<(u32, u32)> {
+    if !output.status.success() {
+        return None;
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    let mut lines = text.lines();
+    let pair = (
+        lines.next()?.trim().parse().ok()?,
+        lines.next()?.trim().parse().ok()?,
+    );
+    lines.next().is_none().then_some(pair)
+}
+
+fn focus_snapshot(output: &std::process::Output) -> Option<(u64, std::collections::HashSet<u64>)> {
+    // xdotool script mode returns the last command's status. getactivewindow
+    // always reports an error to stderr when it fails; reject that partial
+    // snapshot even if the subsequent window search succeeds.
+    if !output.status.success() || !output.stderr.is_empty() {
+        return None;
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    let mut lines = text.lines();
+    let active = lines.next()?.trim().parse().ok()?;
+    let ours: Option<std::collections::HashSet<u64>> =
+        lines.map(|line| line.trim().parse().ok()).collect();
+    let ours = ours?;
+    (!ours.is_empty()).then_some((active, ours))
 }
 
 fn watchdogs_supported(display_server: &str) -> bool {
@@ -1012,12 +1035,14 @@ fn spawn_workspace_watchdog(generation: u64) {
                     break;
                 }
 
-                let Some(active_desktop) = xdotool_int(&["get_desktop"]) else {
-                    continue;
-                };
-                let Some(our_desktop) =
-                    xdotool_int(&["get_desktop_for_window", &win_id.to_string()])
-                else {
+                // Both read-only queries share one X connection/process. Chained
+                // commands stop on failure; exactly two values are required.
+                let pair = std::process::Command::new("xdotool")
+                    .args(["get_desktop", "get_desktop_for_window", &win_id.to_string()])
+                    .bounded_output()
+                    .ok()
+                    .and_then(|output| desktop_pair(&output));
+                let Some((active_desktop, our_desktop)) = pair else {
                     continue;
                 };
 
@@ -1132,26 +1157,20 @@ fn spawn_focus_watchdog(generation: u64) {
                 if !shield_generation_active(generation) {
                     break;
                 }
-                let active = std::process::Command::new("xdotool")
-                    .arg("getactivewindow")
-                    .bounded_output()
-                    .ok()
-                    .and_then(|o| {
-                        String::from_utf8_lossy(&o.stdout)
-                            .trim()
-                            .parse::<u64>()
-                            .ok()
-                    });
-                let Some(active) = active else {
-                    continue; // active window unresolvable — don't flap
-                };
-                // Re-scan our windows each poll (xdotool search is ~ms) so a
-                // newly-mapped dialog counts as ours. An empty set means the scan
-                // transiently failed — skip rather than emit a false positive.
-                let ours = our_window_ids(&our_pid);
-                if ours.is_empty() {
+                // Script mode runs each line separately, preserving printed
+                // IDs and the original active-window-then-owned-windows order.
+                // No shell is involved; pid is the numeric process id.
+                let script = format!("getactivewindow\nsearch --pid {our_pid} --onlyvisible\n");
+                let snapshot = crate::process_runner::output(
+                    std::process::Command::new("xdotool").arg("-"),
+                    std::time::Duration::from_secs(3),
+                    Some(script.as_bytes()),
+                )
+                .ok()
+                .and_then(|output| focus_snapshot(&output));
+                let Some((active, ours)) = snapshot else {
                     continue;
-                }
+                };
                 if !ours.contains(&active) {
                     if !lost {
                         lost = true;
@@ -2129,6 +2148,46 @@ mod optional_touchpad_tests {
                 vec![vec!["list".to_string()], vec![action.into(), "14".into()]]
             );
             assert!(budget.failure().is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod watchdog_batch_tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+    fn output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+    #[test]
+    fn workspace_snapshot_requires_both_values_and_success() {
+        assert_eq!(desktop_pair(&output(0, "2\n3\n", "")), Some((2, 3)));
+        for out in [
+            output(1, "2\n3\n", "failed"),
+            output(0, "2\n", ""),
+            output(0, "2\n3\n4\n", ""),
+            output(0, "2\ninvalid\n", ""),
+        ] {
+            assert!(desktop_pair(&out).is_none());
+        }
+    }
+    #[test]
+    fn focus_snapshot_keeps_all_own_windows_and_rejects_partial_reads() {
+        let (active, ours) = focus_snapshot(&output(0, "42\n10\n42\n", "")).unwrap();
+        assert_eq!(active, 42);
+        assert_eq!(ours.len(), 2);
+        assert!(ours.contains(&active));
+        for out in [
+            output(0, "10\n42\n", "getactivewindow failed"),
+            output(1, "42\n", ""),
+            output(0, "42\n", ""),
+            output(0, "42\nbad\n", ""),
+        ] {
+            assert!(focus_snapshot(&out).is_none());
         }
     }
 }

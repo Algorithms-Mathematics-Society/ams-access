@@ -5,6 +5,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { CheckLine, Spinner, StageHeader } from "../ui";
 import { type TauriGlobals } from "../tauri-globals";
 import { getNetworkProbeHost, invoke, invokeStrict, withNullableTimeout } from "../../support";
+import { ensureNetworkHelper } from "../../network-helper";
 
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
 declare const window: Window & TauriGlobals;
@@ -19,47 +20,13 @@ export function Stage11_NetworkValidation({ onPass, onWarn }: { onPass(): void; 
   const [helperMessage, setHelperMessage] = useState("Network lockdown helper ready");
 
   useEffect(() => {
-    async function ensureNetworkHelper() {
-      if (!window.__TAURI__) return true;
-
-      // macOS (LaunchDaemon) and Linux (systemd + polkit) both apply egress
-      // lockdown through a privileged out-of-process helper that must be
-      // installed before the contest. Windows locks in-process and needs none.
-      const platform = await invoke<{ os: string }>("get_platform");
-      if (platform?.os !== "macos" && platform?.os !== "linux") return true;
-
-      setHelperPhase("checking");
-      const running = await invoke<boolean>("network_helper_running");
-      if (running) {
-        setHelperPhase("pass");
-        setHelperMessage("Network lockdown helper ready");
-        return true;
-      }
-
-      setHelperPhase("installing");
-      setHelperMessage("Administrator approval requested");
-      try {
-        await invokeStrict("install_network_helper");
-        const ready = await invoke<boolean>("network_helper_running");
-        setHelperPhase(ready ? "pass" : "warn");
-        setHelperMessage(
-          ready ? "Network lockdown helper ready" : "Network lockdown helper unavailable"
-        );
-        return Boolean(ready);
-      } catch (error) {
-        const msg =
-          error instanceof Error ? error.message : String(error ?? "helper install failed");
-        setHelperPhase("warn");
-        setHelperMessage(
-          msg.includes("admin_auth_cancelled")
-            ? "Administrator approval was cancelled"
-            : msg.includes("pkexec_not_available")
-              ? "Admin authorization tool (pkexec) is unavailable — ask your organizer to pre-install the helper"
-              : "Network lockdown helper unavailable"
-        );
-        return false;
-      }
-    }
+    const controller = new AbortController();
+    let advanceTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleAdvance = (callback: () => void) => {
+      advanceTimer = setTimeout(() => {
+        if (!controller.signal.aborted) callback();
+      }, 1400);
+    };
 
     async function go() {
       // TEST-ONLY relaxation (build-time flag). Default builds run the real
@@ -71,7 +38,7 @@ export function Stage11_NetworkValidation({ onPass, onWarn }: { onPass(): void; 
         setHelperPhase("skipped");
         setHelperMessage(RELAXED_MODE_BADGE);
         setPhase("pass");
-        setTimeout(() => onPass(), 1400);
+        scheduleAdvance(onPass);
         return;
       }
 
@@ -84,9 +51,17 @@ export function Stage11_NetworkValidation({ onPass, onWarn }: { onPass(): void; 
           }>("check_network_stability", { host: getNetworkProbeHost() }),
           3000
         ),
-        ensureNetworkHelper(),
+        window.__TAURI__ ? ensureNetworkHelper({
+          invoke: invokeStrict,
+          signal: controller.signal,
+          onProgress: ({ phase, message }) => {
+            setHelperPhase(phase);
+            setHelperMessage(message);
+          },
+        }) : Promise.resolve(true),
       ]);
 
+      if (controller.signal.aborted) return;
       let nextPhase: "pass" | "warn";
       if (result?.reachable) {
         setLatency(result.latency_ms);
@@ -99,9 +74,13 @@ export function Stage11_NetworkValidation({ onPass, onWarn }: { onPass(): void; 
         nextPhase = "warn";
         setPhase("warn");
       }
-      setTimeout(() => (nextPhase === "warn" ? (onWarn ?? onPass)() : onPass()), 1400);
+      scheduleAdvance(nextPhase === "warn" ? (onWarn ?? onPass) : onPass);
     }
     void go();
+    return () => {
+      controller.abort();
+      clearTimeout(advanceTimer);
+    };
   }, [onPass, onWarn]);
 
   return (

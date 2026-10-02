@@ -21,10 +21,20 @@ export function parseEditorPreferences(serialized: string | null): EditorPrefere
   }
 }
 
+// Nine allowed sizes × two wrap modes: style modules stay bounded across tabs.
+const preferenceExtensionsCache = new Map<string, Extension[]>();
+
 /** Reconfigure this compartment; never rebuild the editor for visual preferences. */
 export function editorPreferenceExtensions(preferences: EditorPreferences): Extension[] {
-  return [
-    Prec.highest(EditorView.theme({ "&": { fontSize: `${preferences.fontSize}px` } })),
-    ...(preferences.wordWrap ? [EditorView.lineWrapping] : []),
+  const fontSize = EDITOR_FONT_SIZES.includes(preferences.fontSize) ? preferences.fontSize : DEFAULT_EDITOR_PREFERENCES.fontSize;
+  const wordWrap = typeof preferences.wordWrap === "boolean" ? preferences.wordWrap : DEFAULT_EDITOR_PREFERENCES.wordWrap;
+  const key = `${fontSize}:${wordWrap}`;
+  const cached = preferenceExtensionsCache.get(key);
+  if (cached) return cached;
+  const extensions = [
+    Prec.highest(EditorView.theme({ "&": { fontSize: `${fontSize}px` } })),
+    ...(wordWrap ? [EditorView.lineWrapping] : []),
   ];
+  preferenceExtensionsCache.set(key, extensions);
+  return extensions;
 }

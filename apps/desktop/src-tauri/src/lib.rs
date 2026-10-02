@@ -1,7 +1,9 @@
 mod blocking_probe;
+mod event_recorder;
 mod event_store;
 mod lockdown_lifecycle;
 mod network_probe;
+mod shutdown;
 
 use base64::Engine as _;
 use core_rs::exam::{
@@ -142,6 +144,50 @@ static EVENT_CHAIN: OnceLock<Mutex<HashMap<Option<event_store::SessionBinding>, 
 // Serialize config changes with reservation + append, preventing relabel races.
 static EVENT_RECORD_LOCK: Mutex<()> = Mutex::new(());
 static EVENT_STORE: OnceLock<event_store::EventStore> = OnceLock::new();
+static EVENT_RECORDER: OnceLock<Result<event_recorder::Recorder, String>> = OnceLock::new();
+static EVENT_INPUT_REJECTIONS: AtomicU64 = AtomicU64::new(0);
+fn event_recorder() -> Result<&'static event_recorder::Recorder, String> {
+    EVENT_RECORDER
+        .get_or_init(|| {
+            event_recorder::Recorder::start(128, |error| note_event_error("record event", error))
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+fn event_input_valid(kind: &str, detail: &str, payload: Option<&serde_json::Value>) -> bool {
+    // Bound queued heap, independently of the exact wire-size limit checked on
+    // the recorder. Walk the already parsed Value without copying/serializing it.
+    fn weight(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::String(text) => text.len(),
+            serde_json::Value::Array(values) => values.iter().fold(32, |n, value| {
+                n.saturating_add(32).saturating_add(weight(value))
+            }),
+            serde_json::Value::Object(values) => values.iter().fold(32, |n, (key, value)| {
+                n.saturating_add(64)
+                    .saturating_add(key.len())
+                    .saturating_add(weight(value))
+            }),
+            _ => 32,
+        }
+    }
+    let valid = kind
+        .len()
+        .saturating_add(detail.len())
+        .saturating_add(payload.map_or(0, weight))
+        <= 4 * event_store::MAX_EVENT_BYTES;
+    if !valid {
+        EVENT_INPUT_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+    }
+    valid
+}
+fn queue_native_event(work: impl FnOnce() -> Result<(), String> + Send + 'static) {
+    if let Some(Ok(recorder)) = EVENT_RECORDER.get() {
+        recorder.try_record(work);
+    } else {
+        EVENT_INPUT_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 static EVENT_PERSISTENCE_STATUS: OnceLock<Mutex<EventPersistenceStatus>> = OnceLock::new();
 const RECENT_EVENT_LIMIT: usize = 1000;
 
@@ -152,6 +198,8 @@ struct EventPersistenceStatus {
     last_error_at: Option<u64>,
     legacy_unbound_preserved: bool,
     quarantine_notices: u64,
+    recorder_rejections: u64,
+    pending_recorder_operations: u64,
 }
 fn event_status() -> &'static Mutex<EventPersistenceStatus> {
     EVENT_PERSISTENCE_STATUS.get_or_init(|| Mutex::new(EventPersistenceStatus::default()))
@@ -167,10 +215,20 @@ fn note_event_error(operation: &str, error: impl std::fmt::Display) {
 }
 #[tauri::command]
 fn get_event_persistence_status() -> EventPersistenceStatus {
-    event_status()
+    let mut status = event_status()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+        .clone();
+    status.recorder_rejections = EVENT_INPUT_REJECTIONS.load(Ordering::Relaxed)
+        + EVENT_RECORDER
+            .get()
+            .and_then(|result| result.as_ref().ok())
+            .map_or(0, event_recorder::Recorder::rejected);
+    status.pending_recorder_operations = EVENT_RECORDER
+        .get()
+        .and_then(|result| result.as_ref().ok())
+        .map_or(0, event_recorder::Recorder::pending);
+    status
 }
 fn local_event_store(app: Option<&tauri::AppHandle>) -> &'static event_store::EventStore {
     EVENT_STORE
@@ -256,8 +314,7 @@ fn payload_digest(payload: &serde_json::Value) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn violation_entry(kind: &str, detail: &str) -> ViolationEntry {
-    let ts = unix_ts_ms();
+fn violation_entry(kind: &str, detail: &str, ts: u64) -> ViolationEntry {
     let (seq, prev_hash, hash) = next_chain_link(ts, kind, detail, "");
     ViolationEntry {
         kind: kind.to_string(),
@@ -279,32 +336,25 @@ fn proctoring_log_dir(app: Option<&tauri::AppHandle>) -> PathBuf {
     std::env::temp_dir().join("ams_access").join("proctoring")
 }
 
-fn persist_violation(app: Option<&tauri::AppHandle>, entry: &ViolationEntry) {
-    persist_jsonl(app, "violations.jsonl", entry);
-}
-
-fn persist_proctoring_event(app: Option<&tauri::AppHandle>, entry: &ProctoringEventEntry) {
-    persist_jsonl(app, "proctoring-events.jsonl", entry);
-}
-
-fn persist_jsonl<T: Serialize>(app: Option<&tauri::AppHandle>, filename: &str, entry: &T) {
+fn persist_jsonl<T: Serialize>(
+    app: Option<&tauri::AppHandle>,
+    stream: event_store::EventStream,
+    entry: &T,
+) -> Result<usize, String> {
     let binding = event_sync_config()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
         .map(|config| config.binding.clone());
-    let stream = if filename == "violations.jsonl" {
-        event_store::EventStream::Violation
-    } else {
-        event_store::EventStream::Proctoring
-    };
-    if let Err(error) = local_event_store(app).append(binding.as_ref(), stream, entry) {
-        event_status()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .failed_writes += 1;
-        note_event_error("append audit event", error);
-    }
+    local_event_store(app)
+        .append(binding.as_ref(), stream, entry)
+        .map_err(|error| {
+            event_status()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .failed_writes += 1;
+            format!("append audit event: {error}")
+        })
 }
 
 const RECENT_EVENT_BYTES: usize = 4 * 1024 * 1024;
@@ -346,14 +396,23 @@ impl<T: Clone> RecentEventLog<T> {
             .collect()
     }
 }
-fn remember_event<T: Serialize>(log: &Mutex<RecentEventLog<T>>, entry: T) {
-    // Track serialized bytes once per append; cap both records and memory.
-    let Ok(raw) = serde_json::to_vec(&entry) else {
-        return;
-    };
+fn remember_event<T>(log: &Mutex<RecentEventLog<T>>, entry: T, size: usize) {
     log.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(entry, raw.len());
+        .push(entry, size);
+}
+
+fn remember_after_persist<T: Serialize>(
+    log: &Mutex<RecentEventLog<T>>,
+    entry: T,
+    persisted: Result<usize, String>,
+) -> Result<(), String> {
+    let size = persisted
+        .as_ref()
+        .copied()
+        .unwrap_or_else(|_| serde_json::to_vec(&entry).map_or(usize::MAX, |bytes| bytes.len()));
+    remember_event(log, entry, size);
+    persisted.map(|_| ())
 }
 
 // ── F4: pinned HTTP client ─────────────────────────────────────────────────────
@@ -420,12 +479,29 @@ fn pinned_http_client_builder() -> reqwest::ClientBuilder {
 }
 
 fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
+    if !event_input_valid(kind, detail, None) {
+        return;
+    }
+    let (app, kind, detail, ts) = (
+        app.cloned(),
+        kind.to_owned(),
+        detail.to_owned(),
+        unix_ts_ms(),
+    );
+    queue_native_event(move || record_violation_now(app.as_ref(), &kind, &detail, ts));
+}
+fn record_violation_now(
+    app: Option<&tauri::AppHandle>,
+    kind: &str,
+    detail: &str,
+    ts: u64,
+) -> Result<(), String> {
     let _scope = EVENT_RECORD_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let entry = violation_entry(kind, detail);
-    persist_violation(app, &entry);
-    remember_event(violation_log(), entry);
+    let entry = violation_entry(kind, detail, ts);
+    let persisted = persist_jsonl(app, event_store::EventStream::Violation, &entry);
+    remember_after_persist(violation_log(), entry, persisted)
 }
 
 // ── Session-bound event streaming ────────────────────────────────────────────
@@ -456,7 +532,19 @@ const EVENT_SYNC_MAX_BATCH: usize = 200;
 /// Arm (or disarm, with `session_id: None`) the violation/proctoring event
 /// uploader. Called by the frontend as soon as a server session id exists.
 #[tauri::command]
-fn configure_event_stream(api_url: String, session_id: Option<String>, token: Option<String>) {
+async fn configure_event_stream(
+    api_url: String,
+    session_id: Option<String>,
+    token: Option<String>,
+) -> Result<(), String> {
+    event_recorder()?
+        .submit(move || {
+            configure_event_stream_now(api_url, session_id, token);
+            Ok(())
+        })
+        .await
+}
+fn configure_event_stream_now(api_url: String, session_id: Option<String>, token: Option<String>) {
     let _scope = EVENT_RECORD_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -554,7 +642,7 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                 store.next_batch(&binding, EVENT_SYNC_MAX_BATCH, event_store::MAX_BATCH_BYTES)
             })
             .await;
-            let batch = match read {
+            let mut batch = match read {
                 Ok(Ok(Some(batch))) => batch,
                 Ok(Ok(None)) => {
                     delay = EVENT_SYNC_INTERVAL_SECS;
@@ -584,7 +672,8 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                 match client
                     .post(&url)
                     .bearer_auth(&config.token)
-                    .json(&serde_json::json!({ "events": batch.events }))
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(std::mem::take(&mut batch.body))
                     .send()
                     .await
                 {
@@ -627,23 +716,42 @@ fn record_proctoring_event(
     detail: &str,
     payload: serde_json::Value,
 ) {
+    if !event_input_valid(kind, detail, Some(&payload)) {
+        return;
+    }
+    let (app, kind, detail, ts) = (
+        app.cloned(),
+        kind.to_owned(),
+        detail.to_owned(),
+        unix_ts_ms(),
+    );
+    queue_native_event(move || {
+        record_proctoring_event_now(app.as_ref(), &kind, &detail, payload, ts)
+    });
+}
+fn record_proctoring_event_now(
+    app: Option<&tauri::AppHandle>,
+    kind: &str,
+    detail: &str,
+    payload: serde_json::Value,
+    ts: u64,
+) -> Result<(), String> {
     let _scope = EVENT_RECORD_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let ts = unix_ts_ms();
     let digest = payload_digest(&payload);
     let (seq, prev_hash, hash) = next_chain_link(ts, kind, detail, &digest);
     let entry = ProctoringEventEntry {
-        kind: kind.to_string(),
-        detail: detail.to_string(),
+        kind: kind.to_owned(),
+        detail: detail.to_owned(),
         ts,
         payload,
         seq,
         prev_hash,
         hash,
     };
-    persist_proctoring_event(app, &entry);
-    remember_event(proctoring_log(), entry);
+    let persisted = persist_jsonl(app, event_store::EventStream::Proctoring, &entry);
+    remember_after_persist(proctoring_log(), entry, persisted)
 }
 
 #[cfg(target_os = "windows")]
@@ -1102,7 +1210,13 @@ fn native_scan_processes() -> ProcessScanResult {
 /// frontend and is validated server-side against the platform's RESTRICTED
 /// list before any kill is issued. Names not on the list are silently ignored.
 #[tauri::command]
-fn close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
+async fn close_restricted_apps(apps: Vec<String>) -> Result<CloseAppsResult, String> {
+    blocking_probe::run(blocking_probe::Priority::Readiness, move || {
+        native_close_restricted_apps(apps)
+    })
+    .await
+}
+fn native_close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
     if apps.is_empty() {
         return CloseAppsResult {
             closed: vec![],
@@ -1264,7 +1378,14 @@ fn set_escape_blocked(blocked: bool) {
 /// Other platforms have no helper and report `true` (lockdown is enforced
 /// in-process there, e.g. Windows WFP).
 #[tauri::command]
-fn network_helper_running() -> bool {
+async fn network_helper_running() -> Result<bool, String> {
+    blocking_probe::run(
+        blocking_probe::Priority::Informational,
+        native_network_helper_running,
+    )
+    .await
+}
+fn native_network_helper_running() -> bool {
     #[cfg(target_os = "macos")]
     return platform_rs::macos::network_helper_running();
     #[cfg(target_os = "linux")]
@@ -1277,7 +1398,28 @@ fn network_helper_running() -> bool {
 /// standard macOS auth dialog. Resource paths are resolved inside Rust so the
 /// renderer cannot choose an arbitrary root-installed binary.
 #[tauri::command]
-fn install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
+async fn install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
+    // Installation owns its own single slot: a password prompt must not occupy
+    // the readiness worker or allow multiple competing privileged installers.
+    static INSTALLING: AtomicBool = AtomicBool::new(false);
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            INSTALLING.store(false, Ordering::Release);
+        }
+    }
+    if INSTALLING.swap(true, Ordering::AcqRel) {
+        return Err("Network helper installation is already running".into());
+    }
+    let reset = Reset;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _reset = reset;
+        native_install_network_helper(app)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+fn native_install_network_helper(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = app;
     #[cfg(target_os = "linux")]
@@ -1920,7 +2062,13 @@ fn recent_event_history<T: for<'de> Deserialize<'de> + Serialize + Clone>(
     entries
 }
 #[tauri::command]
-fn get_violation_log(app: tauri::AppHandle) -> Vec<ViolationEntry> {
+async fn get_violation_log(app: tauri::AppHandle) -> Result<Vec<ViolationEntry>, String> {
+    event_recorder()?.submit(|| Ok(())).await?;
+    tauri::async_runtime::spawn_blocking(move || get_violation_log_now(app))
+        .await
+        .map_err(|error| error.to_string())
+}
+fn get_violation_log_now(app: tauri::AppHandle) -> Vec<ViolationEntry> {
     let _scope = EVENT_RECORD_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1933,13 +2081,19 @@ fn get_violation_log(app: tauri::AppHandle) -> Vec<ViolationEntry> {
 
 /// Record a violation from the frontend (blocked app opened during exam, focus lost, etc).
 #[tauri::command]
-fn log_violation(app: tauri::AppHandle, kind: String, detail: String) {
-    record_violation(Some(&app), &kind, &detail);
+async fn log_violation(app: tauri::AppHandle, kind: String, detail: String) -> Result<(), String> {
+    if !event_input_valid(&kind, &detail, None) {
+        return Err("Event exceeds recorder input limit".into());
+    }
+    let ts = unix_ts_ms();
+    event_recorder()?
+        .submit(move || record_violation_now(Some(&app), &kind, &detail, ts))
+        .await
 }
 
 /// Persist a structured proctoring audit event from the frontend.
 #[tauri::command]
-fn log_proctoring_event(
+async fn log_proctoring_event(
     app: tauri::AppHandle,
     kind: Option<String>,
     event: Option<String>,
@@ -1947,7 +2101,7 @@ fn log_proctoring_event(
     reason: Option<String>,
     timestamp: Option<u64>,
     payload: Option<serde_json::Value>,
-) {
+) -> Result<(), String> {
     let event_kind = kind
         .or(event)
         .unwrap_or_else(|| "proctoring_event".to_string());
@@ -1960,12 +2114,26 @@ fn log_proctoring_event(
             object.insert("frontend_ts".to_string(), serde_json::json!(ts));
         }
     }
-    record_proctoring_event(Some(&app), &event_kind, &event_detail, event_payload);
+    if !event_input_valid(&event_kind, &event_detail, Some(&event_payload)) {
+        return Err("Event exceeds recorder input limit".into());
+    }
+    let ts = unix_ts_ms();
+    event_recorder()?
+        .submit(move || {
+            record_proctoring_event_now(Some(&app), &event_kind, &event_detail, event_payload, ts)
+        })
+        .await
 }
 
 /// Return bounded persisted structured events for the current session.
 #[tauri::command]
-fn get_proctoring_log(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
+async fn get_proctoring_log(app: tauri::AppHandle) -> Result<Vec<ProctoringEventEntry>, String> {
+    event_recorder()?.submit(|| Ok(())).await?;
+    tauri::async_runtime::spawn_blocking(move || get_proctoring_log_now(app))
+        .await
+        .map_err(|error| error.to_string())
+}
+fn get_proctoring_log_now(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
     let _scope = EVENT_RECORD_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2595,38 +2763,26 @@ async fn save_face_image(
 
 // ── App entry point ───────────────────────────────────────────────────────────
 
-#[cfg(unix)]
-mod unix_signal {
-    use std::os::raw::c_int;
-    extern "C" {
-        pub fn signal(sig: c_int, handler: usize) -> usize;
-    }
-    pub const SIGINT: c_int = 2;
-    pub const SIGTERM: c_int = 15;
-    pub const SIGQUIT: c_int = 3;
-    pub const SIGHUP: c_int = 1;
-}
+// Concurrent normal/signal exits wait for the same completed cleanup.
+static SHUTDOWN: shutdown::Coordinator = shutdown::Coordinator::new();
+// Prevent setup from creating a recorder after shutdown observed it absent.
+static EVENT_LIFECYCLE: Mutex<bool> = Mutex::new(false);
 
-#[cfg(unix)]
-extern "C" fn handle_sigterm(_sig: std::os::raw::c_int) {
-    eprintln!("AMS Access intercepted termination signal; restoring keyboard shortcuts...");
-    #[cfg(target_os = "linux")]
-    {
-        // Full unlock: keyboard intercept, the kill-shield / workspace-watchdog
-        // threads (via SHIELD_ACTIVE=false), and the disabled touchpad — matching
-        // the macOS arm in this same handler rather than restoring only the keyboard.
-        platform_rs::linux::unlock_desktop();
-        let _ = platform_rs::linux::disable_network_lockdown();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // Full unlock: keyboard intercept, trackpad gesture prefs (persisted via
-        // `defaults write` — must be restored or they survive the process), and
-        // the caffeinate child.
-        platform_rs::macos::unlock_desktop();
-        let _ = platform_rs::macos::disable_network_lockdown();
-    }
-    std::process::exit(0);
+fn finish_shutdown() {
+    SHUTDOWN.run(|| {
+        let mut shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+        *shutting_down = true;
+        // Restore input and stop native producers before waiting on the disk.
+        // Receiver closure handles callbacks already in flight.
+        platform_dispatch!(unlock_desktop(), else ());
+        if let Some(Ok(recorder)) = EVENT_RECORDER.get() {
+            if let Err(error) = recorder.drain_on_exit(Duration::from_secs(5)) {
+                note_event_error("drain event recorder at exit", error);
+            }
+        }
+        // Even a failed/timed-out drain must restore network access.
+        let _ = platform_dispatch!(disable_network_lockdown(), else Ok(()));
+    });
 }
 
 pub fn run() {
@@ -2642,12 +2798,13 @@ pub fn run() {
     // its command path if the process cannot modify firewall rules.
     #[cfg(unix)]
     {
-        unsafe {
-            unix_signal::signal(unix_signal::SIGINT, handle_sigterm as *const () as usize);
-            unix_signal::signal(unix_signal::SIGTERM, handle_sigterm as *const () as usize);
-            unix_signal::signal(unix_signal::SIGQUIT, handle_sigterm as *const () as usize);
-            unix_signal::signal(unix_signal::SIGHUP, handle_sigterm as *const () as usize);
-        }
+        // install_signal_handler invokes this callback on its named worker;
+        // the raw handler itself only stores an atomic notification flag.
+        shutdown::install_signal_handler(|| {
+            finish_shutdown();
+            std::process::exit(0);
+        })
+        .expect("cannot install orderly signal shutdown");
 
         let uid_out = std::process::Command::new("id").arg("-u").output();
         if let Ok(out) = uid_out {
@@ -2773,8 +2930,14 @@ pub fn run() {
             configure_event_stream,
         ])
         .setup(|app| {
+            let shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+            if *shutting_down {
+                return Err(std::io::Error::other("Application is shutting down").into());
+            }
             // Establish AppData before any callback can choose a fallback.
             local_event_store(Some(app.handle()));
+            event_recorder().map_err(std::io::Error::other)?;
+            drop(shutting_down);
             // Anything left in the face-capture directory belongs to a run
             // that did not shut down cleanly — a crash, a kill, a power cut.
             // Teardown cannot clear those, so startup does. See
@@ -2893,6 +3056,12 @@ pub fn run() {
         })
         .on_window_event(|_win, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                // Preserve destruction-time recovery even if Exit is delayed,
+                // but never overlap platform teardown with the signal worker.
+                let shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+                if *shutting_down {
+                    return;
+                }
                 #[cfg(target_os = "linux")]
                 {
                     // unlock_desktop covers keyboard intercept, the kill-shield /
@@ -2919,8 +3088,13 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error running AMS Access");
+        .build(tauri::generate_context!())
+        .expect("error building AMS Access")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                finish_shutdown();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -3052,7 +3226,7 @@ mod event_integration_tests {
     }
     #[test]
     fn actual_config_switch_keeps_inflight_destination_and_ack_binding() {
-        configure_event_stream(
+        configure_event_stream_now(
             "https://first.invalid".into(),
             Some("one".into()),
             Some("token-one".into()),
@@ -3075,7 +3249,7 @@ mod event_integration_tests {
             .next_batch(&first.binding, 200, event_store::MAX_BATCH_BYTES)
             .unwrap()
             .unwrap();
-        configure_event_stream(
+        configure_event_stream_now(
             "https://second.invalid".into(),
             Some("two".into()),
             Some("token-two".into()),
@@ -3092,7 +3266,7 @@ mod event_integration_tests {
             .next_batch(&second.binding, 200, event_store::MAX_BATCH_BYTES)
             .unwrap()
             .is_none());
-        configure_event_stream(String::new(), None, None);
+        configure_event_stream_now(String::new(), None, None);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -3140,6 +3314,16 @@ mod event_integration_tests {
         assert!(log.snapshot().is_empty());
     }
     #[test]
+    fn persistence_failure_remains_in_memory_and_is_not_acknowledged() {
+        let log = Mutex::new(RecentEventLog::default());
+        let entry = serde_json::json!({"kind":"focus","detail":"disk failed","ts":1});
+        assert_eq!(
+            remember_after_persist(&log, entry.clone(), Err("disk full".into())),
+            Err("disk full".into())
+        );
+        assert_eq!(log.lock().unwrap().snapshot(), vec![entry]);
+    }
+    #[test]
     fn local_status_exposes_quarantine_and_persistence_failures_without_secrets() {
         let status = EventPersistenceStatus {
             failed_writes: 2,
@@ -3147,6 +3331,8 @@ mod event_integration_tests {
             last_error_at: Some(7),
             legacy_unbound_preserved: true,
             quarantine_notices: 1,
+            recorder_rejections: 0,
+            pending_recorder_operations: 0,
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["failed_writes"], 2);

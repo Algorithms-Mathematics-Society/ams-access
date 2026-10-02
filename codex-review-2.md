@@ -480,3 +480,106 @@ Implementation references: [Microsoft firewall object enumeration](https://devbl
 - Windows MSVC all-target cross-Clippy passed, including compilation of the two new Windows-only PowerShell integration tests. Those tests cannot execute on this Linux host and await native CI; live desktop/firewall behavior is not claimed as tested.
 - Final source review confirms the required entry guard remains present, optional isolation is limited to the runtime KDE/X11 touchpad branch, actual Windows owned names still cause an error, and uncertain inventories cannot become successful cleanup.
 - Commit scope is the three platform source files plus this log. Claude's separate frontend/bundle/Java-removal changes remain untouched and unstaged. No API/cloud/dependency changes or native protection mutations were made by this pass.
+
+## R3 — User-supplied performance review (2026-10-02, local only)
+
+User requested all 16 attached findings be checked and fixed with subagents, followed by independent subagent review. **No commits or pushes are authorized for this pass.** Existing Claude changes (KaTeX chunk isolation, page budgets, Java grammar removal, associated package/lockfile changes) were present at the start and are preserved.
+
+### Completed implementation — Home/request lifecycle (findings 1, 3, 4, parts of 12–13)
+
+- Resume polling now depends on session/request identity and status, keeps the existing 3-second interval, skips overlapping requests, and invalidates outstanding responses on disposal. Identical server decisions preserve the session object and skip local-storage writes. Updated request metadata still reaches the UI.
+- Readiness scans carry a generation number; only the current scan publishes its report. Closing/changing preflight or leaving Home invalidates older work. Overlapping baseline/preflight media probes share the in-flight camera/microphone checks, release successful streams immediately, and do not cache completed hardware results.
+- Override and Help requests abort after 10 seconds, including response-body reads. Override failures still fall back to the unchanged base policy. Help does not mistake an aborted response body for an empty successful response.
+- Only native process-constant `get_platform` and `plugin:app|version` calls are cached; concurrent readers share a promise and failures remain retryable. Live telemetry/enforcement is never cached. Login prefetches Home once after the candidate starts entering their handle.
+- Home callbacks/card colors are stable; contest list/calendar are memoized. The calendar explicitly updates its “next contest” boundary so memoization cannot leave that label stale. Existing contest/proctoring refresh cadence is retained. Date formatters use a bounded cache. Settings mic visualization updates at most every 125 ms. Media permission rejection no longer creates an unhandled side promise, and late streams are stopped.
+- Validation so far: 14 new focused regressions pass (cadence, non-overlap/disposal, identity preservation, media denial/late streams/shared probes, formatter reuse/bounds, native cache retry/isolation, stalled headers/body, base-policy filtering). Integrated web typecheck passes. Independent review pending below.
+
+### Completed implementation — contest rendering (findings 5–9, submission portion of 12)
+
+Implemented by `review_events_again`: stable focus-trap/mark/copy/question/expiry callbacks; memoized ProblemPane and QuestionRail; cached compiler parsing and statement/KaTeX rendering; bounded CodeMirror theme/preferences style modules; reuse of the editor's already-produced document string; geometry observation reconciles actual elements and unobserves replaced editors instead of forcing layout on text mutations. Submission rows reuse case results already returned by the list and update them when judging finishes. The three Run-only submission refreshes were confirmed redundant because runs are polled separately and excluded from submission lists, and were removed.
+
+Per-keystroke crash-recovery writes, judging/proctoring cadence, backend payloads, and visual layout are unchanged. Subagent verification: 24 focused tests passed, including style identity, pending→terminal result merging, repeated text mutations without measurement, and replaced-editor release; typecheck passed. Independent cross-review is in progress; native implementation remains in progress.
+
+### Completed implementation — native recorder and long-session overhead (findings 2, 10–11, 14–16)
+
+Implemented by `review_native_again`, cross-reviewed by `review_events_again`:
+
+- One bounded FIFO recorder thread handles event persistence and session-configuration barriers. Windows/native callbacks only attempt queue admission; their existing panic guards and rate limits remain. Frontend logging awaits queue capacity and then actual persistence, so a resolved promise still means the write completed. Queue rejection/pending counters and a bounded orderly-exit drain make failures visible.
+- Close-app, helper-check, and helper-install commands run in background workers. Privileged installation has one independent slot that remains held even if the caller is cancelled; it does not occupy readiness's reserved worker.
+- Upload batches are serialized once on the blocking reader and sent verbatim; append byte counts are reused for bounded recent-event accounting. Failed disk writes retain in-memory diagnostics while rejecting persistence acknowledgements.
+- The append publication cache keeps only one Unix file/directory identity. Appends still reopen and inspect the actual file tail and perform data synchronization for every event. New/replaced/reopened files still synchronize their directory. Recovery, binding, quarantine, TLS/auth, and upload contracts remain unchanged.
+- X11 watchdogs batch their existing read-only queries, reducing approximately 12 processes/second to 6 at the same 250/500 ms polling intervals. `/proc` scans avoid redundant strings/path copies. macOS releases the tap lock before reporting events.
+- Native callback admission is deliberately asynchronous: an accepted native event may still be pending on the recorder if the process crashes immediately. It is not claimed durable at admission; frontend acknowledgements remain durable, pending/rejected counters expose queue state, and orderly shutdown attempts a 5-second drain. This is the explicit tradeoff required to remove disk waits from the low-level hook.
+- Validation: 205 Rust workspace tests passed (desktop 62, core 39, helper 40, platform 64); strict all-target workspace Clippy and formatting passed. Windows platform all-target cross-Clippy passed. macOS cross-Clippy was attempted but this Linux environment lacks an Apple C toolchain/SDK (bundled SQLite compilation rejects `-arch`/`-mmacosx-version-min`); macOS execution/compilation is not claimed verified. No live firewall, desktop lockdown, privileged installation, or cloud upload was exercised. Real X11/Windows/macOS runtime validation remains a platform-CI/manual check.
+
+### Independent review findings and corrections
+
+1. **Saturated recorder admission:** an early implementation used nonblocking admission for configuration too, so a full queue could leave the old session binding. Changed async IPC/configuration to await FIFO capacity; hooks retain nonblocking admission. Added saturation/order/durability regressions.
+2. **Disk-failure diagnostics:** preserving acknowledgement errors initially lost the previous bounded memory diagnostic. Restored that diagnostic without reporting the disk write successful; regression added.
+3. **Closing preflight:** cancelling a strict scan without replacing it could leave Home stuck on checking. The shared scan effect now starts a fresh baseline on close; two tests execute the actual scan/effect with deferred, out-of-order responses and include a stale manual rescan during contest change.
+4. **Stalled resume response body:** the existing shared API transport cleared its timeout after headers. With serialized polling, an endless body would hold the poll forever. Moved body consumption under the existing timeout/catch; added a body-timeout→later-poll-retry test and checked HTTP error semantics remain intact.
+5. **Local timezone changes:** caching formatters could retain the old device zone. Cache invalidation now observes offset changes cheaply and refreshes timezone/locale on focus, visible-page re-entry, and language changes. Tests include different and equal-offset zones.
+
+All corrections were independently re-reviewed; reviewers reported no remaining blocking findings in their scopes. Existing Claude frontend/bundle edits remain preserved.
+
+### Browser verification
+
+Disposable Chrome against this worktree on port 3010, with external requests blocked, passed five checks: fixed Home polling cadence/no repeated session-storage writes; per-keystroke recovery writes; stable editor style size over repeated question switches (20,626 bytes before and after); retained media-dialog action focus across background updates; no horizontal viewport overflow at 1280×800. Captured 1440×1000 and 1280×800 states, with no runtime exceptions.
+
+An initial focus assertion encountered the existing critical camera-denied overlay, which correctly took priority. The ordinary-dialog check was isolated with a pending browser permission fixture; app proctoring policy was not altered. This is fixture validation, not a claim that native camera/proctoring passed.
+
+Reproducible runner: `scripts/performance-review-capture.mjs` (pass this worktree's local dev-server URL). Current evidence: `/tmp/ams-r3-browser-evidence/2026-10-01T23-03-33-511Z/manifest.json`. The temporary port-3010 server was stopped for the production build; the pre-existing port-3000 app in the other worktree was left running.
+
+### Final validation and handoff
+
+- **412 web tests + 28 API-client tests + 205 Rust tests passed (645 total).**
+- Production static build and all 14 size budgets passed; web build type validation and API-client typecheck passed. Strict Rust workspace Clippy, Windows platform cross-Clippy, Rust formatting, browser-runner syntax, and `git diff --check` passed.
+- Independent subagents reviewed both implementation areas, and re-reviewed the corrections above. No remaining blocking source findings were reported. Native platform runtime/Apple-toolchain limits are explicitly recorded above.
+- All 16 attached review items are addressed. Per-keystroke crash recovery remains intact. No backend server/cloud/API contract or visual-design changes were made.
+- Changes are in `/home/user/AccessSoftware/ams-access-main`, **unstaged and uncommitted**. HEAD remains `2f49cf3`; **nothing was pushed**. Claude's pre-existing local code is retained in the working tree. Ready for Claude's next review here.
+
+## R4 — Follow-up integration fixes (2026-10-02, local only)
+
+The user authorized fixes for the two confirmed review findings, with subagent implementation followed by independent review. This pass remains uncommitted and unpushed; earlier local changes are preserved.
+
+### Decisions and scope
+
+- **Busy helper checks:** distinguish a successful `false` (installation is needed) from busy, failed, or unknown checks. Use bounded retries for the specific busy outcome and preserve warning/error outcomes otherwise. Increasing pool capacity or adding a dedicated worker would not correct the caller's error-to-missing conversion; indefinite retries could strand onboarding.
+- **Unix signal shutdown:** move work out of the raw signal handler into normal execution context, share shutdown coordination with ordinary app exit, and drain accepted recorder work with a deadline. Directly draining inside a signal handler risks deadlock; synchronous native logging would restore the original performance problem; periodic flushing would still leave a termination gap.
+- Implementation ownership: `fix_helper_busy` handles onboarding and tests; `fix_signal_drain` handles native shutdown and recorder tests. `review_events_again` independently reviews onboarding, with native cross-review to follow. No cloud, deployment, or privileged device changes are exercised by tests.
+
+Implementation and validation results will be recorded below as each task completes. This section is not a claim that the fixes have passed review yet.
+
+### Completed implementation — helper-status caller
+
+`fix_helper_busy` extracted the actual onboarding helper workflow into `network-helper.ts`. It uses the strict bridge, permits installation only after an explicit boolean `false`, retries the known worker-busy error at most three checks (250/500 ms delays), and reports unknown/malformed/failed checks as warnings without installation. The post-install check follows the same bounded policy. Leaving the stage aborts retry delays and prevents later probes, installation attempts, progress updates, and stage advancement; an installer already launched natively cannot be cancelled by this frontend cleanup.
+
+Parent review caught an older-WebKit compatibility issue in the initial cancellation guard. The final guard reads `signal.aborted` instead of requiring `AbortSignal.throwIfAborted`; the minimum supported macOS version remains unchanged. A regression exercises a signal without that method. Reference: [WebKit implementation history](https://bugs.webkit.org/show_bug.cgi?id=234127).
+
+Agent validation: 52 related onboarding tests and web typecheck passed; the subsequent compatibility regression brings helper-only coverage to 19 passing tests. Independent reviewer `review_events_again` has the handoff; final integrated counts and review outcome follow below.
+
+Independent helper review completed: `review_events_again` reported **no findings** after checking strict bridge wiring, actual native busy text, bounded retries, unknown responses, cancellation, old-WebKit compatibility, and the unchanged final entry gate. The reviewer independently reran all 19 helper regressions successfully. Parent validation also passed the complete **431-test web suite** and web typecheck. Real administrator dialogs were not exercised.
+
+### Completed implementation — signal shutdown and terminal recorder drain
+
+`fix_signal_drain` added `shutdown.rs`. The raw Unix handler only stores an atomic notification; a named thread performs ordinary-context cleanup. Signal exit and Tauri exit share a completion coordinator, so a competing exit waits for cleanup to finish rather than skipping an in-progress drain. Startup recorder initialization is serialized with shutdown to prevent creating a recorder after shutdown observed none.
+
+Native input recovery runs before the five-second recorder drain; network recovery still runs if the drain times out. The terminal recorder marker closes receiver admission and consumes all accepted jobs, including jobs queued behind the marker, before acknowledging completion. Late native/IPC submissions are rejected. Existing window-destruction recovery remains an independent safety net and uses the same lifecycle mutex to prevent concurrent recovery with signal cleanup.
+
+Automatic review rejected the initial combined rewrite and later removal of destruction-time recovery. The final scoped implementation makes the atomic-only handler boundary explicit and retains destruction recovery; both concerns were resolved without bypassing review. No action remains blocked.
+
+Regression coverage includes a dedicated subprocess receiving actual SIGTERM, four queued records written and synced before exit, a handshake ensuring another SIGTERM arrives during cleanup with recorder work still blocked, concurrent-exit waiting, jobs accepted behind the shutdown marker, late admission rejection, and a stalled worker's bounded timeout. Tests use temporary files and fake platform recovery; no native keyboard/firewall APIs or administrator installation were exercised.
+
+Independent native cross-review by `fix_helper_busy` reported **no findings**. Parent also reviewed shutdown ordering, startup/exit synchronization, recorder semantics, and the strengthened signal handshake. Targeted recorder/shutdown tests passed. Full workspace validation passed **209 Rust tests** (desktop 66, core 39, helper 40, platform 64); formatting passed. Strict Clippy and final source/status checks are pending below.
+
+### R4 final validation and handoff
+
+- **431 web tests and 209 Rust tests passed (640 total in this pass).** Includes 19 new helper regressions and four new native shutdown/recorder regressions.
+- Web typecheck, strict Rust workspace/all-target Clippy (`--locked --offline -- -D warnings`), Rust formatting, and `git diff --check` passed.
+- Independent frontend and native reviewers reported no remaining findings; the parent reviewed both integrations and the final tests. Compatibility and signal-test handshake corrections were included before final validation.
+- Actual SIGTERM delivery and temporary-file persistence were tested on Linux. Real desktop/input/firewall recovery, administrator prompts, and native Windows/macOS execution were not exercised. A hung recorder still has the deliberate five-second drain limit; forced termination/power loss cannot guarantee persistence of queued native events.
+- No new dependencies, cloud changes, deployment, commits, staging, or pushes. Earlier local work remains preserved; HEAD is still `2f49cf3`. Fixes and review evidence are ready for Claude's next review in this file.
+
+### Publication authorization (2026-10-02)
+
+The user now authorized committing and pushing this reviewed local batch to `main`, including the preserved Claude changes described in R3. A fresh `git fetch origin` confirmed local HEAD and `origin/main` both at `2f49cf3` (zero commits ahead/behind); no intervening remote-main commits were present. Publication will use a normal fast-forward push, preserving remote history.

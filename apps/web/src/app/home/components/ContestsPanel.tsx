@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { VStack, HStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
@@ -14,7 +14,11 @@ import { getContestEntryState, getScheduledContestTickDelay } from "./utils";
 import { sortHomeContests } from "./home-contest-presentation";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
 
-export function ContestsPanel({
+const contestColors = {
+  dot: "var(--color-success)", bg: "var(--color-success-muted)", border: "var(--color-success)",
+};
+
+export const ContestsPanel = memo(function ContestsPanel({
   contests,
   loading,
   theme,
@@ -132,11 +136,7 @@ export function ContestsPanel({
               key={c.id}
               c={c}
               theme={theme}
-              col={{
-                dot: "var(--color-success)",
-                bg: "var(--color-success-muted)",
-                border: "var(--color-success)",
-              }}
+              col={contestColors}
               onPreflight={onPreflight}
               readinessContext={readinessContext}
               isHighlighted={highlightedContestId === c.id}
@@ -173,4 +173,4 @@ export function ContestsPanel({
       )}
     </VStack>
   );
-}
+});

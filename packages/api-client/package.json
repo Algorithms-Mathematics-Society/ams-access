@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "test": "node --test --experimental-strip-types src/policy-parity.test.mjs"
+    "test": "node --test --experimental-strip-types src/policy-parity.test.mjs src/metadata-timeout.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0"

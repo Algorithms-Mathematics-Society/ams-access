@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, type Dispatch, type SetStateAction, type MouseEvent as ReactMouseEvent } from "react";
 import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { TabList, Tab } from "@astryxdesign/core/TabList";
@@ -22,7 +22,7 @@ export interface ProblemPaneProps {
   toggleQuestionMark: (id: string) => void;
 }
 
-export function ProblemPane({ problemPaneWidth, availableProblemTabs, activeProblemTab, setProblemTab,
+export const ProblemPane = memo(function ProblemPane({ problemPaneWidth, availableProblemTabs, activeProblemTab, setProblemTab,
   questions, activeQ, problemBodyHtml, handleProblemBodyClick, markedQuestionIds, toggleQuestionMark }: ProblemPaneProps) {
   const question = questions[activeQ];
   const marked = question ? markedQuestionIds.includes(question.id) : false;
@@ -67,4 +67,4 @@ export function ProblemPane({ problemPaneWidth, availableProblemTabs, activeProb
       </VStack>
     </StackItem>
   </VStack>;
-}
+});

@@ -81,6 +81,8 @@ struct Checkpoint {
 #[derive(Debug)]
 pub struct UploadBatch {
     pub events: Vec<Value>,
+    /// Encoded once on the blocking reader, reused verbatim by the uploader.
+    pub body: Vec<u8>,
     pub notices: Vec<String>,
     path: PathBuf,
     binding: SessionBinding,
@@ -93,15 +95,28 @@ pub struct EventStore {
     run_key: String,
     // A partial append must be detected before a later append; in-process
     // writers also cannot interleave JSON lines.
-    io_lock: Mutex<()>,
+    io_lock: Mutex<Option<AppendPublication>>,
 }
+
+// Keep the published inode and directory alive while cached. Holding their
+// handles prevents inode-number reuse after unlink/replacement from making a
+// different file appear to be the same already-synced directory entry.
+#[cfg(unix)]
+struct AppendPublication {
+    path: PathBuf,
+    identity: (u64, u64, u64, u64),
+    _file: File,
+    directory: File,
+}
+#[cfg(not(unix))]
+type AppendPublication = ();
 
 impl EventStore {
     pub fn new(root: PathBuf, run_id: &str) -> Self {
         Self {
             root: root.join("bound-events-v1"),
             run_key: hex::encode(Sha256::digest(run_id.as_bytes())),
-            io_lock: Mutex::new(()),
+            io_lock: Mutex::new(None),
         }
     }
 
@@ -115,11 +130,17 @@ impl EventStore {
         binding: Option<&SessionBinding>,
         stream: EventStream,
         entry: &T,
-    ) -> io::Result<()> {
-        let _guard = self
+    ) -> io::Result<usize> {
+        let mut guard = self
             .io_lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Any error invalidates publication knowledge. We still open the path
+        // and inspect the actual tail every time, including after external
+        // edits, truncation, or a partial previous write.
+        let previous = guard.take();
+        #[cfg(not(unix))]
+        let _ = previous;
         let event = serde_json::to_value(entry).map_err(invalid)?;
         if !valid_event(&event, stream) {
             return Err(invalid(
@@ -132,18 +153,29 @@ impl EventStore {
             return Err(invalid("event exceeds local spool size limit"));
         }
         let directory = self.directory(binding);
-        private_directory(&directory)?;
+        let directory_metadata = private_directory(&directory)?;
+        #[cfg(not(unix))]
+        let _ = directory_metadata;
         let path = directory.join(format!("{}.jsonl", self.run_key));
-        match fs::remove_file(path.with_extension("closed")) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        let reopened = match fs::remove_file(path.with_extension("closed")) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
             Err(error) => return Err(error),
-        }
+        };
+        #[cfg(not(unix))]
+        let _ = reopened;
         let mut options = private_options();
         options.create(true).read(true).append(true);
         let mut file = options.open(&path)?;
-        tighten_permissions(&path)?;
-        let length = file.metadata()?.len();
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o777 != 0o600 {
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            }
+        }
+        let length = metadata.len();
         if length > 0 {
             file.seek(SeekFrom::End(-1))?;
             let mut last = [0];
@@ -158,8 +190,32 @@ impl EventStore {
         }
         file.write_all(&line)?;
         file.sync_data()?;
-        sync_directory(&directory)?;
-        Ok(())
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let identity = (
+                metadata.dev(),
+                metadata.ino(),
+                directory_metadata.dev(),
+                directory_metadata.ino(),
+            );
+            let existing = previous
+                .filter(|entry| entry.path == path && entry.identity == identity && !reopened);
+            let directory_handle = if let Some(entry) = existing {
+                entry.directory
+            } else {
+                let directory_handle = File::open(&directory)?;
+                directory_handle.sync_all()?;
+                directory_handle
+            };
+            *guard = Some(AppendPublication {
+                path,
+                identity,
+                _file: file,
+                directory: directory_handle,
+            });
+        }
+        Ok(line.len())
     }
 
     /// Returns a bounded batch from one run of this session, including previous
@@ -198,6 +254,7 @@ impl EventStore {
             let mut reader = BufReader::new(file);
             let mut next = checkpoint.clone();
             let mut events = Vec::new();
+            let mut body = b"{\"events\":[".to_vec();
             let mut bytes = 0;
             let mut scanned = 0;
             while events.len() < max_events.min(200) && scanned < 4 * MAX_BATCH_BYTES {
@@ -246,8 +303,14 @@ impl EventStore {
                         continue;
                     }
                 };
-                let wire_bytes = serde_json::to_vec(&event).map_err(invalid)?.len() + 1;
+                let before = body.len();
+                if !events.is_empty() {
+                    body.push(b',');
+                }
+                serde_json::to_writer(&mut body, &event).map_err(invalid)?;
+                let wire_bytes = body.len() - before + usize::from(events.is_empty());
                 if bytes + wire_bytes > max_bytes {
+                    body.truncate(before);
                     if events.is_empty() {
                         return Err(invalid("batch byte limit is smaller than pending event"));
                     }
@@ -260,8 +323,10 @@ impl EventStore {
                 events.push(event);
             }
             if !events.is_empty() || next.offset != checkpoint.offset || !notices.is_empty() {
+                body.extend_from_slice(b"]}");
                 return Ok(Some(UploadBatch {
                     events,
+                    body,
                     notices,
                     path,
                     binding: binding.clone(),
@@ -361,10 +426,11 @@ impl EventStore {
 
     /// Explicitly close this run on session disarm; append reopens it.
     pub fn close_binding(&self, binding: &SessionBinding) -> io::Result<()> {
-        let _guard = self
+        let mut guard = self
             .io_lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = None;
         let path = self
             .directory(Some(binding))
             .join(format!("{}.jsonl", self.run_key));
@@ -603,15 +669,15 @@ fn private_options() -> OpenOptions {
     let options = OpenOptions::new();
     options
 }
-fn private_directory(path: &Path) -> io::Result<()> {
+fn private_directory(path: &Path) -> io::Result<fs::Metadata> {
     // A synced file and leaf directory are insufficient when their ancestors
     // were just created: their names must also survive a power failure. Record
     // missing entries first, then publish them durably from the leaf upwards.
     let mut missing = Vec::new();
     let mut ancestor = path;
-    loop {
+    let existing = loop {
         match fs::metadata(ancestor) {
-            Ok(_) => break,
+            Ok(metadata) => break metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 missing.push(ancestor);
                 ancestor = ancestor
@@ -621,6 +687,19 @@ fn private_directory(path: &Path) -> io::Result<()> {
             }
             Err(error) => return Err(error),
         }
+    };
+    if missing.is_empty() {
+        if !existing.is_dir() {
+            return Err(invalid("event directory is not a directory"));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if existing.permissions().mode() & 0o777 != 0o700 {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+            }
+        }
+        return Ok(existing);
     }
     fs::create_dir_all(path)?;
     #[cfg(unix)]
@@ -635,7 +714,7 @@ fn private_directory(path: &Path) -> io::Result<()> {
             .unwrap_or_else(|| Path::new("."));
         sync_directory(parent)?;
     }
-    Ok(())
+    fs::metadata(path)
 }
 #[cfg(unix)]
 fn tighten_permissions(path: &Path) -> io::Result<()> {
@@ -698,6 +777,42 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn encoded_upload_body_matches_events_without_another_serialization_pass() {
+        let fixture = Fixture::new();
+        let store = fixture.store("run");
+        let binding = binding("session");
+        for seq in 0..3 {
+            store
+                .append(Some(&binding), EventStream::Violation, &event(seq))
+                .unwrap();
+        }
+        let batch = pending(&store, &binding);
+        let decoded: Value = serde_json::from_slice(&batch.body).unwrap();
+        assert_eq!(decoded["events"], Value::Array(batch.events));
+    }
+    #[test]
+    fn cached_append_detects_replaced_file_and_preserves_partial_tail() {
+        let fixture = Fixture::new();
+        let store = fixture.store("run");
+        let binding = binding("session");
+        store
+            .append(Some(&binding), EventStream::Violation, &event(1))
+            .unwrap();
+        let batch = pending(&store, &binding);
+        fs::remove_file(&batch.path).unwrap();
+        fs::write(&batch.path, b"partial-corrupt-row").unwrap();
+        store
+            .append(Some(&binding), EventStream::Violation, &event(2))
+            .unwrap();
+        let next = pending(&store, &binding);
+        assert_eq!(next.events.len(), 1);
+        assert_eq!(next.events[0]["seq"], 2);
+        assert!(!next.notices.is_empty());
+        assert!(fs::read(&batch.path)
+            .unwrap()
+            .starts_with(b"partial-corrupt-row\n"));
+    }
     #[test]
     fn session_origin_and_unbound_data_never_cross_destinations() {
         let fixture = Fixture::new();

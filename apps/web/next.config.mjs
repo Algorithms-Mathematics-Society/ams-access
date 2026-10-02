@@ -17,8 +17,13 @@ const nextConfig = {
     if (!isServer && config.optimization?.splitChunks) {
       config.optimization.splitChunks.cacheGroups = {
         ...config.optimization.splitChunks.cacheGroups,
+        // JavaScript only. The root layout imports katex.min.css; a test that
+        // also matched that stylesheet put the CSS module in this named chunk,
+        // so /layout depended on the whole 257 KiB library and every screen
+        // (Welcome, Login, Home, Onboarding, Results) loaded it. Only the
+        // contest statement renderer (markdown.ts) needs the JS.
         katex: {
-          test: /[\\/]node_modules[\\/]katex[\\/]/,
+          test: /[\\/]node_modules[\\/]katex[\\/].*\.m?js$/,
           name: "katex",
           priority: 40,
           chunks: "all",

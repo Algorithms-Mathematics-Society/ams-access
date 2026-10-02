@@ -22,9 +22,6 @@ export const LANGUAGE_ID_MAP: Record<string, string> = {
   PyPy3: "pypy3",
   pypy: "pypy3",
   pypy3: "pypy3",
-  Java17: "java17",
-  java: "java17",
-  java17: "java17",
   Go: "go",
   go: "go",
   Rust: "rust",
@@ -43,7 +40,6 @@ export const WORKER_SUPPORTED_LANGUAGES = new Set([
   "C++23",
   "Python3",
   "PyPy3",
-  "Java17",
 ]);
 
 export function toLanguageId(displayLabel: string): string {
@@ -71,9 +67,6 @@ export function normalizeLanguageLabel(label: string): string {
     case "pypy":
     case "pypy3":
       return "PyPy3";
-    case "java":
-    case "java17":
-      return "Java17";
     case "go":
       return "Go";
     case "rust":
@@ -122,23 +115,8 @@ export function defaultPythonStarter(): string {
   ].join("\n");
 }
 
-export function defaultJavaStarter(): string {
-  return [
-    "import java.util.*;",
-    "import java.io.*;",
-    "",
-    "public class Main {",
-    "    public static void main(String[] args) throws IOException {",
-    "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));",
-    "        ",
-    "    }",
-    "}",
-  ].join("\n");
-}
-
 export function defaultStarterFor(language: string): string {
   if (language === "Python3") return defaultPythonStarter();
-  if (language === "Java17") return defaultJavaStarter();
   return defaultCppStarter();
 }
 
@@ -151,8 +129,7 @@ export function isPristineStarter(content: string): boolean {
   return (
     content === "" ||
     content === defaultCppStarter() ||
-    content === defaultPythonStarter() ||
-    content === defaultJavaStarter()
+    content === defaultPythonStarter()
   );
 }
 
@@ -161,20 +138,14 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   "C++20": "cpp",
   "C++23": "cpp",
   Python3: "py",
-  Java17: "java",
   Go: "go",
   Rust: "rs",
 };
 
 /**
  * Derives the editor filename for a question's main file.
- * Java is a hard special-case: the worker compiles `javac Main.java` and runs
- * `java -cp . Main`, so the class name — and therefore the filename — must be
- * `Main.java` regardless of the question title.
  */
 export function questionFileName(question: Question, language: string): string {
-  if (language === "Java17") return "Main.java";
-
   const ext = LANGUAGE_EXTENSIONS[language] ?? "cpp";
   const fallbackLetter = String.fromCharCode(65 + Math.max(0, question.order_index));
 

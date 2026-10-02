@@ -126,3 +126,14 @@ test("an empty compile output becomes null rather than an empty panel", () => {
 test("an empty list stays empty", () => {
   assert.deepEqual(toAttemptRecords([]), []);
 });
+
+test("list results replace pending cases while preserving the separately polled run", async () => {
+  const { mergeAttemptTestResults } = await import("./attempt-adapter.ts");
+  const runCases = [{ verdict: "AC" }];
+  const previous = { run: runCases, scored: [] };
+  const cases = [{ verdict: "WA" }];
+  const merged = mergeAttemptTestResults(previous, [{ id: "scored", testcases: cases }]);
+  assert.equal(merged.run, runCases);
+  assert.equal(merged.scored, cases);
+  assert.deepEqual(previous.scored, []);
+});

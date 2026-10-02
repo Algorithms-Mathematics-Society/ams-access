@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, memo } from "react";
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import { useRouter } from "next/navigation";
 import { Clock3, ListChecks, Loader2, ShieldCheck } from "lucide-react";
 import {
@@ -168,15 +169,9 @@ export const ScheduledContestCard = memo(
           >
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span>
-                {new Date(c.start_at).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })}{" "}
+                {dateTimeFormatter({ month: "short", day: "numeric" }).format(new Date(c.start_at))}{" "}
                 —{" "}
-                {new Date(c.end_at).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })}
+                {dateTimeFormatter({ month: "short", day: "numeric" }).format(new Date(c.end_at))}
               </span>
             </div>
 
@@ -339,7 +334,7 @@ export const ActiveContestCard = memo(
       const ms = Date.parse(c.start_at);
       if (Number.isNaN(ms)) return entryState.contestDateLabel;
       try {
-        return new Intl.DateTimeFormat(undefined, {
+        return dateTimeFormatter({
           day: "numeric",
           month: "long",
           year: "numeric",

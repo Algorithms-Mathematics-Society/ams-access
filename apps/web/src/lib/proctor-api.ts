@@ -195,6 +195,7 @@ async function request<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
+  let text: string;
   try {
     res = await fetch(`${API}${path}`, {
       method,
@@ -203,6 +204,10 @@ async function request<T>(
       signal: controller.signal,
       cache: "no-store",
     });
+    // Headers do not complete the request. A stalled body must release callers
+    // such as the single-flight resume poller within the same deadline.
+    text = await res.text();
+    if (controller.signal.aborted) throw new Error("Response body timed out");
   } catch (err) {
     // A timeout and an unreachable host are different problems for a
     // candidate mid-exam: one is "wait", the other is "get an invigilator".
@@ -223,7 +228,6 @@ async function request<T>(
     clearTimeout(timer);
   }
 
-  const text = await res.text();
   let data: unknown = null;
   if (text) {
     try {

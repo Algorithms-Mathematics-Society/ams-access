@@ -82,19 +82,6 @@ def solve():
 if __name__ == '__main__':
     solve()`,
   },
-  java17: {
-    ext: "java",
-    name: "Java 17",
-    starter: `import java.io.*;
-import java.util.*;
-
-public class Main {
-    public static void main(String[] args) throws IOException {
-        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
-        // Write your Java 17 solution here
-    }
-}`,
-  },
 };
 
 // A test row is a "sample" test (expected/got may be shown) only when it is not

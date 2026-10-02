@@ -414,33 +414,40 @@ fn start_tap_watchdog(tap_cell: Arc<Mutex<Option<SendPtr>>>, generation: u64) {
             let Some(tap) = cell.as_ref() else {
                 break;
             };
+            let mut event = None;
             unsafe {
                 if !CGEventTapIsEnabled(tap.0) {
                     CGEventTapEnable(tap.0, true);
                     if CGEventTapIsEnabled(tap.0) {
-                        emit_lockdown_event(
+                        event = Some((
                             "keyboard_tap_reenabled",
                             "CGEventTap was disabled by the OS and has been re-enabled",
-                        );
+                        ));
                         revocation_reported = false;
                         reenable_failure_reported = false;
                     } else if trusted && !reenable_failure_reported {
                         reenable_failure_reported = true;
-                        emit_lockdown_event(
+                        event = Some((
                             "keyboard_lockdown_lost",
                             "CGEventTap was disabled and could not be re-enabled",
-                        );
+                        ));
                     }
                 } else {
                     reenable_failure_reported = false;
                     if trusted && revocation_reported {
                         revocation_reported = false;
-                        emit_lockdown_event(
+                        event = Some((
                             "keyboard_lockdown_restored",
                             "Accessibility permission restored; keyboard intercept active",
-                        );
+                        ));
                     }
                 }
+            }
+            // Keep the pointer protected only while calling CoreGraphics.
+            // Event recording/notification must not delay tap teardown.
+            drop(cell);
+            if let Some((kind, detail)) = event {
+                emit_lockdown_event(kind, detail);
             }
         }
     });

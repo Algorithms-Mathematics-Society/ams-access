@@ -10,7 +10,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { resolveApiBase } from "@/lib/api-base";
-import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { createAbortTimeout } from "@/lib/abort-timeout";
 
 const API_URL = resolveApiBase();
 
@@ -70,12 +70,14 @@ export function HelpRequestModal({
       summary,
       details: { ...(details ?? {}), candidate_note: note.trim() || undefined },
     };
+    const timeout = createAbortTimeout(10_000);
     try {
       const url = sessionId
         ? `${API_URL}/participant/sessions/${encodeURIComponent(sessionId)}/incidents`
         : `${API_URL}/participant/support-incidents`;
       const res = await fetch(url, {
         method: "POST",
+        signal: timeout.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -84,10 +86,14 @@ export function HelpRequestModal({
         return;
       }
       const data = (await res.json().catch(() => ({}))) as { id?: string };
+      // Empty success bodies are allowed, but an aborted body is not success.
+      if (timeout.signal.aborted) throw new Error("Help request timed out");
       setReference(data.id ?? null);
       setState("sent");
     } catch {
       setState("error");
+    } finally {
+      timeout.clear();
     }
   }
 
