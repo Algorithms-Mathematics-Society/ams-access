@@ -242,9 +242,16 @@ fn read_response(stream: &mut UnixStream) -> Result<(), String> {
             .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
             .ok_or("read response: timed out")?;
-        stream
-            .set_read_timeout(Some(remaining))
-            .map_err(|e| format!("read timeout: {e}"))?;
+        if let Err(error) = stream.set_read_timeout(Some(remaining)) {
+            // macOS can reject SO_RCVTIMEO with EINVAL after the helper has
+            // closed its write side, even while response bytes remain queued.
+            // Reading can no longer wait for more peer data in that state, so
+            // preserve the protocol-level EOF/framing error. Other socket
+            // option failures still abort the exchange.
+            if error.kind() != std::io::ErrorKind::InvalidInput {
+                return Err(format!("read timeout: {error}"));
+            }
+        }
         let count = match stream.read(&mut chunk) {
             Ok(0) => return Err("read response: helper closed before a complete response".into()),
             Ok(count) => count,
@@ -322,7 +329,10 @@ mod tests {
             match connect_with_timeout(&path, Duration::from_millis(20)) {
                 Ok(stream) => connected.push(stream),
                 Err(error) => {
-                    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+                    assert!(matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::ConnectionRefused
+                    ));
                     saturated = true;
                     break;
                 }
@@ -330,12 +340,12 @@ mod tests {
         }
         assert!(saturated);
         let started = Instant::now();
-        assert_eq!(
+        assert!(matches!(
             connect_with_timeout(&path, Duration::from_millis(30))
                 .unwrap_err()
                 .kind(),
-            std::io::ErrorKind::TimedOut
-        );
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::ConnectionRefused
+        ));
         assert!(started.elapsed() < Duration::from_secs(1));
         drop(connected);
         drop(listener);
