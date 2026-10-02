@@ -18,6 +18,7 @@ import { Token } from "@astryxdesign/core/Token";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
 import { ContestBriefing } from "./ContestBriefing";
+import { ContestSponsor } from "@/components/ContestSponsor";
 
 export const ScheduledContestCard = memo(
   function ScheduledContestCard({
@@ -399,6 +400,7 @@ export const ActiveContestCard = memo(
             {c.title}
           </Heading>
           {c.description && <Text color="secondary" maxLines={2}>{c.description}</Text>}
+          <ContestSponsor contestId={c.id} placement="home" />
         </VStack>
         <MetadataList columns={c.is_practice ? 2 : 3} label={{ position: "top" }} className="dashboard-contest-metadata">
           <MetadataListItem label={c.is_practice ? "Format" : "Date"}>

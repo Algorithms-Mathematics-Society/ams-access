@@ -1,11 +1,13 @@
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { ContestSponsor } from "@/components/ContestSponsor";
 import type { ContestIndex } from "@/lib/proctor-api";
 
-export function SetupContestContext({ contest, dryRun, hasContest }: {
+export function SetupContestContext({ contest, dryRun, hasContest, sponsorPlacement }: {
   contest: ContestIndex | null;
   dryRun: boolean;
   hasContest: boolean;
+  sponsorPlacement?: "introduction" | "waiting";
 }) {
   if (!hasContest) return null;
   const start = contest ? new Date(contest.starts_at) : null;
@@ -17,6 +19,7 @@ export function SetupContestContext({ contest, dryRun, hasContest }: {
     <VStack gap={1} style={{ minWidth: 0, flex: "1 1 50%" }}>
       <Text type="supporting" color="secondary">{dryRun ? "Practicing setup for" : "Setting up for"}</Text>
       <Text weight="semibold" style={{ overflowWrap: "anywhere" }}>{contest?.title || "Contest details unavailable"}</Text>
+      {sponsorPlacement && contest && <ContestSponsor contestId={contest.uid} placement={sponsorPlacement} />}
     </VStack>
     <VStack gap={1} style={{ minWidth: 0 }}>
       <Text type="supporting" color="secondary">{contest?.ends_at === null ? "Practice · untimed" : `Scheduled start · ${startLabel}`}</Text>

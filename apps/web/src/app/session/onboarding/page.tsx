@@ -818,7 +818,11 @@ export default function OnboardingPage() {
         {!presentationReady ? <VStack gap={4} align="center" style={{ paddingBlock: "var(--spacing-10)" }}>
           <Spinner /><Text color="secondary">Preparing your setup…</Text>
         </VStack> : <>
-          <SetupContestContext contest={contestIndex} dryRun={dryRun} hasContest={Boolean(contestId)} />
+          <SetupContestContext contest={contestIndex} dryRun={dryRun} hasContest={Boolean(contestId)}
+            sponsorPlacement={!dryRun && !policyBlock && !entryBlockedMessage
+              ? currentStage === 0 ? "introduction"
+                : currentStage === FINAL_STAGE && readyForStart && waitMs > 0 ? "waiting" : undefined
+              : undefined} />
               {policyBlock && <Banner
                 status={platform === "macos" && policyBlock.includes("accessibility_denied") ? "warning" : "error"}
                 title={platform === "macos" && policyBlock.includes("accessibility_denied") ? "Grant Accessibility permission" : "Setup needs your attention"}

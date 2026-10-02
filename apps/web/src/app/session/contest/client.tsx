@@ -1,5 +1,6 @@
 "use client";
 
+import { ContestSponsor } from "@/components/ContestSponsor";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text, Heading } from "@astryxdesign/core/Text";
@@ -2756,6 +2757,7 @@ export default function ContestPageClient() {
           <Text color="secondary">The server acknowledged that this session is finished. Check results status for your scored submissions.</Text>
           {finalDraftSaved && <Text color="secondary">The active file’s final draft save was also confirmed. A draft save is not a scored submission.</Text>}
           {submitWarning && <Banner status="warning" title="Latest draft save not confirmed" description={submitWarning} />}
+          {!submitWarning && <ContestSponsor contestId={contestId} placement="completion" />}
         </VStack>}
         {timeUpState === "error" && <VStack gap={4}>
           <Heading level={2} id="contest-ended-title">Could not confirm session finish</Heading>
