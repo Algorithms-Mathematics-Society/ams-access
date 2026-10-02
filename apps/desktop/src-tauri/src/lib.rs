@@ -2200,11 +2200,9 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
     }
 
     // The Linux/macOS client returns Err when the privileged helper is not
-    // installed/running. We propagate that verbatim instead of swallowing it:
-    // an exam must NOT proceed with unrestricted egress. This is the last-line
-    // enforcement at ContestLaunch; the readiness policy already hard-blocks a
-    // strict Linux contest earlier via the CheckKind::Network helper gate in
-    // `packages/core-rs/src/exam/mod.rs` (fed by `network_helper_ready`).
+    // installed/running. Propagate that failure to ContestLaunch's final network
+    // gate; the earlier readiness policy treats CheckKind::Network as advisory.
+    // The frontend's decideNetworkLockdown applies the final platform policy.
     platform_dispatch!(
         enable_network_lockdown(&ips),
         else Err("Network lockdown not supported on this platform".to_string())

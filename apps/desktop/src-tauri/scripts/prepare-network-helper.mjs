@@ -2,9 +2,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cargoTargetDirectory } from "./cargo-target-directory.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../../../..");
+const targetDir = cargoTargetDirectory(repoRoot);
 const helperDir = path.join(repoRoot, "apps/desktop/src-tauri/helpers");
 const helperName = "com.ams.access.networkhelper";
 const cargoBinName = "ams-access-networkhelper";
@@ -29,7 +31,7 @@ if (!isMacOS) {
     stdio: "inherit",
   });
   const binFileName = process.platform === "win32" ? `${cargoBinName}.exe` : cargoBinName;
-  const builtHelper = path.join(repoRoot, "target", "release", binFileName);
+  const builtHelper = path.join(targetDir, "release", binFileName);
   // Stage the Linux/host-named copy that tauri.conf.json bundles and that
   // platform_rs::linux::install_network_helper installs via systemd. This is the
   // only helper actually used at runtime on this (non-macOS) host.
@@ -66,7 +68,7 @@ if (!isMacOS) {
     });
   }
 
-  const arches = targets.map((t) => path.join(repoRoot, "target", t, "release", cargoBinName));
+  const arches = targets.map((t) => path.join(targetDir, t, "release", cargoBinName));
 
   execFileSync("lipo", ["-create", "-output", bundledHelper, ...arches]);
   chmodSync(bundledHelper, 0o755);

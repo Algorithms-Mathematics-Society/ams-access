@@ -8,7 +8,8 @@
     "prepare:helper": "node src-tauri/scripts/prepare-network-helper.mjs",
     "build:mac-dev": "APPLE_SIGNING_IDENTITY='AMS Access Dev' tauri build --debug --bundles app",
     "setup:mac-signing": "bash src-tauri/scripts/setup-macos-dev-signing.sh",
-    "clean": "rm -rf src-tauri/target"
+    "clean": "rm -rf src-tauri/target",
+    "test": "node --test src-tauri/scripts/cargo-target-directory.test.mjs"
   },
   "dependencies": {
     "@ams/web": "workspace:*"
