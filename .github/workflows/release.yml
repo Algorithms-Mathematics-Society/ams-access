@@ -18,18 +18,23 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-          # macOS is dormant, not dropped. Notarization fails with a 403
-          # ("A required agreement is missing or has expired") and an
-          # unnotarized .dmg is worse than no .dmg — Gatekeeper refuses it and
-          # the candidate cannot open the app at all. The macOS targets and
-          # the certificate-import step come back in one commit when the
-          # Apple developer agreement is accepted; `bundle.targets` still
-          # lists dmg/macOS, and Tauri filters by host, so a local
-          # `pnpm build:mac-dev` is unaffected.
-          #
-          # (Both macOS targets built on macos-latest: GitHub retired the
+          # Both macOS targets build on macos-latest. GitHub retired the
           # macos-13 Intel runners, and a job pinned to that label queues for
-          # 24h and cancels the whole run — that killed v1.0.3 and v1.0.4.)
+          # 24h and then cancels the whole run — that killed v1.0.3 and
+          # v1.0.4. The Intel slice cross-compiles on the arm64 runner.
+          #
+          # These were parked while notarization returned 403 ("A required
+          # agreement is missing or has expired"), because an unnotarized .dmg
+          # is worse than none: Gatekeeper refuses to open it at all. They are
+          # restored here together with the certificate import. If the
+          # agreement is still outstanding the notarize step fails loudly on
+          # macOS and `fail-fast: false` leaves the Linux and Windows
+          # artifacts intact, so a blocked Apple account costs a red job
+          # rather than a release.
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.target }})
@@ -165,8 +170,47 @@ jobs:
           "TAURI_WINDOWS_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           Write-Host "signing certificate imported"
 
+      # Imports into a throwaway keychain rather than the login one: the
+      # runner is disposable, but a signing key left in the default keychain
+      # is readable by every later step in the job.
+      - name: Import Apple certificate (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/ams-signing.keychain-db"
+          KEYCHAIN_PASS=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -f pkcs12
+          # Without the partition list codesign prompts for the keychain
+          # password, which on a headless runner means the job hangs rather
+          # than fails.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
+          rm "$RUNNER_TEMP/cert.p12"
+
       - name: Build Tauri app
         working-directory: apps/desktop
+        env:
+          # Tauri reads these directly: APPLE_SIGNING_IDENTITY to codesign the
+          # .app, and the APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID trio to
+          # notarize it. APPLE_PASSWORD is an app-specific password, not the
+          # account password — a regular one fails with an unhelpful 401.
+          # All six are ignored on Linux and Windows.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         # No TAURI_SIGNING_PRIVATE_KEY: there is no `plugins.updater` block in
         # tauri.conf.json, so no signature was ever produced and the key was
         # decoration. There is deliberately no updater either — a proctored
@@ -208,6 +252,11 @@ jobs:
                    "${BASE}"/nsis/*-setup.exe; do
             [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
           done
+          # macOS. The .dmg only — `macos/*.app.tar.gz` exists solely to feed
+          # the updater, and there is no updater.
+          for f in "${BASE}"/dmg/*.dmg; do
+            [ -f "$f" ] && FILES="${FILES}${f}"$'\n'
+          done
           echo "RELEASE_FILES<<EOF" >> "$GITHUB_ENV"
           echo "$FILES" >> "$GITHUB_ENV"
           echo "EOF" >> "$GITHUB_ENV"
@@ -240,7 +289,15 @@ jobs:
           while IFS= read -r file; do
             [ -n "$file" ] || continue
             asset="$(basename "$file" | tr ' ' '.')"
-            printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$asset" >> "$SUMS"
+            # macOS runners have no `sha256sum`; BSD ships `shasum`. With
+            # macOS back in the matrix, hardcoding sha256sum would fail every
+            # mac release at the last step, after a full build and notarize.
+            if command -v sha256sum >/dev/null 2>&1; then
+              digest="$(sha256sum "$file" | cut -d' ' -f1)"
+            else
+              digest="$(shasum -a 256 "$file" | cut -d' ' -f1)"
+            fi
+            printf '%s  %s\n' "$digest" "$asset" >> "$SUMS"
           done <<< "${RELEASE_FILES}"
           cat "$SUMS"
           echo "RELEASE_FILES<<EOF" >> "$GITHUB_ENV"
@@ -253,11 +310,10 @@ jobs:
           draft: true
           name: "AMS Access ${{ github.ref_name }}"
           body: |
-            AMS Access ${{ github.ref_name }} — Windows and Linux.
+            AMS Access ${{ github.ref_name }} — Windows, Linux and macOS.
 
-            **macOS is not in this release.** Notarization is blocked on an
-            Apple developer agreement that needs accepting; an unnotarized
-            build is worse than none, because Gatekeeper refuses to open it.
+            **macOS builds are signed and notarized**, so they open without a
+            Gatekeeper warning. Both Apple Silicon and Intel are included.
 
             **Windows installers are not code-signed.** SmartScreen will show
             "Windows protected your PC" and the installer asks for

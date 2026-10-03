@@ -19,11 +19,11 @@ push a `v<version>` tag.
 
 ## What ships
 
-| Platform | Artifacts                   | Signed               |
-| -------- | --------------------------- | -------------------- |
-| Windows  | `.msi`, `-setup.exe`        | **No** — see below   |
-| Linux    | `.deb`, `.rpm`, `.AppImage` | n/a                  |
-| macOS    | — (dormant)                 | see below            |
+| Platform | Artifacts                   | Signed                   |
+| -------- | --------------------------- | ------------------------ |
+| Windows  | `.msi`, `-setup.exe`        | **No** — see below       |
+| Linux    | `.deb`, `.rpm`, `.AppImage` | n/a                      |
+| macOS    | `.dmg` (arm64 + Intel)      | signed **and notarized** |
 
 ### Windows is unsigned
 
@@ -60,17 +60,44 @@ installer, and "Cannot reach the exam server" on a healthy API. Tests missed
 it because they run without the secret, and `tauri dev` missed it because
 `devCsp` is permissive.
 
-### macOS is not built
+### macOS needs a live Apple agreement
 
-Notarization fails with `403 — A required agreement is missing or has
-expired`. An unnotarized `.dmg` is worse than no `.dmg`: Gatekeeper refuses to
-open it and the candidate cannot run the app at all.
+macOS is in the release matrix: two `macos-latest` rows (Apple Silicon, and
+Intel cross-compiled on the same runner because GitHub retired the `macos-13`
+Intel runners — a job pinned to that label queues 24h and cancels the whole
+run, which killed v1.0.3 and v1.0.4).
 
-`bundle.targets` still lists `dmg`/`macOS` and Tauri filters by host, so
-`pnpm build:mac-dev` works locally for development. To restore macOS releases,
-accept the agreement in App Store Connect and revert one commit: the two
-`macos-latest` matrix rows and the _Import Apple certificate_ step, both
-removed from `release.yml` with a comment pointing here.
+It was parked for a while because notarization returned `403 — A required
+agreement is missing or has expired`, and an unnotarized `.dmg` is worse than
+none: Gatekeeper refuses to open it, so the candidate cannot run the app at
+all. **That 403 is an Apple-account state, not a code problem.** Apple
+publishes new Program License Agreement versions periodically and notarization
+stops until someone accepts the new one in App Store Connect.
+
+Before tagging a release that includes macOS, check the agreement is live —
+it takes one command on any Mac and costs nothing:
+
+```
+xcrun notarytool history --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD"
+```
+
+A 403 there means the agreement needs accepting at
+<https://developer.apple.com/account> and in App Store Connect → Business →
+Agreements. Anything else means notarization will work.
+
+`fail-fast: false` means a blocked Apple account costs a red macOS job rather
+than the whole release: the Linux and Windows artifacts still build and
+upload.
+
+**The six secrets this needs** are already set on the repository:
+`APPLE_CERTIFICATE` (base64 `.p12` holding a **Developer ID Application**
+certificate — not "Mac App Distribution", which cannot notarize),
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+`APPLE_PASSWORD` (an **app-specific** password from appleid.apple.com; the
+account password fails with an unhelpful 401) and `APPLE_TEAM_ID`.
+
+`bundle.targets` lists `dmg`/`macOS` and Tauri filters by host, so
+`pnpm build:mac-dev` works locally regardless of any of this.
 
 ## There is no auto-updater
 
