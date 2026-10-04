@@ -12,7 +12,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "clean": "rm -rf .next out",
     "mediapipe:setup": "node scripts/setup-mediapipe.mjs",
-    "size:check": "node scripts/check-size-budgets.mjs"
+    "size:check": "node scripts/check-size-budgets.mjs",
+    "dev:hosted": "next dev --port 3001"
   },
   "dependencies": {
     "@ams/api-client": "workspace:*",

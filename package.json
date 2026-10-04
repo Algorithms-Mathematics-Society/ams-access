@@ -10,7 +10,8 @@
     "check:versions": "node scripts/check-versions.mjs",
     "clean": "turbo run clean && rm -rf node_modules",
     "prepare": "husky",
-    "theme:build": "node apps/web/src/theme/build-theme.mjs"
+    "theme:build": "node apps/web/src/theme/build-theme.mjs",
+    "dev:hosted": "turbo run dev:hosted --filter=@ams/desktop"
   },
   "devDependencies": {
     "@astryxdesign/cli": "^0.1.8",
