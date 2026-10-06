@@ -54,6 +54,7 @@ import {
   readinessFromReport,
   getVerificationWindowMinutes,
 } from "./components/utils";
+import { hasNativeBridge, nativeCheckFallback } from "./components/readiness-status";
 
 // ── Components ─────────────────────────────────────────────────
 import { DashboardShell, DashboardColumns } from "./components/DashboardShell";
@@ -433,6 +434,11 @@ export default function HomePage() {
     } catch {
       if (isCancelled()) return;
       setReadinessReport(null);
+      // Camera and microphone come from the browser, so they are real results
+      // either way. The rest are native probes: in a browser they do not exist
+      // rather than fail, and saying "fix 4 required checks" about probes that
+      // cannot run there is advice nobody can act on.
+      const native = nativeCheckFallback(hasNativeBridge());
       setReadiness({
         camera: media.cameraAvailable ? "ok" : "fail",
         mic: media.microphoneAvailable ? "ok" : "fail",
@@ -441,10 +447,10 @@ export default function HomePage() {
         // the only true thing available here.
         network: "unavailable",
         networkLockdown: "unavailable",
-        keyboard: "fail",
-        restrictedApps: "fail",
-        vm: "fail",
-        platform: "fail",
+        keyboard: native,
+        restrictedApps: native,
+        vm: native,
+        platform: native,
       });
       appendSecurityEvent("READINESS: Local integrity scan failed", "error");
     }
