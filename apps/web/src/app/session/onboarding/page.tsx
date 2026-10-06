@@ -19,6 +19,8 @@ import {
   collectDeviceState,
   fetchOrganizerOverrides,
   startSecureSession,
+  hasNativeBridge,
+  browserDeviceState,
   strictContestPolicy,
   type OrganizerOverride,
 } from "@ams/api-client";
@@ -70,17 +72,42 @@ import {
 
 // Astryx Kbd uses modifier glyphs; this shortcut intentionally spells out its keys.
 function SetupExitShortcut() {
-  return <HStack as="span" className="setup-exit-shortcut" gap={1} align="center" role="img" aria-label="Control + Shift + Q" style={{ flexShrink: 0 }}>
-    {["Ctrl", "Shift", "Q"].map((key) => <kbd key={key} aria-hidden="true" style={{
-      display: "inline-flex", alignItems: "center", justifyContent: "center",
-      minWidth: "var(--spacing-5)", minHeight: "var(--spacing-5)",
-      paddingInline: "var(--spacing-1)", borderRadius: "var(--radius-element)",
-      border: "var(--border-width) solid var(--color-border)",
-      background: "var(--color-background-muted)", color: "var(--color-text-secondary)",
-      fontFamily: "var(--font-family-body)", fontSize: "var(--font-size-xs)",
-      fontWeight: "var(--font-weight-medium)", lineHeight: 1,
-    }}>{key}</kbd>)}
-  </HStack>;
+  return (
+    <HStack
+      as="span"
+      className="setup-exit-shortcut"
+      gap={1}
+      align="center"
+      role="img"
+      aria-label="Control + Shift + Q"
+      style={{ flexShrink: 0 }}
+    >
+      {["Ctrl", "Shift", "Q"].map((key) => (
+        <kbd
+          key={key}
+          aria-hidden="true"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minWidth: "var(--spacing-5)",
+            minHeight: "var(--spacing-5)",
+            paddingInline: "var(--spacing-1)",
+            borderRadius: "var(--radius-element)",
+            border: "var(--border-width) solid var(--color-border)",
+            background: "var(--color-background-muted)",
+            color: "var(--color-text-secondary)",
+            fontFamily: "var(--font-family-body)",
+            fontSize: "var(--font-size-xs)",
+            fontWeight: "var(--font-weight-medium)",
+            lineHeight: 1,
+          }}
+        >
+          {key}
+        </kbd>
+      ))}
+    </HStack>
+  );
 }
 
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
@@ -376,18 +403,34 @@ export default function OnboardingPage() {
       }
     }
     const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
-    const deviceState = await collectDeviceState({
-      // Real connectivity probe (neutral canary host) feeds the readiness gate.
-      // Under the test flag we skip it and force a healthy network below.
-      networkHost: isGatingRelaxed() ? undefined : getNetworkProbeHost(),
-      apiUrl: API_URL,
-      cameraAvailable:
-        cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live") ||
-        devices?.some((device) => device.kind === "videoinput") ||
-        false,
-      microphoneAvailable: devices?.some((device) => device.kind === "audioinput") || false,
-      activateKeyboard: true,
-    });
+    // Outside the Tauri shell there is no native layer to ask, and
+    // `collectDeviceState` throws "Tauri bridge unavailable" — which left
+    // onboarding stuck for ever on "Checking contest entry…" with an uncaught
+    // error behind it. Every native-only field stays null, which the readiness
+    // evaluator reads as "not probed", so this cannot make an unsupervised
+    // machine look supervised. A packaged build always has the bridge and so
+    // always takes the real path below.
+    const nativeAvailable = hasNativeBridge();
+    const cameraLive =
+      cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live") ||
+      devices?.some((device) => device.kind === "videoinput") ||
+      false;
+    const microphoneLive = devices?.some((device) => device.kind === "audioinput") || false;
+    const deviceState = !nativeAvailable
+      ? browserDeviceState({
+          cameraAvailable: cameraLive,
+          microphoneAvailable: microphoneLive,
+          platform: platform ?? null,
+        })
+      : await collectDeviceState({
+          // Real connectivity probe (neutral canary host) feeds the readiness
+          // gate. Under the test flag we skip it and force a healthy network.
+          networkHost: isGatingRelaxed() ? undefined : getNetworkProbeHost(),
+          apiUrl: API_URL,
+          cameraAvailable: cameraLive,
+          microphoneAvailable: microphoneLive,
+          activateKeyboard: true,
+        });
     if (isGatingRelaxed()) {
       // TEST-ONLY (build-time flag): present a healthy network + installed helper
       // so the readiness gate treats network as fine. Default builds use the real
@@ -555,19 +598,24 @@ export default function OnboardingPage() {
       }
       const policy = applyOrganizerOverrides(strictContestPolicy(devicePlatform), liveOverrides);
 
-      await startSecureSession({
-        contestId,
-        deviceId,
-        policy,
-        deviceState,
-        // Entry-gate attestation: the evaluated readiness report is
-        // delivered to the backend so the server has a durable record of
-        // what this device claimed — including when the gate blocked, which
-        // is the report an invigilator actually needs. Best-effort: the
-        // client, not the server, decides whether to proceed.
-        apiUrl: API_URL,
-        token: participantToken(),
-      });
+      // Locks the desktop, arms the keyboard intercept and applies egress
+      // rules — all native, none of which exist in a browser. Skipped there
+      // rather than throwing: the session is already an unproctored dev one,
+      // which the readiness modal states outright before letting anyone in.
+      if (nativeAvailable)
+        await startSecureSession({
+          contestId,
+          deviceId,
+          policy,
+          deviceState,
+          // Entry-gate attestation: the evaluated readiness report is
+          // delivered to the backend so the server has a durable record of
+          // what this device claimed — including when the gate blocked, which
+          // is the report an invigilator actually needs. Best-effort: the
+          // client, not the server, decides whether to proceed.
+          apiUrl: API_URL,
+          token: participantToken(),
+        });
 
       if (windowMeta && !isTestAccount) {
         const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
@@ -700,15 +748,20 @@ export default function OnboardingPage() {
       onBegin: (stage, status) => {
         setTransitioning(true);
         setResults((r) => ({ ...r, [stage]: status }));
-        if (status !== "warn") setWarningDetails(previous => {
-          const next = { ...previous }; delete next[stage]; return next;
-        });
+        if (status !== "warn")
+          setWarningDetails((previous) => {
+            const next = { ...previous };
+            delete next[stage];
+            return next;
+          });
       },
       onAdvance: (nextStage) => {
         setCurrentStage(nextStage);
         setTransitioning(false);
       },
-      onFinalize: () => { void finalizeSecureStartRef.current(); },
+      onFinalize: () => {
+        void finalizeSecureStartRef.current();
+      },
     });
   }
   const advanceController = advanceControllerRef.current;
@@ -721,15 +774,20 @@ export default function OnboardingPage() {
   }, [advanceController, stageRun]);
 
   const advance = useCallback(
-    (status: StageStatus = "pass") => { advanceController.advance(stageRun, status); },
+    (status: StageStatus = "pass") => {
+      advanceController.advance(stageRun, status);
+    },
     [advanceController, stageRun]
   );
   const advancePass = useCallback(() => advance("pass"), [advance]);
-  const advanceWarn = useCallback((detail?: string) => {
-    if (advanceController.advance(stageRun, "warn") && detail) {
-      setWarningDetails(previous => ({ ...previous, [stageRun.stage]: detail }));
-    }
-  }, [advanceController, stageRun]);
+  const advanceWarn = useCallback(
+    (detail?: string) => {
+      if (advanceController.advance(stageRun, "warn") && detail) {
+        setWarningDetails((previous) => ({ ...previous, [stageRun.stage]: detail }));
+      }
+    },
+    [advanceController, stageRun]
+  );
   // Equity fallback from the face check: flag for proctor review, record it
   // best-effort now (buffered until the session exists, then re-logged durably in
   // finalizeSecureStart), and advance as a warning rather than a clean pass.
@@ -794,168 +852,464 @@ export default function OnboardingPage() {
   // flexible check panel. Below 960px, progress becomes a compact top region.
   return (
     <AppShell height="fill" variant="section" contentPadding={0} style={{ height: "100dvh" }}>
-      <VStack data-onboarding-page gap={8} style={{
-        width: "100%", maxWidth: "calc(var(--spacing-10) * 28)", minHeight: "100dvh",
-        marginInline: "auto", padding: "clamp(var(--spacing-4), 4vw, var(--spacing-10))",
-        fontFamily: "var(--font-sans)", color: "var(--color-text-primary)",
-      }}>
+      <VStack
+        data-onboarding-page
+        gap={8}
+        style={{
+          width: "100%",
+          maxWidth: "calc(var(--spacing-10) * 28)",
+          minHeight: "100dvh",
+          marginInline: "auto",
+          padding: "clamp(var(--spacing-4), 4vw, var(--spacing-10))",
+          fontFamily: "var(--font-sans)",
+          color: "var(--color-text-primary)",
+        }}
+      >
         <HStack as="header" justify="between" align="center" gap={4} wrap="wrap">
           <HStack gap={3} align="center">
-            <svg viewBox="0 0 176 166" fill="none" aria-hidden="true" style={{ width: "var(--spacing-6)", height: "var(--spacing-6)", flexShrink: 0 }}>
+            <svg
+              viewBox="0 0 176 166"
+              fill="none"
+              aria-hidden="true"
+              style={{ width: "var(--spacing-6)", height: "var(--spacing-6)", flexShrink: 0 }}
+            >
               <path d="M4 162L88 4L172 162" stroke="var(--color-accent-base)" strokeWidth="6" />
             </svg>
-            <Text type="large" weight="semibold">Access</Text>
-            <Text type="supporting" color="secondary">Device setup</Text>
+            <Text type="large" weight="semibold">
+              Access
+            </Text>
+            <Text type="supporting" color="secondary">
+              Device setup
+            </Text>
           </HStack>
           <HStack gap={3} align="center" wrap="wrap">
             {wideLayout && <SetupExitShortcut />}
-            <Button type="button" variant="secondary" label="Exit setup" onClick={() => void emergencyExit()}
-              aria-label="Exit setup. Shortcut: Control Shift Q." aria-keyshortcuts="Control+Shift+Q" tooltip="Shortcut: Ctrl + Shift + Q" />
+            <Button
+              type="button"
+              variant="secondary"
+              label="Exit setup"
+              onClick={() => void emergencyExit()}
+              aria-label="Exit setup. Shortcut: Control Shift Q."
+              aria-keyshortcuts="Control+Shift+Q"
+              tooltip="Shortcut: Ctrl + Shift + Q"
+            />
           </HStack>
         </HStack>
         <Divider />
 
-        {!presentationReady ? <VStack gap={4} align="center" style={{ paddingBlock: "var(--spacing-10)" }}>
-          <Spinner /><Text color="secondary">Preparing your setup…</Text>
-        </VStack> : <>
-          <SetupContestContext contest={contestIndex} dryRun={dryRun} hasContest={Boolean(contestId)}
-            sponsorPlacement={!dryRun && !policyBlock && !entryBlockedMessage
-              ? currentStage === 0 ? "introduction"
-                : currentStage === FINAL_STAGE && readyForStart && waitMs > 0 ? "waiting" : undefined
-              : undefined} />
-              {policyBlock && <Banner
-                status={platform === "macos" && policyBlock.includes("accessibility_denied") ? "warning" : "error"}
-                title={platform === "macos" && policyBlock.includes("accessibility_denied") ? "Grant Accessibility permission" : "Setup needs your attention"}
+        {!presentationReady ? (
+          <VStack gap={4} align="center" style={{ paddingBlock: "var(--spacing-10)" }}>
+            <Spinner />
+            <Text color="secondary">Preparing your setup…</Text>
+          </VStack>
+        ) : (
+          <>
+            <SetupContestContext
+              contest={contestIndex}
+              dryRun={dryRun}
+              hasContest={Boolean(contestId)}
+              sponsorPlacement={
+                !dryRun && !policyBlock && !entryBlockedMessage
+                  ? currentStage === 0
+                    ? "introduction"
+                    : currentStage === FINAL_STAGE && readyForStart && waitMs > 0
+                      ? "waiting"
+                      : undefined
+                  : undefined
+              }
+            />
+            {policyBlock && (
+              <Banner
+                status={
+                  platform === "macos" && policyBlock.includes("accessibility_denied")
+                    ? "warning"
+                    : "error"
+                }
+                title={
+                  platform === "macos" && policyBlock.includes("accessibility_denied")
+                    ? "Grant Accessibility permission"
+                    : "Setup needs your attention"
+                }
                 role="alert"
-                description={platform === "macos" && policyBlock.includes("accessibility_denied") ? <VStack gap={4}>
-                  <Text>AMS Access needs Accessibility permission to block exam keyboard shortcuts. Open System Settings, find AMS Access under Privacy &amp; Security → Accessibility, and toggle it on. Then run the device check again.</Text>
-                  <HStack gap={3} wrap="wrap"><Button label="Open Accessibility settings" onClick={() => void invoke("open_accessibility_settings")} /><Button label="Run checks again" variant="secondary" onClick={() => { setPolicyBlock(null); setCurrentStage(4); }} /></HStack>
-                </VStack> : <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{policyBlock}</Text>}
-              />}
-          {currentStage === 0 && !dryRunComplete && <HStack gap={10} align="start" wrap="wrap" style={{ paddingBlock: "clamp(var(--spacing-4), 5vh, var(--spacing-10))" }}>
-            <VStack gap={5} style={{ flex: "1 1 calc(var(--spacing-10) * 9)", minWidth: 0 }}>
-              <Text type="supporting" color="secondary">{dryRun ? "PRACTICE SETUP" : "PRE-CONTEST SETUP"}</Text>
-              <Heading level={1} style={{ fontSize: "clamp(var(--font-size-3xl), 3.5vw, var(--font-size-5xl))", lineHeight: "var(--text-display-2-leading)", maxWidth: "16ch" }}>
-                {dryRun ? "Get familiar with your setup." : "A few checks. Then you’re ready."}
-              </Heading>
-              <Text type="large" color="secondary" style={{ maxWidth: "40ch", fontWeight: "var(--font-weight-normal)" }}>
-                {dryRun ? "Rehearse your exam-day setup. Nothing is submitted, and you won’t enter a contest." : "We’ll guide you through your device and camera checks before you enter the contest."}
-              </Text>
-              <Text color="secondary">Allow a few minutes. Some steps may need your permission.</Text>
-              <Link href="/privacy">Read the privacy policy before setup</Link>
-              <Text type="supporting" color="secondary" style={{ maxWidth: "48ch" }}>Keep this app open during setup. If you need to leave, use Exit setup so the app can restore your device settings.</Text>
-            </VStack>
-            <VStack gap={6} style={{ flex: "1 1 calc(var(--spacing-10) * 10)", minWidth: 0 }}>
-              <VStack gap={0} as="ol" aria-label="What setup checks" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {[
-                  ["Your workspace", "Fullscreen, connected displays and keyboard setup."],
-                  ["Your device", "Restricted apps and device compatibility."],
-                  ["Your camera", "Camera access, face scan and presence check."],
-                  ["Audio & connection", "Microphone access and connection checks."],
-                ].map(([title, detail], index) => <HStack as="li" key={title} gap={4} align="start" style={{ paddingBlock: "var(--spacing-5)", borderBottom: "var(--border-width) solid var(--color-border)" }}>
-                  <Text type="supporting" color="secondary" style={{ paddingTop: "var(--spacing-1)", fontVariantNumeric: "tabular-nums" }}>0{index + 1}</Text>
-                  <VStack gap={1} style={{ minWidth: 0 }}><Text weight="semibold">{title}</Text><Text color="secondary">{detail}</Text></VStack>
-                </HStack>)}
+                description={
+                  platform === "macos" && policyBlock.includes("accessibility_denied") ? (
+                    <VStack gap={4}>
+                      <Text>
+                        AMS Access needs Accessibility permission to block exam keyboard shortcuts.
+                        Open System Settings, find AMS Access under Privacy &amp; Security →
+                        Accessibility, and toggle it on. Then run the device check again.
+                      </Text>
+                      <HStack gap={3} wrap="wrap">
+                        <Button
+                          label="Open Accessibility settings"
+                          onClick={() => void invoke("open_accessibility_settings")}
+                        />
+                        <Button
+                          label="Run checks again"
+                          variant="secondary"
+                          onClick={() => {
+                            setPolicyBlock(null);
+                            setCurrentStage(4);
+                          }}
+                        />
+                      </HStack>
+                    </VStack>
+                  ) : (
+                    <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                      {policyBlock}
+                    </Text>
+                  )
+                }
+              />
+            )}
+            {currentStage === 0 && !dryRunComplete && (
+              <HStack
+                gap={10}
+                align="start"
+                wrap="wrap"
+                style={{ paddingBlock: "clamp(var(--spacing-4), 5vh, var(--spacing-10))" }}
+              >
+                <VStack gap={5} style={{ flex: "1 1 calc(var(--spacing-10) * 9)", minWidth: 0 }}>
+                  <Text type="supporting" color="secondary">
+                    {dryRun ? "PRACTICE SETUP" : "PRE-CONTEST SETUP"}
+                  </Text>
+                  <Heading
+                    level={1}
+                    style={{
+                      fontSize: "clamp(var(--font-size-3xl), 3.5vw, var(--font-size-5xl))",
+                      lineHeight: "var(--text-display-2-leading)",
+                      maxWidth: "16ch",
+                    }}
+                  >
+                    {dryRun ? "Get familiar with your setup." : "A few checks. Then you’re ready."}
+                  </Heading>
+                  <Text
+                    type="large"
+                    color="secondary"
+                    style={{ maxWidth: "40ch", fontWeight: "var(--font-weight-normal)" }}
+                  >
+                    {dryRun
+                      ? "Rehearse your exam-day setup. Nothing is submitted, and you won’t enter a contest."
+                      : "We’ll guide you through your device and camera checks before you enter the contest."}
+                  </Text>
+                  <Text color="secondary">
+                    Allow a few minutes. Some steps may need your permission.
+                  </Text>
+                  <Link href="/privacy">Read the privacy policy before setup</Link>
+                  <Text type="supporting" color="secondary" style={{ maxWidth: "48ch" }}>
+                    Keep this app open during setup. If you need to leave, use Exit setup so the app
+                    can restore your device settings.
+                  </Text>
+                </VStack>
+                <VStack gap={6} style={{ flex: "1 1 calc(var(--spacing-10) * 10)", minWidth: 0 }}>
+                  <VStack
+                    gap={0}
+                    as="ol"
+                    aria-label="What setup checks"
+                    style={{ listStyle: "none", margin: 0, padding: 0 }}
+                  >
+                    {[
+                      ["Your workspace", "Fullscreen, connected displays and keyboard setup."],
+                      ["Your device", "Restricted apps and device compatibility."],
+                      ["Your camera", "Camera access, face scan and presence check."],
+                      ["Audio & connection", "Microphone access and connection checks."],
+                    ].map(([title, detail], index) => (
+                      <HStack
+                        as="li"
+                        key={title}
+                        gap={4}
+                        align="start"
+                        style={{
+                          paddingBlock: "var(--spacing-5)",
+                          borderBottom: "var(--border-width) solid var(--color-border)",
+                        }}
+                      >
+                        <Text
+                          type="supporting"
+                          color="secondary"
+                          style={{
+                            paddingTop: "var(--spacing-1)",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          0{index + 1}
+                        </Text>
+                        <VStack gap={1} style={{ minWidth: 0 }}>
+                          <Text weight="semibold">{title}</Text>
+                          <Text color="secondary">{detail}</Text>
+                        </VStack>
+                      </HStack>
+                    ))}
+                  </VStack>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="lg"
+                    label="Begin setup"
+                    onClick={() => setCurrentStage(1)}
+                    style={{
+                      width: "100%",
+                      minHeight: "calc(var(--spacing-10) + var(--spacing-1))",
+                    }}
+                  />
+                  <Text type="supporting" color="secondary">
+                    {dryRun
+                      ? "A practice run helps you find issues before exam day."
+                      : "Your contest’s requirements determine whether you can continue."}
+                  </Text>
+                </VStack>
+              </HStack>
+            )}
+
+            {dryRunComplete && (
+              <VStack
+                style={{
+                  width: "100%",
+                  maxWidth: "calc(var(--spacing-10) * 20)",
+                  marginInline: "auto",
+                }}
+              >
+                <DryRunSummary
+                  results={results}
+                  warningDetails={warningDetails}
+                  networkOutcome={dryRunNetwork}
+                  onDone={() => router.push("/home")}
+                />
               </VStack>
-              <Button type="button" variant="primary" size="lg" label="Begin setup" onClick={() => setCurrentStage(1)} style={{ width: "100%", minHeight: "calc(var(--spacing-10) + var(--spacing-1))" }} />
-              <Text type="supporting" color="secondary">{dryRun ? "A practice run helps you find issues before exam day." : "Your contest’s requirements determine whether you can continue."}</Text>
-            </VStack>
-          </HStack>}
+            )}
 
-          {dryRunComplete && <VStack style={{ width: "100%", maxWidth: "calc(var(--spacing-10) * 20)", marginInline: "auto" }}><DryRunSummary results={results} warningDetails={warningDetails} networkOutcome={dryRunNetwork} onDone={() => router.push("/home")} /></VStack>}
-
-          {currentStage > 0 && !dryRunComplete && <HStack gap={10} align="start" style={{ flexDirection: wideLayout ? "row" : "column", paddingBottom: "var(--spacing-8)" }}>
-            <VStack as="aside" style={{ width: wideLayout ? "calc(var(--spacing-8) * 8)" : "100%", flexShrink: 0 }}>
-              <ProgressBar current={currentStage} results={results} compact={!wideLayout} blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)} />
-            </VStack>
-            <VStack gap={5} style={{ flex: 1, width: "100%", minWidth: 0 }}>
-              <Heading level={1} style={{ fontSize: "var(--font-size-xl)" }}>{dryRun ? "Practice setup" : "Pre-contest setup"}</Heading>
-              <Card padding={0} style={{ width: "100%", minWidth: 0, border: 0, borderRadius: "var(--radius-container)", background: "var(--color-background-card)" }}>
-                <VStack gap={5} data-onboarding-stage={currentStage} style={{ padding: "clamp(var(--spacing-4), 3vw, var(--spacing-8))", minWidth: 0, opacity: transitioning ? 0.5 : 1 }}>
-                  {isTooEarly && <Banner status="warning" title="Verification not open yet" description={<VStack gap={2}><Text>Opens in {formatCountdown(verifyOpensInMs)} ({contestWindow?.timezone || "UTC"})</Text><Text>You can start setup only in the configured verification window before contest start.</Text></VStack>} />}
-                  {isEnded && <Banner status="error" title="Contest has ended" description="Return home to review your contests." />}
-                  {canRunChecks && <>
-                    {STAGE_META[currentStage] && <VStack gap={2} style={{ paddingBottom: "var(--spacing-4)", borderBottom: "var(--border-width) solid var(--color-border)" }}>
-                      <Text type="supporting" color="secondary">{STAGE_META[currentStage].checking}</Text>
-                      {STAGE_META[currentStage].todo && <Text weight="medium">{STAGE_META[currentStage].todo}</Text>}
-                    </VStack>}
-                    {currentStage === FINAL_STAGE && dryRun && <VStack gap={4} role="status">
-                      <Heading level={2}>Finishing your practice setup.</Heading>
-                      <Text color="secondary">Keep this window open while the app finishes its checks and restores your device settings.</Text>
-                      <HStack gap={3} align="center"><Spinner /><Text type="supporting" color="secondary">Preparing your setup summary…</Text></HStack>
-                    </VStack>}
-                    {currentStage === FINAL_STAGE && !dryRun && contestWindow && waitMs > 0 && <VStack gap={5}>
-                      <Heading level={2}>{readyForStart ? "Ready for the start." : "Preparing your contest."}</Heading>
-                      <Text color="secondary">{readyForStart ? "Your workspace will open automatically when the contest begins. Keep this app open." : "Wait while your entry checks finish."}</Text>
-                      <VStack gap={2}><Text type="supporting" color="secondary">Starts in</Text><Text style={{ fontSize: "var(--font-size-4xl)", fontVariantNumeric: "tabular-nums", lineHeight: "var(--text-display-1-leading)" }}>{formatCountdown(waitMs)}</Text><Text type="supporting" color="secondary">{contestWindow.timezone || "UTC"}</Text></VStack>
-                    </VStack>}
-                    {currentStage === FINAL_STAGE && !dryRun && (!contestWindow || waitMs <= 0) && <VStack gap={4}>
-                      <Heading level={2}>Opening your contest.</Heading><Text color="secondary">Keep this window open while your secure workspace is prepared.</Text><HStack gap={3} align="center"><Spinner /><Text type="supporting" color="secondary">Checking contest entry…</Text></HStack>
-                    </VStack>}
-                {currentStage === 1 && (
-                  <Stage1_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
-                )}
-                {currentStage === 2 && (
-                  <Stage2_MonitorDetection
-                    onPass={advancePass}
-                    platform={platform}
-                    externalDisplayOverride={externalDisplayOverride}
-                  />
-                )}
-                {currentStage === 3 && (
-                  <Stage3_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
-                )}
-                {currentStage === 4 && <Stage4_EnvironmentValidation onPass={advancePass} />}
-                {currentStage === 5 && (
-                  <Stage5_RestrictedApps onPass={advancePass} onWarn={advanceWarn} />
-                )}
-                {currentStage === 6 && (
-                  <Stage6_VMDetection onPass={advancePass} onWarn={advanceWarn} />
-                )}
-                {currentStage === 7 && (
-                  <Stage7_CameraInit onPass={advancePass} onCameraReady={setCameraStream} />
-                )}
-                {currentStage === 8 && (
-                  <Stage8_FaceCalibration
-                    stream={cameraStream}
-                    onPass={advancePass}
-                    dryRun={dryRun}
-                    onFaceFallback={handleFaceFallback}
-                  />
-                )}
-                {currentStage === 9 && (
-                  <Stage9_PresenceVerification
-                    stream={cameraStream}
-                    onPass={advancePass}
-                    onWarn={advanceWarn}
-                  />
-                )}
-                {currentStage === 10 && (
-                  <Stage10_AudioVerification onPass={advancePass} onWarn={advanceWarn} />
-                )}
-                {currentStage === 11 && (
-                  <Stage11_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
-                )}
-                {currentStage === REVIEW_STAGE && (
-                  <Stage12_IntegrityConfirmation
+            {currentStage > 0 && !dryRunComplete && (
+              <HStack
+                gap={10}
+                align="start"
+                style={{
+                  flexDirection: wideLayout ? "row" : "column",
+                  paddingBottom: "var(--spacing-8)",
+                }}
+              >
+                <VStack
+                  as="aside"
+                  style={{
+                    width: wideLayout ? "calc(var(--spacing-8) * 8)" : "100%",
+                    flexShrink: 0,
+                  }}
+                >
+                  <ProgressBar
+                    current={currentStage}
                     results={results}
-                    warningDetails={warningDetails}
-                    onPass={advancePass}
+                    compact={!wideLayout}
                     blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
                   />
-                )}
-
-                  </>}
                 </VStack>
-              </Card>
-              {wideLayout ? <Text type="supporting" color="secondary">Need to leave? Exit setup is always available at the top of this page.</Text> :
-                <HStack gap={2} align="center" wrap="wrap">
-                  <Text type="supporting" color="secondary">Exit setup at the top, or press</Text>
-                  <SetupExitShortcut />
-                </HStack>}
-            </VStack>
-          </HStack>}
-        </>}
+                <VStack gap={5} style={{ flex: 1, width: "100%", minWidth: 0 }}>
+                  <Heading level={1} style={{ fontSize: "var(--font-size-xl)" }}>
+                    {dryRun ? "Practice setup" : "Pre-contest setup"}
+                  </Heading>
+                  <Card
+                    padding={0}
+                    style={{
+                      width: "100%",
+                      minWidth: 0,
+                      border: 0,
+                      borderRadius: "var(--radius-container)",
+                      background: "var(--color-background-card)",
+                    }}
+                  >
+                    <VStack
+                      gap={5}
+                      data-onboarding-stage={currentStage}
+                      style={{
+                        padding: "clamp(var(--spacing-4), 3vw, var(--spacing-8))",
+                        minWidth: 0,
+                        opacity: transitioning ? 0.5 : 1,
+                      }}
+                    >
+                      {isTooEarly && (
+                        <Banner
+                          status="warning"
+                          title="Verification not open yet"
+                          description={
+                            <VStack gap={2}>
+                              <Text>
+                                Opens in {formatCountdown(verifyOpensInMs)} (
+                                {contestWindow?.timezone || "UTC"})
+                              </Text>
+                              <Text>
+                                You can start setup only in the configured verification window
+                                before contest start.
+                              </Text>
+                            </VStack>
+                          }
+                        />
+                      )}
+                      {isEnded && (
+                        <Banner
+                          status="error"
+                          title="Contest has ended"
+                          description="Return home to review your contests."
+                        />
+                      )}
+                      {canRunChecks && (
+                        <>
+                          {STAGE_META[currentStage] && (
+                            <VStack
+                              gap={2}
+                              style={{
+                                paddingBottom: "var(--spacing-4)",
+                                borderBottom: "var(--border-width) solid var(--color-border)",
+                              }}
+                            >
+                              <Text type="supporting" color="secondary">
+                                {STAGE_META[currentStage].checking}
+                              </Text>
+                              {STAGE_META[currentStage].todo && (
+                                <Text weight="medium">{STAGE_META[currentStage].todo}</Text>
+                              )}
+                            </VStack>
+                          )}
+                          {currentStage === FINAL_STAGE && dryRun && (
+                            <VStack gap={4} role="status">
+                              <Heading level={2}>Finishing your practice setup.</Heading>
+                              <Text color="secondary">
+                                Keep this window open while the app finishes its checks and restores
+                                your device settings.
+                              </Text>
+                              <HStack gap={3} align="center">
+                                <Spinner />
+                                <Text type="supporting" color="secondary">
+                                  Preparing your setup summary…
+                                </Text>
+                              </HStack>
+                            </VStack>
+                          )}
+                          {currentStage === FINAL_STAGE &&
+                            !dryRun &&
+                            contestWindow &&
+                            waitMs > 0 && (
+                              <VStack gap={5}>
+                                <Heading level={2}>
+                                  {readyForStart
+                                    ? "Ready for the start."
+                                    : "Preparing your contest."}
+                                </Heading>
+                                <Text color="secondary">
+                                  {readyForStart
+                                    ? "Your workspace will open automatically when the contest begins. Keep this app open."
+                                    : "Wait while your entry checks finish."}
+                                </Text>
+                                <VStack gap={2}>
+                                  <Text type="supporting" color="secondary">
+                                    Starts in
+                                  </Text>
+                                  <Text
+                                    style={{
+                                      fontSize: "var(--font-size-4xl)",
+                                      fontVariantNumeric: "tabular-nums",
+                                      lineHeight: "var(--text-display-1-leading)",
+                                    }}
+                                  >
+                                    {formatCountdown(waitMs)}
+                                  </Text>
+                                  <Text type="supporting" color="secondary">
+                                    {contestWindow.timezone || "UTC"}
+                                  </Text>
+                                </VStack>
+                              </VStack>
+                            )}
+                          {currentStage === FINAL_STAGE &&
+                            !dryRun &&
+                            (!contestWindow || waitMs <= 0) && (
+                              <VStack gap={4}>
+                                <Heading level={2}>Opening your contest.</Heading>
+                                <Text color="secondary">
+                                  Keep this window open while your secure workspace is prepared.
+                                </Text>
+                                <HStack gap={3} align="center">
+                                  <Spinner />
+                                  <Text type="supporting" color="secondary">
+                                    Checking contest entry…
+                                  </Text>
+                                </HStack>
+                              </VStack>
+                            )}
+                          {currentStage === 1 && (
+                            <Stage1_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
+                          )}
+                          {currentStage === 2 && (
+                            <Stage2_MonitorDetection
+                              onPass={advancePass}
+                              platform={platform}
+                              externalDisplayOverride={externalDisplayOverride}
+                            />
+                          )}
+                          {currentStage === 3 && (
+                            <Stage3_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
+                          )}
+                          {currentStage === 4 && (
+                            <Stage4_EnvironmentValidation onPass={advancePass} />
+                          )}
+                          {currentStage === 5 && (
+                            <Stage5_RestrictedApps onPass={advancePass} onWarn={advanceWarn} />
+                          )}
+                          {currentStage === 6 && (
+                            <Stage6_VMDetection onPass={advancePass} onWarn={advanceWarn} />
+                          )}
+                          {currentStage === 7 && (
+                            <Stage7_CameraInit
+                              onPass={advancePass}
+                              onCameraReady={setCameraStream}
+                            />
+                          )}
+                          {currentStage === 8 && (
+                            <Stage8_FaceCalibration
+                              stream={cameraStream}
+                              onPass={advancePass}
+                              dryRun={dryRun}
+                              onFaceFallback={handleFaceFallback}
+                            />
+                          )}
+                          {currentStage === 9 && (
+                            <Stage9_PresenceVerification
+                              stream={cameraStream}
+                              onPass={advancePass}
+                              onWarn={advanceWarn}
+                            />
+                          )}
+                          {currentStage === 10 && (
+                            <Stage10_AudioVerification onPass={advancePass} onWarn={advanceWarn} />
+                          )}
+                          {currentStage === 11 && (
+                            <Stage11_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
+                          )}
+                          {currentStage === REVIEW_STAGE && (
+                            <Stage12_IntegrityConfirmation
+                              results={results}
+                              warningDetails={warningDetails}
+                              onPass={advancePass}
+                              blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
+                            />
+                          )}
+                        </>
+                      )}
+                    </VStack>
+                  </Card>
+                  {wideLayout ? (
+                    <Text type="supporting" color="secondary">
+                      Need to leave? Exit setup is always available at the top of this page.
+                    </Text>
+                  ) : (
+                    <HStack gap={2} align="center" wrap="wrap">
+                      <Text type="supporting" color="secondary">
+                        Exit setup at the top, or press
+                      </Text>
+                      <SetupExitShortcut />
+                    </HStack>
+                  )}
+                </VStack>
+              </HStack>
+            )}
+          </>
+        )}
       </VStack>
     </AppShell>
   );

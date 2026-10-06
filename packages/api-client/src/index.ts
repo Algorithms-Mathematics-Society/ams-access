@@ -318,6 +318,41 @@ export function strictContestPolicy(platform?: string): SessionPolicy {
   return sessionPolicy("strict_contest", platform);
 }
 
+/** Whether the native (Tauri) bridge exists in this runtime. */
+export function hasNativeBridge(globals: unknown = globalThis): boolean {
+  return Boolean(
+    (globals as { __TAURI__?: { core?: { invoke?: unknown } } } | undefined)?.__TAURI__?.core
+      ?.invoke
+  );
+}
+
+/**
+ * What the browser alone can say about the device.
+ *
+ * Only for running the client outside the Tauri shell, which is how
+ * development and manual testing happen. Every field the native layer owns
+ * stays `null`, which the readiness evaluator already reads as "not probed"
+ * rather than "probed and passed" — so this cannot make an unproctored machine
+ * look supervised. Camera and microphone are real: the browser genuinely knows
+ * those.
+ */
+export function browserDeviceState(options: {
+  cameraAvailable?: boolean | null;
+  microphoneAvailable?: boolean | null;
+  platform?: string | null;
+}): DeviceState {
+  return {
+    platform: options.platform ?? null,
+    camera_available: options.cameraAvailable ?? null,
+    microphone_available: options.microphoneAvailable ?? null,
+    network: null,
+    keyboard: null,
+    restricted_processes: null,
+    virtualization: null,
+    network_helper_ready: null,
+  };
+}
+
 export async function collectDeviceState(options: {
   networkHost?: string;
   /** Contest API base URL — enables the device-clock skew measurement. */
