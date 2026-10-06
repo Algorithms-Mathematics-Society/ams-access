@@ -54,7 +54,6 @@ import {
   type RunVerdict,
   type SubmissionAttemptRecord,
 } from "./submission-state";
-import { computeAutosaveDelayMs } from "./autosave-timing";
 import {
   parseDescription,
   splitProblemDescription,
@@ -87,7 +86,6 @@ import { CameraTile } from "./components/CameraTile";
 import { deriveSaveIndicator } from "./save-indicator";
 import { draftStatus, requestFinish, submissionComparison, type SourceSnapshot } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
-import { saveErrorAfterEdit } from "./save-edit-state";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
@@ -109,12 +107,10 @@ import {
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
-  getDrafts,
   getRun,
   getSession,
   heartbeat,
   listMySubmissions,
-  putDraft,
   run as runAgainstSamples,
   serverNow,
   submit as submitSolution,
@@ -130,11 +126,9 @@ const PROBLEM_SPLIT_WIDTH_KEY = "ams_contest_problem_split_width";
 const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
 
 // Autosave delay policy lives in ./autosave-timing (computeAutosaveDelayMs).
-// MAX_SAVE_RETRIES stays here — it caps handleSave's retry counter.
-const MAX_SAVE_RETRIES = 5;
-// Cap the interactive save/submit request so "Saving…" can't hang unbounded.
-// 10s > warm latency (esp. once api min-instances=1 removes the ~15s cold start)
-// and < "hung". On timeout the fetch aborts into handleSave's catch → saveError.
+// Caps the interactive submit request so it cannot hang unbounded. 10s is
+// comfortably above warm latency and well below "hung". Draft saving no longer
+// uses this: it is a local write that cannot time out.
 const SAVE_TIMEOUT_MS = 10_000;
 
 function isContestEditorTheme(value: string | null): value is ContestEditorThemeId {
@@ -300,27 +294,18 @@ export default function ContestPageClient() {
   const runResultAttemptIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const latestActiveDraftRef = useRef<{ questionId: string; fileId: string; source: string; language: string } | null>(null);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
   // even when the candidate has stopped typing (e.g. a transient network blip).
   const [saveRetryNonce, setSaveRetryNonce] = useState(0);
   // Consecutive failed-save count, drives the exponential backoff in the autosave
-  // effect. Reset to 0 on any successful save.
-  const saveRetryCountRef = useRef(0);
-  // True once we've blown past MAX_SAVE_RETRIES: the work is buffered locally and
-  // we back off to occasional retries instead of a tight retry loop.
-  const [savedLocallyOnly, setSavedLocallyOnly] = useState(false);
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // In-flight guards so double-clicks / rapid retries can't fire a second POST to
   // /submissions while one is already pending (prevents duplicate QUEUED rows).
   const runInFlightRef = useRef(false);
   const runVisitRef = useRef(0);
   // True when the initial draft load failed. The autosave path re-seeds its
   // revision from the server's reply instead of assuming it starts at zero.
-  const [draftsUnknown, setDraftsUnknown] = useState(false);
   // Problems whose editor was opened from this device's local buffer rather
   // than the server's draft, so the candidate can be told.
   const [restoredFromDevice, setRestoredFromDevice] = useState<string[]>([]);
@@ -461,7 +446,6 @@ export default function ContestPageClient() {
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
     "idle"
   );
-  const [serverDraftSnapshots, setServerDraftSnapshots] = useState<Record<string, SourceSnapshot>>({});
   const [submittedSources, setSubmittedSources] = useState<Record<string, SourceSnapshot>>({});
   const [dismissedRecoveryQuestions, setDismissedRecoveryQuestions] = useState<string[]>([]);
   const [finalDraftSaved, setFinalDraftSaved] = useState(false);
@@ -1017,29 +1001,21 @@ export default function ContestPageClient() {
 
       const answersMap: Record<string, { language: string; content: string }> = {};
       const restored: string[] = [];
-      let serverDrafts: Awaited<ReturnType<typeof getDrafts>> = [];
-      try {
-        serverDrafts = await getDrafts(live.uid);
-        setServerDraftSnapshots(Object.fromEntries(serverDrafts.map(draft => [draft.problem_label, { source: draft.source, language: draft.language }])));
-      } catch (err) {
-        console.error("Failed to load saved answers:", err);
-        setDraftsUnknown(true);
-      }
+      // No server drafts: work is local only. `restoreDraftWorkspace` and
+      // `chooseRestore` already handle a null server copy by taking the
+      // buffer, so this is the path they were written for.
       const restoredFiles: Record<string, EditorFile[]> = {};
       const restoredActiveFiles: Record<string, string> = {};
       // A first offline draft may have no server row at all. Enumerate the paper.
       for (const question of questions) {
-        const draft = serverDrafts.find(item => item.problem_label === question.id) ?? null;
         const buffered = readAnswerBuffer(localStorage, live.uid, question.id);
-        draftRevisionsRef.current[question.id] = Math.max(draft?.client_revision ?? 0, buffered?.revision ?? 0);
-        const workspace = restoreDraftWorkspace(question.id, question.starter_filename ?? questionFileName(question, "C++23"), buffered, draft);
+        draftRevisionsRef.current[question.id] = buffered?.revision ?? 0;
+        const workspace = restoreDraftWorkspace(question.id, question.starter_filename ?? questionFileName(question, "C++23"), buffered, null);
         if (workspace) {
           restoredFiles[question.id] = workspace.files;
           restoredActiveFiles[question.id] = workspace.activeFileId;
           answersMap[question.id] = { language: workspace.language, content: workspace.files.find(file => file.id === workspace.activeFileId)?.content ?? workspace.files[0]?.content ?? "" };
           if (workspace.recovered) restored.push(question.id);
-        } else if (draft) {
-          answersMap[question.id] = { language: draft.language, content: draft.source };
         }
       }
       setQuestionFiles(restoredFiles);
@@ -1211,7 +1187,6 @@ export default function ContestPageClient() {
     // (autosave re-fires ~600ms after this edit since hasUnsavedChanges stays
     // true), and handleSave clears + re-evaluates it from that attempt's
     // actual outcome.
-    setSaveError((prev) => saveErrorAfterEdit(prev));
     const qId = questions[activeQ]?.id ?? "";
     const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
     setQuestionFiles((prev) => ({
@@ -1384,106 +1359,31 @@ export default function ContestPageClient() {
     clearAnswerBuffer(localStorage, sessionId, questionId);
   }
 
-  // Each queued save owns this render's question, active file and source.
-  // Network writes are serialized; later renders cannot reinterpret a queued job.
+  // Work lives on the device only.
+  //
+  // Drafts used to be PUT to the server on a debounce, with a revision
+  // counter, an exponential-backoff retry, and a visible failure banner. All
+  // of it is gone: the local buffer is written on every change and read back
+  // on restart, so a crash or reload recovers the code without the network
+  // being involved at all.
+  //
+  // What that costs is honest: work does not follow the candidate to another
+  // machine, and clearing site data loses it. What it buys is that a flaky
+  // connection can no longer put "Save failed — retry before submitting" in
+  // front of someone mid-contest about code that was never actually at risk.
   async function doSave(): Promise<boolean> {
-    if (!questions[activeQ] || !sessionId) {
-      setSaveError("No active session is available. Reopen the contest and try again.");
-      return false;
-    }
-
+    if (!questions[activeQ] || !sessionId) return false;
     const qId = questions[activeQ].id;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      // Monotonic per problem. An autosave retried on a flaky connection can
-      // arrive after a newer one, and without a revision the later-arriving
-      // older write silently wins — which in an exam is indistinguishable
-      // from losing work. The server drops anything at or below what it holds.
-      const revision = (draftRevisionsRef.current[qId] ?? 0) + 1;
-      draftRevisionsRef.current[qId] = revision;
-
-      const stored = await putDraft(sessionId, qId, {
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+    writeLocalAnswerBuffer();
+    setSavedAnswers((prev) => ({
+      ...prev,
+      [qId]: {
         language: toLanguageId(selectedLanguage),
-        clientRevision: revision,
-      });
-      // Re-seed from what the server actually holds. If the initial draft
-      // load failed, our counter started at zero and every write would be
-      // dropped as stale for the rest of the exam — silently. A stale PUT
-      // returns the stored copy unchanged, so this self-heals in one trip.
-      draftRevisionsRef.current[qId] = Math.max(revision, stored.client_revision);
-      if (draftsUnknown) setDraftsUnknown(false);
-      setSavedAnswers((prev) => ({
-        ...prev,
-        [qId]: {
-          language: toLanguageId(selectedLanguage),
-          content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
-        },
-      }));
-
-      setServerDraftSnapshots(prev => ({ ...prev, [qId]: { source: stored.source, language: stored.language } }));
-      const sourceConfirmed = stored.source === (editorFiles.find(f => f.id === activeFileId)?.content ?? "") && stored.language === toLanguageId(selectedLanguage);
-      if (!sourceConfirmed) {
-        setSaveError("The server has a different draft version. Retrying your latest draft.");
-        setSaveRetryNonce(n => n + 1);
-        return false;
-      }
-
-      // An older queued write can be acknowledged after newer local edits.
-      // Keep their revision baseline current so reload does not mistake them
-      // for an older server copy merely because this request finished later.
-      const latestBuffer = readAnswerBuffer(localStorage, sessionId, qId);
-      if (latestBuffer) writeAnswerBuffer(localStorage, sessionId, qId, {
-        ...latestBuffer, revision: Math.max(latestBuffer.revision, stored.client_revision),
-      });
-
-      // Only the same active version can clear the dirty flag. An older PUT
-      // completing inside the next edit's debounce must not cancel that save.
-      const latest = latestActiveDraftRef.current;
-      const stillCurrent = latest?.questionId === qId && latest.fileId === activeFileId &&
-        latest.source === stored.source && latest.language === stored.language;
-      if (stillCurrent) {
-        setHasUnsavedChanges(false);
-        // Other tabs have no server copy: retain the complete workspace locally.
-        const buffered = readAnswerBuffer(localStorage, sessionId, qId);
-        if (buffered && activeContent(buffered) === stored.source && buffered.language === stored.language) {
-          if (buffered.files.length > 1) writeAnswerBuffer(localStorage, sessionId, qId, { ...buffered, revision: stored.client_revision });
-          else clearLocalAnswerBuffer(qId);
-        }
-      } else if (latest?.questionId === qId) {
-        setHasUnsavedChanges(true);
-        setSaveRetryNonce(n => n + 1);
-      }
-      saveRetryCountRef.current = 0;
-      setSavedLocallyOnly(false);
-      return true;
-    } catch (caught) {
-      // The bell, not a failure. The contest closed while this save was in
-      // flight — or while the candidate was offline and this is the flush.
-      // Their work is on the device and their last accepted version is with
-      // the server; saying "save failed" would read as data loss.
-      if (caught instanceof ProctorApiError && caught.status === 409) {
-        setSaving(false);
-        setSaveError(null);
-        setBellRung(true);
-        return false;
-      }
-      // The buffer write above means the work is safe locally regardless.
-      saveRetryCountRef.current += 1;
-      if (saveRetryCountRef.current >= MAX_SAVE_RETRIES) {
-        setSavedLocallyOnly(true);
-        setSaveError("Server save not confirmed. Keep this workspace open while autosave retries.");
-      } else {
-        setSaveError("Save failed. Check your connection and retry before submitting.");
-      }
-      // Re-arm the autosave so it keeps trying once connectivity returns, even if
-      // the candidate has stopped typing. The effect applies exponential backoff.
-      setSaveRetryNonce((n) => n + 1);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+        content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
+      },
+    }));
+    setHasUnsavedChanges(false);
+    return true;
   }
 
   // Capture this render's immutable question/file/source closure at request time.
@@ -2233,39 +2133,14 @@ export default function ContestPageClient() {
   const currentCode = activeFile?.content ?? "";
   latestActiveDraftRef.current = { questionId: currentQId, fileId: activeFileId, source: currentCode, language: toLanguageId(selectedLanguage) };
 
+  // The local buffer is the only persistence. Written on every change rather
+  // than debounced: a localStorage write costs nothing, and the debounce only
+  // ever existed to rate-limit the network call that no longer happens.
   useEffect(() => {
-    if (hasUnsavedChanges && sessionId && currentQId) writeLocalAnswerBuffer();
-    // The buffer is local and best-effort; network writes remain debounced below.
+    if (sessionId && currentQId) writeLocalAnswerBuffer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionFiles, questionActiveFile, selectedLanguage, currentQId, sessionId, hasUnsavedChanges]);
+  }, [questionFiles, questionActiveFile, selectedLanguage, currentQId, sessionId]);
 
-  // Debounced autosave: persist the active answer ~600ms after the candidate stops
-  // editing, so saving is invisible and they never sit on an "unsaved" warning.
-  // Re-arms on every content/language/file change (debounces typing) and on a
-  // failed save (retry). Switching question bumps currentQId, whose cleanup clears
-  // any pending timer; switchQuestion already saves the outgoing answer first.
-  useEffect(() => {
-    if (!hasUnsavedChanges || !sessionId || !currentQId) return;
-    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    // Fresh edit debounces at AUTOSAVE_DEBOUNCE_MS (~600ms); consecutive failures
-    // back off exponentially on the (separate) retry base. See ./autosave-timing.
-    const delayMs = computeAutosaveDelayMs(saveRetryCountRef.current);
-    autosaveTimerRef.current = setTimeout(() => {
-      void handleSave();
-    }, delayMs);
-    return () => {
-      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    hasUnsavedChanges,
-    currentCode,
-    selectedLanguage,
-    activeFileId,
-    currentQId,
-    sessionId,
-    saveRetryNonce,
-  ]);
   const currentDescriptionMd = currentQuestion?.description ?? "*No description provided.*";
   const problemSections = useMemo(
     () => splitProblemDescription(currentDescriptionMd),
@@ -2324,7 +2199,13 @@ export default function ContestPageClient() {
   // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
   // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
   // surfaced (and the debounced autosave keeps retrying in the background).
-  const saveIndicator = deriveSaveIndicator({ saveError, saving, hasUnsavedChanges });
+  // Nothing can fail and nothing is ever in flight: the write is a synchronous
+  // localStorage put. The indicator exists only to say so.
+  const saveIndicator = deriveSaveIndicator({
+    saveError: null,
+    saving: false,
+    hasUnsavedChanges: false,
+  });
   // Submit button state = SUBMIT only (never autosave) — see submit-button.ts.
   const submitButton = deriveSubmitButton({
     isSubmitting,
@@ -2410,11 +2291,7 @@ export default function ContestPageClient() {
       ? (testResults[runResultAttemptId] ?? null)
       : null;
   const latestAttempt = submissionsList[0] ?? null;
-  const activeDraftStatus = draftStatus({
-    current: { source: currentCode, language: toLanguageId(selectedLanguage) },
-    confirmed: serverDraftSnapshots[currentQId], saving,
-    failed: Boolean(saveError) || savedLocallyOnly, ended: bellRung || Boolean(sessionEnded),
-  });
+  const activeDraftStatus = draftStatus();
   const submissionSource = latestAttempt ? submittedSources[latestAttempt.id] : undefined;
   const compilerText = runResult ? runResult.compile_output : latestAttempt?.compile_output;
   const compilerDiagnostic = useMemo(() => compilerText ? firstCompilerError(compilerText) : null, [compilerText]);
@@ -2630,7 +2507,6 @@ export default function ContestPageClient() {
         <WorkspaceResizeHandle className="contest-splitter" direction="horizontal" value={problemPaneWidth} min={28} max={52} onChange={updateProblemWidth} containerSelector=".contest-body" label="Resize problem and editor panes" />
         <VStack gap={0} className="contest-editor-output" style={{ flex: 1, minHeight: 0, minWidth: 0, background: "var(--color-background-body)" }}>
           {restoredFromDevice.includes(currentQId) && !dismissedRecoveryQuestions.includes(currentQId) && <Banner status="info" container="section" title="Draft restored from this device" description={`Review the recovered code. ${activeDraftStatus.confirmed ? "This active file now matches the server draft." : "Its latest server save is not yet confirmed."}`} isDismissable onDismiss={() => setDismissedRecoveryQuestions(prev => [...prev, currentQId])} />}
-          {draftsUnknown && <Banner status="warning" container="section" title="Saved drafts could not be loaded" description="Check your code before submitting. Server save status is shown below." />}
           <EditorPanel
             diagnosticNavigation={diagnosticNavigation}
             draftStatusLabel={activeDraftStatus.label}
@@ -2661,7 +2537,6 @@ export default function ContestPageClient() {
             isEditorEmpty={isEditorEmpty}
             handleSubmitSolution={handleSubmitSolution}
             submissionError={submissionError}
-            saveError={saveError}
             activeQ={activeQ}
             activeFile={activeFile}
             currentCode={currentCode}

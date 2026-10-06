@@ -63,7 +63,6 @@ export interface EditorPanelProps {
   isEditorEmpty: boolean;
   handleSubmitSolution: () => Promise<void>;
   submissionError: string | null;
-  saveError: string | null;
   activeQ: number;
   activeFile: EditorFile | null;
   currentCode: string;
@@ -99,7 +98,6 @@ export function EditorPanel({
   isEditorEmpty,
   handleSubmitSolution,
   submissionError,
-  saveError,
   activeQ,
   activeFile,
   currentCode,
@@ -280,7 +278,6 @@ export function EditorPanel({
 
       {judgingUnavailableReason && <Banner status="warning" container="section" title={judgingUnavailableReason} role="status" />}
       {submissionError && <Banner status="error" container="section" title={submissionError} role="status" />}
-      {saveError && <Banner status="error" container="section" title={saveError} role="status" />}
 
       {/* Keep the lazy editor at a stable position and pass through its original
           props: presentation changes must not remount CodeMirror or lose drafts. */}

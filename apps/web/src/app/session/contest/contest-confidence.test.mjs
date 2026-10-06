@@ -2,11 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { draftStatus, sameSource, submissionComparison, requestFinish } from './contest-confidence.ts';
 const current = {source:'answer',language:'cpp'};
-test('saved is a content and language match, not absence of an error',()=>{
- assert.equal(draftStatus({current,saving:false,failed:false,ended:false}).confirmed,false);
+// Drafts no longer go to the server, so there is no in-flight or failed state
+// to describe: the write is a synchronous localStorage put on every change.
+// What the label must not do is imply a server copy exists.
+test('the draft label describes the device, never a server copy',()=>{
+ const status = draftStatus();
+ assert.equal(status.confirmed,true);
+ assert.match(status.label,/device/i);
+ assert.doesNotMatch(status.label,/server/i);
+});
+test('source comparison still distinguishes a language change',()=>{
  assert.equal(sameSource({...current,language:'python'},current),false);
- assert.equal(draftStatus({current,confirmed:current,saving:false,failed:false,ended:false}).confirmed,true);
- assert.equal(draftStatus({current,confirmed:{...current,source:'old'},saving:false,failed:false,ended:true}).label,'Latest draft not confirmed on server');
+ assert.equal(sameSource(current,current),true);
 });
 test('historical submissions with no source do not claim draft equivalence',()=>{
  assert.equal(submissionComparison(current), '');

@@ -564,32 +564,9 @@ export async function getProblem(contestUid: string, label: string): Promise<Pro
   return body.problem;
 }
 
-// ── drafts ────────────────────────────────────────────────────────────────
-
-export async function getDrafts(sessionUid: string): Promise<Draft[]> {
-  return request<Draft[]>("GET", `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts`);
-}
-
-/** Autosave one problem's source.
- *
- * `clientRevision` must increase monotonically per problem. A retry on a
- * flaky connection can arrive after a newer save, and without it the older
- * write wins — which in an exam is indistinguishable from losing work. */
-export async function putDraft(
-  sessionUid: string,
-  label: string,
-  input: { source: string; language: string; clientRevision: number }
-): Promise<Draft> {
-  return request<Draft>(
-    "PUT",
-    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts/${encodeURIComponent(label)}`,
-    {
-      source: input.source,
-      language: input.language,
-      client_revision: input.clientRevision,
-    }
-  );
-}
+// Drafts are not sent to the server. Work is written to the device on every
+// change and read back on restart (see contest/answer-buffer.ts), so there is
+// no draft endpoint to call and no save that can fail mid-contest.
 
 // ── running and submitting ────────────────────────────────────────────────
 

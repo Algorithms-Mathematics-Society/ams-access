@@ -5,15 +5,21 @@ export function sameSource(a: SourceSnapshot | null | undefined, b: SourceSnapsh
   return Boolean(a && a.source === b.source && a.language === b.language);
 }
 
-export function draftStatus({ current, confirmed, saving, failed, ended }: {
-  current: SourceSnapshot; confirmed?: SourceSnapshot; saving: boolean; failed: boolean; ended: boolean;
-}): { label: string; confirmed: boolean } {
-  const matches = sameSource(confirmed, current);
-  if (matches) return { label: "Saved to server", confirmed: true };
-  if (ended) return { label: "Latest draft not confirmed on server", confirmed: false };
-  if (failed) return { label: "Server save not confirmed · retrying", confirmed: false };
-  if (saving) return { label: "Saving to server…", confirmed: false };
-  return { label: "Not yet saved to server", confirmed: false };
+/**
+ * Where the candidate's work currently is.
+ *
+ * Drafts are not sent to the server. They are written to this device on every
+ * change and read back on restart, so there is no in-flight state to report
+ * and no failure mode to warn about — which is the point: the old version
+ * could put "Server save not confirmed · retrying" in front of someone
+ * mid-contest about code that was never at risk, and a flaky connection made
+ * that a routine sight rather than an alarming one.
+ *
+ * Kept as a function rather than inlined so the footer keeps one place to ask,
+ * and so restoring server drafts later means changing this and nothing else.
+ */
+export function draftStatus(): { label: string; confirmed: boolean } {
+  return { label: "Saved on this device", confirmed: true };
 }
 
 export function submissionComparison(current: SourceSnapshot, submitted?: SourceSnapshot): string {
