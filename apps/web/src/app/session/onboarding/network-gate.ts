@@ -1,32 +1,33 @@
 /**
- * Whether a failure to raise the egress firewall should stop a candidate.
+ * What to record when the egress firewall does not come up.
  *
- * This exists because two correct decisions collided. Flipping the default
- * Windows build to `asInvoker` was deliberate — contestants install at home
- * and the firewall was never wanted there. But Windows egress lockdown is
- * `netsh advfirewall firewall add rule`, which needs elevation, so
- * `enable_network_lockdown` short-circuits and returns `false` on such a
- * build. Its comment in lib.rs explains why that is safe:
+ * It never stops a candidate. Egress lockdown needs privilege the exam shell
+ * deliberately does not hold -- Windows releases ship `asInvoker` because
+ * contestants install at home, Linux runs unelevated so GTK, WebKit, the
+ * camera and the microphone work at all, and macOS needs a LaunchDaemon the
+ * candidate installs by consenting to an admin prompt. A control that depends
+ * on privilege the candidate can simply decline is not a control, and building
+ * a gate on one means the gate fails open for anyone willing to say no, while
+ * falling shut on honest candidates whose machine is merely ordinary.
  *
- *   > `false` is the existing "not applied" answer — the caller already
- *   > treats it as advisory, because this has always been best-effort on
- *   > machines where it could not engage.
+ * So the firewall is best-effort, and the thing of actual value is the record:
+ * an invigilator can see which sessions ran with open egress and weigh that
+ * against the rest of the proctoring signal. That is also the honest framing --
+ * three other layers already called this advisory (the Rust comment on
+ * `enable_network_lockdown`, the readiness policy in `packages/api-client`,
+ * and core-rs, which gives it `BlockingSeverity::Warning`). This module used to
+ * be the one that disagreed, and it was the one the candidate met.
  *
- * The caller did not. It turned any falsy result into a `setPolicyBlock` and
- * an early return, and the only escape was a build-time flag that must never
- * ship. So on a release build *every* Windows candidate was stopped at the
- * final stage, and told "we couldn't secure your network for the exam" —
- * which was not even true, because that build never tried.
+ * The distinction that survives is not block-vs-enter. It is whether a
+ * firewall was *expected* here, because that decides whether the open egress
+ * is worth an invigilator's attention:
  *
- * Three layers already agreed this check is advisory: the Rust comment above,
- * the readiness policy in `packages/api-client` ("egress lockdown is applied
- * best-effort during the contest and is NOT a hard entry gate"), and core-rs.
- * This module is the fourth, and it is the one the candidate meets.
- *
- * The distinction that makes it safe to relax is one the native layer already
- * reports, and it turns on intent rather than outcome: a build that never
- * asked to elevate is not failing when it has no firewall, while a build that
- * asked and was refused is. Only the second is a block.
+ * * A build that never asked to elevate has nothing to report. Every ordinary
+ *   contestant runs one, and filing a violation for each would put the whole
+ *   cohort in the feed on contest day and cost the feed its meaning.
+ * * A build that asked and was refused, or a helper that should be installed
+ *   and is not, is recorded -- that is a candidate who declined, or a machine
+ *   that changed under them, and it is exactly what the feed is for.
  */
 
 /**
@@ -35,8 +36,8 @@
  * `windows_msix` is a Store build that can never elevate by construction.
  *
  * `windows_no_admin` is deliberately absent. It is the shape that means a
- * firewall build asked for elevation and did not get it — the one case where
- * the old message was honest, and the one that must keep blocking.
+ * firewall build asked for elevation and did not get it, so its open egress is
+ * worth recording -- someone declined a prompt that was meant to be accepted.
  */
 const FIREWALL_NOT_EXPECTED = ["windows_no_firewall", "windows_msix"];
 
@@ -44,19 +45,10 @@ export type NetworkLockdownDecision =
   /** Egress is restricted to the allowlist. Nothing to tell the candidate. */
   | { decision: "engaged"; eventKind: string; detail: string; violation: false }
   /**
-   * The candidate goes in with open egress. Recorded so an invigilator can
-   * see the session is under-protected — but not called a failure, and not a
-   * wall.
+   * The candidate goes in with open egress. Never a wall; `violation` says
+   * whether an invigilator should be told.
    */
-  | { decision: "advisory"; eventKind: string; detail: string; violation: boolean }
-  /** A firewall was expected here and did not engage. Stop. */
-  | {
-      decision: "blocked";
-      eventKind: string;
-      detail: string;
-      violation: true;
-      message: string;
-    };
+  | { decision: "advisory"; eventKind: string; detail: string; violation: boolean };
 
 export type NetworkLockdownInput = {
   /**
@@ -72,9 +64,6 @@ export type NetworkLockdownInput = {
   /** `isGatingRelaxed()` — dev builds only, never set in a shipping build. */
   relaxed: boolean;
 };
-
-const BLOCK_MESSAGE =
-  "We couldn't secure your network for the exam — the proctoring network component may not be installed or still needs your permission. Re-run device setup, then try again. Starting now would leave your internet open, which a secured contest does not allow.";
 
 export function decideNetworkLockdown(input: NetworkLockdownInput): NetworkLockdownDecision {
   if (input.engaged) {
@@ -115,11 +104,16 @@ export function decideNetworkLockdown(input: NetworkLockdownInput): NetworkLockd
     };
   }
 
+  // A firewall was expected here and did not come up: an elevated Windows
+  // build, `windows_no_admin` (asked to elevate and was refused), a macOS or
+  // Linux session whose privileged helper is absent, or a platform we cannot
+  // identify. The candidate still enters -- none of these is something they
+  // can necessarily fix at the desk, and none of them is worth voiding a sitting
+  // over by itself -- but every one is recorded for the invigilator.
   return {
-    decision: "blocked",
+    decision: "advisory",
     eventKind: "network_lockdown_failed",
     detail,
     violation: true,
-    message: BLOCK_MESSAGE,
   };
 }

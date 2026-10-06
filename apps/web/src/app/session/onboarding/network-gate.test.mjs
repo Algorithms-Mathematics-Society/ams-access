@@ -1,16 +1,20 @@
-// Whether a missing egress firewall stops a candidate.
+// What a missing egress firewall is worth: a record, never a wall.
 //
-// The bug this replaces stopped every one of them. The default Windows build
-// runs unelevated by design, `netsh` needs elevation, so
-// `enable_network_lockdown` returns false — and onboarding turned that into a
-// hard block with a message ("we couldn't secure your network") describing a
-// failure that never happened, because nothing was attempted.
+// Two bugs sit behind this. The first blocked every candidate on the ordinary
+// unelevated Windows release, with a message ("we couldn't secure your
+// network") describing a failure that never happened because nothing was
+// attempted. The fix split "never asked to elevate" from "asked and was
+// refused" -- correct, but it kept a gate on the second.
 //
-// The test that matters most is the last one: relaxing this for the ordinary
-// build must NOT relax it for `windows_no_admin`, which is a firewall build
-// that asked for elevation and was refused. That one is a real failure, and a
-// regression here would disarm the gate silently — exactly the shape of the
-// bug it is replacing.
+// A gate cannot stand on a privilege the candidate can decline. It fails open
+// for anyone willing to say no to the prompt, and falls shut on an honest
+// machine that is merely ordinary. So the firewall is best-effort everywhere
+// and the record is the control. The distinction that survives is whether a
+// firewall was EXPECTED, because that decides whether the open egress is worth
+// an invigilator's attention.
+//
+// The test that matters most is the last one: nothing may return a blocking
+// decision, whatever the platform.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -71,15 +75,17 @@ test("an unelevated build that never wanted a firewall is not 'relaxed'", () => 
   assert.equal(out.violation, false);
 });
 
-test("Linux without the privileged helper still blocks", () => {
+test("Linux without the privileged helper enters, and is recorded", () => {
   const out = decideNetworkLockdown({ ...base, platform: "linux" });
-  assert.equal(out.decision, "blocked");
+  assert.equal(out.decision, "advisory");
   assert.equal(out.violation, true);
-  assert.match(out.message, /couldn't secure your network/);
+  assert.equal(out.eventKind, "network_lockdown_failed");
 });
 
-test("an unknown platform blocks rather than assuming it is safe", () => {
-  assert.equal(decideNetworkLockdown({ ...base, platform: null }).decision, "blocked");
+test("an unknown platform is recorded rather than assumed safe", () => {
+  const out = decideNetworkLockdown({ ...base, platform: null });
+  assert.equal(out.decision, "advisory");
+  assert.equal(out.violation, true);
 });
 
 test("the error from a rejected or timed-out call is carried into the record", () => {
@@ -96,19 +102,20 @@ test("a silent false still gets a detail, so the record is never blank", () => {
   assert.equal(out.detail, "enable_network_lockdown returned false");
 });
 
-test("windows_no_admin — a firewall build refused elevation — still blocks", () => {
-  // The whole point of the three-way split in the native layer. This build
-  // was MEANT to have a firewall and does not, so the candidate is stopped
-  // and the original message is the honest one. If this ever starts passing
-  // as advisory, the gate is disarmed for the machines it exists to catch.
+test("windows_no_admin — a firewall build refused elevation — is recorded", () => {
+  // The whole point of the three-way split in the native layer. This build was
+  // MEANT to have a firewall and does not: someone declined a prompt that was
+  // meant to be accepted. It no longer stops them, but it must stay a
+  // violation, or the one shape worth an invigilator's attention goes silent.
   const out = decideNetworkLockdown({ ...base, platform: "windows_no_admin" });
-  assert.equal(out.decision, "blocked");
   assert.equal(out.violation, true);
-  assert.match(out.message, /couldn't secure your network/);
+  assert.equal(out.eventKind, "network_lockdown_failed");
 });
 
-test("an elevated Windows build that fails to lock down still blocks", () => {
-  assert.equal(decideNetworkLockdown({ ...base, platform: "windows" }).decision, "blocked");
+test("an elevated Windows build that fails to lock down is recorded", () => {
+  const out = decideNetworkLockdown({ ...base, platform: "windows" });
+  assert.equal(out.violation, true);
+  assert.equal(out.eventKind, "network_lockdown_failed");
 });
 
 test("platform matching is case-insensitive", () => {
@@ -116,4 +123,45 @@ test("platform matching is case-insensitive", () => {
     decideNetworkLockdown({ ...base, platform: "Windows_No_Firewall" }).decision,
     "advisory"
   );
+});
+
+test("no platform, engaged state or error can produce a blocking decision", () => {
+  // The guarantee this module now makes. Egress lockdown is best-effort
+  // because it rests on privilege the exam shell does not hold, so no input
+  // may put a wall in front of a candidate.
+  const platforms = [
+    "windows",
+    "windows_no_admin",
+    "windows_no_firewall",
+    "windows_msix",
+    "linux",
+    "macos",
+    "something_new",
+    null,
+  ];
+  for (const platform of platforms) {
+    for (const engaged of [true, false]) {
+      for (const relaxed of [true, false]) {
+        for (const error of [null, "helper unresponsive"]) {
+          const out = decideNetworkLockdown({ platform, engaged, error, relaxed });
+          assert.ok(
+            out.decision === "engaged" || out.decision === "advisory",
+            `${platform}/${engaged}/${relaxed} produced ${out.decision}`
+          );
+          assert.equal(out.message, undefined, `${platform} still carries a block message`);
+        }
+      }
+    }
+  }
+});
+
+test("every non-engaged outcome still carries a usable reason", () => {
+  // The record is the control now, so a blank detail would be the whole
+  // failure: an invigilator reading the feed must be able to tell a declined
+  // admin prompt from a build that never asked.
+  for (const platform of ["windows", "windows_no_admin", "windows_no_firewall", "linux", null]) {
+    const out = decideNetworkLockdown({ ...base, platform });
+    assert.ok(out.detail && out.detail.length > 0, String(platform));
+    assert.ok(out.eventKind.startsWith("network_lockdown_"), String(platform));
+  }
 });

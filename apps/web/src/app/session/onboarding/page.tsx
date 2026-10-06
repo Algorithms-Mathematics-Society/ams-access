@@ -512,14 +512,15 @@ export default function OnboardingPage() {
       const devicePlatform = deviceState.platform ?? platform ?? undefined;
 
       // SEC-3: egress lockdown is the core anti-cheat control, so a build that
-      // was meant to raise a firewall and did not get one is a hard stop, with
-      // a durable server-visible violation so the proctor sees the attempt
-      // rather than the candidate slipping in with open internet.
+      // was meant to raise a firewall and did not get one enters anyway, with a
+      // durable server-visible violation so the proctor can see the session ran
+      // with open internet and weigh it against the rest of the signal.
       //
-      // A build that never asked to elevate is a different thing entirely, and
-      // used to be treated as the same thing — which blocked every candidate on
-      // the ordinary Windows release. It now enters with the fact recorded.
-      // decideNetworkLockdown owns that distinction; see network-gate.ts.
+      // Nobody is stopped here. A privilege the candidate can decline cannot
+      // carry a gate: it would fail open for anyone who says no and fall shut on
+      // an ordinary unelevated machine that did nothing wrong. What survives is
+      // whether a firewall was expected, which decides whether the open egress
+      // is worth reporting. decideNetworkLockdown owns that; see network-gate.ts.
       // Outside the desktop shell (dev / browser preview) there is nothing to
       // lock, so this is skipped.
       const tauriBridge = window.__TAURI__;
@@ -564,16 +565,14 @@ export default function OnboardingPage() {
           },
         }).catch(() => {});
 
-        if (gate.decision === "blocked") {
-          setReadyForStart(false);
-          setTransitioning(false);
-          setPolicyBlock(gate.message);
-          return;
-        }
-        if (gate.decision === "advisory" && gate.violation) {
-          // TEST MODE ONLY — a relaxed build entering with open internet. This
-          // branch must never be reachable in a shipping build; the ordinary
-          // unelevated release takes the non-violation advisory path above.
+        // No block. Egress lockdown needs privilege the shell does not hold and
+        // the candidate can decline, so gating on it would fail open for anyone
+        // unwilling and fall shut on an ordinary machine. The violation above is
+        // the control; this is just the local trace of it.
+        // The server-side violation above is the control. This is only the local
+        // trace, and it must not claim TEST MODE: on a shipping build this path
+        // is reached by an ordinary candidate who declined an admin prompt.
+        if (gate.violation && isGatingRelaxed()) {
           warnGatingRelaxed(
             `network lockdown NOT engaged at launch (${gate.detail}) — entering contest with OPEN internet`
           );
