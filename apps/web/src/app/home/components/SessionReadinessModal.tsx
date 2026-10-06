@@ -18,6 +18,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { parseLogLine } from "./SecurityOperationsLog";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { ReadinessState, ReadinessStatus } from "./types";
+import { hasNativeBridge } from "./readiness-status";
 import type { ReadinessReport } from "@ams/api-client";
 
 // Visible text supplements the status dot for every required and advisory check.
@@ -207,8 +208,24 @@ export function SessionReadinessModal({
   const requiredChecksPassed =
     !!activeReport &&
     requiredPolicyChecks.every((check) => check.outcome === "pass" && !check.blocking);
-  const policyAllowsProceed =
-    !!activeReport && activeReport.decision !== "blocked" && requiredChecksPassed;
+
+  // Readiness is evaluated natively, so running the client in a browser
+  // produces no report at all and entry could never be offered — which made
+  // the contest room untestable outside a packaged build.
+  //
+  // This cannot fire in a shipped build: the Tauri shell always has the
+  // bridge, so `unproctoredDevSession` is false there and entry depends on
+  // the report exactly as before. It is also not a new hole — the contest
+  // room already opens its lock gate in this situation, saying so in as many
+  // words ("Tauri unavailable (dev/browser) — no real lockdown exists here"),
+  // and the distributed artefact is the desktop app.
+  //
+  // It is deliberately loud. A session entered this way is unproctored, and
+  // the modal says so rather than looking like a normal pass.
+  const unproctoredDevSession = !hasNativeBridge();
+  const policyAllowsProceed = unproctoredDevSession
+    ? true
+    : !!activeReport && activeReport.decision !== "blocked" && requiredChecksPassed;
   const entryWindowAllowed = entryWindow.status === "allowed";
   const canProceed = scanStatus === "done" && entryWindowAllowed && policyAllowsProceed;
   const primaryActionLabel = canProceed
@@ -356,6 +373,27 @@ export function SessionReadinessModal({
             </HStack>
           </VStack>
 
+          {unproctoredDevSession && (
+            <VStack
+              gap={1}
+              padding={3}
+              style={{
+                borderRadius: "var(--radius-md)",
+                border: "var(--border-width) solid var(--home-status-error-border-26)",
+                background: "var(--home-status-error-bg)",
+              }}
+            >
+              <Text style={{ color: "var(--theme-error-text)", fontWeight: 600 }}>
+                Unproctored development session
+              </Text>
+              <Text type="supporting">
+                This is a browser, not the AMS Access app, so none of the device checks can
+                run and nothing is being monitored. Entry is allowed here for testing only.
+                A real contest requires the installed app.
+              </Text>
+            </VStack>
+          )}
+
           <Grid columns={{ minWidth: 240, max: 2 }} gap={4} align="start">
             <VStack as="section" gap={0} style={{ minWidth: 0 }}>
               <VStack gap={3}>
@@ -372,7 +410,9 @@ export function SessionReadinessModal({
                   </Text>
                 </HStack>
                 <Text type="supporting">
-                  These checks must pass before this device can enter the contest.
+                  {unproctoredDevSession
+                    ? "Not run: these are native probes and this is a browser."
+                    : "These checks must pass before this device can enter the contest."}
                 </Text>
                 <VStack gap={0}>
                   {!activeReport && scanStatus === "done" ? (

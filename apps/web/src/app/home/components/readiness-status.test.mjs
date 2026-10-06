@@ -62,3 +62,18 @@ test("the bridge is detected by the invoke function, not merely the global", () 
   assert.equal(hasNativeBridge({ __TAURI__: { core: {} } }), false);
   assert.equal(hasNativeBridge({ __TAURI__: { core: { invoke: () => {} } } }), true);
 });
+
+// ── the dev entry path must be impossible in a shipped build ───────────────
+//
+// Entry in a browser depends on the native bridge being absent. A packaged
+// Tauri build always has it, so these pin the only thing that keeps the dev
+// affordance out of a real contest.
+
+test("a packaged build is never treated as a dev session", () => {
+  const packaged = { __TAURI__: { core: { invoke: () => {} } } };
+  assert.equal(hasNativeBridge(packaged), true, "entry must still require a readiness report");
+});
+
+test("a browser is treated as a dev session", () => {
+  assert.equal(hasNativeBridge({}), false);
+});
