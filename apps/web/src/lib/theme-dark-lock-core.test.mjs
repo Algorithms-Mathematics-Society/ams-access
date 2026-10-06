@@ -16,8 +16,18 @@ test("normalizePath: strips index.html then trailing slash; keeps root", () => {
   assert.equal(normalizePath(""), "/");
 });
 
-const LOCKED = ["/home/", "/home", "/home/index.html", "/session/contest/", "/session/onboarding/"];
-const UNLOCKED = ["/", "/login/", "/results/", "/home-x/", "/session/"];
+const LOCKED = ["/session/contest/", "/session/onboarding/", "/session/contest/index.html"];
+// /home is unlocked: its colours are tokens, so it follows the preference like /login.
+const UNLOCKED = [
+  "/",
+  "/login/",
+  "/results/",
+  "/home",
+  "/home/",
+  "/home/index.html",
+  "/home-x/",
+  "/session/",
+];
 
 test("isRouteDarkLocked: verified matrix", () => {
   for (const p of LOCKED) assert.equal(isRouteDarkLocked(p), true, `locked: ${p}`);

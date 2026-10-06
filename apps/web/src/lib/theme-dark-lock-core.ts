@@ -1,6 +1,10 @@
 // Pure route-dark-lock resolution — NO DOM, NO React, NO imports. Node-testable.
 // PARITY: buildDarkLockBody() and isRouteDarkLocked() MUST encode the SAME rule (parity test).
-export const DARK_LOCKED_ROUTES = ["/home", "/session/onboarding", "/session/contest"] as const;
+// /home came off the lock once its colours became tokens: getThemeColors() ignores its
+// argument and returns var(--color-*) throughout, so the CSS lock has nothing left to
+// constrain there. The two session routes still carry raw hex and stay locked -- a
+// half-light exam screen is worse than a dark one.
+export const DARK_LOCKED_ROUTES = ["/session/onboarding", "/session/contest"] as const;
 
 /** Strip a trailing "/index.html", then a single trailing "/". Root "/" preserved. */
 export function normalizePath(pathname: string): string {

@@ -10,6 +10,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 function AccessMark(props: SVGProps<SVGSVGElement>) {
   return (
@@ -73,19 +74,20 @@ export function DashboardShell({
             <TopNavHeading heading="Access" logo={<Icon icon={AccessMark} color="accent" />} />
           }
           endContent={
-            <Button
-              label={signingOut ? "Signing out..." : "Sign out"}
-              variant="ghost"
-              isDisabled={signingOut}
-              onClick={onSignOut}
-              icon={<Icon icon={LogOut} size="sm" />}
-            />
+            <HStack gap={2} align="center">
+              <ThemeToggle />
+              <Button
+                label={signingOut ? "Signing out..." : "Sign out"}
+                variant="ghost"
+                isDisabled={signingOut}
+                onClick={onSignOut}
+                icon={<Icon icon={LogOut} size="sm" />}
+              />
+            </HStack>
           }
         />
       }
-      sideNav={
-        <WorkspacePanel activeNav={activeNav} onNavigate={navigate} calendar={calendar} />
-      }
+      sideNav={<WorkspacePanel activeNav={activeNav} onNavigate={navigate} calendar={calendar} />}
     >
       <VStack
         gap={6}
@@ -97,7 +99,13 @@ export function DashboardShell({
         }}
       >
         <HStack gap={4} justify="between" align="end" wrap="wrap">
-          <VStack gap={2} style={{ minWidth: 0, flex: activeNav === "settings" ? "1 1 calc(var(--spacing-10) * 6)" : 1 }}>
+          <VStack
+            gap={2}
+            style={{
+              minWidth: 0,
+              flex: activeNav === "settings" ? "1 1 calc(var(--spacing-10) * 6)" : 1,
+            }}
+          >
             <Text type="supporting" maxLines={1}>
               {displayName || "Your workspace"}
             </Text>
@@ -149,7 +157,11 @@ export function DashboardColumns({
   );
 }
 
-function WorkspacePanel({ activeNav, onNavigate, calendar }: {
+function WorkspacePanel({
+  activeNav,
+  onNavigate,
+  calendar,
+}: {
   activeNav: Destination;
   onNavigate: (nav: Destination) => void;
   calendar?: ReactNode;
@@ -161,8 +173,12 @@ function WorkspacePanel({ activeNav, onNavigate, calendar }: {
         <SideNav style={{ width: "100%", height: "auto", minHeight: 0 }}>
           <SideNavSection title="Workspace">
             {destinations.map((item) => (
-              <SideNavItem key={item.id} label={item.label} isSelected={activeNav === item.id}
-                onClick={() => onNavigate(item.id)} />
+              <SideNavItem
+                key={item.id}
+                label={item.label}
+                isSelected={activeNav === item.id}
+                onClick={() => onNavigate(item.id)}
+              />
             ))}
           </SideNavSection>
         </SideNav>
@@ -174,5 +190,7 @@ function WorkspacePanel({ activeNav, onNavigate, calendar }: {
 
 function MobileCalendar({ children }: { children?: ReactNode }) {
   const { isMobile } = useAppShellMobile();
-  return isMobile && children ? <VStack maxWidth="calc(var(--spacing-10) * 10)">{children}</VStack> : null;
+  return isMobile && children ? (
+    <VStack maxWidth="calc(var(--spacing-10) * 10)">{children}</VStack>
+  ) : null;
 }
