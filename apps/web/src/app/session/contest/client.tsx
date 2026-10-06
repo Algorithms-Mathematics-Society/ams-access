@@ -9,13 +9,16 @@ import { Banner } from "@astryxdesign/core/Banner";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { TextArea } from "@astryxdesign/core/TextArea";
-import { canNavigateDiagnostic, firstCompilerError, type DiagnosticNavigation } from "./compiler-diagnostics";
+import {
+  canNavigateDiagnostic,
+  firstCompilerError,
+  type DiagnosticNavigation,
+} from "./compiler-diagnostics";
 import { ContestOverlay } from "./components/ContestOverlay";
 import { WorkspaceControls } from "./components/WorkspaceControls";
 import { WorkspaceResizeHandle } from "./components/WorkspaceResizeHandle";
 import { boundedPercent, parseQuestionMarks } from "./workspace-preferences";
 import { CONTEST_STYLES } from "./components/workspace-styles";
-
 
 import {
   useState,
@@ -84,7 +87,12 @@ import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
 import { deriveSaveIndicator } from "./save-indicator";
-import { draftStatus, requestFinish, submissionComparison, type SourceSnapshot } from "./contest-confidence";
+import {
+  draftStatus,
+  requestFinish,
+  submissionComparison,
+  type SourceSnapshot,
+} from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
@@ -117,7 +125,15 @@ import {
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
 
-const SUPPORT_CATEGORIES = [{ value: "camera_not_detected", label: "Camera not detected" }, { value: "internet_unstable", label: "Internet unstable" }, { value: "app_crashed", label: "App crashed" }, { value: "fullscreen_issue", label: "Fullscreen issue" }, { value: "audio_issue", label: "Audio issue" }, { value: "submission_issue", label: "Submission issue" }, { value: "other", label: "Other issue" }];
+const SUPPORT_CATEGORIES = [
+  { value: "camera_not_detected", label: "Camera not detected" },
+  { value: "internet_unstable", label: "Internet unstable" },
+  { value: "app_crashed", label: "App crashed" },
+  { value: "fullscreen_issue", label: "Fullscreen issue" },
+  { value: "audio_issue", label: "Audio issue" },
+  { value: "submission_issue", label: "Submission issue" },
+  { value: "other", label: "Other issue" },
+];
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
@@ -274,8 +290,18 @@ export default function ContestPageClient() {
   const [editorFocused, setEditorFocused] = useState(false);
   const [markedQuestionIds, setMarkedQuestionIds] = useState<string[]>([]);
   const previousLayoutRef = useRef({ sidebarCollapsed: false, terminalCollapsed: false });
-  const [diagnosticNavigation, setDiagnosticNavigation] = useState<DiagnosticNavigation | null>(null);
-  const [runSourceSnapshot, setRunSourceSnapshot] = useState<(SourceSnapshot & { questionId: string; fileId: string; filename: string; problemTitle?: string }) | null>(null);
+  const [diagnosticNavigation, setDiagnosticNavigation] = useState<DiagnosticNavigation | null>(
+    null
+  );
+  const [runSourceSnapshot, setRunSourceSnapshot] = useState<
+    | (SourceSnapshot & {
+        questionId: string;
+        fileId: string;
+        filename: string;
+        problemTitle?: string;
+      })
+    | null
+  >(null);
   const [problemTab, setProblemTab] = useState<ProblemSectionKey>("statement");
   const [copiedSampleKey, setCopiedSampleKey] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<RunAttempt | null>(null);
@@ -286,8 +312,8 @@ export default function ContestPageClient() {
   const [runTimedOut, setRunTimedOut] = useState(false);
   // Attempt id of the most recent "Run on Judge" (sample-only) run. Used to pull
   // its per-test results out of `testResults` and render them LeetCode-style in
-  // the Output panel. RUN attempts are hidden from the Attempts history, so this
-  // is the only place their results surface.
+  // the run pane. RUN attempts are excluded from the submissions endpoint, so the
+  // run pane above the attempts list is the only place their results surface.
   const [runResultAttemptId, setRunResultAttemptId] = useState<string | null>(null);
   // Kept synced via effect below so fetchSubmissions (a useCallback NOT keyed on
   // runResultAttemptId) can read the LIVE value instead of a stale closure.
@@ -295,7 +321,12 @@ export default function ContestPageClient() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const latestActiveDraftRef = useRef<{ questionId: string; fileId: string; source: string; language: string } | null>(null);
+  const latestActiveDraftRef = useRef<{
+    questionId: string;
+    fileId: string;
+    source: string;
+    language: string;
+  } | null>(null);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
   // even when the candidate has stopped typing (e.g. a transient network blip).
   const [saveRetryNonce, setSaveRetryNonce] = useState(0);
@@ -362,10 +393,11 @@ export default function ContestPageClient() {
   const [reportSentSuccess, setReportSentSuccess] = useState(false);
   const [supportReportError, setSupportReportError] = useState<string | null>(null);
   // Local acknowledgements only: no organizer read/reply status is inferred.
-  const [sentReports, setSentReports] = useState<Array<{ sessionId: string; category: string; sentAt: string }>>([]);
+  const [sentReports, setSentReports] = useState<
+    Array<{ sessionId: string; category: string; sentAt: string }>
+  >([]);
   const supportInFlightRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [pendingCloseFileId, setPendingCloseFileId] = useState<string | null>(null);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
   const [cameraCollapsed, setCameraCollapsed] = useState(false);
@@ -389,11 +421,10 @@ export default function ContestPageClient() {
     type: "camera" | "mic";
     value: boolean;
   } | null>(null);
-  const [terminalTab, setTerminalTab] = useState<"stdout" | "logs" | "submissions">("stdout");
   // Deferred terminal-collapse feature. Shrink-to-tab-strip; the editor (flex:1) reclaims the
   // freed height automatically. Output is NEVER silently hidden on the exam: auto-expand is the
   // primary guarantee, the unread dot is the fallback. All of this only READS run state — the
-  // three renderers, isRunSubmission, setTerminalTab, and the run/submit handlers are untouched.
+  // three renderers, isRunSubmission, and the run/submit handlers are untouched.
   const [terminalCollapsed, setTerminalCollapsed] = useState(false);
   const [terminalUnread, setTerminalUnread] = useState(false);
   const terminalCollapsedRef = useRef(false);
@@ -402,7 +433,9 @@ export default function ContestPageClient() {
   const prevSubmittingRef = useRef(false);
   const [allSubmissionsList, setAllSubmissionsList] = useState<SubmissionAttemptRecord[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
-  const [submissionHistoryStatus, setSubmissionHistoryStatus] = useState<"loading" | "available" | "unavailable" | "stale">("loading");
+  const [submissionHistoryStatus, setSubmissionHistoryStatus] = useState<
+    "loading" | "available" | "unavailable" | "stale"
+  >("loading");
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, any[]>>({});
   const [testResultFilter, setTestResultFilter] = useState<"all" | "failed" | "passed">("all");
@@ -506,7 +539,7 @@ export default function ContestPageClient() {
       setAllSubmissionsList(attempts);
       // Each list response already contains the per-case results. Refresh the
       // cache as pending attempts complete, preserving separately polled runs.
-      setTestResults(previous => mergeAttemptTestResults(previous, attempts));
+      setTestResults((previous) => mergeAttemptTestResults(previous, attempts));
       setSubmissionHistoryStatus("available");
       // Nothing here refreshes the run panel any more. This list excludes
       // runs by construction — the server filters on `mode` — so searching it
@@ -514,7 +547,9 @@ export default function ContestPageClient() {
       // through `getRun` in `triggerRun`, which is the only place that can
       // see them.
     } catch (err) {
-      setSubmissionHistoryStatus(prev => prev === "available" || prev === "stale" ? "stale" : "unavailable");
+      setSubmissionHistoryStatus((prev) =>
+        prev === "available" || prev === "stale" ? "stale" : "unavailable"
+      );
       console.error("Failed to fetch submissions:", err);
     } finally {
       setLoadingSubmissions(false);
@@ -656,38 +691,71 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     try {
-      setProblemPaneWidth(boundedPercent(localStorage.getItem(`${PROBLEM_SPLIT_WIDTH_KEY}:${contestId || "default"}`), 35, 28, 52));
-      setOutputHeightPercent(boundedPercent(localStorage.getItem(`ams_contest_output_height:${contestId}`), 34, 18, 55));
-    } catch { /* Layout preferences must never block a contest. */ }
+      setProblemPaneWidth(
+        boundedPercent(
+          localStorage.getItem(`${PROBLEM_SPLIT_WIDTH_KEY}:${contestId || "default"}`),
+          35,
+          28,
+          52
+        )
+      );
+      setOutputHeightPercent(
+        boundedPercent(localStorage.getItem(`ams_contest_output_height:${contestId}`), 34, 18, 55)
+      );
+    } catch {
+      /* Layout preferences must never block a contest. */
+    }
   }, [contestId]);
 
   useEffect(() => {
     if (!sessionId) return;
-    try { setMarkedQuestionIds(parseQuestionMarks(localStorage.getItem(`ams_contest_marks:${sessionId}`))); }
-    catch { setMarkedQuestionIds([]); }
+    try {
+      setMarkedQuestionIds(
+        parseQuestionMarks(localStorage.getItem(`ams_contest_marks:${sessionId}`))
+      );
+    } catch {
+      setMarkedQuestionIds([]);
+    }
   }, [sessionId]);
 
-  const toggleQuestionMark = useCallback((id: string) => {
-    if (!sessionId) return;
-    const next = markedQuestionIds.includes(id) ? markedQuestionIds.filter(item => item !== id) : [...markedQuestionIds, id];
-    setMarkedQuestionIds(next);
-    try { localStorage.setItem(`ams_contest_marks:${sessionId}`, JSON.stringify(next)); } catch { /* Keep the in-memory mark. */ }
-  }, [sessionId, markedQuestionIds]);
+  const toggleQuestionMark = useCallback(
+    (id: string) => {
+      if (!sessionId) return;
+      const next = markedQuestionIds.includes(id)
+        ? markedQuestionIds.filter((item) => item !== id)
+        : [...markedQuestionIds, id];
+      setMarkedQuestionIds(next);
+      try {
+        localStorage.setItem(`ams_contest_marks:${sessionId}`, JSON.stringify(next));
+      } catch {
+        /* Keep the in-memory mark. */
+      }
+    },
+    [sessionId, markedQuestionIds]
+  );
 
   function handleEditorThemeChange(value: string) {
     if (isContestEditorTheme(value) === false) return;
     setEditorTheme(value);
-    try { localStorage.setItem(EDITOR_THEME_KEY, value); } catch { /* In-memory preference still applies. */ }
+    try {
+      localStorage.setItem(EDITOR_THEME_KEY, value);
+    } catch {
+      /* In-memory preference still applies. */
+    }
     setThemeMenuOpen(false);
   }
 
   function updateProblemWidth(value: number) {
     setProblemPaneWidth(value);
-    try { localStorage.setItem(`${PROBLEM_SPLIT_WIDTH_KEY}:${contestId || "default"}`, String(value)); } catch {}
+    try {
+      localStorage.setItem(`${PROBLEM_SPLIT_WIDTH_KEY}:${contestId || "default"}`, String(value));
+    } catch {}
   }
   function updateOutputHeight(value: number) {
     setOutputHeightPercent(value);
-    try { localStorage.setItem(`ams_contest_output_height:${contestId}`, String(value)); } catch {}
+    try {
+      localStorage.setItem(`ams_contest_output_height:${contestId}`, String(value));
+    } catch {}
   }
   function toggleEditorFocus() {
     if (editorFocused) {
@@ -695,13 +763,17 @@ export default function ContestPageClient() {
       setTerminalCollapsed(previousLayoutRef.current.terminalCollapsed);
     } else {
       previousLayoutRef.current = { sidebarCollapsed, terminalCollapsed };
-      setSidebarCollapsed(true); setTerminalCollapsed(true);
+      setSidebarCollapsed(true);
+      setTerminalCollapsed(true);
     }
-    setEditorFocused(value => !value);
+    setEditorFocused((value) => !value);
   }
   function resetWorkspaceLayout() {
-    setEditorFocused(false); setSidebarCollapsed(false); setTerminalCollapsed(false);
-    updateProblemWidth(35); updateOutputHeight(34);
+    setEditorFocused(false);
+    setSidebarCollapsed(false);
+    setTerminalCollapsed(false);
+    updateProblemWidth(35);
+    updateOutputHeight(34);
   }
   function navigateWorkspace(region: "problem" | "code" | "output") {
     if (region === "problem" && editorFocused) {
@@ -710,14 +782,21 @@ export default function ContestPageClient() {
       setTerminalCollapsed(previousLayoutRef.current.terminalCollapsed);
     }
     if (region === "output") setTerminalCollapsed(false);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const selector = region === "problem" ? ".contest-problem-pane" : region === "code" ? ".cm-content" : "#contest-output-body";
-      const target = document.querySelector<HTMLElement>(selector);
-      if (!target) return;
-      target.scrollIntoView({ block: "start", behavior: "instant" });
-      if (region !== "code") target.tabIndex = -1;
-      target.focus({ preventScroll: true });
-    }));
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const selector =
+          region === "problem"
+            ? ".contest-problem-pane"
+            : region === "code"
+              ? ".cm-content"
+              : "#contest-output-body";
+        const target = document.querySelector<HTMLElement>(selector);
+        if (!target) return;
+        target.scrollIntoView({ block: "start", behavior: "instant" });
+        if (region !== "code") target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      })
+    );
   }
 
   const handleProblemBodyClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -822,15 +901,26 @@ export default function ContestPageClient() {
     try {
       const response = await postJsonKeepalive(
         `${API_URL}/participant/sessions/${sessionId}/incidents`,
-        { category: supportCategory, detail: customIssueDetail.trim(), telemetry: supportTelemetry },
+        {
+          category: supportCategory,
+          detail: customIssueDetail.trim(),
+          telemetry: supportTelemetry,
+        },
         { headers: authHeaders() },
         { timeoutMs: 10000 }
       );
       if (!response.ok) throw new Error("Report not acknowledged");
-      setSentReports((reports) => [{ sessionId, category: supportCategory, sentAt: new Date().toISOString() }, ...reports].slice(0, 10));
+      setSentReports((reports) =>
+        [
+          { sessionId, category: supportCategory, sentAt: new Date().toISOString() },
+          ...reports,
+        ].slice(0, 10)
+      );
       setReportSentSuccess(true);
     } catch {
-      setSupportReportError("Could not confirm your report was sent. Your details are still here. Retry, or ask an invigilator for help.");
+      setSupportReportError(
+        "Could not confirm your report was sent. Your details are still here. Retry, or ask an invigilator for help."
+      );
     } finally {
       supportInFlightRef.current = false;
       setIsSendingReport(false);
@@ -1010,11 +1100,22 @@ export default function ContestPageClient() {
       for (const question of questions) {
         const buffered = readAnswerBuffer(localStorage, live.uid, question.id);
         draftRevisionsRef.current[question.id] = buffered?.revision ?? 0;
-        const workspace = restoreDraftWorkspace(question.id, question.starter_filename ?? questionFileName(question, "C++23"), buffered, null);
+        const workspace = restoreDraftWorkspace(
+          question.id,
+          question.starter_filename ?? questionFileName(question, "C++23"),
+          buffered,
+          null
+        );
         if (workspace) {
           restoredFiles[question.id] = workspace.files;
           restoredActiveFiles[question.id] = workspace.activeFileId;
-          answersMap[question.id] = { language: workspace.language, content: workspace.files.find(file => file.id === workspace.activeFileId)?.content ?? workspace.files[0]?.content ?? "" };
+          answersMap[question.id] = {
+            language: workspace.language,
+            content:
+              workspace.files.find((file) => file.id === workspace.activeFileId)?.content ??
+              workspace.files[0]?.content ??
+              "",
+          };
           if (workspace.recovered) restored.push(question.id);
         }
       }
@@ -1143,15 +1244,6 @@ export default function ContestPageClient() {
   switchQuestionRef.current = switchQuestion;
   const onSwitchQuestion = useCallback((idx: number) => switchQuestionRef.current(idx), []);
 
-  function selectEditorFile(fileId: string) {
-    if (fileId === activeFileId) return;
-    if (!editorLocked) {
-      void handleSave();
-      setHasUnsavedChanges(true);
-    }
-    setQuestionActiveFile(prev => ({ ...prev, [currentQId]: fileId }));
-  }
-
   function handleLanguageChange(newLanguage: string) {
     const normalizedLanguage = normalizeLanguageLabel(newLanguage);
     if (questions[activeQ]?.judge_engine === "cxxprobe" && normalizedLanguage !== "C++23") {
@@ -1197,36 +1289,6 @@ export default function ContestPageClient() {
     }));
   }
 
-  function addEditorFile() {
-    setHasUnsavedChanges(true);
-    const qId = questions[activeQ]?.id ?? "question";
-    setQuestionFiles((prev) => {
-      const files = prev[qId] ?? [];
-      const nextIndex = files.length + 1;
-      const file: EditorFile = {
-        id: `${qId}:scratch-${Date.now()}`,
-        name: `scratch${nextIndex}.cpp`,
-        content: defaultCppStarter(),
-      };
-      setQuestionActiveFile((qaf) => ({ ...qaf, [qId]: file.id }));
-      return { ...prev, [qId]: [...files, file] };
-    });
-  }
-
-  function removeEditorFile(fileId: string) {
-    setHasUnsavedChanges(true);
-    const qId = questions[activeQ]?.id ?? "";
-    setQuestionFiles((prev) => {
-      const files = (prev[qId] ?? []).filter((f) => f.id !== fileId);
-      return { ...prev, [qId]: files };
-    });
-    setQuestionActiveFile((prev) => {
-      if (prev[qId] !== fileId) return prev;
-      const remaining = (questionFiles[qId] ?? []).filter((f) => f.id !== fileId);
-      return { ...prev, [qId]: remaining[remaining.length - 1]?.id ?? "" };
-    });
-  }
-
   async function triggerRun() {
     if (!questions[activeQ] || !sessionId || isRunning) return;
     // In-flight guard: block a second POST while one is already pending so rapid
@@ -1238,7 +1300,6 @@ export default function ContestPageClient() {
     resetRunPanelState();
     const runVisit = runVisitRef.current;
     setSubmitError(null);
-    setTerminalTab("stdout");
 
     // Persist the current code before dispatching to the judge.
     const savedOk = await handleSave();
@@ -1255,7 +1316,14 @@ export default function ContestPageClient() {
     // contest is not feedback.
     let attemptId: string;
     try {
-      setRunSourceSnapshot({ fileId: activeFileId, questionId: questions[activeQ].id, problemTitle: questions[activeQ].title, filename: activeFile?.name ?? "main.cpp", source: editorFiles.find(f => f.id === activeFileId)?.content ?? "", language: toLanguageId(selectedLanguage) });
+      setRunSourceSnapshot({
+        fileId: activeFileId,
+        questionId: questions[activeQ].id,
+        problemTitle: questions[activeQ].title,
+        filename: activeFile?.name ?? "main.cpp",
+        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        language: toLanguageId(selectedLanguage),
+      });
       const created = await runAgainstSamples(sessionId, {
         problemLabel: questions[activeQ].id,
         language: toLanguageId(selectedLanguage),
@@ -1266,8 +1334,6 @@ export default function ContestPageClient() {
       attemptId = resolvedId;
       setRunResult({ id: resolvedId, attempt_no: 0, status: "QUEUED" });
       setRunResultAttemptId(resolvedId);
-      // Keep results in the Output panel — runs never appear under Attempts.
-      setTerminalTab("stdout");
     } catch (caught) {
       if (runVisit !== runVisitRef.current) return;
       setIsRunning(false);
@@ -1307,12 +1373,11 @@ export default function ContestPageClient() {
           setRunResult(normalized);
           if (!isPendingSubmissionStatus(normalized.status)) {
             setIsRunning(false);
-            // Compile errors go to the Build tab (as today); sample results render
-            // in the Output panel. Runs never appear under Attempts.
-            setTerminalTab(normalized.status === "CE" ? "logs" : "stdout");
+            // Verdict, sample results and any compiler messages all render in the
+            // run pane; a run is never a row in the attempts list below it.
             // Run records carry their own results. The submissions endpoint
             // excludes runs, so it cannot supply this attempt's sample output.
-            setTestResults(prev => ({ ...prev, [attemptId]: polled.testcases ?? [] }));
+            setTestResults((prev) => ({ ...prev, [attemptId]: polled.testcases ?? [] }));
             return;
           }
         }
@@ -1326,9 +1391,8 @@ export default function ContestPageClient() {
     setIsRunning(false);
     setRunError(null);
     setRunTimedOut(true);
-    // Keep the timed-out state visible in the Output panel — the run is never an
-    // Attempts row to navigate to.
-    setTerminalTab("stdout");
+    // The timed-out state stays visible in the run pane — the run is never an
+    // attempts row to navigate to.
   }
 
   // Persist the current editor content locally so an unconfirmed network save
@@ -1408,11 +1472,13 @@ export default function ContestPageClient() {
 
     setIsSubmitting(true);
     setSubmissionError(null);
-    setTerminalTab("submissions");
 
     try {
       const qId = questions[activeQ].id;
-      const submittedSource = { source: editorFiles.find(f => f.id === activeFileId)?.content ?? "", language: toLanguageId(selectedLanguage) };
+      const submittedSource = {
+        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        language: toLanguageId(selectedLanguage),
+      };
       let created;
       try {
         created = await submitSolution(sessionId, {
@@ -1431,7 +1497,7 @@ export default function ContestPageClient() {
         throw caught;
       }
 
-      setSubmittedSources(prev => ({ ...prev, [created.uid]: submittedSource }));
+      setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
       await fetchSubmissions();
     } catch (err: any) {
       setSubmissionError(err.message || "An unexpected error occurred.");
@@ -1482,16 +1548,30 @@ export default function ContestPageClient() {
     setSubmitError(null);
     setSubmitWarning(null);
     setTimeUpState("submitting");
-    const receipt = sessionId ? await requestFinish({
-      save: handleSave,
-      finish: () => postJsonKeepalive(
-        `${API_URL}/participant/sessions/${sessionId}/finish`, undefined,
-        { headers: authHeaders() }, { timeoutMs: 10000 }
-      ),
-      wait: attempt => new Promise<void>(resolve => setTimeout(resolve, Math.min(1500 * 2 ** attempt, 8000) + Math.round(Math.random() * 400))),
-    }) : { confirmed: false, draftSaved: false };
+    const receipt = sessionId
+      ? await requestFinish({
+          save: handleSave,
+          finish: () =>
+            postJsonKeepalive(
+              `${API_URL}/participant/sessions/${sessionId}/finish`,
+              undefined,
+              { headers: authHeaders() },
+              { timeoutMs: 10000 }
+            ),
+          wait: (attempt) =>
+            new Promise<void>((resolve) =>
+              setTimeout(
+                resolve,
+                Math.min(1500 * 2 ** attempt, 8000) + Math.round(Math.random() * 400)
+              )
+            ),
+        })
+      : { confirmed: false, draftSaved: false };
     setFinalDraftSaved(receipt.draftSaved);
-    if (!receipt.draftSaved) setSubmitWarning("We could not confirm the latest draft was saved to the server. Previously acknowledged submissions are separate from draft saves.");
+    if (!receipt.draftSaved)
+      setSubmitWarning(
+        "We could not confirm the latest draft was saved to the server. Previously acknowledged submissions are separate from draft saves."
+      );
     try {
       await runExitTeardown();
     } finally {
@@ -2131,7 +2211,12 @@ export default function ContestPageClient() {
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
-  latestActiveDraftRef.current = { questionId: currentQId, fileId: activeFileId, source: currentCode, language: toLanguageId(selectedLanguage) };
+  latestActiveDraftRef.current = {
+    questionId: currentQId,
+    fileId: activeFileId,
+    source: currentCode,
+    language: toLanguageId(selectedLanguage),
+  };
 
   // The local buffer is the only persistence. Written on every change rather
   // than debounced: a localStorage write costs nothing, and the debounce only
@@ -2152,15 +2237,16 @@ export default function ContestPageClient() {
   );
   const activeProblemTab = availableProblemTabs.includes(problemTab) ? problemTab : "statement";
   const parsedProblemHtml = useMemo(
-    () => parseDescription(
-      problemSections[activeProblemTab] || currentDescriptionMd,
-      currentQuestion?.cxxprobe
-        ? {
-            statementPath: currentQuestion.cxxprobe.statement.path,
-            assets: currentQuestion.cxxprobe.assets,
-          }
-        : undefined
-    ),
+    () =>
+      parseDescription(
+        problemSections[activeProblemTab] || currentDescriptionMd,
+        currentQuestion?.cxxprobe
+          ? {
+              statementPath: currentQuestion.cxxprobe.statement.path,
+              assets: currentQuestion.cxxprobe.assets,
+            }
+          : undefined
+      ),
     [activeProblemTab, currentDescriptionMd, currentQuestion, problemSections]
   );
   const problemBodyHtml = useMemo(
@@ -2181,7 +2267,8 @@ export default function ContestPageClient() {
   // The editor goes read-only on a *sustained* outage, not the first dropped
   // packet — see `heartbeat-policy`. Locking a whole exam hall on one lost
   // packet would be a self-inflicted incident.
-  const editorLocked = shouldLockEditor(heartbeatState) || bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
+  const editorLocked =
+    shouldLockEditor(heartbeatState) || bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
 
   const judgingUnavailableReason = sessionEnded
     ? sessionEnded === "terminated"
@@ -2294,19 +2381,53 @@ export default function ContestPageClient() {
   const activeDraftStatus = draftStatus();
   const submissionSource = latestAttempt ? submittedSources[latestAttempt.id] : undefined;
   const compilerText = runResult ? runResult.compile_output : latestAttempt?.compile_output;
-  const compilerDiagnostic = useMemo(() => compilerText ? firstCompilerError(compilerText) : null, [compilerText]);
-  const diagnosticContext = { questionId: currentQId, fileId: activeFileId, filename: activeFile?.name ?? "main.cpp", source: currentCode, language: toLanguageId(selectedLanguage) };
+  const compilerDiagnostic = useMemo(
+    () => (compilerText ? firstCompilerError(compilerText) : null),
+    [compilerText]
+  );
+  const diagnosticContext = {
+    questionId: currentQId,
+    fileId: activeFileId,
+    filename: activeFile?.name ?? "main.cpp",
+    source: currentCode,
+    language: toLanguageId(selectedLanguage),
+  };
   // Historical submissions omit source/file identity; only a matching run can navigate safely.
-  const canJumpToCompilerError = Boolean(!isRunning && runResult && compilerDiagnostic && canNavigateDiagnostic(compilerDiagnostic, runSourceSnapshot, diagnosticContext));
+  const canJumpToCompilerError = Boolean(
+    !isRunning &&
+    runResult &&
+    compilerDiagnostic &&
+    canNavigateDiagnostic(compilerDiagnostic, runSourceSnapshot, diagnosticContext)
+  );
   const jumpToCompilerError = () => {
-    if (!canJumpToCompilerError || !compilerDiagnostic || !canNavigateDiagnostic(compilerDiagnostic, runSourceSnapshot, diagnosticContext)) return;
-    setDiagnosticNavigation((previous) => ({ ...diagnosticContext, line: compilerDiagnostic.line, column: compilerDiagnostic.column, sequence: (previous?.sequence ?? 0) + 1 }));
+    if (
+      !canJumpToCompilerError ||
+      !compilerDiagnostic ||
+      !canNavigateDiagnostic(compilerDiagnostic, runSourceSnapshot, diagnosticContext)
+    )
+      return;
+    setDiagnosticNavigation((previous) => ({
+      ...diagnosticContext,
+      line: compilerDiagnostic.line,
+      column: compilerDiagnostic.column,
+      sequence: (previous?.sequence ?? 0) + 1,
+    }));
   };
 
-  const comparisonLabel = submissionComparison({ source: currentCode, language: toLanguageId(selectedLanguage) }, submissionSource);
-  const lastSubmissionLabel = submissionHistoryStatus === "loading" ? "Loading history…" : submissionHistoryStatus === "unavailable" ? "History unavailable · status not confirmed" : latestAttempt
-    ? `Attempt ${latestAttempt.attempt_no} · ${runStatusLabelMap[normalizeSubmissionVerdict(latestAttempt)]}${comparisonLabel ? ` · ${comparisonLabel}` : ""}${submissionHistoryStatus === "stale" ? " · History could not refresh" : ""}`
-    : submissionHistoryStatus === "stale" ? "History could not refresh · status not confirmed" : "No scored submission yet";
+  const comparisonLabel = submissionComparison(
+    { source: currentCode, language: toLanguageId(selectedLanguage) },
+    submissionSource
+  );
+  const lastSubmissionLabel =
+    submissionHistoryStatus === "loading"
+      ? "Loading history…"
+      : submissionHistoryStatus === "unavailable"
+        ? "History unavailable · status not confirmed"
+        : latestAttempt
+          ? `Attempt ${latestAttempt.attempt_no} · ${runStatusLabelMap[normalizeSubmissionVerdict(latestAttempt)]}${comparisonLabel ? ` · ${comparisonLabel}` : ""}${submissionHistoryStatus === "stale" ? " · History could not refresh" : ""}`
+          : submissionHistoryStatus === "stale"
+            ? "History could not refresh · status not confirmed"
+            : "No scored submission yet";
   const latestAttemptTests = latestAttempt ? testResults[latestAttempt.id] : null;
   const latestAttemptPending = latestAttempt
     ? latestAttempt.status === "QUEUED" || latestAttempt.status === "RUNNING"
@@ -2416,7 +2537,17 @@ export default function ContestPageClient() {
         ? "Camera issue"
         : "Camera starting";
   const footerStatusDot = (color: string) => (
-    <VStack as="span" aria-hidden="true" style={{ display: "inline-block", width: "var(--spacing-1-5, var(--spacing-2))", height: "var(--spacing-1-5, var(--spacing-2))", borderRadius: "50%", background: color }} />
+    <VStack
+      as="span"
+      aria-hidden="true"
+      style={{
+        display: "inline-block",
+        width: "var(--spacing-1-5, var(--spacing-2))",
+        height: "var(--spacing-1-5, var(--spacing-2))",
+        borderRadius: "50%",
+        background: color,
+      }}
+    />
   );
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
   const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
@@ -2428,16 +2559,29 @@ export default function ContestPageClient() {
   const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
     lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle"
   );
-  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(shouldShowFaceBlock && timeUpState === "idle");
+  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(
+    shouldShowFaceBlock && timeUpState === "idle"
+  );
   const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
     showMediaToggleWarning && timeUpState === "idle",
     cancelMediaToggle
   );
-  const criticalOverlayActive = shouldShowFaceBlock || (lockGraceActive && lockGraceCountdown === 0);
-  const supportDialogRef = useFocusTrap<HTMLDivElement>(showSupportModal && !criticalOverlayActive && timeUpState === "idle", closeSupport);
+  const criticalOverlayActive =
+    shouldShowFaceBlock || (lockGraceActive && lockGraceCountdown === 0);
+  const supportDialogRef = useFocusTrap<HTMLDivElement>(
+    showSupportModal && !criticalOverlayActive && timeUpState === "idle",
+    closeSupport
+  );
   const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle");
   useEffect(() => {
-    if (criticalOverlayActive || submitConfirm || showSupportModal || showMediaToggleWarning || timeUpState !== "idle") setThemeMenuOpen(false);
+    if (
+      criticalOverlayActive ||
+      submitConfirm ||
+      showSupportModal ||
+      showMediaToggleWarning ||
+      timeUpState !== "idle"
+    )
+      setThemeMenuOpen(false);
   }, [criticalOverlayActive, submitConfirm, showSupportModal, showMediaToggleWarning, timeUpState]);
 
   // SECURITY: while the lockdown probe is pending — or while bouncing an
@@ -2456,218 +2600,497 @@ export default function ContestPageClient() {
   }
 
   return (
-    <AppShell height="fill" contentPadding={0} data-contest-page style={{ height: "100dvh", background: "var(--color-background-body)", color: "var(--color-text-primary)" }}>
+    <AppShell
+      height="fill"
+      contentPadding={0}
+      data-contest-page
+      style={{
+        height: "100dvh",
+        background: "var(--color-background-body)",
+        color: "var(--color-text-primary)",
+      }}
+    >
       <VStack gap={0} style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
-      <KioskBanner />
-      {lockGraceActive && lockGraceCountdown > 0 && <LockGraceToast lockGraceCountdown={lockGraceCountdown} />}
-      {lockGraceActive && lockGraceCountdown === 0 && <BlockedAppsOverlay lockViolationDialogRef={lockViolationDialogRef} blockedApps={blockedApps} />}
-      <TopBar
-        markedQuestionIds={markedQuestionIds}
-        workspaceControls={<WorkspaceControls suspended={criticalOverlayActive || submitConfirm || showSupportModal || showMediaToggleWarning || timeUpState !== "idle"} focused={editorFocused} onFocus={toggleEditorFocus} onReset={resetWorkspaceLayout} onNavigate={navigateWorkspace} />}
-        contest={contest}
-        clock={clock}
-        handleContestExpiry={onContestExpiry}
-        setShowSupportModal={setShowSupportModal}
-        submitConfirm={submitConfirm}
-        setSubmitConfirm={setSubmitConfirm}
-        submitError={submitError}
-        setSubmitError={setSubmitError}
-        handleSubmitConfirmed={handleSubmitConfirmed}
-        timeUpState={timeUpState}
-        finishHistoryStatus={submissionHistoryStatus}
-        finishQuestions={questions.map(q => ({ id: q.id, title: q.title, submissionCount: (submissionsByQuestion[q.id] ?? []).length, pendingCount: (submissionsByQuestion[q.id] ?? []).filter(sub => isPendingSubmissionStatus(sub.status)).length, hasAccepted: (submissionsByQuestion[q.id] ?? []).some(sub => (sub.final_verdict ?? sub.status) === "AC") }))}
-        finishDraftStatus={`${activeFile?.name ?? "Active file"}: ${activeDraftStatus.label}. Other tabs are not included in this server draft.`}
-        finishDraftNeedsAttention={!activeDraftStatus.confirmed}
-        finishReviewSuspended={criticalOverlayActive || showSupportModal || showMediaToggleWarning || timeUpState !== "idle"}
-        onReviewQuestion={onSwitchQuestion}
-      />
-      <HStack gap={0} className="contest-body" data-editor-focus={editorFocused ? "true" : "false"} align="stretch" style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}>
-        <QuestionRail
+        <KioskBanner />
+        {lockGraceActive && lockGraceCountdown > 0 && (
+          <LockGraceToast lockGraceCountdown={lockGraceCountdown} />
+        )}
+        {lockGraceActive && lockGraceCountdown === 0 && (
+          <BlockedAppsOverlay
+            lockViolationDialogRef={lockViolationDialogRef}
+            blockedApps={blockedApps}
+          />
+        )}
+        <TopBar
           markedQuestionIds={markedQuestionIds}
-          questions={questions}
-          activeQ={activeQ}
-          switchQuestion={onSwitchQuestion}
-          sidebarCollapsed={sidebarCollapsed}
-          setSidebarCollapsed={setSidebarCollapsed}
-          questionStatusMap={questionStatusMap}
-          acceptedQuestionCount={acceptedQuestionCount}
+          workspaceControls={
+            <WorkspaceControls
+              suspended={
+                criticalOverlayActive ||
+                submitConfirm ||
+                showSupportModal ||
+                showMediaToggleWarning ||
+                timeUpState !== "idle"
+              }
+              focused={editorFocused}
+              onFocus={toggleEditorFocus}
+              onReset={resetWorkspaceLayout}
+              onNavigate={navigateWorkspace}
+            />
+          }
+          contest={contest}
+          clock={clock}
+          handleContestExpiry={onContestExpiry}
+          setShowSupportModal={setShowSupportModal}
+          submitConfirm={submitConfirm}
+          setSubmitConfirm={setSubmitConfirm}
+          submitError={submitError}
+          setSubmitError={setSubmitError}
+          handleSubmitConfirmed={handleSubmitConfirmed}
+          timeUpState={timeUpState}
+          finishHistoryStatus={submissionHistoryStatus}
+          finishQuestions={questions.map((q) => ({
+            id: q.id,
+            title: q.title,
+            submissionCount: (submissionsByQuestion[q.id] ?? []).length,
+            pendingCount: (submissionsByQuestion[q.id] ?? []).filter((sub) =>
+              isPendingSubmissionStatus(sub.status)
+            ).length,
+            hasAccepted: (submissionsByQuestion[q.id] ?? []).some(
+              (sub) => (sub.final_verdict ?? sub.status) === "AC"
+            ),
+          }))}
+          finishDraftStatus={`${activeFile?.name ?? "Active file"}: ${activeDraftStatus.label}. Other tabs are not included in this server draft.`}
+          finishDraftNeedsAttention={!activeDraftStatus.confirmed}
+          finishReviewSuspended={
+            criticalOverlayActive ||
+            showSupportModal ||
+            showMediaToggleWarning ||
+            timeUpState !== "idle"
+          }
+          onReviewQuestion={onSwitchQuestion}
         />
-        <ProblemPane
-          markedQuestionIds={markedQuestionIds}
-          toggleQuestionMark={toggleQuestionMark}
-          problemPaneWidth={problemPaneWidth}
-          availableProblemTabs={availableProblemTabs}
-          activeProblemTab={activeProblemTab}
-          setProblemTab={setProblemTab}
-          questions={questions}
-          activeQ={activeQ}
-          problemBodyHtml={problemBodyHtml}
-          handleProblemBodyClick={handleProblemBodyClick}
-        />
-        <WorkspaceResizeHandle className="contest-splitter" direction="horizontal" value={problemPaneWidth} min={28} max={52} onChange={updateProblemWidth} containerSelector=".contest-body" label="Resize problem and editor panes" />
-        <VStack gap={0} className="contest-editor-output" style={{ flex: 1, minHeight: 0, minWidth: 0, background: "var(--color-background-body)" }}>
-          {restoredFromDevice.includes(currentQId) && !dismissedRecoveryQuestions.includes(currentQId) && <Banner status="info" container="section" title="Draft restored from this device" description={`Review the recovered code. ${activeDraftStatus.confirmed ? "This active file now matches the server draft." : "Its latest server save is not yet confirmed."}`} isDismissable onDismiss={() => setDismissedRecoveryQuestions(prev => [...prev, currentQId])} />}
-          <EditorPanel
-            diagnosticNavigation={diagnosticNavigation}
-            draftStatusLabel={activeDraftStatus.label}
-            lastSubmissionLabel={lastSubmissionLabel}
-            editorFiles={editorFiles}
-            activeFileId={activeFileId}
-            pendingCloseFileId={pendingCloseFileId}
-            setPendingCloseFileId={setPendingCloseFileId}
-            setQuestionActiveFile={setQuestionActiveFile}
-            onSelectFile={selectEditorFile}
-            currentQId={currentQId}
-            removeEditorFile={removeEditorFile}
-            addEditorFile={addEditorFile}
-            selectedLanguage={selectedLanguage}
-            handleLanguageChange={handleLanguageChange}
-            contest={editorContest}
-            themeMenuOpen={themeMenuOpen}
-            setThemeMenuOpen={setThemeMenuOpen}
-            editorTheme={editorTheme}
-            handleEditorThemeChange={handleEditorThemeChange}
-            isRunning={isRunning}
-            sessionId={sessionId}
-            triggerRun={triggerRun}
-            judgingUnavailableReason={judgingUnavailableReason}
-            readOnly={editorLocked}
-            submitButton={submitButton}
-            isSubmitting={isSubmitting}
-            isEditorEmpty={isEditorEmpty}
-            handleSubmitSolution={handleSubmitSolution}
-            submissionError={submissionError}
+        <HStack
+          gap={0}
+          className="contest-body"
+          data-editor-focus={editorFocused ? "true" : "false"}
+          align="stretch"
+          style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}
+        >
+          <QuestionRail
+            markedQuestionIds={markedQuestionIds}
+            questions={questions}
             activeQ={activeQ}
-            activeFile={activeFile}
-            currentCode={currentCode}
-            handleCodeChange={handleCodeChange}
+            switchQuestion={onSwitchQuestion}
+            sidebarCollapsed={sidebarCollapsed}
+            setSidebarCollapsed={setSidebarCollapsed}
+            questionStatusMap={questionStatusMap}
+            acceptedQuestionCount={acceptedQuestionCount}
           />
-          {!terminalCollapsed && <WorkspaceResizeHandle direction="vertical" reversed value={outputHeightPercent} min={18} max={55} onChange={updateOutputHeight} containerSelector=".contest-editor-output" label="Resize output panel" />}
-          <TerminalPanel
-            compilerDiagnostic={compilerDiagnostic}
-            onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
-            outputHeightPercent={outputHeightPercent}
-            runSourceLabel={runSourceSnapshot ? `${runSourceSnapshot.filename}${runSourceSnapshot.problemTitle ? ` · ${runSourceSnapshot.problemTitle}` : ""}` : undefined}
-            runSourceChanged={Boolean(runSourceSnapshot && (runSourceSnapshot.questionId !== currentQId || runSourceSnapshot.source !== currentCode || runSourceSnapshot.language !== toLanguageId(selectedLanguage)))}
-            terminalCollapsed={terminalCollapsed}
-            setTerminalCollapsed={setTerminalCollapsed}
-            shouldShowRunProgress={shouldShowRunProgress}
-            terminalTab={terminalTab}
-            setTerminalTab={setTerminalTab}
-            runResult={runResult}
-            isRunning={isRunning}
-            runTimedOut={runTimedOut}
-            runResultAttemptId={runResultAttemptId}
-            runSampleTests={runSampleTests}
-            runError={runError}
-            isEditorEmpty={isEditorEmpty}
-            submissionsList={submissionsList}
-            problemLabel={activeQLabel}
-            loadingSubmissions={loadingSubmissions}
-            expandedAttemptId={expandedAttemptId}
-            toggleExpandAttempt={toggleExpandAttempt}
-            testResults={testResults}
-            testResultFilter={testResultFilter}
-            setTestResultFilter={setTestResultFilter}
-            latestAttempt={latestAttempt}
-            latestAttemptTests={latestAttemptTests}
-            latestAttemptPending={latestAttemptPending}
-            latestAttemptPassed={latestAttemptPassed}
-            latestAttemptFirstFailed={latestAttemptFirstFailed}
-            runStatus={runStatus}
-            runMetrics={runMetrics}
-            runProgressSteps={runProgressSteps}
-            runProgressPhase={runProgressPhase}
-            terminalUnread={terminalUnread}
+          <ProblemPane
+            markedQuestionIds={markedQuestionIds}
+            toggleQuestionMark={toggleQuestionMark}
+            problemPaneWidth={problemPaneWidth}
+            availableProblemTabs={availableProblemTabs}
+            activeProblemTab={activeProblemTab}
+            setProblemTab={setProblemTab}
+            questions={questions}
+            activeQ={activeQ}
+            problemBodyHtml={problemBodyHtml}
+            handleProblemBodyClick={handleProblemBodyClick}
           />
-        </VStack>
-        <CameraTile
-          cameraVideoRef={cameraVideoRef}
-          cameraStream={cameraStream}
-          cameraError={cameraError}
-          sidebarCollapsed={sidebarCollapsed}
-          cameraStatusLabel={cameraStatusLabel}
-          cameraHealthy={cameraHealthy}
-          cameraEnabled={cameraEnabled}
-          micEnabled={micEnabled}
-          handleToggleMedia={handleToggleMedia}
+          <WorkspaceResizeHandle
+            className="contest-splitter"
+            direction="horizontal"
+            value={problemPaneWidth}
+            min={28}
+            max={52}
+            onChange={updateProblemWidth}
+            containerSelector=".contest-body"
+            label="Resize problem and editor panes"
+          />
+          <VStack
+            gap={0}
+            className="contest-editor-output"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              background: "var(--color-background-body)",
+            }}
+          >
+            {restoredFromDevice.includes(currentQId) &&
+              !dismissedRecoveryQuestions.includes(currentQId) && (
+                <Banner
+                  status="info"
+                  container="section"
+                  title="Draft restored from this device"
+                  description={`Review the recovered code. ${activeDraftStatus.confirmed ? "This active file now matches the server draft." : "Its latest server save is not yet confirmed."}`}
+                  isDismissable
+                  onDismiss={() => setDismissedRecoveryQuestions((prev) => [...prev, currentQId])}
+                />
+              )}
+            <EditorPanel
+              diagnosticNavigation={diagnosticNavigation}
+              draftStatusLabel={activeDraftStatus.label}
+              lastSubmissionLabel={lastSubmissionLabel}
+              editorFiles={editorFiles}
+              activeFileId={activeFileId}
+              setQuestionActiveFile={setQuestionActiveFile}
+              currentQId={currentQId}
+              selectedLanguage={selectedLanguage}
+              handleLanguageChange={handleLanguageChange}
+              contest={editorContest}
+              themeMenuOpen={themeMenuOpen}
+              setThemeMenuOpen={setThemeMenuOpen}
+              editorTheme={editorTheme}
+              handleEditorThemeChange={handleEditorThemeChange}
+              isRunning={isRunning}
+              sessionId={sessionId}
+              triggerRun={triggerRun}
+              judgingUnavailableReason={judgingUnavailableReason}
+              readOnly={editorLocked}
+              submitButton={submitButton}
+              isSubmitting={isSubmitting}
+              isEditorEmpty={isEditorEmpty}
+              handleSubmitSolution={handleSubmitSolution}
+              submissionError={submissionError}
+              activeQ={activeQ}
+              activeFile={activeFile}
+              currentCode={currentCode}
+              handleCodeChange={handleCodeChange}
+            />
+            {!terminalCollapsed && (
+              <WorkspaceResizeHandle
+                direction="vertical"
+                reversed
+                value={outputHeightPercent}
+                min={18}
+                max={55}
+                onChange={updateOutputHeight}
+                containerSelector=".contest-editor-output"
+                label="Resize output panel"
+              />
+            )}
+            <TerminalPanel
+              compilerDiagnostic={compilerDiagnostic}
+              onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
+              outputHeightPercent={outputHeightPercent}
+              runSourceLabel={
+                runSourceSnapshot
+                  ? `${runSourceSnapshot.filename}${runSourceSnapshot.problemTitle ? ` · ${runSourceSnapshot.problemTitle}` : ""}`
+                  : undefined
+              }
+              runSourceChanged={Boolean(
+                runSourceSnapshot &&
+                (runSourceSnapshot.questionId !== currentQId ||
+                  runSourceSnapshot.source !== currentCode ||
+                  runSourceSnapshot.language !== toLanguageId(selectedLanguage))
+              )}
+              terminalCollapsed={terminalCollapsed}
+              setTerminalCollapsed={setTerminalCollapsed}
+              shouldShowRunProgress={shouldShowRunProgress}
+              runResult={runResult}
+              isRunning={isRunning}
+              runTimedOut={runTimedOut}
+              runResultAttemptId={runResultAttemptId}
+              runSampleTests={runSampleTests}
+              runError={runError}
+              isEditorEmpty={isEditorEmpty}
+              submissionsList={submissionsList}
+              problemLabel={activeQLabel}
+              loadingSubmissions={loadingSubmissions}
+              expandedAttemptId={expandedAttemptId}
+              toggleExpandAttempt={toggleExpandAttempt}
+              testResults={testResults}
+              testResultFilter={testResultFilter}
+              setTestResultFilter={setTestResultFilter}
+              latestAttempt={latestAttempt}
+              latestAttemptTests={latestAttemptTests}
+              latestAttemptPending={latestAttemptPending}
+              latestAttemptPassed={latestAttemptPassed}
+              latestAttemptFirstFailed={latestAttemptFirstFailed}
+              runStatus={runStatus}
+              runMetrics={runMetrics}
+              runProgressSteps={runProgressSteps}
+              runProgressPhase={runProgressPhase}
+              terminalUnread={terminalUnread}
+            />
+          </VStack>
+          <CameraTile
+            cameraVideoRef={cameraVideoRef}
+            cameraStream={cameraStream}
+            cameraError={cameraError}
+            sidebarCollapsed={sidebarCollapsed}
+            cameraStatusLabel={cameraStatusLabel}
+            cameraHealthy={cameraHealthy}
+            cameraEnabled={cameraEnabled}
+            micEnabled={micEnabled}
+            handleToggleMedia={handleToggleMedia}
+          />
+        </HStack>
+        <FooterTrustStrip
+          proctoringOk={proctoringOk}
+          footerStatusDot={footerStatusDot}
+          faceStatus={presenceDetected}
+          online={online}
+          saveIndicator={saveIndicator}
+          draftStatusLabel={activeDraftStatus.label}
+          draftConfirmed={activeDraftStatus.confirmed}
+          activeQ={activeQ}
+          questions={questions}
+          attemptedQuestionCount={attemptedQuestionCount}
+          acceptedQuestionCount={acceptedQuestionCount}
+          remainingQuestionCount={remainingQuestionCount}
         />
-      </HStack>
-      <FooterTrustStrip
-        proctoringOk={proctoringOk}
-        footerStatusDot={footerStatusDot}
-        faceStatus={presenceDetected}
-        online={online}
-        saveIndicator={saveIndicator}
-        draftStatusLabel={activeDraftStatus.label}
-        draftConfirmed={activeDraftStatus.confirmed}
-        activeQ={activeQ}
-        questions={questions}
-        attemptedQuestionCount={attemptedQuestionCount}
-        acceptedQuestionCount={acceptedQuestionCount}
-        remainingQuestionCount={remainingQuestionCount}
-      />
       </VStack>
 
-      {shouldShowFaceBlock && <ContestOverlay labelId="face-block-title" critical alert dialogRef={faceBlockDialogRef}>
-        <Heading level={2} id="face-block-title">{faceBlockTitle}</Heading>
-        <Banner status="warning" title="Camera attention needed" description={faceBlockMessage} />
-        <Text color="secondary">The workspace will resume when the camera check clears.</Text>
-      </ContestOverlay>}
+      {shouldShowFaceBlock && (
+        <ContestOverlay labelId="face-block-title" critical alert dialogRef={faceBlockDialogRef}>
+          <Heading level={2} id="face-block-title">
+            {faceBlockTitle}
+          </Heading>
+          <Banner status="warning" title="Camera attention needed" description={faceBlockMessage} />
+          <Text color="secondary">The workspace will resume when the camera check clears.</Text>
+        </ContestOverlay>
+      )}
 
-      {showMediaToggleWarning && <ContestOverlay labelId="media-toggle-warning-title" dialogRef={mediaWarningDialogRef}>
-        <VStack gap={3}><Heading level={2} id="media-toggle-warning-title">This action will be logged.</Heading><Text color="secondary">Turning off your camera or microphone may affect proctoring validation.</Text></VStack>
-        <HStack gap={3} justify="end" wrap="wrap"><Button label="Cancel" variant="secondary" onClick={cancelMediaToggle} /><Button label="Continue" variant="primary" onClick={confirmMediaToggle} /></HStack>
-      </ContestOverlay>}
+      {showMediaToggleWarning && (
+        <ContestOverlay labelId="media-toggle-warning-title" dialogRef={mediaWarningDialogRef}>
+          <VStack gap={3}>
+            <Heading level={2} id="media-toggle-warning-title">
+              This action will be logged.
+            </Heading>
+            <Text color="secondary">
+              Turning off your camera or microphone may affect proctoring validation.
+            </Text>
+          </VStack>
+          <HStack gap={3} justify="end" wrap="wrap">
+            <Button label="Cancel" variant="secondary" onClick={cancelMediaToggle} />
+            <Button label="Continue" variant="primary" onClick={confirmMediaToggle} />
+          </HStack>
+        </ContestOverlay>
+      )}
 
-      {timeUpState !== "idle" && <ContestOverlay labelId="contest-ended-title" critical alert dialogRef={finishReceiptDialogRef}>
-        <Text type="supporting" color="secondary">Finish receipt</Text>
-        {timeUpState === "submitting" && <VStack gap={4}>
-          <Heading level={2} id="contest-ended-title">Finishing your session…</Heading>
-          <HStack gap={3} align="center"><Spinner /><Text color="secondary">Waiting for the server to acknowledge your finish request.</Text></HStack>
-          <Text color="secondary">Keep this window open until the result appears.</Text>
-        </VStack>}
-        {timeUpState === "submitted" && <VStack gap={4}>
-          <Heading level={2} id="contest-ended-title">Session finish confirmed</Heading>
-          <Text color="secondary">The server acknowledged that this session is finished. Check results status for your scored submissions.</Text>
-          {finalDraftSaved && <Text color="secondary">The active file’s final draft save was also confirmed. A draft save is not a scored submission.</Text>}
-          {submitWarning && <Banner status="warning" title="Latest draft save not confirmed" description={submitWarning} />}
-          {!submitWarning && <ContestSponsor contestId={contestId} placement="completion" />}
-        </VStack>}
-        {timeUpState === "error" && <VStack gap={4}>
-          <Heading level={2} id="contest-ended-title">Could not confirm session finish</Heading>
-          <Banner status="warning" title="Server acknowledgement missing" description="The connection failed or the server did not acknowledge the finish request. This screen will not keep retrying after you leave." />
-          <Text color="secondary">{finalDraftSaved ? "The active file’s draft save was confirmed, but finishing the session was not." : "The latest draft save was not confirmed either."} Ask an invigilator to check your session and submissions.</Text>
-        </VStack>}
-        {timeUpState !== "submitting" && <HStack gap={3} wrap="wrap"><Button label="Back to home" variant="secondary" onClick={() => router.push("/home")} /><Button label="Check results status" variant="ghost" onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)} /></HStack>}
-      </ContestOverlay>}
+      {timeUpState !== "idle" && (
+        <ContestOverlay
+          labelId="contest-ended-title"
+          critical
+          alert
+          dialogRef={finishReceiptDialogRef}
+        >
+          <Text type="supporting" color="secondary">
+            Finish receipt
+          </Text>
+          {timeUpState === "submitting" && (
+            <VStack gap={4}>
+              <Heading level={2} id="contest-ended-title">
+                Finishing your session…
+              </Heading>
+              <HStack gap={3} align="center">
+                <Spinner />
+                <Text color="secondary">
+                  Waiting for the server to acknowledge your finish request.
+                </Text>
+              </HStack>
+              <Text color="secondary">Keep this window open until the result appears.</Text>
+            </VStack>
+          )}
+          {timeUpState === "submitted" && (
+            <VStack gap={4}>
+              <Heading level={2} id="contest-ended-title">
+                Session finish confirmed
+              </Heading>
+              <Text color="secondary">
+                The server acknowledged that this session is finished. Check results status for your
+                scored submissions.
+              </Text>
+              {finalDraftSaved && (
+                <Text color="secondary">
+                  The active file’s final draft save was also confirmed. A draft save is not a
+                  scored submission.
+                </Text>
+              )}
+              {submitWarning && (
+                <Banner
+                  status="warning"
+                  title="Latest draft save not confirmed"
+                  description={submitWarning}
+                />
+              )}
+              {!submitWarning && <ContestSponsor contestId={contestId} placement="completion" />}
+            </VStack>
+          )}
+          {timeUpState === "error" && (
+            <VStack gap={4}>
+              <Heading level={2} id="contest-ended-title">
+                Could not confirm session finish
+              </Heading>
+              <Banner
+                status="warning"
+                title="Server acknowledgement missing"
+                description="The connection failed or the server did not acknowledge the finish request. This screen will not keep retrying after you leave."
+              />
+              <Text color="secondary">
+                {finalDraftSaved
+                  ? "The active file’s draft save was confirmed, but finishing the session was not."
+                  : "The latest draft save was not confirmed either."}{" "}
+                Ask an invigilator to check your session and submissions.
+              </Text>
+            </VStack>
+          )}
+          {timeUpState !== "submitting" && (
+            <HStack gap={3} wrap="wrap">
+              <Button
+                label="Back to home"
+                variant="secondary"
+                onClick={() => router.push("/home")}
+              />
+              <Button
+                label="Check results status"
+                variant="ghost"
+                onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)}
+              />
+            </HStack>
+          )}
+        </ContestOverlay>
+      )}
 
-      {showSupportModal && <ContestOverlay labelId="support-modal-title" dialogRef={supportDialogRef} wide>
-        <VStack gap={2}><Heading level={2} id="support-modal-title">Report an incident</Heading><Text color="secondary">Choose the issue you’re experiencing. Device diagnostics are included with your report.</Text></VStack>
-        {reportSentSuccess ? <VStack gap={4}>
-          <Banner status="success" title="Report sent" description="Your incident report has been sent. You can return to your contest." />
-          <Button label="Back to contest" variant="primary" onClick={closeSupport} />
-        </VStack> : <>
-          {supportReportError && <Banner status="error" title="Report not confirmed" description={supportReportError} role="alert" />}
-          <RadioList label="Issue" value={supportCategory} onChange={setSupportCategory} htmlName="supportCategory" isDisabled={isSendingReport}>
-            {SUPPORT_CATEGORIES.map(opt => <RadioListItem key={opt.value} value={opt.value} label={opt.label} />)}
-          </RadioList>
-          <TextArea label="What happened?" isOptional={supportCategory !== "other"} isRequired={supportCategory === "other"} description="Include the problem and what you were doing when the issue occurred." placeholder="Describe what happened…" value={customIssueDetail} onChange={setCustomIssueDetail} isDisabled={isSendingReport} hasSpellCheck={false} rows={3} />
-          <HStack gap={3} wrap="wrap"><Button label={isSendingReport ? "Sending…" : "Submit report"} variant="primary" onClick={handleSendSupportReport} isDisabled={isSendingReport || (supportCategory === "other" && !customIssueDetail.trim())} /><Button label="Cancel" variant="secondary" onClick={closeSupport} isDisabled={isSendingReport} /></HStack>
-        </>}
-        {sentReports.some((report) => report.sessionId === sessionId) && <VStack as="section" gap={3} aria-label="Recent reports" style={{ borderTop: "var(--border-width) solid var(--color-border)", paddingTop: "var(--spacing-4)" }}>
-          <Text weight="medium">Recent reports</Text>
-          <Text type="supporting" color="secondary">Last 10 reports confirmed during this visit. This list clears when you reload or leave the contest. Organizer replies are not shown here.</Text>
-          {sentReports.filter((report) => report.sessionId === sessionId).map((report, index) => <HStack key={`${report.sentAt}-${index}`} gap={3} justify="between" wrap="wrap">
-            <Text>{SUPPORT_CATEGORIES.find((category) => category.value === report.category)?.label ?? "Other issue"}</Text>
-            <Text type="supporting" color="secondary">Sent {new Date(report.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Text>
-          </HStack>)}
-        </VStack>}
-        <VStack as="details" gap={3} style={{ borderTop: "var(--border-width) solid var(--color-border)", paddingTop: "var(--spacing-4)" }}>
-          <summary tabIndex={0} style={{ cursor: "pointer", fontWeight: "var(--font-weight-medium)" }}>Attached diagnostics</summary>
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "calc(var(--spacing-10) * 5)", overflowY: "auto", padding: "var(--spacing-4)", background: "var(--color-background-body)", borderRadius: "var(--radius-element)" }}>{JSON.stringify(supportTelemetry, null, 2)}</pre>
-        </VStack>
-      </ContestOverlay>}
+      {showSupportModal && (
+        <ContestOverlay labelId="support-modal-title" dialogRef={supportDialogRef} wide>
+          <VStack gap={2}>
+            <Heading level={2} id="support-modal-title">
+              Report an incident
+            </Heading>
+            <Text color="secondary">
+              Choose the issue you’re experiencing. Device diagnostics are included with your
+              report.
+            </Text>
+          </VStack>
+          {reportSentSuccess ? (
+            <VStack gap={4}>
+              <Banner
+                status="success"
+                title="Report sent"
+                description="Your incident report has been sent. You can return to your contest."
+              />
+              <Button label="Back to contest" variant="primary" onClick={closeSupport} />
+            </VStack>
+          ) : (
+            <>
+              {supportReportError && (
+                <Banner
+                  status="error"
+                  title="Report not confirmed"
+                  description={supportReportError}
+                  role="alert"
+                />
+              )}
+              <RadioList
+                label="Issue"
+                value={supportCategory}
+                onChange={setSupportCategory}
+                htmlName="supportCategory"
+                isDisabled={isSendingReport}
+              >
+                {SUPPORT_CATEGORIES.map((opt) => (
+                  <RadioListItem key={opt.value} value={opt.value} label={opt.label} />
+                ))}
+              </RadioList>
+              <TextArea
+                label="What happened?"
+                isOptional={supportCategory !== "other"}
+                isRequired={supportCategory === "other"}
+                description="Include the problem and what you were doing when the issue occurred."
+                placeholder="Describe what happened…"
+                value={customIssueDetail}
+                onChange={setCustomIssueDetail}
+                isDisabled={isSendingReport}
+                hasSpellCheck={false}
+                rows={3}
+              />
+              <HStack gap={3} wrap="wrap">
+                <Button
+                  label={isSendingReport ? "Sending…" : "Submit report"}
+                  variant="primary"
+                  onClick={handleSendSupportReport}
+                  isDisabled={
+                    isSendingReport || (supportCategory === "other" && !customIssueDetail.trim())
+                  }
+                />
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  onClick={closeSupport}
+                  isDisabled={isSendingReport}
+                />
+              </HStack>
+            </>
+          )}
+          {sentReports.some((report) => report.sessionId === sessionId) && (
+            <VStack
+              as="section"
+              gap={3}
+              aria-label="Recent reports"
+              style={{
+                borderTop: "var(--border-width) solid var(--color-border)",
+                paddingTop: "var(--spacing-4)",
+              }}
+            >
+              <Text weight="medium">Recent reports</Text>
+              <Text type="supporting" color="secondary">
+                Last 10 reports confirmed during this visit. This list clears when you reload or
+                leave the contest. Organizer replies are not shown here.
+              </Text>
+              {sentReports
+                .filter((report) => report.sessionId === sessionId)
+                .map((report, index) => (
+                  <HStack key={`${report.sentAt}-${index}`} gap={3} justify="between" wrap="wrap">
+                    <Text>
+                      {SUPPORT_CATEGORIES.find((category) => category.value === report.category)
+                        ?.label ?? "Other issue"}
+                    </Text>
+                    <Text type="supporting" color="secondary">
+                      Sent{" "}
+                      {new Date(report.sentAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </Text>
+                  </HStack>
+                ))}
+            </VStack>
+          )}
+          <VStack
+            as="details"
+            gap={3}
+            style={{
+              borderTop: "var(--border-width) solid var(--color-border)",
+              paddingTop: "var(--spacing-4)",
+            }}
+          >
+            <summary
+              tabIndex={0}
+              style={{ cursor: "pointer", fontWeight: "var(--font-weight-medium)" }}
+            >
+              Attached diagnostics
+            </summary>
+            <pre
+              style={{
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                maxHeight: "calc(var(--spacing-10) * 5)",
+                overflowY: "auto",
+                padding: "var(--spacing-4)",
+                background: "var(--color-background-body)",
+                borderRadius: "var(--radius-element)",
+              }}
+            >
+              {JSON.stringify(supportTelemetry, null, 2)}
+            </pre>
+          </VStack>
+        </ContestOverlay>
+      )}
       <style>{CONTEST_STYLES}</style>
     </AppShell>
   );
