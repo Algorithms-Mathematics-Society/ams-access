@@ -11,6 +11,7 @@ import type {
   ContestEntryPhase,
 } from "./types";
 import { PRACTICE_TICK_MS, isPracticeContest, practiceEntryState } from "./practice-card";
+import { readinessStatusForOutcome } from "./readiness-status";
 
 export { sessionPolicy };
 export type { ReadinessCheck, ReadinessReport };
@@ -172,6 +173,7 @@ export function readinessFromReport(report: ReadinessReport): ReadinessState {
     camera: statusFromReport(report, "camera"),
     mic: statusFromReport(report, "microphone"),
     network: statusFromReport(report, "network"),
+    networkLockdown: statusFromReport(report, "network_lockdown"),
     keyboard: statusFromReport(report, "keyboard_lockdown"),
     restrictedApps: statusFromReport(report, "restricted_apps"),
     vm: statusFromReport(report, "virtualization"),
@@ -180,15 +182,23 @@ export function readinessFromReport(report: ReadinessReport): ReadinessState {
 }
 
 export function readinessCheckStatus(check: ReadinessCheck): ReadinessStatus {
-  if (check.outcome === "pass") return "ok";
-  if (check.outcome === "unknown") return "checking";
-  return "fail";
+  return readinessStatusForOutcome(check.outcome);
 }
 
 export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
   switch (kind) {
     case "network":
       return { label: "Network connection", success: "Network ready", fail: "Network unavailable" };
+    case "network_lockdown":
+      return {
+        label: "Network lockdown",
+        success: "Egress can be restricted",
+        // Says what is and is not wrong. The connection working while lockdown
+        // does not is the common Linux case — the app runs unelevated so the
+        // desktop session works at all — and a candidate told only "network
+        // problem" cannot tell that from being offline.
+        fail: "Your connection works, but egress cannot be restricted",
+      };
     case "microphone":
       return { label: "Microphone", success: "Microphone ready", fail: "Microphone not available" };
     case "camera":

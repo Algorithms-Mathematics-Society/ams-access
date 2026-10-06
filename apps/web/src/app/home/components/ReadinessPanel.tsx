@@ -10,7 +10,7 @@ import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
-import type { ReadinessState, ContestantReadinessContext } from "./types";
+import type { ReadinessState, ReadinessStatus, ContestantReadinessContext } from "./types";
 
 const checks = [
   ["network", "Network connection"],
@@ -38,19 +38,26 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   onPracticeRun?: () => void;
 }) {
   const failedChecks = checks.filter(([key]) => readiness[key] === "fail");
+  // Advisory: real results that do not stop the candidate entering. Without a
+  // bucket of their own these matched nothing and disappeared from the panel
+  // entirely, while the log underneath still reported them.
+  const advisoryChecks = checks.filter(
+    ([key]) => readiness[key] === "warn" || readiness[key] === "unavailable"
+  );
   const pendingChecks = checks.filter(([key]) => readiness[key] === "checking");
   const passedChecks = checks.filter(([key]) => readiness[key] === "ok");
   const policyNeedsReview =
     context?.status === "blocked_by_policy" ||
     context?.status === "needs_action" ||
     context?.status === "advisory_warning";
-  const summary = failedChecks.length > 0
-    ? `${failedChecks.length} ${failedChecks.length === 1 ? "check needs" : "checks need"} attention`
-    : pendingChecks.length > 0 || context?.status === "checking"
-      ? "Checking your setup"
-      : policyNeedsReview
-        ? "Review your setup"
-        : "Checks complete";
+  const summary =
+    failedChecks.length > 0
+      ? `${failedChecks.length} ${failedChecks.length === 1 ? "check needs" : "checks need"} attention`
+      : pendingChecks.length > 0 || context?.status === "checking"
+        ? "Checking your setup"
+        : policyNeedsReview
+          ? "Review your setup"
+          : "Checks complete";
 
   return (
     <Card
@@ -84,6 +91,20 @@ export const ReadinessWidget = memo(function ReadinessWidget({
                   theme={theme}
                   onResolve={onResolve ? () => onResolve(key) : undefined}
                 />
+              ))}
+            </List>
+          </VStack>
+        )}
+
+        {advisoryChecks.length > 0 && (
+          <VStack as="section" gap={2} aria-label="Advisory checks">
+            <HStack gap={2} align="center">
+              <StatusDot variant="warning" label="Advisory" />
+              <Text type="supporting">Worth knowing — these do not stop you entering</Text>
+            </HStack>
+            <List density="compact" aria-label="Advisory checks">
+              {advisoryChecks.map(([key, label]) => (
+                <ReadinessItem key={key} label={label} status={readiness[key]} theme={theme} />
               ))}
             </List>
           </VStack>
@@ -133,12 +154,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
               icon={<Icon icon="wrench" size="sm" />}
             />
           )}
-          <Button
-            label="Open settings"
-            variant="ghost"
-            onClick={onSettingsRedirect}
-            width="100%"
-          />
+          <Button label="Open settings" variant="ghost" onClick={onSettingsRedirect} width="100%" />
         </VStack>
       </VStack>
     </Card>
@@ -151,12 +167,23 @@ export const ReadinessItem = memo(function ReadinessItem({
   onResolve,
 }: {
   label: string;
-  status: "ok" | "fail" | "checking";
+  status: ReadinessStatus;
   theme: "dark" | "light";
   onResolve?: () => void;
 }) {
+  // "Checking..." is only for a scan still running. A check this machine
+  // cannot run says so instead of sitting at "Checking..." for ever with the
+  // real failure visible in the log underneath it.
   const statusLabel =
-    status === "ok" ? "Passed" : status === "fail" ? "Needs action" : "Checking...";
+    status === "ok"
+      ? "Passed"
+      : status === "fail"
+        ? "Needs action"
+        : status === "warn"
+          ? "Not available — you can still enter"
+          : status === "unavailable"
+            ? "Unavailable on this device"
+            : "Checking...";
   const canResolve = status === "fail" && !!onResolve;
   return (
     <ListItem

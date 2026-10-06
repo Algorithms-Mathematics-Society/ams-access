@@ -12,7 +12,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
 import { useAppVersion } from "@/lib/use-app-version";
-import type { ReadinessState, TelemetryQueryState } from "./types";
+import type { ReadinessState, ReadinessStatus, TelemetryQueryState } from "./types";
 
 export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   readiness,
@@ -60,64 +60,66 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
     await refreshTelemetry(true, "DIAGNOSTICS");
   }
 
-  const rows: { label: string; status: "ok" | "fail" | "checking" | "unknown"; detail: string }[] =
-    [
-      {
-        label: "Camera access",
-        status: readiness.camera,
-        detail:
-          readiness.camera === "ok"
-            ? "Camera access was available at the last check."
-            : "Test camera access and framing in Settings.",
-      },
-      {
-        label: "Microphone access",
-        status: readiness.mic,
-        detail:
-          readiness.mic === "ok"
-            ? "Microphone access was available at the last check."
-            : "Test your microphone in Settings.",
-      },
-      {
-        label: "Keyboard support",
-        status: platformInfo ? readiness.keyboard : "unknown",
-        detail: "Current readiness result; contest entry checks lockdown separately.",
-      },
-      {
-        label: "Platform support",
-        status: platformInfo ? readiness.platform : "unknown",
-        detail: platformInfo
-          ? `${platformInfo.os} · ${platformInfo.arch}`
-          : "No native platform result is available.",
-      },
-      {
-        label: "Virtual machine check",
-        status: telemetry.virt ? (telemetry.virt.detected ? "fail" : "ok") : "unknown",
-        detail: telemetry.virt
-          ? telemetry.virt.detected
-            ? `${telemetry.virt.platform ?? "Virtual environment"} detected.`
-            : "No virtualization detected in the latest scan."
-          : "No virtualization result is available.",
-      },
-      {
-        label: "Restricted apps",
-        status: telemetry.processes ? (telemetry.processes.clean ? "ok" : "fail") : "unknown",
-        detail: telemetry.processes
-          ? telemetry.processes.clean
-            ? "No restricted apps found in the latest scan."
-            : `${telemetry.processes.found.length} app entries found. Close flagged apps and scan again.`
-          : "No app scan result is available.",
-      },
-      {
-        label: "Startup integrity",
-        status: securityEnv ? (securityEnv.ld_preload_injection ? "fail" : "ok") : "unknown",
-        detail: securityEnv
-          ? securityEnv.ld_preload_injection
-            ? "Startup injection detected. Ask your organizer for help before entering."
-            : "No startup injection detected in the latest scan."
-          : "No startup integrity result is available.",
-      },
-    ];
+  // `unknown` here means "no native result reached this panel at all", which
+  // is distinct from the report's own `unavailable` ("this machine cannot run
+  // the probe"). Both render the same way; only the first is this panel's.
+  const rows: { label: string; status: ReadinessStatus | "unknown"; detail: string }[] = [
+    {
+      label: "Camera access",
+      status: readiness.camera,
+      detail:
+        readiness.camera === "ok"
+          ? "Camera access was available at the last check."
+          : "Test camera access and framing in Settings.",
+    },
+    {
+      label: "Microphone access",
+      status: readiness.mic,
+      detail:
+        readiness.mic === "ok"
+          ? "Microphone access was available at the last check."
+          : "Test your microphone in Settings.",
+    },
+    {
+      label: "Keyboard support",
+      status: platformInfo ? readiness.keyboard : "unknown",
+      detail: "Current readiness result; contest entry checks lockdown separately.",
+    },
+    {
+      label: "Platform support",
+      status: platformInfo ? readiness.platform : "unknown",
+      detail: platformInfo
+        ? `${platformInfo.os} · ${platformInfo.arch}`
+        : "No native platform result is available.",
+    },
+    {
+      label: "Virtual machine check",
+      status: telemetry.virt ? (telemetry.virt.detected ? "fail" : "ok") : "unknown",
+      detail: telemetry.virt
+        ? telemetry.virt.detected
+          ? `${telemetry.virt.platform ?? "Virtual environment"} detected.`
+          : "No virtualization detected in the latest scan."
+        : "No virtualization result is available.",
+    },
+    {
+      label: "Restricted apps",
+      status: telemetry.processes ? (telemetry.processes.clean ? "ok" : "fail") : "unknown",
+      detail: telemetry.processes
+        ? telemetry.processes.clean
+          ? "No restricted apps found in the latest scan."
+          : `${telemetry.processes.found.length} app entries found. Close flagged apps and scan again.`
+        : "No app scan result is available.",
+    },
+    {
+      label: "Startup integrity",
+      status: securityEnv ? (securityEnv.ld_preload_injection ? "fail" : "ok") : "unknown",
+      detail: securityEnv
+        ? securityEnv.ld_preload_injection
+          ? "Startup injection detected. Ask your organizer for help before entering."
+          : "No startup injection detected in the latest scan."
+        : "No startup integrity result is available.",
+    },
+  ];
 
   const copySupportSummary = useCallback(() => {
     setCopyError(null);

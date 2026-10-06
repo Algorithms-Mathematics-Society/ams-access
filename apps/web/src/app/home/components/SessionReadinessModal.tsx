@@ -29,13 +29,24 @@ function PreflightCheckItem({
   variant = "required",
 }: {
   label: string;
-  status: "ok" | "fail" | "checking";
+  status: ReadinessStatus;
   successLabel: string;
   failLabel: string;
   theme: "dark" | "light";
   variant?: "required" | "optional";
 }) {
-  const stateLabel = status === "ok" ? successLabel : status === "fail" ? failLabel : "Checking...";
+  // Same correction as ReadinessItem: "Checking..." means the scan is still
+  // running, and nothing else. A check that failed advisorily, or that this
+  // machine cannot run at all, says which — the modal used to show both as
+  // though they were still in progress.
+  const stateLabel =
+    status === "ok"
+      ? successLabel
+      : status === "fail" || status === "warn"
+        ? failLabel
+        : status === "unavailable"
+          ? "Unavailable on this device"
+          : "Checking...";
   return (
     <HStack
       justify="between"
@@ -268,7 +279,19 @@ export function SessionReadinessModal({
     const checkLog = (kind: string, prefix: string, label: string) => {
       const check = activeReport.checks.find((item) => item.kind === kind);
       if (!check) return `[${prefix}] ${label}: unavailable`;
-      const outcome = check.outcome === "pass" ? "PASS" : "FAIL";
+      // Four outcomes, four words. This printed PASS for `pass` and FAIL for
+      // everything else, so an advisory warning and a probe this machine
+      // cannot run both appeared in the log as hard failures — which is how
+      // "[NET] Network connectivity: FAIL - readiness probe did not return a
+      // result" came to describe a probe that was never run.
+      const outcome =
+        check.outcome === "pass"
+          ? "PASS"
+          : check.outcome === "warn"
+            ? "WARN"
+            : check.outcome === "unknown"
+              ? "UNAVAILABLE"
+              : "FAIL";
       const detail = check.detail ? ` - ${check.detail}` : "";
       return `[${prefix}] ${label}: ${outcome}${detail}`;
     };

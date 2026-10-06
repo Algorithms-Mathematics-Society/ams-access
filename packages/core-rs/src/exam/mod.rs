@@ -101,6 +101,12 @@ pub enum CheckKind {
     Camera,
     Microphone,
     Network,
+    /// Whether egress can be restricted, as opposed to whether the network
+    /// works. These were one check, and the helper branch short-circuited the
+    /// connectivity one — so a candidate whose helper was missing was told
+    /// nothing at all about their internet, and could not tell an offline
+    /// machine from an unprivileged one.
+    NetworkLockdown,
     ClockIntegrity,
     KeyboardLockdown,
     RestrictedApps,
@@ -264,6 +270,7 @@ impl SessionPolicy {
             CheckKind::Virtualization,
             CheckKind::KeyboardLockdown,
             CheckKind::Network,
+            CheckKind::NetworkLockdown,
             CheckKind::ClockIntegrity,
             CheckKind::Camera,
             CheckKind::Microphone,
@@ -283,6 +290,12 @@ impl SessionPolicy {
                 // never a block, so contest entry is never gated on it. (Mirrors
                 // the Microphone precedent above.)
                 CheckKind::Network => (false, BlockingSeverity::Warning),
+                // Advisory everywhere. On Linux the app runs unelevated so
+                // that GTK, WebKit, camera and microphone work at all, and the
+                // helper that restricts egress may simply not be installable
+                // in that session. Blocking on it would exclude the candidate
+                // for something they cannot fix from inside the exam shell.
+                CheckKind::NetworkLockdown => (false, BlockingSeverity::Warning),
                 // Camera and the two Windows-only entry checks are hard
                 // requirements only under a strict Windows session; everywhere
                 // else (non-strict, or non-Windows) they remain advisory so
@@ -622,24 +635,45 @@ fn evaluate_requirement(
                 vec![],
             ),
         },
-        CheckKind::Network if device_state.network_helper_ready == Some(false) => {
-            // Network is advisory on every profile (see SessionPolicy), so a
-            // down helper surfaces here as a non-blocking warning — it never
-            // blocks contest entry. The check reports Warn (non-required/Warning
-            // checks map to Warn, not Fail), so the cause is visible under "Optional warnings".
-            (
+        // Egress restriction, reported separately from connectivity. The two
+        // used to be one check, and this branch short-circuited it: a
+        // candidate with no helper learned nothing about their internet, which
+        // is the more urgent of the two and the only one they can act on.
+        CheckKind::NetworkLockdown => match device_state.network_helper_ready {
+            Some(true) => (
+                true,
+                None,
+                Some("egress restriction is available".to_string()),
+                vec![],
+            ),
+            Some(false) => (
                 false,
                 Some(FailureReasonCode::NetworkHelperUnavailable),
+                // Says which of the two is wrong, and what to do. "Network
+                // problem" left a Linux candidate unable to tell an offline
+                // machine from an unprivileged one, and the two have very
+                // different remedies — one is theirs, one is the invigilator's.
                 Some(
-                    "network lockdown helper is not installed or not running — egress cannot be restricted"
+                    "internet connectivity is available, but network lockdown could not be enabled — restart the application using the supported privileged helper, or tell an invigilator"
                         .to_string(),
                 ),
                 vec![
                     RecoveryAction::InstallNetworkHelper,
                     RecoveryAction::RetryReadinessScan,
                 ],
-            )
-        }
+            ),
+            // Not probed at all — the entry gate skips it, and only onboarding
+            // asks. Inert rather than a warning, matching how ClockIntegrity
+            // treats an unmeasured clock above: warning on every screen that
+            // does not run the probe would put a permanent amber mark on a
+            // perfectly clean machine, and candidates learn to ignore those.
+            None => (
+                true,
+                None,
+                Some("egress restriction not probed on this screen".to_string()),
+                vec![],
+            ),
+        },
         CheckKind::Network => match &device_state.network {
             Some(network) if network.reachable && network.quality != "poor" => (
                 true,
@@ -1292,6 +1326,52 @@ mod tests {
     }
 
     #[test]
+    fn connectivity_and_egress_restriction_are_reported_separately() {
+        // The two were one check, and the helper branch short-circuited it: a
+        // Linux candidate running unelevated saw "network" fail and could not
+        // tell whether their internet was down (their problem, and urgent) or
+        // whether egress simply could not be restricted (not their problem,
+        // and not urgent). They need both answers, not one of them.
+        let mut offline_but_locked = passing_state();
+        offline_but_locked.network_helper_ready = Some(true);
+        offline_but_locked.network = Some(NetworkCheckResult {
+            reachable: false,
+            latency_ms: None,
+            jitter_ms: None,
+            quality: "offline".to_string(),
+            clock_skew_ms: None,
+        });
+
+        let report = evaluate_readiness(
+            &SessionPolicy::strict_contest(),
+            Some("contest-1".into()),
+            Some("device-1".into()),
+            &offline_but_locked,
+        );
+        let net = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::Network)
+            .expect("network check present");
+        let lockdown = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::NetworkLockdown)
+            .expect("lockdown check present");
+
+        assert_eq!(net.outcome, CheckOutcome::Warn, "the connection is down");
+        assert_eq!(
+            lockdown.outcome,
+            CheckOutcome::Pass,
+            "egress restriction is available and must say so independently"
+        );
+
+        // Neither blocks: network readiness is advisory on every profile, so a
+        // candidate on a flaky connection still sits the contest.
+        assert!(!net.blocking && !lockdown.blocking);
+    }
+
+    #[test]
     fn network_helper_down_warns_not_blocks_strict_and_is_inert_when_unknown() {
         // Network is advisory: even with the egress helper explicitly down,
         // strict contest must NOT block on it — it surfaces as a non-blocking
@@ -1308,15 +1388,31 @@ mod tests {
         // The helper-down reason rides on the (non-blocking) network check, so it
         // must NOT appear in blocking_reasons.
         assert!(report.blocking_reasons.is_empty());
+        // Connectivity and egress restriction are separate checks now. The
+        // helper being down says nothing about whether the network works, and
+        // the candidate needs to be told which of the two is wrong: one is
+        // their problem to fix, the other is not.
         let net = report
             .checks
             .iter()
             .find(|c| c.kind == CheckKind::Network)
             .expect("network check present");
         assert!(!net.blocking);
+        assert_eq!(
+            net.outcome,
+            CheckOutcome::Pass,
+            "a down helper must not be reported as a connectivity failure"
+        );
+
+        let lockdown = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::NetworkLockdown)
+            .expect("network lockdown check present");
+        assert!(!lockdown.blocking);
         // Advisory (non-required/Warning) checks surface as Warn, not Fail.
-        assert_eq!(net.outcome, CheckOutcome::Warn);
-        assert!(net.reason == Some(FailureReasonCode::NetworkHelperUnavailable));
+        assert_eq!(lockdown.outcome, CheckOutcome::Warn);
+        assert!(lockdown.reason == Some(FailureReasonCode::NetworkHelperUnavailable));
 
         // Unknown helper signal + an otherwise-good network still admits the
         // candidate. (Warnings, not Allowed: this is a Linux state, whose
@@ -1454,10 +1550,11 @@ mod tests {
             .blocking_reasons
             .contains(&FailureReasonCode::ContestIdMissing));
         // With no platform supplied (legacy `strict_contest()` / `None`
-        // platform), camera/microphone, network, and the two Windows-only entry
-        // checks are all advisory; the other seven checks (including ClockIntegrity)
-        // stay required under the strict profile. `optional_kinds` is ordered by
-        // `CheckKind`'s derived `Ord`.
+        // platform), camera/microphone, both network checks, and the two
+        // Windows-only entry checks are all advisory; the rest (including
+        // ClockIntegrity) stay required under the strict profile.
+        // `optional_kinds` is ordered by `CheckKind`'s derived `Ord`, so
+        // NetworkLockdown sits next to Network by declaration order.
         let optional_kinds = report
             .optional_checks
             .iter()
@@ -1469,6 +1566,7 @@ mod tests {
                 CheckKind::Camera,
                 CheckKind::Microphone,
                 CheckKind::Network,
+                CheckKind::NetworkLockdown,
                 CheckKind::ExternalDisplay,
                 CheckKind::RemoteServer,
             ]

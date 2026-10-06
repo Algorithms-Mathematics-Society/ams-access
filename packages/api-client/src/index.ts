@@ -32,7 +32,10 @@ export async function invoke<T = unknown>(
   }
   if (args === undefined && (command === "get_platform" || command === "plugin:app|version")) {
     let cache = metadataByBridge.get(fn);
-    if (!cache) { cache = new Map(); metadataByBridge.set(fn, cache); }
+    if (!cache) {
+      cache = new Map();
+      metadataByBridge.set(fn, cache);
+    }
     const existing = cache.get(command);
     if (existing) return existing as Promise<T>;
     const request = fn(command).catch((error: unknown) => {
@@ -51,6 +54,7 @@ export type CheckKind =
   | "camera"
   | "microphone"
   | "network"
+  | "network_lockdown"
   | "clock_integrity"
   | "keyboard_lockdown"
   | "restricted_apps"
@@ -186,6 +190,7 @@ const POLICY_CHECKS: CheckKind[] = [
   "virtualization",
   "keyboard_lockdown",
   "network",
+  "network_lockdown",
   "clock_integrity",
   "camera",
   "microphone",
@@ -244,7 +249,12 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
       // best-effort during the contest and is NOT a hard entry gate. A failing/
       // uncollected network surfaces as a warning, never a block. (Mirrors
       // core-rs SessionPolicy + the Microphone precedent above.)
-      if (kind === "network") {
+      // `network_lockdown` is advisory for the same reason, plus one of its
+      // own: on Linux the app runs unelevated so GTK, WebKit, camera and
+      // microphone work at all, and the helper that restricts egress may not
+      // be installable in that session. Blocking would exclude a candidate for
+      // something they cannot fix from inside the exam shell.
+      if (kind === "network" || kind === "network_lockdown") {
         return {
           kind,
           required: false,

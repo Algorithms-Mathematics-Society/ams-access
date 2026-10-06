@@ -48,6 +48,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -117,6 +123,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -196,6 +208,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -265,6 +283,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -344,6 +368,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -413,6 +443,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -492,6 +528,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -561,6 +603,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -640,6 +688,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -709,6 +763,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -788,6 +848,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -857,6 +923,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -936,6 +1008,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": true,
       "required": false,
@@ -1005,6 +1083,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -1084,6 +1168,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": false,
       "required": true,
@@ -1153,6 +1243,12 @@
       "unsupported_severity": "warning"
     },
     "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": false,
       "required": false,
       "severity": "warning",
@@ -1232,6 +1328,12 @@
       "severity": "warning",
       "unsupported_severity": "warning"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "warning"
+    },
     "platform": {
       "organizer_override_allowed": false,
       "required": true,
@@ -1301,6 +1403,12 @@
       "unsupported_severity": "block"
     },
     "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": false,
       "required": false,
       "severity": "warning",
@@ -1380,6 +1488,12 @@
       "severity": "warning",
       "unsupported_severity": "block"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
     "platform": {
       "organizer_override_allowed": false,
       "required": false,
@@ -1454,6 +1568,12 @@
       "severity": "warning",
       "unsupported_severity": "block"
     },
+    "network_lockdown": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
     "platform": {
       "organizer_override_allowed": false,
       "required": false,
@@ -1523,6 +1643,12 @@
       "unsupported_severity": "block"
     },
     "network": {
+      "organizer_override_allowed": false,
+      "required": false,
+      "severity": "warning",
+      "unsupported_severity": "block"
+    },
+    "network_lockdown": {
       "organizer_override_allowed": false,
       "required": false,
       "severity": "warning",

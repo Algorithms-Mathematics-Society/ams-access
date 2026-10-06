@@ -20,12 +20,28 @@ export type InvitedContest = {
   is_practice?: boolean;
 };
 
-export type ReadinessStatus = "ok" | "fail" | "checking";
+/**
+ * Mirrors the report's four outcomes rather than flattening them.
+ *
+ * It was `ok | fail | checking`, which lost two distinctions the report had
+ * already made correctly:
+ *
+ * * `warn` became "fail", overstating an advisory check as something the
+ *   candidate must fix before entering.
+ * * `unavailable` became "checking", so a probe this machine can *never* run
+ *   — keyboard lockdown on a tiling WM, say — sat at "Checking..." for ever,
+ *   with the log underneath it reporting the real failure.
+ *
+ * `checking` now means only what it says: the scan has not finished yet.
+ */
+export type ReadinessStatus = "ok" | "warn" | "unavailable" | "fail" | "checking";
 
 export type ReadinessState = {
   camera: ReadinessStatus;
   mic: ReadinessStatus;
   network: ReadinessStatus;
+  /** Whether egress can be restricted — separate from whether the net works. */
+  networkLockdown: ReadinessStatus;
   keyboard: ReadinessStatus;
   restrictedApps: ReadinessStatus;
   vm: ReadinessStatus;

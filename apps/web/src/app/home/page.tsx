@@ -50,6 +50,7 @@ import {
   withUiTimeout,
   getBrowserMediaAvailability,
   fetchWithTimeout,
+  getNetworkProbeHost,
   readinessFromReport,
   getVerificationWindowMinutes,
 } from "./components/utils";
@@ -107,7 +108,10 @@ export default function HomePage() {
   const [signingOut, setSigningOut] = useState(false);
   const [contestSearch, setContestSearch] = useState("");
   const [homeHelpOpen, setHomeHelpOpen] = useState(false);
-  const { highlightedContestId, showContest } = useHomeContestNavigation(setContestSearch, activeNav === "overview");
+  const { highlightedContestId, showContest } = useHomeContestNavigation(
+    setContestSearch,
+    activeNav === "overview"
+  );
   const [contests, setContests] = useState<InvitedContest[]>([]);
   const [contestsLoading, setContestsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -138,6 +142,7 @@ export default function HomePage() {
     camera: "checking",
     mic: "checking",
     network: "checking",
+    networkLockdown: "checking",
     keyboard: "checking",
     restrictedApps: "checking",
     vm: "checking",
@@ -152,7 +157,12 @@ export default function HomePage() {
   const lastScannedAtRef = useRef<number | null>(null);
 
   const appendSecurityEvent = useCallback((event: string, level: SecurityLogLevel = "info") => {
-    const time = dateTimeFormatter({ hour: "numeric", minute: "numeric", second: "numeric", hour12: false }).format(new Date());
+    const time = dateTimeFormatter({
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false,
+    }).format(new Date());
     setSecurityLogs((prev) => {
       const next = [
         ...prev,
@@ -287,30 +297,35 @@ export default function HomePage() {
     }
   }, [invitedContestsQuery.data, invitedContestsQuery.error]);
 
-  const loadContests = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
-    if (mode === "initial") setContestsLoading(true);
-    else setSessionsRefreshing(true);
-    appendSecurityEvent("SESSION: Contest list refresh requested");
-    setSessionsError(null);
-    try {
-      const data = await invitedContestsQuery.mutate();
-      if (data) {
-        setContests(data);
-        appendSecurityEvent(
-          "SESSION: Contest list refresh completed (" + data.length + " records)"
-        );
+  const loadContests = useCallback(
+    async (mode: "initial" | "refresh" = "refresh") => {
+      if (mode === "initial") setContestsLoading(true);
+      else setSessionsRefreshing(true);
+      appendSecurityEvent("SESSION: Contest list refresh requested");
+      setSessionsError(null);
+      try {
+        const data = await invitedContestsQuery.mutate();
+        if (data) {
+          setContests(data);
+          appendSecurityEvent(
+            "SESSION: Contest list refresh completed (" + data.length + " records)"
+          );
+        }
+      } catch {
+        if (mode === "refresh") {
+          setSessionsError("Could not refresh sessions. Check your connection and try again.");
+          appendSecurityEvent("SESSION: Contest list refresh failed", "error");
+        }
+      } finally {
+        setContestsLoading(false);
+        setSessionsRefreshing(false);
       }
-    } catch {
-      if (mode === "refresh") {
-        setSessionsError("Could not refresh sessions. Check your connection and try again.");
-        appendSecurityEvent("SESSION: Contest list refresh failed", "error");
-      }
-    } finally {
-      setContestsLoading(false);
-      setSessionsRefreshing(false);
-    }
-  }, [invitedContestsQuery.mutate, appendSecurityEvent]);
-  const refreshContests = useCallback(() => { void loadContests(); }, [loadContests]);
+    },
+    [invitedContestsQuery.mutate, appendSecurityEvent]
+  );
+  const refreshContests = useCallback(() => {
+    void loadContests();
+  }, [loadContests]);
   const openPreflight = useCallback((contestId: string, type: "new" | "resume") => {
     setPreflightContestId(contestId);
     setPreflightSessionType(type);
@@ -318,7 +333,8 @@ export default function HomePage() {
 
   async function runIntegrityScan(cancelledRef?: { current: boolean }, contestId?: string | null) {
     const generation = ++scanGenerationRef.current;
-    const isCancelled = () => Boolean(cancelledRef?.current) || generation !== scanGenerationRef.current;
+    const isCancelled = () =>
+      Boolean(cancelledRef?.current) || generation !== scanGenerationRef.current;
 
     if (!isCancelled()) {
       setReadinessReport(null);
@@ -326,6 +342,7 @@ export default function HomePage() {
         camera: "checking",
         mic: "checking",
         network: "checking",
+        networkLockdown: "checking",
         keyboard: "checking",
         restrictedApps: "checking",
         vm: "checking",
@@ -384,9 +401,12 @@ export default function HomePage() {
       }
 
       const report = await runSessionReadiness({
-        // Network readiness is advisory (policy: Network is non-blocking), so the
-        // connectivity probe is intentionally skipped here — it never gates entry.
-        networkHost: undefined,
+        // Run it. Skipping the probe did not make network readiness advisory —
+        // the policy already does that — it only meant the check had no result,
+        // which the report then recorded as a failure and the log printed as
+        // "FAIL - readiness probe did not return a result". Advisory means it
+        // must not *block*, not that it must not be *measured*.
+        networkHost: getNetworkProbeHost(),
         apiUrl: API_URL,
         contestId: contestId ?? null,
         deviceId,
@@ -397,12 +417,12 @@ export default function HomePage() {
       });
       if (isCancelled()) return;
       setReadinessReport(report);
+      // No network override any more. It was there because the probe above was
+      // skipped, so the honest value would have been a red that meant nothing;
+      // now the probe runs, the real result is the right thing to show, and
+      // "advisory" is expressed by the status being `warn` rather than `fail`.
       setReadiness({
         ...readinessFromReport(report),
-        // Network is advisory/non-blocking (policy) and we skip the probe above,
-        // so the coarse home summary reports it as "ok" rather than a misleading
-        // red. The detailed entry gate shows its true advisory status from the report.
-        network: "ok",
       });
       appendSecurityEvent(
         "READINESS: Policy report " +
@@ -416,7 +436,11 @@ export default function HomePage() {
       setReadiness({
         camera: media.cameraAvailable ? "ok" : "fail",
         mic: media.microphoneAvailable ? "ok" : "fail",
-        network: "ok",
+        // The scan threw, so nothing was measured. "ok" was a guess that
+        // happened to be green; `unavailable` says we do not know, which is
+        // the only true thing available here.
+        network: "unavailable",
+        networkLockdown: "unavailable",
         keyboard: "fail",
         restrictedApps: "fail",
         vm: "fail",
@@ -502,7 +526,9 @@ export default function HomePage() {
   async function refreshResumeRequest(session: ActiveSession, isCancelled = () => false) {
     if (!session.id || resumePollInFlightRef.current || resumeConsumeInFlightRef.current) return;
     resumePollInFlightRef.current = true;
-    const isStale = () => isCancelled() || activeSessionRef.current?.id !== session.id ||
+    const isStale = () =>
+      isCancelled() ||
+      activeSessionRef.current?.id !== session.id ||
       activeSessionRef.current?.resume_request_id !== session.resume_request_id ||
       activeSessionRef.current?.resume_request_status !== session.resume_request_status;
     try {
@@ -776,8 +802,11 @@ export default function HomePage() {
   void closeFailedApps;
 
   // Match the existing resume guards; keep position stable while the action runs.
-  const prioritizeRecovery = Boolean(activeSession && resumeVerification === "verified" &&
-    String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING");
+  const prioritizeRecovery = Boolean(
+    activeSession &&
+    resumeVerification === "verified" &&
+    String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING"
+  );
   const contestsPanel = (
     <ContestsPanel
       key="contests"
@@ -789,10 +818,7 @@ export default function HomePage() {
       theme={theme}
       searchQuery={contestSearch}
       onSearchChange={setContestSearch}
-      error={
-        sessionsError ??
-        (invitedContestsQuery.error ? "Could not load your contests." : null)
-      }
+      error={sessionsError ?? (invitedContestsQuery.error ? "Could not load your contests." : null)}
       onPreflight={openPreflight}
       readinessContext={contestantReadiness}
     />
@@ -818,10 +844,16 @@ export default function HomePage() {
         displayName={displayName}
         onSignOut={handleSignOut}
         signingOut={signingOut}
-        calendar={activeNav === "overview" ? (
-          <ContestCalendar contests={contests} loading={contestsLoading} onSelectContest={showContest}
-            error={invitedContestsQuery.error ? "Could not load your contests." : null} />
-        ) : undefined}
+        calendar={
+          activeNav === "overview" ? (
+            <ContestCalendar
+              contests={contests}
+              loading={contestsLoading}
+              onSelectContest={showContest}
+              error={invitedContestsQuery.error ? "Could not load your contests." : null}
+            />
+          ) : undefined
+        }
         headerAction={
           activeNav === "overview" ? (
             <AstryxButton label="Get help" variant="ghost" onClick={() => setHomeHelpOpen(true)} />
