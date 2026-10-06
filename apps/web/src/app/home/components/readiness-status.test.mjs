@@ -77,3 +77,29 @@ test("a packaged build is never treated as a dev session", () => {
 test("a browser is treated as a dev session", () => {
   assert.equal(hasNativeBridge({}), false);
 });
+
+// ── the second mapper ────────────────────────────────────────────────────
+//
+// `statusFromReport` in utils.ts kept its own three-way collapse after the
+// fix above landed, so the hub panel still painted an advisory warn red.
+// Network lockdown is the check that exposed it: on an ordinary unelevated
+// Linux session, or any shipping Windows build (AMS_FIREWALL_BUILD is not set
+// in release CI, so the firewall is never even attempted), core-rs reports
+// Warn with blocking:false -- and the hub said "failed".
+//
+// utils.ts cannot be imported here: it reaches through `@/lib` path aliases
+// that plain `node --test` will not resolve. So this pins the mapper
+// `statusFromReport` must delegate to, which is the thing that regressed.
+
+test("an advisory warn is never shown as a failure", () => {
+  assert.equal(readinessStatusForOutcome("warn"), "warn");
+  assert.notEqual(readinessStatusForOutcome("warn"), "fail");
+});
+
+test("only a blocking outcome maps to fail", () => {
+  const outcomes = ["pass", "warn", "unknown", "fail"];
+  assert.deepEqual(
+    outcomes.filter((o) => readinessStatusForOutcome(o) === "fail"),
+    ["fail"]
+  );
+});

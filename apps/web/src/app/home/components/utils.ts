@@ -164,8 +164,15 @@ export function describeMediaError(err: unknown, kind: "camera" | "microphone") 
 
 export function statusFromReport(report: ReadinessReport, kind: string): ReadinessStatus {
   const check = report.checks.find((item) => item.kind === kind);
+  // A check the report does not carry at all is not the same as one that ran
+  // and warned: we cannot say the machine is clean, so this stays fail-closed.
   if (!check) return "fail";
-  return check.outcome === "pass" ? "ok" : "fail";
+  // Via the shared mapper rather than a second `=== "pass"` collapse. This path
+  // kept its own three-way version after #38/#39/#40 fixed the other one, which
+  // is why an advisory warn -- network lockdown on an unelevated Linux or
+  // Windows build, the ordinary case -- painted red on the hub and told
+  // candidates to fix something that was never going to stop them entering.
+  return readinessCheckStatus(check);
 }
 
 export function readinessFromReport(report: ReadinessReport): ReadinessState {
