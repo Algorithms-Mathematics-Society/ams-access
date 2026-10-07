@@ -1690,7 +1690,10 @@ pub struct FullTelemetry {
 }
 
 #[tauri::command]
-async fn get_full_telemetry(network_host: Option<String>) -> Result<FullTelemetry, String> {
+async fn get_full_telemetry(
+    network_host: Option<String>,
+    api_url: Option<String>,
+) -> Result<FullTelemetry, String> {
     let (platform, env, processes, virt) =
         blocking_probe::run(blocking_probe::Priority::Informational, || {
             let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
@@ -1712,7 +1715,7 @@ async fn get_full_telemetry(network_host: Option<String>) -> Result<FullTelemetr
         })
         .await??;
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
-        Some(host) => Some(check_network_stability(host, None).await),
+        Some(host) => Some(check_network_stability(host, api_url).await),
         None => None,
     };
 

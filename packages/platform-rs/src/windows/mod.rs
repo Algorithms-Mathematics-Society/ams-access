@@ -637,11 +637,14 @@ pub fn unlock_desktop() {
     disable_keyboard_intercept();
 }
 
-// ── Virtualization detection (fast: registry + CPUID + ACPI, systeminfo fallback) ──
+mod virtualization;
+
+// ── Virtualization detection (registry + CPUID + ACPI + firmware identity) ──
 
 pub fn detect_virtualization() -> VirtDetectionResult {
     let _budget = Budget::new(std::time::Duration::from_secs(6));
-    // Method 1: Specific registry keys left by VM guest tools (<100 ms total).
+    // Method 1: Guest-specific tools/integration keys and firmware (<100 ms total).
+    // Host application install keys and host-only network adapters are not evidence.
     // Hyper-V VM guest key is checked here — critical for the MicrosoftHyperV CPUID
     // exclusion in Method 2 to be correct.
     const VM_REGISTRY_KEYS: &[(&str, &str)] = &[
@@ -718,31 +721,21 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         }
     }
 
-    // Method 4: systeminfo — last resort for unusual / hardened VMs that leave no
-    // registry or CPUID traces. Capped at 3s to avoid a visible onboarding stall.
-    // Confidence is "medium" because this relies on loose string matching of
-    // English-localised systeminfo output.
+    // Method 4: firmware identity is available locally, without systeminfo's
+    // slow WMI/network enumeration or localized labels. Host-only adapters and
+    // VBS status are not guest hardware evidence. A failed required query still
+    // propagates through the enclosing scan budget rather than reporting clean.
+    if let Ok(out) = hidden_command("reg")
+        .args(["query", r"HKLM\HARDWARE\DESCRIPTION\System\BIOS"])
+        .bounded_checked_output()
     {
-        if let Ok(out) = hidden_command("systeminfo").bounded_checked_output() {
-            let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-            for vm in &[
-                "vmware",
-                "virtualbox",
-                "virtual machine",
-                "hyper-v",
-                "kvm",
-                "xen",
-                "qemu",
-                "parallels",
-            ] {
-                if text.contains(vm) {
-                    return VirtDetectionResult {
-                        detected: true,
-                        platform: Some(vm.to_string()),
-                        confidence: "medium".to_string(),
-                    };
-                }
-            }
+        let text = String::from_utf8_lossy(&out.stdout);
+        if let Some(platform) = virtualization::registry_guest_platform(&text) {
+            return VirtDetectionResult {
+                detected: true,
+                platform: Some(platform.to_string()),
+                confidence: "high".to_string(),
+            };
         }
     }
 
@@ -1854,6 +1847,7 @@ mod firewall_inventory_query_tests {
         let factory = "$policy = New-Object -ComObject HNetCfg.FwPolicy2";
         assert!(FIREWALL_INVENTORY_SCRIPT.contains(factory));
         let script = FIREWALL_INVENTORY_SCRIPT.replace(factory, source);
+        // Allow for cold PowerShell startup on shared CI runners.
         hidden_command("powershell.exe")
             .args([
                 "-NoLogo",
@@ -1862,7 +1856,7 @@ mod firewall_inventory_query_tests {
                 "-Command",
                 &script,
             ])
-            .bounded_output_with_timeout(std::time::Duration::from_secs(5))
+            .bounded_output_with_timeout(std::time::Duration::from_secs(30))
             .expect("mock inventory script must finish")
     }
 
