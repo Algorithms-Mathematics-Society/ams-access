@@ -233,7 +233,7 @@
   }
 
   button:focus-visible, [role="button"]:focus-visible, a:focus-visible,
-  input:focus-visible, textarea:focus-visible, select:focus-visible,
+  input:focus-visible, textarea:focus-visible:not(.astryx-textarea textarea), select:focus-visible,
   summary:focus-visible, .ams-field:focus-visible {
     outline: var(--spacing-0-5) solid var(--color-accent);
     outline-offset: var(--spacing-0-5);
