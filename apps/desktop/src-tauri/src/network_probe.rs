@@ -39,9 +39,9 @@ impl Drop for Permit<'_> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct Target {
-    host: String,
-    port: u16,
+enum Target {
+    Address(SocketAddr),
+    Host { host: String, port: u16 },
 }
 
 fn url_target(value: &str) -> Option<Target> {
@@ -52,11 +52,16 @@ fn url_target(value: &str) -> Option<Target> {
     {
         return None;
     }
-    Some(Target {
-        // URL's IPv6 host serialization includes brackets; SocketAddr needs
-        // its bare IP when we avoid a DNS worker for literal addresses.
-        host: url.host_str()?.trim_matches(['[', ']']).to_string(),
-        port: url.port_or_known_default()?,
+    // URL's IPv6 host serialization includes brackets; parse the bare IP
+    // to avoid a DNS worker for literal addresses.
+    let host = url.host_str()?.trim_matches(['[', ']']);
+    let port = url.port_or_known_default()?;
+    Some(match host.parse::<IpAddr>() {
+        Ok(ip) => Target::Address(SocketAddr::new(ip, port)),
+        Err(_) => Target::Host {
+            host: host.to_string(),
+            port,
+        },
     })
 }
 
@@ -69,16 +74,12 @@ fn target(host: &str, api_url: Option<&str>) -> Option<Target> {
         return None;
     }
     if let Ok(address) = host.parse::<SocketAddr>() {
-        return Some(Target {
-            host: address.ip().to_string(),
-            port: address.port(),
-        });
+        // Keep the full socket address: converting an IPv6 address to just
+        // its IP and port loses the scope ID required by link-local targets.
+        return Some(Target::Address(address));
     }
     if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-        return Some(Target {
-            host: ip.to_string(),
-            port: 443,
-        });
+        return Some(Target::Address(SocketAddr::new(ip, 443)));
     }
     if host.contains("://") {
         url_target(host)
@@ -138,16 +139,18 @@ async fn bounded_dns_worker(
 }
 
 async fn resolve(target: Target) -> Option<Vec<SocketAddr>> {
-    if let Ok(ip) = target.host.parse::<IpAddr>() {
-        return Some(vec![SocketAddr::new(ip, target.port)]);
+    match target {
+        Target::Address(address) => Some(vec![address]),
+        Target::Host { host, port } => {
+            bounded_dns_worker(&DNS_WORKERS, MAX_DNS_WORKERS, DNS_TIMEOUT, move || {
+                (host.as_str(), port)
+                    .to_socket_addrs()
+                    .map(bounded_addresses)
+                    .ok()
+            })
+            .await
+        }
     }
-    bounded_dns_worker(&DNS_WORKERS, MAX_DNS_WORKERS, DNS_TIMEOUT, move || {
-        (target.host.as_str(), target.port)
-            .to_socket_addrs()
-            .map(bounded_addresses)
-            .ok()
-    })
-    .await
 }
 
 async fn sample(addresses: &[SocketAddr]) -> Option<u64> {
@@ -249,21 +252,18 @@ mod tests {
     fn api_url_is_authoritative_and_keeps_explicit_development_port() {
         assert_eq!(
             target("unrelated.example", Some("http://localhost:3001/api")),
-            Some(Target {
+            Some(Target::Host {
                 host: "localhost".into(),
                 port: 3001
             })
         );
         assert_eq!(
             target("example.test", Some("https://[::1]:8443/api")),
-            Some(Target {
-                host: "::1".into(),
-                port: 8443
-            })
+            Some(Target::Address("[::1]:8443".parse().unwrap()))
         );
         assert_eq!(
             target("example.test", Some("https://api.example.test")),
-            Some(Target {
+            Some(Target::Host {
                 host: "api.example.test".into(),
                 port: 443
             })
@@ -274,20 +274,29 @@ mod tests {
 
     #[test]
     fn bare_hosts_socket_addresses_and_ipv6_are_parsed_without_fake_success() {
-        for (host, expected, port) in [
-            ("localhost:8123", "localhost", 8123),
-            ("[::1]:8123", "::1", 8123),
-            ("::1", "::1", 443),
-            ("127.0.0.1", "127.0.0.1", 443),
-            ("https://example.test:8443", "example.test", 8443),
+        for (host, expected) in [
+            (
+                "localhost:8123",
+                Target::Host {
+                    host: "localhost".into(),
+                    port: 8123,
+                },
+            ),
+            ("[::1]:8123", Target::Address("[::1]:8123".parse().unwrap())),
+            ("::1", Target::Address("[::1]:443".parse().unwrap())),
+            (
+                "127.0.0.1",
+                Target::Address("127.0.0.1:443".parse().unwrap()),
+            ),
+            (
+                "https://example.test:8443",
+                Target::Host {
+                    host: "example.test".into(),
+                    port: 8443,
+                },
+            ),
         ] {
-            assert_eq!(
-                target(host, None),
-                Some(Target {
-                    host: expected.into(),
-                    port
-                })
-            );
+            assert_eq!(target(host, None), Some(expected));
         }
         for host in [
             "",
@@ -298,6 +307,17 @@ mod tests {
         ] {
             assert!(target(host, None).is_none());
         }
+    }
+
+    #[test]
+    fn scoped_ipv6_socket_address_keeps_its_interface_during_resolution() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let address: SocketAddr = "[fe80::1%3]:8123".parse().unwrap();
+        let parsed = target(&address.to_string(), None).unwrap();
+        assert_eq!(runtime.block_on(resolve(parsed)), Some(vec![address]));
     }
 
     #[test]
@@ -379,6 +399,72 @@ mod tests {
                     .await
                     .is_some()
             );
+        });
+    }
+
+    #[test]
+    fn cancelled_dns_waiter_retains_capacity_until_worker_finishes() {
+        static WORKERS: AtomicUsize = AtomicUsize::new(0);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (release, wait) = std::sync::mpsc::channel::<()>();
+            let (started, worker_started) = tokio::sync::oneshot::channel();
+            let waiter = tokio::spawn(bounded_dns_worker(
+                &WORKERS,
+                1,
+                Duration::from_secs(2),
+                move || {
+                    started.send(()).unwrap();
+                    wait.recv_timeout(Duration::from_secs(2)).unwrap();
+                    Some(Vec::new())
+                },
+            ));
+            tokio::time::timeout(Duration::from_secs(1), worker_started)
+                .await
+                .unwrap()
+                .unwrap();
+            waiter.abort();
+            assert!(waiter.await.unwrap_err().is_cancelled());
+            assert_eq!(WORKERS.load(Ordering::Acquire), 1);
+            assert!(
+                bounded_dns_worker(&WORKERS, 1, Duration::from_millis(20), || panic!(
+                    "cancelled waiters must not free a running worker's capacity"
+                ))
+                .await
+                .is_none()
+            );
+            release.send(()).unwrap();
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while WORKERS.load(Ordering::Acquire) != 0 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(
+                bounded_dns_worker(&WORKERS, 1, Duration::from_millis(100), || Some(Vec::new()))
+                    .await
+                    .is_some()
+            );
+        });
+    }
+
+    #[test]
+    fn failed_address_does_not_hide_a_reachable_alternate_family() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addresses = ["[::1]:0".parse().unwrap(), listener.local_addr().unwrap()];
+            assert!(sample(&addresses).await.is_some());
+            assert_eq!(sample(&[]).await, None);
+            drop(listener);
+            assert_eq!(sample(&addresses).await, None);
         });
     }
 

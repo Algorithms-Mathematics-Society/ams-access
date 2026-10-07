@@ -193,8 +193,10 @@ export default function HomePage() {
       appendSecurityEvent(source + ": Native telemetry scan started");
 
       const request = withUiTimeout(
-        // Connectivity checks are disabled for now so they do not block contest testing.
-        invoke<FullTelemetry>("get_full_telemetry", { networkHost: null }),
+        invoke<FullTelemetry>("get_full_telemetry", {
+          networkHost: API_URL,
+          apiUrl: API_URL,
+        }),
         READINESS_TIMEOUT_MS.platform + READINESS_TIMEOUT_MS.process
       ).then((telemetry) => {
         if (!telemetry) return null;
@@ -236,13 +238,14 @@ export default function HomePage() {
               : "fail",
           restrictedApps: snapshot.processes ? (snapshot.processes.clean ? "ok" : "fail") : "fail",
           vm: snapshot.virt ? (snapshot.virt.detected ? "fail" : "ok") : "fail",
-          network: "ok",
+          network: snapshot.network ? (snapshot.network.reachable ? "ok" : "warn") : "unavailable",
         }));
         appendSecurityEvent(
           source +
             ": Native scan completed; restricted_apps=" +
             (snapshot.processes ? (snapshot.processes.clean ? "clear" : "flagged") : "unknown") +
-            ", network=skipped"
+            ", network=" +
+            (snapshot.network ? snapshot.network.quality : "unchecked")
         );
       } catch {
         setTelemetryQuery((prev) => ({
