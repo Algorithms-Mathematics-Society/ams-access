@@ -44,9 +44,7 @@ import {
   TELEMETRY_STALE_MS,
   ACTIVE_SESSION_KEY,
   EMPTY_TELEMETRY,
-  READINESS_TIMEOUT_MS,
   getOrCreateDeviceId,
-  withUiTimeout,
   getBrowserMediaAvailability,
   fetchWithTimeout,
   getNetworkProbeHost,
@@ -54,6 +52,7 @@ import {
   getVerificationWindowMinutes,
 } from "./components/utils";
 import { hasNativeBridge, nativeCheckFallback } from "./components/readiness-status";
+import { withTelemetryTimeout } from "./components/telemetry-timeout";
 
 // ── Components ─────────────────────────────────────────────────
 import { DashboardShell, DashboardColumns } from "./components/DashboardShell";
@@ -192,12 +191,11 @@ export default function HomePage() {
       setTelemetryQuery((prev) => ({ ...prev, isLoading: true, error: null }));
       appendSecurityEvent(source + ": Native telemetry scan started");
 
-      const request = withUiTimeout(
+      const request = withTelemetryTimeout(
         invoke<FullTelemetry>("get_full_telemetry", {
           networkHost: API_URL,
           apiUrl: API_URL,
-        }),
-        READINESS_TIMEOUT_MS.platform + READINESS_TIMEOUT_MS.process
+        })
       ).then((telemetry) => {
         if (!telemetry) return null;
         return {
@@ -247,13 +245,14 @@ export default function HomePage() {
             ", network=" +
             (snapshot.network ? snapshot.network.quality : "unchecked")
         );
-      } catch {
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
         setTelemetryQuery((prev) => ({
           ...prev,
           isLoading: false,
-          error: "Native telemetry unavailable",
+          error: detail || "Native telemetry unavailable",
         }));
-        appendSecurityEvent(source + ": Native telemetry scan failed", "error");
+        appendSecurityEvent(source + ": Native telemetry scan failed: " + detail, "error");
       } finally {
         telemetryInFlightRef.current = null;
       }
