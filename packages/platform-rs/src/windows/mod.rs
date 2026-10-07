@@ -1847,6 +1847,7 @@ mod firewall_inventory_query_tests {
         let factory = "$policy = New-Object -ComObject HNetCfg.FwPolicy2";
         assert!(FIREWALL_INVENTORY_SCRIPT.contains(factory));
         let script = FIREWALL_INVENTORY_SCRIPT.replace(factory, source);
+        // Allow for cold PowerShell startup on shared CI runners.
         hidden_command("powershell.exe")
             .args([
                 "-NoLogo",
@@ -1855,7 +1856,7 @@ mod firewall_inventory_query_tests {
                 "-Command",
                 &script,
             ])
-            .bounded_output_with_timeout(std::time::Duration::from_secs(5))
+            .bounded_output_with_timeout(std::time::Duration::from_secs(30))
             .expect("mock inventory script must finish")
     }
 
