@@ -124,6 +124,7 @@ import {
   submit as submitSolution,
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
+import { type CustomCase, canRun as canRunCustom, newCase, toWire } from "./custom-cases";
 
 const SUPPORT_CATEGORIES = [
   { value: "camera_not_detected", label: "Camera not detected" },
@@ -310,6 +311,10 @@ export default function ContestPageClient() {
   // Set when the judge hasn't returned a verdict within the polling window — the
   // submission is still queued (distinct from a hard connection error).
   const [runTimedOut, setRunTimedOut] = useState(false);
+  // The candidate's own cases, per question. Local only, exactly like the
+  // code itself -- there is no server copy of a draft any more, and a test
+  // case someone typed is no more worth persisting than the code it tests.
+  const [questionCustomCases, setQuestionCustomCases] = useState<Record<string, CustomCase[]>>({});
   // Attempt id of the most recent "Run on Judge" (sample-only) run. Used to pull
   // its per-test results out of `testResults` and render them LeetCode-style in
   // the run pane. RUN attempts are excluded from the submissions endpoint, so the
@@ -1289,7 +1294,7 @@ export default function ContestPageClient() {
     }));
   }
 
-  async function triggerRun() {
+  async function triggerRun(useCustomCases = false) {
     if (!questions[activeQ] || !sessionId || isRunning) return;
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
@@ -1328,6 +1333,9 @@ export default function ContestPageClient() {
         problemLabel: questions[activeQ].id,
         language: toLanguageId(selectedLanguage),
         source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        // Only when the candidate pressed Run Custom. An ordinary Run must
+        // send nothing here, or the samples are never reached.
+        customCases: useCustomCases ? toWire(customCases) : null,
       });
       if (runVisit !== runVisitRef.current) return;
       const resolvedId = created.uid;
@@ -2208,6 +2216,14 @@ export default function ContestPageClient() {
   const currentQId = currentQuestion?.id ?? "";
   const editorFiles = questionFiles[currentQId] ?? [];
   const activeFileId = questionActiveFile[currentQId] ?? editorFiles[0]?.id ?? "";
+  const customCases = questionCustomCases[currentQId] ?? [];
+
+  function mutateCustomCases(next: (previous: CustomCase[]) => CustomCase[]) {
+    setQuestionCustomCases((previous) => ({
+      ...previous,
+      [currentQId]: next(previous[currentQId] ?? []),
+    }));
+  }
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
@@ -2773,6 +2789,11 @@ export default function ContestPageClient() {
               />
             )}
             <TerminalPanel
+              customCases={customCases}
+              onCustomCasesChange={mutateCustomCases}
+              onRunCustom={() => void triggerRun(true)}
+              readOnly={editorLocked}
+              judgingUnavailableReason={judgingUnavailableReason}
               compilerDiagnostic={compilerDiagnostic}
               onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
               outputHeightPercent={outputHeightPercent}

@@ -411,6 +411,11 @@ export type TestcaseResult = {
   runtime_ms: number;
   memory_kb: number;
   checker_message: string;
+  /** What the program printed. Present only for a case the candidate
+   *  supplied themselves; null on every ordinary testcase, samples
+   *  included, so a hidden test's output can never arrive here. */
+  stdout_text?: string | null;
+  stderr_text?: string | null;
 };
 
 export type SubmissionResult = {
@@ -574,14 +579,36 @@ export async function getProblem(contestUid: string, label: string): Promise<Pro
  *
  * Throws `ProctorApiError` with status 429 and `retryAfterSeconds` when the
  * candidate is going too fast. */
+/** One case the candidate typed themselves.
+ *
+ * `expected` is optional: without it the case is run and its output shown
+ * but no verdict given, which is the common "what does my code print" use.
+ */
+export type CustomCase = { label?: string; input: string; expected?: string | null };
+
 export async function run(
   sessionUid: string,
-  input: { problemLabel: string; language: string; source: string }
+  input: {
+    problemLabel: string;
+    language: string;
+    source: string;
+    customCases?: CustomCase[] | null;
+  }
 ): Promise<SubmissionResult> {
   return request<SubmissionResult>(
     "POST",
     `/participant/sessions/${encodeURIComponent(sessionUid)}/runs`,
-    { problem_label: input.problemLabel, language: input.language, source: input.source }
+    {
+      problem_label: input.problemLabel,
+      language: input.language,
+      source: input.source,
+      // Omitted entirely when absent: the API reads a present key as "run
+      // only these", and an empty array is refused rather than quietly
+      // falling back to the samples.
+      ...(input.customCases && input.customCases.length > 0
+        ? { custom_cases: input.customCases }
+        : {}),
+    }
   );
 }
 

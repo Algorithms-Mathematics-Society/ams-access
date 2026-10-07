@@ -14,6 +14,8 @@ import {
   type RunAttempt,
   type SubmissionAttemptRecord,
 } from "../submission-state";
+import { CustomCasesPanel } from "./CustomCasesPanel";
+import type { CustomCase } from "../custom-cases";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import { isPublicSample, outputText } from "../execution-output";
 import type { VerdictCode } from "@/lib/verdict";
@@ -124,6 +126,16 @@ type RunStatusView = {
 } | null;
 
 export interface TerminalPanelProps {
+  /** The candidate's own cases for the active problem, and how to change
+   *  and run them. Rendered here rather than beside the editor so the cases
+   *  and the output they produced stay in one place. */
+  customCases: CustomCase[];
+  onCustomCasesChange: (next: (previous: CustomCase[]) => CustomCase[]) => void;
+  onRunCustom: () => void;
+  /** Editing is locked (session ended, or the heartbeat said so). */
+  readOnly: boolean;
+  /** Why judging is unavailable, if it is. Disables Run custom with a reason. */
+  judgingUnavailableReason: string | null;
   compilerDiagnostic?: CompilerDiagnostic | null;
   onJumpToCompilerError?: () => void;
   outputHeightPercent?: number;
@@ -163,6 +175,11 @@ export interface TerminalPanelProps {
 }
 
 export function TerminalPanel({
+  customCases,
+  onCustomCasesChange,
+  onRunCustom,
+  readOnly,
+  judgingUnavailableReason,
   compilerDiagnostic,
   onJumpToCompilerError,
   outputHeightPercent = 34,
@@ -200,6 +217,10 @@ export function TerminalPanel({
   // The run pane only earns its space once a run exists in some state; before
   // the first Run the panel is just the attempts list.
   const showRunPane = Boolean(runResult || isRunning || runError || runTimedOut);
+  // Whether the results on screen came from the candidate's own cases.
+  const runIsCustom = Boolean(
+    runSampleTests?.some((tr: any) => tr.stdout_text != null || tr.stderr_text != null)
+  );
   // Compiler messages follow the run when there is one, and otherwise fall back
   // to the last submission -- the precedence the Compiler output tab used before
   // the two output tabs were folded into this one pane.
@@ -293,6 +314,14 @@ export function TerminalPanel({
           overflowWrap: "anywhere",
         }}
       >
+        <CustomCasesPanel
+          cases={customCases}
+          onChange={onCustomCasesChange}
+          onRun={onRunCustom}
+          isRunning={isRunning}
+          readOnly={readOnly}
+          runDisabledReason={judgingUnavailableReason}
+        />
         {runResult && runSourceChanged && (
           <Banner
             status="warning"
@@ -387,7 +416,7 @@ export function TerminalPanel({
           <VStack gap={0} style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}>
             <VStack gap={3} padding={4}>
               <Text type="supporting" weight="medium" color="secondary">
-                Sample run · not scored, not an attempt
+                {runIsCustom ? "Your cases" : "Sample run"} · not scored, not an attempt
               </Text>
               {runSourceLabel && (
                 <Text type="supporting" color="secondary">
@@ -402,11 +431,23 @@ export function TerminalPanel({
                   ) : (
                     runSampleTests.map((tr: any, idx: number) => {
                       const isAC = tr.verdict === "AC";
-                      const isSample = isSampleTestRow(tr);
+                      // A custom case is the candidate's own input, so there
+                      // is nothing of the problem's to withhold -- its output
+                      // always shows. cxxprobe emits stdout for every custom
+                      // case and for no other kind, which is what makes this
+                      // safe to key on.
+                      const isCustom = tr.stdout_text != null || tr.stderr_text != null;
+                      const isSample = isCustom || isSampleTestRow(tr);
                       const testNumber = tr.test_number ?? tr.testcase_no ?? idx + 1;
                       const expected = tr.expected ?? tr.expected_output ?? tr.answer ?? null;
                       const got =
-                        tr.got_output ?? tr.got ?? tr.actual ?? tr.output ?? tr.stdout ?? null;
+                        tr.stdout_text ??
+                        tr.got_output ??
+                        tr.got ??
+                        tr.actual ??
+                        tr.output ??
+                        tr.stdout ??
+                        null;
                       return (
                         <VStack
                           key={`run-sample-${testNumber}-${idx}`}
@@ -416,12 +457,25 @@ export function TerminalPanel({
                         >
                           <HStack gap={3} align="center" wrap="wrap">
                             <Text type="label" weight="medium">
-                              {isSample ? "Sample" : "Test"} {testNumber}
+                              {isCustom
+                                ? (tr.label ?? `Case ${testNumber}`)
+                                : `${isSample ? "Sample" : "Test"} ${testNumber}`}
                             </Text>
-                            <VerdictBadge
-                              variant="chip"
-                              code={(tr.verdict ?? (isAC ? "AC" : "Failed")) as VerdictCode}
-                            />
+                            {/* An unjudged custom case has no verdict at all
+                                -- the candidate gave no expected output. A
+                                badge there would invent a result. */}
+                            {tr.verdict ? (
+                              <VerdictBadge variant="chip" code={tr.verdict as VerdictCode} />
+                            ) : isCustom ? (
+                              <Text type="supporting" color="secondary">
+                                not checked
+                              </Text>
+                            ) : (
+                              <VerdictBadge
+                                variant="chip"
+                                code={(isAC ? "AC" : "Failed") as VerdictCode}
+                              />
+                            )}
                             {tr.runtime_ms != null && (
                               <Text type="supporting" color="secondary" hasTabularNumbers>
                                 {tr.runtime_ms}ms
@@ -447,6 +501,16 @@ export function TerminalPanel({
                           {isAC && isSample && got != null && String(got).length > 0 && (
                             <SampleOutput label="Actual output" value={got} />
                           )}
+                          {/* An unchecked custom case falls through both
+                              branches above (no verdict, so neither AC nor
+                              not-AC); its output is the only thing the
+                              candidate asked for. */}
+                          {isCustom && !tr.verdict && (
+                            <SampleOutput label="Output" value={got ?? ""} />
+                          )}
+                          {isCustom && tr.stderr_text ? (
+                            <SampleOutput label="Errors" value={tr.stderr_text} />
+                          ) : null}
                         </VStack>
                       );
                     })
