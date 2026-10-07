@@ -65,16 +65,23 @@ jobs:
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
-        # The runners default to an Azure mirror that goes unreachable often
-        # enough to matter, and apt waits on it rather than failing: one run
-        # sat in `apt-get update` for 38 minutes before anyone noticed, with
-        # nothing in the log but Ign: lines. Bound every call and retry, so a
-        # dead mirror costs seconds rather than the job.
-        timeout-minutes: 12
+        # The runners point apt at azure.archive.ubuntu.com, which degrades
+        # often enough to matter. Twice in one day: once unreachable, so
+        # `apt-get update` sat for 38 minutes against a mirror that never
+        # answered, and once merely slow, stalling ~20s on individual
+        # packages until the download outlived the step.
+        #
+        # Retrying did not help the second case, because nothing failed --
+        # it was just slow. Moving off the mirror does. archive.ubuntu.com
+        # answered normally in both runs, visible in the same logs as the
+        # Hit:/Get: lines that were not stalling.
+        timeout-minutes: 20
         run: |
           set -eu
+          sudo sed -i 's|https\?://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
           for attempt in 1 2 3; do
-            if sudo timeout 150 apt-get update; then
+            if sudo timeout 180 apt-get update; then
               break
             fi
             echo "apt-get update failed or stalled (attempt $attempt of 3)"
@@ -83,7 +90,7 @@ jobs:
             sudo rm -rf /var/lib/apt/lists/*
             sleep 5
           done
-          sudo timeout 600 apt-get install -y --no-install-recommends \
+          sudo timeout 900 apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
@@ -213,16 +220,23 @@ jobs:
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
-        # The runners default to an Azure mirror that goes unreachable often
-        # enough to matter, and apt waits on it rather than failing: one run
-        # sat in `apt-get update` for 38 minutes before anyone noticed, with
-        # nothing in the log but Ign: lines. Bound every call and retry, so a
-        # dead mirror costs seconds rather than the job.
-        timeout-minutes: 12
+        # The runners point apt at azure.archive.ubuntu.com, which degrades
+        # often enough to matter. Twice in one day: once unreachable, so
+        # `apt-get update` sat for 38 minutes against a mirror that never
+        # answered, and once merely slow, stalling ~20s on individual
+        # packages until the download outlived the step.
+        #
+        # Retrying did not help the second case, because nothing failed --
+        # it was just slow. Moving off the mirror does. archive.ubuntu.com
+        # answered normally in both runs, visible in the same logs as the
+        # Hit:/Get: lines that were not stalling.
+        timeout-minutes: 20
         run: |
           set -eu
+          sudo sed -i 's|https\?://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
           for attempt in 1 2 3; do
-            if sudo timeout 150 apt-get update; then
+            if sudo timeout 180 apt-get update; then
               break
             fi
             echo "apt-get update failed or stalled (attempt $attempt of 3)"
@@ -231,7 +245,7 @@ jobs:
             sudo rm -rf /var/lib/apt/lists/*
             sleep 5
           done
-          sudo timeout 600 apt-get install -y --no-install-recommends \
+          sudo timeout 900 apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
