@@ -1,9 +1,13 @@
 /** Scoped styles for responsive composition and the existing sanitized HTML renderer. */
 export const CONTEST_STYLES = `
 [data-contest-page] { font-family: var(--font-family-body); }
+/* Astryx labels are inline, clipped text wrappers. Rail content is a layout,
+   so give that wrapper a real box before positioning its status icons. */
+[data-contest-page] .contest-question-button > span:first-child > span { display:block; overflow:visible; }
 [data-contest-page] .contest-body[data-editor-focus="true"] .contest-problem-pane { width:0 !important; min-width:0 !important; visibility:hidden; overflow:hidden; border:0; }
 [data-contest-page] .contest-body[data-editor-focus="true"] .contest-splitter { display:none; }
 @media (prefers-reduced-motion: no-preference) {
+ [data-contest-page]:not([data-resizing]) .contest-question-rail,
  [data-contest-page]:not([data-resizing]) .contest-problem-pane { transition:width 180ms cubic-bezier(0.22,1,0.36,1), min-width 180ms cubic-bezier(0.22,1,0.36,1); }
  [data-contest-page]:not([data-resizing]) .contest-terminal-panel { transition:height 180ms cubic-bezier(0.22,1,0.36,1), min-height 180ms cubic-bezier(0.22,1,0.36,1); }
 }
