@@ -4,7 +4,7 @@
 //! Sleep prevention: caffeinate subprocess.
 //! Network lockdown: pfctl anchor (requires root).
 //! Process scanning: `ps -axco comm`.
-//! VM detection: `system_profiler SPHardwareDataType` + `ioreg`.
+//! VM detection: `kern.hv_vmm_present` + `system_profiler SPHardwareDataType` + `ioreg`.
 
 use crate::process_runner::{Budget, CommandDeadlineExt};
 use block2::RcBlock;
@@ -1129,7 +1129,8 @@ pub fn scan_processes() -> ProcessScanResult {
 /// Detect whether the process is running inside a VM or hypervisor.
 ///
 /// Checks CPUID hypervisor leaf first (cannot be spoofed without paravirt config),
-/// then `system_profiler SPHardwareDataType` and `ioreg -l` for hypervisor markers.
+/// then `kern.hv_vmm_present`, then `system_profiler SPHardwareDataType` and the
+/// `IOPlatformExpertDevice` registry node for hypervisor markers.
 pub fn detect_virtualization() -> VirtDetectionResult {
     let _budget = Budget::new(std::time::Duration::from_secs(6));
     // CPUID leaf 0x40000000 — x86/x86_64 only; ARM Macs skip this path
@@ -1153,14 +1154,35 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         }
     }
 
+    // kern.hv_vmm_present is 1 inside any guest of Hypervisor.framework or
+    // Virtualization.framework (UTM, Parallels, Docker, Tart) on both Apple
+    // Silicon and Intel. Unlike kern.hv_support it says nothing about the host.
+    // Older macOS lacks the key and sysctl exits nonzero, which means "absent"
+    // rather than a failed probe, so this one is not checked.
+    let hv_vmm_present = Command::new("sysctl")
+        .args(["-n", "kern.hv_vmm_present"])
+        .bounded_output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+        .unwrap_or(false);
+    if hv_vmm_present {
+        return VirtDetectionResult {
+            detected: true,
+            platform: Some("Apple Hypervisor".to_string()),
+            confidence: "high".to_string(),
+        };
+    }
+
     let hw_output = Command::new("system_profiler")
         .arg("SPHardwareDataType")
         .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
+    // Only the platform expert node: model, manufacturer and board strings are
+    // where VMs identify themselves. `ioreg -l` dumps the whole registry, which
+    // is several MB on real hardware, overran MAX_OUTPUT, and failed the probe.
     let ioreg_output = Command::new("ioreg")
-        .args(["-l"])
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
@@ -1183,6 +1205,8 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         ("xen hypervisor", "Xen"),
         ("utm ", "UTM"),
         ("apple virtualization framework", "Apple Virtualization"),
+        // Virtualization.framework guests report model "VirtualMac2,1"
+        ("virtualmac", "Apple Virtualization"),
     ];
 
     for (marker, platform) in vm_markers {
@@ -1700,5 +1724,21 @@ pub fn request_av_permissions() {
         req(cls, sel, AVMediaTypeVideo, &video_block);
         // Request audio (microphone).
         req(cls, sel, AVMediaTypeAudio, &audio_block);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recorded failure turns the whole result into an error upstream and
+    /// the readiness screen shows every field as Unknown. `ioreg -l` did that
+    /// on every real Mac by overrunning the output limit.
+    #[test]
+    fn virtualization_probe_records_no_failure() {
+        let budget = Budget::new(std::time::Duration::from_secs(20));
+        let result = detect_virtualization();
+        assert_eq!(budget.failure(), None);
+        assert_eq!(result.confidence, "high");
     }
 }
