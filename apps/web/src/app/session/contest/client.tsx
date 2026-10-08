@@ -748,16 +748,22 @@ export default function ContestPageClient() {
 
   function updateProblemWidth(value: number) {
     setProblemPaneWidth(value);
-    try {
-      localStorage.setItem(`${PROBLEM_SPLIT_WIDTH_KEY}:${contestId || "default"}`, String(value));
-    } catch {}
   }
   function updateOutputHeight(value: number) {
     setOutputHeightPercent(value);
-    try {
-      localStorage.setItem(`ams_contest_output_height:${contestId}`, String(value));
-    } catch {}
   }
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          `${PROBLEM_SPLIT_WIDTH_KEY}:${contestId || "default"}`,
+          String(problemPaneWidth)
+        );
+        localStorage.setItem(`ams_contest_output_height:${contestId}`, String(outputHeightPercent));
+      } catch {}
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [contestId, problemPaneWidth, outputHeightPercent]);
   function toggleEditorFocus() {
     if (editorFocused) {
       setSidebarCollapsed(previousLayoutRef.current.sidebarCollapsed);
@@ -2765,6 +2771,7 @@ export default function ContestPageClient() {
                 min={18}
                 max={55}
                 onChange={updateOutputHeight}
+                onCollapse={() => setTerminalCollapsed(true)}
                 containerSelector=".contest-editor-output"
                 label="Resize output panel"
               />
