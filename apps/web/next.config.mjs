@@ -17,6 +17,16 @@ const nextConfig = {
     if (!isServer && config.optimization?.splitChunks) {
       config.optimization.splitChunks.cacheGroups = {
         ...config.optimization.splitChunks.cacheGroups,
+        // Keep language parsers separate from the other contest dependencies.
+        // They remain synchronous dependencies of the editor.
+        editorParsers: {
+          test: /[\\/]node_modules[\\/]@lezer[\\/].*\.m?js$/,
+          name: "editor-parsers",
+          enforce: true,
+          priority: 40,
+          chunks: "all",
+          reuseExistingChunk: true,
+        },
         // JavaScript only. The root layout imports katex.min.css; a test that
         // also matched that stylesheet put the CSS module in this named chunk,
         // so /layout depended on the whole 257 KiB library and every screen
