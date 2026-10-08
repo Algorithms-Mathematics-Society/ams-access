@@ -47,15 +47,6 @@ export function CustomCasesPanel({
       style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
     >
       <HStack gap={3} align="center" justify="between" wrap="wrap">
-        <VStack gap={0}>
-          <Text type="supporting" weight="medium">
-            Your own test cases
-          </Text>
-          <Text type="supporting" color="secondary">
-            Not scored, and not an attempt. Expected output is optional: leave it blank to just see
-            what your code prints.
-          </Text>
-        </VStack>
         <HStack gap={2} align="center" wrap="wrap">
           <Button
             label="Add case"
@@ -86,7 +77,7 @@ export function CustomCasesPanel({
 
       {cases.length === 0 ? (
         <Text type="supporting" color="secondary">
-          No cases yet. Add one to try your code against input of your own.
+          Add a case to get started.
         </Text>
       ) : (
         <VStack gap={3}>
@@ -177,5 +168,7 @@ const BOX: React.CSSProperties = {
   color: "var(--color-text-primary)",
   fontFamily: "var(--font-family-mono, monospace)",
   fontSize: "var(--font-size-sm)",
-  resize: "vertical",
+  // Native resize grips can render a white corner in the desktop webview.
+  // Keep these compact fields fixed; longer input remains scrollable.
+  resize: "none",
 };

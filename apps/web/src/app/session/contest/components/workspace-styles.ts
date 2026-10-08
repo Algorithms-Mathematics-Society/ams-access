@@ -1,8 +1,16 @@
 /** Scoped styles for responsive composition and the existing sanitized HTML renderer. */
 export const CONTEST_STYLES = `
 [data-contest-page] { font-family: var(--font-family-body); }
-[data-contest-page] .contest-body[data-editor-focus="true"] .contest-problem-pane,
+/* Astryx labels are inline, clipped text wrappers. Rail content is a layout,
+   so give that wrapper a real box before positioning its status icons. */
+[data-contest-page] .contest-question-button > span:first-child > span { display:block; overflow:visible; }
+[data-contest-page] .contest-body[data-editor-focus="true"] .contest-problem-pane { width:0 !important; min-width:0 !important; visibility:hidden; overflow:hidden; border:0; }
 [data-contest-page] .contest-body[data-editor-focus="true"] .contest-splitter { display:none; }
+@media (prefers-reduced-motion: no-preference) {
+ [data-contest-page]:not([data-resizing]) .contest-question-rail,
+ [data-contest-page]:not([data-resizing]) .contest-problem-pane { transition:width 180ms cubic-bezier(0.22,1,0.36,1), min-width 180ms cubic-bezier(0.22,1,0.36,1); }
+ [data-contest-page]:not([data-resizing]) .contest-terminal-panel { transition:height 180ms cubic-bezier(0.22,1,0.36,1), min-height 180ms cubic-bezier(0.22,1,0.36,1); }
+}
 [data-contest-page] .contest-problem-pane { container-type:inline-size; }
 [data-contest-page] .contest-problem-limits > dl { grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); grid-template-columns:none; gap:var(--spacing-3); }
 [data-contest-page] .contest-problem-limits dt { font-size:var(--font-size-xs); }
@@ -42,6 +50,7 @@ export const CONTEST_STYLES = `
 [data-contest-page] .pb-body .katex-display { margin:var(--spacing-3) 0; overflow-x:auto; overflow-y:hidden; padding:var(--spacing-0-5) 0; }
 [data-contest-page] .pb-body .pb-math-error { color:var(--color-text-red); background:var(--color-background-red); }
 @media(max-width:1000px) {
+ [data-contest-page] .contest-body[data-editor-focus="true"] .contest-problem-pane { display:none; }
  [data-contest-page] .contest-topbar { flex-wrap:wrap; gap:var(--spacing-3); padding:var(--spacing-3) var(--spacing-4); }
  [data-contest-page] .contest-topbar-actions { flex:none !important; }
  [data-contest-page] .contest-footer { flex-wrap:wrap; gap:var(--spacing-2); padding:var(--spacing-3) var(--spacing-4); }
