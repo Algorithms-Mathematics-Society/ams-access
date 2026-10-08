@@ -1652,8 +1652,6 @@ pub struct SecurityEnvironment {
     pub ptrace_scope: u8,
 }
 
-/// Collect security-relevant environment metadata.
-#[tauri::command]
 /// Run one probe so that its failure cannot erase the others'.
 ///
 /// A recorded failure lives in a thread-local the whole scan shares, which
@@ -1672,6 +1670,8 @@ fn isolated_probe<T>(work: impl FnOnce() -> T) -> (T, Option<String>) {
     (value, reason)
 }
 
+/// Collect security-relevant environment metadata.
+#[tauri::command]
 fn get_security_environment() -> SecurityEnvironment {
     #[cfg(target_os = "linux")]
     return SecurityEnvironment {
