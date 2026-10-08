@@ -92,18 +92,31 @@ export type SecurityScanSnapshot = {
   network: NetworkCheckResult | null;
 };
 
+/** One scan's results, plus why any probe is missing from them. */
+export type TelemetrySnapshot = SecurityScanSnapshot & {
+  scanErrors: string[];
+};
+
 export type TelemetryQueryState = SecurityScanSnapshot & {
   lastScannedAt: number | null;
   isLoading: boolean;
+  /** The whole scan failed. Distinct from scanErrors, which is per probe. */
   error: string | null;
+  /** Probes that did not produce a result, each saying which and why. */
+  scanErrors: string[];
 };
 
 export type FullTelemetry = {
   platform: PlatformInfo;
   env: SecurityEnvironment;
-  processes: ProcessScanResult;
-  virt: VirtDetectionResult;
+  // Null means the probe could not run, which is not the same as running and
+  // finding nothing. Showing an unscanned machine as "no restricted apps" or
+  // "not virtualised" would be a false negative in a proctoring tool.
+  processes: ProcessScanResult | null;
+  virt: VirtDetectionResult | null;
   network: NetworkCheckResult | null;
+  /** Why a probe produced no result, named per probe. Empty when all ran. */
+  scan_errors: string[];
 };
 
 export type InviteCodeResolveResponse = {

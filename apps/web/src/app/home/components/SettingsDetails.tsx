@@ -260,11 +260,17 @@ export function SettingsSecurity({
   const isWindows = !!platformInfo?.os?.toLowerCase().startsWith("windows");
   const isLinux = platformInfo?.os?.toLowerCase() === "linux";
   const networkNotChecked = !networkCheck && telemetry.lastScannedAt !== null;
+  // One message for every item was only correct back when one probe failing
+  // failed them all. The scan is partial now, so an item is missing for its
+  // own reason -- and "retry" is the wrong advice for a probe this machine
+  // cannot run, which is what made the old message worse than silence.
   const unavailable = securityBusy
     ? "Checking native device information"
     : telemetry.error
       ? "The scan could not complete. Run it again to retry."
-      : "Run a scan to check this device.";
+      : telemetry.lastScannedAt !== null
+        ? "This check did not run on this device."
+        : "Run a scan to check this device.";
 
   return (
     <VStack gap={6} data-settings-section="security">
@@ -296,6 +302,17 @@ export function SettingsSecurity({
               ? `Showing the last available results. Run another scan to refresh them. ${telemetry.error}`
               : telemetry.error
           }
+        />
+      )}
+      {!telemetry.error && telemetry.scanErrors.length > 0 && (
+        <Banner
+          status="warning"
+          title={
+            telemetry.scanErrors.length === 1
+              ? "One check could not run"
+              : `${telemetry.scanErrors.length} checks could not run`
+          }
+          description={`Everything else scanned normally. ${telemetry.scanErrors.join("; ")}.`}
         />
       )}
       <HStack gap={6} align="start" wrap="wrap">

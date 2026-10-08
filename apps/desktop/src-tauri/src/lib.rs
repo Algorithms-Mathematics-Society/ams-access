@@ -1654,6 +1654,24 @@ pub struct SecurityEnvironment {
 
 /// Collect security-relevant environment metadata.
 #[tauri::command]
+/// Run one probe so that its failure cannot erase the others'.
+///
+/// A recorded failure lives in a thread-local the whole scan shares, which
+/// is why one probe used to take the rest down with it. `optional` restores
+/// that slot afterwards, containing the damage, but it also discards the
+/// reason -- and a card that says "unavailable" without saying why is only
+/// a quieter version of the same problem. So the reason is read inside the
+/// block, before the restore wipes it, and handed back alongside the value.
+fn isolated_probe<T>(work: impl FnOnce() -> T) -> (T, Option<String>) {
+    let mut reason = None;
+    let value = platform_rs::process_runner::optional(|| {
+        let produced = work();
+        reason = platform_rs::process_runner::current_failure();
+        produced
+    });
+    (value, reason)
+}
+
 fn get_security_environment() -> SecurityEnvironment {
     #[cfg(target_os = "linux")]
     return SecurityEnvironment {
@@ -1684,9 +1702,16 @@ pub struct PlatformInfo {
 pub struct FullTelemetry {
     pub platform: PlatformInfo,
     pub env: SecurityEnvironment,
-    pub processes: ProcessScanResult,
-    pub virt: VirtDetectionResult,
+    // Optional because a probe that could not run is not a probe that found
+    // nothing. In a proctoring tool those must not look alike: reporting an
+    // unscanned machine as "no restricted apps" is a false negative, and
+    // reporting it as "not virtualised" is worse.
+    pub processes: Option<ProcessScanResult>,
+    pub virt: Option<VirtDetectionResult>,
     pub network: Option<NetworkCheckResult>,
+    /// Why a probe did not produce a result, named per probe. Empty when
+    /// everything ran.
+    pub scan_errors: Vec<String>,
 }
 
 #[tauri::command]
@@ -1694,9 +1719,19 @@ async fn get_full_telemetry(
     network_host: Option<String>,
     api_url: Option<String>,
 ) -> Result<FullTelemetry, String> {
-    let (platform, env, processes, virt) =
+    // Partial, deliberately. This used to run all four probes under one
+    // shared budget and return Err if *any* of them recorded a failure, so a
+    // single `ps` that exited nonzero erased the lot -- including `platform`
+    // and `env`, which are pure reads of std::env::consts and cannot fail at
+    // all. On macOS that produced a Device environment card where all five
+    // items said "The scan could not complete" together, and a diagnostics
+    // page where even the operating system was "Not available". Retrying
+    // could not help, because nothing about it was transient.
+    let (platform, env, processes, virt, scan_errors) =
         blocking_probe::run(blocking_probe::Priority::Informational, || {
-            let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+            let _budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+            let mut scan_errors: Vec<String> = Vec::new();
+
             let platform = PlatformInfo {
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
@@ -1704,14 +1739,20 @@ async fn get_full_telemetry(
                 elevated: process_elevated(),
             };
             let env = get_security_environment();
-            let processes = native_scan_processes();
-            let virt = native_detect_virtualization();
-            if let Some(error) = budget.failure() {
-                return Err::<_, String>(format!(
-                    "Device scan could not complete: {error}. Retry device setup."
-                ));
+
+            let (processes, processes_error) = isolated_probe(native_scan_processes);
+            if let Some(reason) = &processes_error {
+                scan_errors.push(format!("running applications: {reason}"));
             }
-            Ok((platform, env, processes, virt))
+            let processes = processes_error.is_none().then_some(processes);
+
+            let (virt, virt_error) = isolated_probe(native_detect_virtualization);
+            if let Some(reason) = &virt_error {
+                scan_errors.push(format!("virtual machine check: {reason}"));
+            }
+            let virt = virt_error.is_none().then_some(virt);
+
+            Ok::<_, String>((platform, env, processes, virt, scan_errors))
         })
         .await??;
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
@@ -1725,6 +1766,7 @@ async fn get_full_telemetry(
         processes,
         virt,
         network,
+        scan_errors,
     })
 }
 

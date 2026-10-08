@@ -59,7 +59,24 @@ const RESTRICTED: &[&str] = &[
     "Screen Sharing",
     "screensharingd",
     "RemoteDesktopAgent",
-    // local screen recording apps
+    // Screen recorders live in CAPTURE_TOOLS below, which scan_processes
+    // also reads. They were listed here too, and the copies had already
+    // drifted apart.
+];
+
+/// Tools that can capture the screen.
+///
+/// One list with two readers: `scan_processes`, so they show up under
+/// Restricted apps and the candidate is asked to close them, and
+/// `detect_active_screen_share`, which treats a running one as an active
+/// capture. Those kept separate copies and drifted, which is the only
+/// reason this is a named constant rather than more entries above.
+///
+/// macOS's own tooling was missing from both. Every third-party recorder
+/// was listed while the one every candidate already has was not:
+/// Cmd+Shift+5 runs `screencaptureui`, Screenshot.app runs as `Screenshot`,
+/// and `screencapture` is the command line they both sit on.
+const CAPTURE_TOOLS: &[&str] = &[
     "QuickTime Player",
     "Kap",
     "CleanShot X",
@@ -67,7 +84,16 @@ const RESTRICTED: &[&str] = &[
     "ScreenFloat",
     "Recordit",
     "ScreenBrush",
+    "obs",
     "OBS",
+    "Screenshot",
+    "screencapture",
+    "screencaptureui",
+    "Snagit",
+    "Snagit 2024",
+    "Loom",
+    "ScreenFlow",
+    "Camtasia",
 ];
 
 // ── Thread-safe raw pointer wrapper ──────────────────────────────────────────
@@ -1081,11 +1107,18 @@ pub fn scan_processes() -> ProcessScanResult {
         })
         .collect();
 
-    let found: Vec<String> = RESTRICTED
-        .iter()
-        .filter(|&&name| running.iter().any(|p| p.eq_ignore_ascii_case(name)))
-        .map(|s| s.to_string())
-        .collect();
+    // Deduped case-insensitively, because the two lists match that way and a
+    // program can therefore match twice under different spellings -- "obs"
+    // and "OBS" are one application. Listing it twice would read as two
+    // things to close.
+    let mut found: Vec<String> = Vec::new();
+    for &name in RESTRICTED.iter().chain(CAPTURE_TOOLS.iter()) {
+        if running.iter().any(|p| p.eq_ignore_ascii_case(name))
+            && !found.iter().any(|seen| seen.eq_ignore_ascii_case(name))
+        {
+            found.push(name.to_string());
+        }
+    }
 
     ProcessScanResult {
         clean: found.is_empty() && _budget.failure().is_none(),
@@ -1490,21 +1523,9 @@ pub fn detect_active_screen_share() -> bool {
         return true;
     }
 
-    const LOCAL_RECORDERS: &[&str] = &[
-        "QuickTime Player",
-        "Kap",
-        "CleanShot X",
-        "Rottenwood",
-        "ScreenFloat",
-        "Recordit",
-        "ScreenBrush",
-        "obs",
-        "OBS",
-    ];
-
     let running = running_process_basenames();
 
-    if let Some(recorder) = LOCAL_RECORDERS.iter().find(|name| {
+    if let Some(recorder) = CAPTURE_TOOLS.iter().find(|name| {
         running
             .iter()
             .any(|basename| basename.eq_ignore_ascii_case(name))

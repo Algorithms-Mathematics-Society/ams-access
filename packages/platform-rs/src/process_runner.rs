@@ -58,6 +58,17 @@ impl Drop for Budget {
     }
 }
 
+/// The failure a probe has recorded so far on this thread, if any.
+///
+/// `optional` throws the reason away along with the failure, which is the
+/// right default for a probe nobody is waiting on. A caller that reports
+/// per-probe status needs the reason as well as the isolation, and reading
+/// the slot from inside an `optional` block is how it gets both: the value
+/// is observed before the restore wipes it.
+pub fn current_failure() -> Option<String> {
+    FAILURE.with(|slot| slot.borrow().clone())
+}
+
 pub fn optional<T>(work: impl FnOnce() -> T) -> T {
     struct RestoreFailure(Option<String>);
     impl Drop for RestoreFailure {
@@ -531,6 +542,57 @@ mod tests {
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::TimedOut
+        );
+    }
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+
+    // A failure recorded by one probe lives in a thread-local the whole scan
+    // shares. get_full_telemetry used to read that slot once at the end and
+    // discard every result if it was set, so one probe took the rest down
+    // with it -- including two that are pure reads and cannot fail. On macOS
+    // that showed as five "The scan could not complete" items at once and an
+    // operating system reported as "Not available".
+
+    #[test]
+    fn a_failure_inside_optional_does_not_escape_it() {
+        let _budget = Budget::new(Duration::from_secs(5));
+        optional(|| record_failure("one probe went wrong"));
+        assert_eq!(
+            current_failure(),
+            None,
+            "an isolated probe must not poison the shared slot"
+        );
+    }
+
+    #[test]
+    fn the_reason_is_readable_from_inside_the_isolation() {
+        // Isolation alone is not enough: a card that says "unavailable"
+        // without saying why is a quieter version of the same problem.
+        let _budget = Budget::new(Duration::from_secs(5));
+        let mut seen = None;
+        optional(|| {
+            record_failure("ps exited unsuccessfully");
+            seen = current_failure();
+        });
+        assert_eq!(seen.as_deref(), Some("ps exited unsuccessfully"));
+        assert_eq!(current_failure(), None, "and it still must not escape");
+    }
+
+    #[test]
+    fn one_probe_failing_leaves_a_later_probe_reporting_clean() {
+        let _budget = Budget::new(Duration::from_secs(5));
+        optional(|| record_failure("first probe failed"));
+        let mut second = None;
+        optional(|| {
+            second = current_failure();
+        });
+        assert_eq!(
+            second, None,
+            "the second probe must not inherit the first one's failure"
         );
     }
 }

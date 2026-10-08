@@ -33,6 +33,7 @@ import type {
   TelemetryQueryState,
   FullTelemetry,
   SecurityScanSnapshot,
+  TelemetrySnapshot,
   ActiveSession,
   ResumeVerificationState,
   CloseAppsResult,
@@ -147,7 +148,7 @@ export default function HomePage() {
   >(null);
   const [securityLogs, setSecurityLogs] = useState<SecurityLogEntry[]>([]);
   const [telemetryQuery, setTelemetryQuery] = useState<TelemetryQueryState>(EMPTY_TELEMETRY);
-  const telemetryInFlightRef = useRef<Promise<SecurityScanSnapshot | null> | null>(null);
+  const telemetryInFlightRef = useRef<Promise<TelemetrySnapshot | null> | null>(null);
   const lastScannedAtRef = useRef<number | null>(null);
 
   const appendSecurityEvent = useCallback((event: string, level: SecurityLogLevel = "info") => {
@@ -204,7 +205,10 @@ export default function HomePage() {
           processes: telemetry.processes ?? null,
           virt: telemetry.virt ?? null,
           network: telemetry.network ?? null,
-        } satisfies SecurityScanSnapshot;
+          // Carried separately from `error`: the scan as a whole succeeded,
+          // and these name the individual probes that did not.
+          scanErrors: telemetry.scan_errors ?? [],
+        } satisfies TelemetrySnapshot;
       });
 
       telemetryInFlightRef.current = request;

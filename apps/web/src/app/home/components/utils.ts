@@ -42,6 +42,7 @@ export const EMPTY_TELEMETRY = {
   lastScannedAt: null,
   isLoading: false,
   error: null,
+  scanErrors: [],
 };
 
 // ── Contest list helpers ──────────────────────────────────────

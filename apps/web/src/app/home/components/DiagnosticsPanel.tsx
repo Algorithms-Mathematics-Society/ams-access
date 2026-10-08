@@ -384,8 +384,12 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 </MetadataList>
               ) : (
                 <Text type="supporting">
-                  Network probing is currently disabled. Device scans do not measure connection
-                  quality.
+                  {/* Said "currently disabled", which was never true: the scan
+                      does measure this. It read that way because the network
+                      probe runs after the native probes, so a native failure
+                      meant it never ran at all and the empty result looked
+                      like a switched-off feature. */}
+                  Connection quality was not measured in this scan. Run it again to collect it.
                 </Text>
               )}
             </VStack>
