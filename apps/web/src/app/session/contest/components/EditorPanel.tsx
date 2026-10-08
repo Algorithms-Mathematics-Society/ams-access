@@ -65,8 +65,6 @@ export interface EditorPanelProps {
   triggerRun: () => Promise<void>;
   judgingUnavailableReason: string | null;
   readOnly: boolean;
-  draftStatusLabel?: string;
-  lastSubmissionLabel?: string;
   submitButton: SubmitButtonView;
   isSubmitting: boolean;
   isEditorEmpty: boolean;
@@ -95,8 +93,6 @@ export function EditorPanel({
   triggerRun,
   judgingUnavailableReason,
   readOnly,
-  draftStatusLabel = "Save status unavailable",
-  lastSubmissionLabel = "Not submitted",
   submitButton,
   isSubmitting,
   isEditorEmpty,
@@ -421,32 +417,6 @@ export function EditorPanel({
           />
         </HStack>
       </HStack>
-
-      <VStack
-        gap={1}
-        paddingInline={4}
-        paddingBlock={2}
-        style={{ flexShrink: 0, borderBottom: "var(--border-width) solid var(--color-border)" }}
-      >
-        <Text type="supporting" color="secondary" style={{ overflowWrap: "anywhere" }}>
-          Run and Submit use {activeFileName}.
-        </Text>
-        <HStack
-          gap={3}
-          wrap="wrap"
-          align="start"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <Text type="supporting" style={{ overflowWrap: "anywhere" }}>
-            Draft: {draftStatusLabel}
-          </Text>
-          <Text type="supporting" color="secondary" style={{ overflowWrap: "anywhere" }}>
-            Last submission: {lastSubmissionLabel}
-          </Text>
-        </HStack>
-      </VStack>
 
       {judgingUnavailableReason && (
         <Banner

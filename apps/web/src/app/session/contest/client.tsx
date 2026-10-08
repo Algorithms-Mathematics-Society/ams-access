@@ -87,12 +87,7 @@ import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
 import { deriveSaveIndicator } from "./save-indicator";
-import {
-  draftStatus,
-  requestFinish,
-  submissionComparison,
-  type SourceSnapshot,
-} from "./contest-confidence";
+import { draftStatus, requestFinish, type SourceSnapshot } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
@@ -307,6 +302,7 @@ export default function ContestPageClient() {
   const [copiedSampleKey, setCopiedSampleKey] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<RunAttempt | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [runMode, setRunMode] = useState<"all" | "custom">("all");
   const [runError, setRunError] = useState<string | null>(null);
   // Set when the judge hasn't returned a verdict within the polling window — the
   // submission is still queued (distinct from a hard connection error).
@@ -1301,6 +1297,7 @@ export default function ContestPageClient() {
     if (runInFlightRef.current) return;
     runInFlightRef.current = true;
 
+    setRunMode(useCustomCases ? "custom" : "all");
     setIsRunning(true);
     resetRunPanelState();
     const runVisit = runVisitRef.current;
@@ -2430,20 +2427,6 @@ export default function ContestPageClient() {
     }));
   };
 
-  const comparisonLabel = submissionComparison(
-    { source: currentCode, language: toLanguageId(selectedLanguage) },
-    submissionSource
-  );
-  const lastSubmissionLabel =
-    submissionHistoryStatus === "loading"
-      ? "Loading history…"
-      : submissionHistoryStatus === "unavailable"
-        ? "History unavailable · status not confirmed"
-        : latestAttempt
-          ? `Attempt ${latestAttempt.attempt_no} · ${runStatusLabelMap[normalizeSubmissionVerdict(latestAttempt)]}${comparisonLabel ? ` · ${comparisonLabel}` : ""}${submissionHistoryStatus === "stale" ? " · History could not refresh" : ""}`
-          : submissionHistoryStatus === "stale"
-            ? "History could not refresh · status not confirmed"
-            : "No scored submission yet";
   const latestAttemptTests = latestAttempt ? testResults[latestAttempt.id] : null;
   const latestAttemptPending = latestAttempt
     ? latestAttempt.status === "QUEUED" || latestAttempt.status === "RUNNING"
@@ -2748,8 +2731,6 @@ export default function ContestPageClient() {
               )}
             <EditorPanel
               diagnosticNavigation={diagnosticNavigation}
-              draftStatusLabel={activeDraftStatus.label}
-              lastSubmissionLabel={lastSubmissionLabel}
               editorFiles={editorFiles}
               activeFileId={activeFileId}
               setQuestionActiveFile={setQuestionActiveFile}
@@ -2789,6 +2770,7 @@ export default function ContestPageClient() {
               />
             )}
             <TerminalPanel
+              runMode={runMode}
               customCases={customCases}
               onCustomCasesChange={mutateCustomCases}
               onRunCustom={() => void triggerRun(true)}
@@ -2797,11 +2779,6 @@ export default function ContestPageClient() {
               compilerDiagnostic={compilerDiagnostic}
               onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
               outputHeightPercent={outputHeightPercent}
-              runSourceLabel={
-                runSourceSnapshot
-                  ? `${runSourceSnapshot.filename}${runSourceSnapshot.problemTitle ? ` · ${runSourceSnapshot.problemTitle}` : ""}`
-                  : undefined
-              }
               runSourceChanged={Boolean(
                 runSourceSnapshot &&
                 (runSourceSnapshot.questionId !== currentQId ||
