@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+
 import { ContestSponsor } from "@/components/ContestSponsor";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -250,7 +252,10 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
   return isVideoRendering(video);
 }
 
+const RecoveryBannerRegion = motion.create(VStack);
+
 export default function ContestPageClient() {
+  const reduceMotion = useReducedMotion();
   const router = useRouter();
   const searchParams = useSearchParams();
   const contestId = searchParams?.get("contestId") ?? "";
@@ -2217,6 +2222,19 @@ export default function ContestPageClient() {
 
   const currentQuestion = questions[activeQ];
   const currentQId = currentQuestion?.id ?? "";
+  const showRecoveryBanner =
+    restoredFromDevice.includes(currentQId) && !dismissedRecoveryQuestions.includes(currentQId);
+
+  useEffect(() => {
+    if (!showRecoveryBanner) return;
+    const timer = window.setTimeout(() => {
+      setDismissedRecoveryQuestions((previous) =>
+        previous.includes(currentQId) ? previous : [...previous, currentQId]
+      );
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [currentQId, showRecoveryBanner]);
+
   const editorFiles = questionFiles[currentQId] ?? [];
   const activeFileId = questionActiveFile[currentQId] ?? editorFiles[0]?.id ?? "";
   const customCases = questionCustomCases[currentQId] ?? [];
@@ -2724,17 +2742,30 @@ export default function ContestPageClient() {
               background: "var(--color-background-body)",
             }}
           >
-            {restoredFromDevice.includes(currentQId) &&
-              !dismissedRecoveryQuestions.includes(currentQId) && (
-                <Banner
-                  status="info"
-                  container="section"
-                  title="Draft restored from this device"
-                  description={`Review the recovered code. ${activeDraftStatus.confirmed ? "This active file now matches the server draft." : "Its latest server save is not yet confirmed."}`}
-                  isDismissable
-                  onDismiss={() => setDismissedRecoveryQuestions((prev) => [...prev, currentQId])}
-                />
+            <AnimatePresence initial={false}>
+              {showRecoveryBanner && (
+                <RecoveryBannerRegion
+                  key={`recovery-${currentQId}`}
+                  gap={0}
+                  initial={false}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{
+                    height: { duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] },
+                    opacity: { duration: reduceMotion ? 0 : 0.12 },
+                  }}
+                  style={{ overflow: "hidden", flexShrink: 0 }}
+                >
+                  <Banner
+                    status="info"
+                    container="section"
+                    title="Draft restored from this device"
+                    description={`Review the recovered code. ${activeDraftStatus.confirmed ? "This active file now matches the server draft." : "Its latest server save is not yet confirmed."}`}
+                    isDismissable
+                    onDismiss={() => setDismissedRecoveryQuestions((prev) => [...prev, currentQId])}
+                  />
+                </RecoveryBannerRegion>
               )}
+            </AnimatePresence>
             <EditorPanel
               diagnosticNavigation={diagnosticNavigation}
               editorFiles={editorFiles}
