@@ -1,5 +1,6 @@
 import type { CompilerDiagnostic } from "../compiler-diagnostics";
-import { type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { TabList, Tab } from "@astryxdesign/core/TabList";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -129,6 +130,7 @@ export interface TerminalPanelProps {
   /** The candidate's own cases for the active problem, and how to change
    *  and run them. Rendered here rather than beside the editor so the cases
    *  and the output they produced stay in one place. */
+  runMode: "all" | "custom";
   customCases: CustomCase[];
   onCustomCasesChange: (next: (previous: CustomCase[]) => CustomCase[]) => void;
   onRunCustom: () => void;
@@ -140,7 +142,6 @@ export interface TerminalPanelProps {
   onJumpToCompilerError?: () => void;
   outputHeightPercent?: number;
   runSourceChanged?: boolean;
-  runSourceLabel?: string;
   terminalCollapsed: boolean;
   setTerminalCollapsed: Dispatch<SetStateAction<boolean>>;
   shouldShowRunProgress: boolean;
@@ -175,6 +176,7 @@ export interface TerminalPanelProps {
 }
 
 export function TerminalPanel({
+  runMode,
   customCases,
   onCustomCasesChange,
   onRunCustom,
@@ -184,7 +186,6 @@ export function TerminalPanel({
   onJumpToCompilerError,
   outputHeightPercent = 34,
   runSourceChanged = false,
-  runSourceLabel,
   terminalCollapsed,
   setTerminalCollapsed,
   shouldShowRunProgress,
@@ -214,13 +215,13 @@ export function TerminalPanel({
   runProgressPhase,
   terminalUnread,
 }: TerminalPanelProps) {
-  // The run pane only earns its space once a run exists in some state; before
-  // the first Run the panel is just the attempts list.
-  const showRunPane = Boolean(runResult || isRunning || runError || runTimedOut);
-  // Whether the results on screen came from the candidate's own cases.
-  const runIsCustom = Boolean(
-    runSampleTests?.some((tr: any) => tr.stdout_text != null || tr.stderr_text != null)
-  );
+  const [activeTab, setActiveTab] = useState<"all" | "custom">("all");
+  useEffect(() => {
+    if (isRunning) setActiveTab(runMode);
+  }, [isRunning, runMode]);
+  const runIsCustom = runMode === "custom";
+  const showRunOutput = activeTab === runMode;
+  const showRunPane = showRunOutput && Boolean(runResult || isRunning || runError || runTimedOut);
   // Compiler messages follow the run when there is one, and otherwise fall back
   // to the last submission -- the precedence the Compiler output tab used before
   // the two output tabs were folded into this one pane.
@@ -245,7 +246,7 @@ export function TerminalPanel({
       className="contest-terminal-panel"
       gap={0}
       role="region"
-      aria-label="Attempts and run output"
+      aria-label="Test results and custom cases"
       style={{
         height: terminalCollapsed ? "var(--spacing-10)" : `${outputHeightPercent}%`,
         minHeight: terminalCollapsed ? "var(--spacing-10)" : "calc(var(--spacing-10) * 3)",
@@ -267,7 +268,7 @@ export function TerminalPanel({
       >
         <HStack gap={2} align="center" style={{ flex: 1, minWidth: 0 }}>
           <Text type="supporting" weight="medium">
-            Attempts
+            Test Results
           </Text>
           {submissionsList.length > 0 && <Badge label={submissionsList.length} variant="neutral" />}
           {runResult?.status === "CE" && <Badge label="CE" variant="error" />}
@@ -303,8 +304,41 @@ export function TerminalPanel({
           </Text>
         )}
       </HStack>
+      <VStack gap={0} style={{ display: terminalCollapsed ? "none" : "flex", flexShrink: 0 }}>
+        <TabList
+          value={activeTab}
+          onChange={(value) => setActiveTab(value as "all" | "custom")}
+          size="sm"
+          hasDivider
+          role="tablist"
+          aria-label="Test result sections"
+        >
+          {(
+            [
+              { value: "all", label: "All Cases" },
+              { value: "custom", label: "Custom" },
+            ] as const
+          ).map((tab) => (
+            <Tab
+              key={tab.value}
+              value={tab.value}
+              label={tab.label}
+              id={`contest-output-tab-${tab.value}`}
+              role="tab"
+              ref={(node) => {
+                node?.removeAttribute("aria-current");
+              }}
+              aria-selected={activeTab === tab.value}
+              aria-controls="contest-output-body"
+            />
+          ))}
+        </TabList>
+      </VStack>
       <VStack
         gap={0}
+        role="tabpanel"
+        aria-labelledby={`contest-output-tab-${activeTab}`}
+        tabIndex={0}
         id="contest-output-body"
         style={{
           display: terminalCollapsed ? "none" : "flex",
@@ -314,15 +348,17 @@ export function TerminalPanel({
           overflowWrap: "anywhere",
         }}
       >
-        <CustomCasesPanel
-          cases={customCases}
-          onChange={onCustomCasesChange}
-          onRun={onRunCustom}
-          isRunning={isRunning}
-          readOnly={readOnly}
-          runDisabledReason={judgingUnavailableReason}
-        />
-        {runResult && runSourceChanged && (
+        {activeTab === "custom" && (
+          <CustomCasesPanel
+            cases={customCases}
+            onChange={onCustomCasesChange}
+            onRun={onRunCustom}
+            isRunning={isRunning}
+            readOnly={readOnly}
+            runDisabledReason={judgingUnavailableReason}
+          />
+        )}
+        {showRunOutput && runResult && runSourceChanged && (
           <Banner
             status="warning"
             container="section"
@@ -330,7 +366,7 @@ export function TerminalPanel({
             description="These results belong to the earlier code. Run the active file again to check your changes."
           />
         )}
-        {(latestAttempt || runStatus) && (
+        {((activeTab === "all" && latestAttempt) || (showRunOutput && runStatus)) && (
           <HStack
             gap={3}
             align="center"
@@ -340,7 +376,7 @@ export function TerminalPanel({
             paddingBlock={2}
             style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
           >
-            {latestAttempt && (
+            {activeTab === "all" && latestAttempt && (
               <HStack
                 gap={2}
                 align="center"
@@ -363,11 +399,11 @@ export function TerminalPanel({
                 })()}
               </HStack>
             )}
-            {runStatus && (
+            {showRunOutput && runStatus && (
               <HStack gap={2} align="center" wrap="wrap" role="status" aria-live="polite">
                 {runStatus.icon === "loading" && <Spinner size="sm" />}
                 <Text type="supporting" weight="medium">
-                  Sample run: {runStatus.label}
+                  {runIsCustom ? "Custom run" : "Sample run"}: {runStatus.label}
                 </Text>
                 {runMetrics && (
                   <Text type="supporting" color="secondary" hasTabularNumbers>
@@ -378,7 +414,7 @@ export function TerminalPanel({
             )}
           </HStack>
         )}
-        {shouldShowRunProgress && (
+        {showRunOutput && shouldShowRunProgress && (
           <HStack
             gap={2}
             align="center"
@@ -415,14 +451,6 @@ export function TerminalPanel({
         {showRunPane && (
           <VStack gap={0} style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}>
             <VStack gap={3} padding={4}>
-              <Text type="supporting" weight="medium" color="secondary">
-                {runIsCustom ? "Your cases" : "Sample run"} · not scored, not an attempt
-              </Text>
-              {runSourceLabel && (
-                <Text type="supporting" color="secondary">
-                  {runSourceLabel}
-                </Text>
-              )}
               {/* Keep the original sample/hidden test masking and branch order. */}
               {!isRunning && runResult?.status !== "CE" && runSampleTests && (
                 <VStack gap={0}>
@@ -639,277 +667,280 @@ export function TerminalPanel({
             )}
           </VStack>
         )}
-        <VStack gap={4} padding={4}>
-          <HStack gap={3} align="center" justify="between" wrap="wrap">
-            <Text type="supporting" color="secondary" weight="medium">
-              {problemLabel ? `Attempts · ${problemLabel}` : "Attempts"}
-            </Text>
-            <SegmentedControl
-              label="Filter attempts and tests"
-              value={testResultFilter}
-              onChange={(value) => setTestResultFilter(value as "all" | "failed" | "passed")}
-              size="sm"
-            >
-              <SegmentedControlItem value="all" label="All" />
-              <SegmentedControlItem value="failed" label="Failed" />
-              <SegmentedControlItem value="passed" label="Passed" />
-            </SegmentedControl>
-          </HStack>
-          {latestAttempt && (
-            <VStack
-              gap={3}
-              paddingBlock={3}
-              style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
-            >
-              <HStack gap={3} align="center" wrap="wrap">
-                <VerdictBadge
-                  variant="full"
-                  code={(latestAttempt.final_verdict ?? latestAttempt.status) as VerdictCode}
-                />
-                <Text type="supporting" color="secondary">
-                  Attempt #{latestAttempt.attempt_no}
-                </Text>
-              </HStack>
-              <HStack gap={3} wrap="wrap">
-                <Text type="supporting" color="secondary">
-                  {latestAttemptTests
-                    ? `${latestAttemptPassed} / ${latestAttemptTests.length} passed`
-                    : latestAttemptPending
-                      ? "Judging in progress"
-                      : "Loading test results"}
-                </Text>
-                <Text type="supporting" color="secondary">
-                  Score: {latestAttempt.score ?? "N/A"}
-                </Text>
-                <Text type="supporting" color="secondary">
-                  {latestAttempt.runtime_ms != null
-                    ? `${latestAttempt.runtime_ms}ms`
-                    : "Runtime N/A"}
-                </Text>
-                <Text type="supporting" color="secondary">
-                  {latestAttempt.memory_kb != null
-                    ? `${Math.round(latestAttempt.memory_kb / 1024)}MB`
-                    : "Memory N/A"}
-                </Text>
-              </HStack>
-              {latestAttemptFirstFailed ? (
-                <Banner
-                  status="error"
-                  title={
-                    latestAttemptFirstFailed.hidden || latestAttemptFirstFailed.is_hidden
-                      ? `Hidden test ${latestAttemptFirstFailed.test_number ?? ""} failed`
-                      : `Test ${latestAttemptFirstFailed.test_number ?? "?"} failed`
-                  }
-                  description={
-                    <Text type="supporting">
-                      {latestAttemptFirstFailed.verdict ?? "Failed"}
-                      {latestAttemptFirstFailed.runtime_ms != null &&
-                        ` · ${latestAttemptFirstFailed.runtime_ms}ms`}
-                      {latestAttemptFirstFailed.memory_kb != null &&
-                        ` · ${Math.round(latestAttemptFirstFailed.memory_kb / 1024)}MB`}
-                      {(latestAttemptFirstFailed.message ||
-                        latestAttemptFirstFailed.status_message ||
-                        latestAttemptFirstFailed.error) &&
-                        ` · ${latestAttemptFirstFailed.message ?? latestAttemptFirstFailed.status_message ?? latestAttemptFirstFailed.error}`}
-                    </Text>
-                  }
-                />
-              ) : latestAttemptTests && latestAttemptTests.length > 0 ? (
-                <Text type="supporting" style={{ color: "var(--color-text-green)" }}>
-                  All visible tests passed.
-                </Text>
-              ) : (
-                <Text type="supporting" color="secondary">
-                  Test-case details will appear here when the judge returns them.
-                </Text>
-              )}
-            </VStack>
-          )}
-          {loadingSubmissions && submissionsList.length === 0 ? (
-            <HStack gap={2} align="center" role="status">
-              <Spinner size="sm" />
-              <Text color="secondary">Loading submissions…</Text>
+        {activeTab === "all" && (
+          <VStack gap={4} padding={4}>
+            <HStack gap={3} align="center" justify="between" wrap="wrap">
+              <Text type="supporting" color="secondary" weight="medium">
+                {problemLabel ? `Attempts · ${problemLabel}` : "Attempts"}
+              </Text>
+              <SegmentedControl
+                label="Filter attempts and tests"
+                value={testResultFilter}
+                onChange={(value) => setTestResultFilter(value as "all" | "failed" | "passed")}
+                size="sm"
+              >
+                <SegmentedControlItem value="all" label="All" />
+                <SegmentedControlItem value="failed" label="Failed" />
+                <SegmentedControlItem value="passed" label="Passed" />
+              </SegmentedControl>
             </HStack>
-          ) : submissionsList.length === 0 ? (
-            <VStack gap={2} paddingBlock={3}>
-              <Text weight="medium">
-                {problemLabel ? `No attempts on ${problemLabel} yet` : "No attempts yet"}
-              </Text>
-              <Text type="supporting" color="secondary">
-                Press Submit Solution to send your code to the judge. This list shows only{" "}
-                {problemLabel ? `problem ${problemLabel}` : "this problem"}. Each attempt is scored
-                independently.
-              </Text>
-            </VStack>
-          ) : (
-            <VStack gap={0}>
-              {submissionsList.filter(attemptMatchesFilter).length === 0 && (
-                <Text color="secondary">No {testResultFilter} attempts yet.</Text>
-              )}
-              {submissionsList.filter(attemptMatchesFilter).map((sub) => {
-                const isExpanded = expandedAttemptId === sub.id;
-                const status = sub.status;
-                const isPending = status === "QUEUED" || status === "RUNNING";
-                return (
-                  <VStack
-                    key={sub.id}
-                    gap={2}
-                    paddingBlock={3}
-                    style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
-                  >
-                    <Button
-                      label={`Attempt #${sub.attempt_no}`}
-                      variant="ghost"
-                      aria-expanded={isExpanded}
-                      onClick={() => toggleExpandAttempt(sub.id)}
-                      style={{
-                        height: "auto",
-                        minHeight: "var(--spacing-8)",
-                        width: "100%",
-                        paddingInline: 0,
-                        justifyContent: "space-between",
-                        textAlign: "start",
-                      }}
-                      endContent={
-                        isExpanded ? (
-                          <ChevronUp size={14} aria-hidden="true" />
-                        ) : (
-                          <ChevronDown size={14} aria-hidden="true" />
-                        )
-                      }
+            {latestAttempt && (
+              <VStack
+                gap={3}
+                paddingBlock={3}
+                style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
+              >
+                <HStack gap={3} align="center" wrap="wrap">
+                  <VerdictBadge
+                    variant="full"
+                    code={(latestAttempt.final_verdict ?? latestAttempt.status) as VerdictCode}
+                  />
+                  <Text type="supporting" color="secondary">
+                    Attempt #{latestAttempt.attempt_no}
+                  </Text>
+                </HStack>
+                <HStack gap={3} wrap="wrap">
+                  <Text type="supporting" color="secondary">
+                    {latestAttemptTests
+                      ? `${latestAttemptPassed} / ${latestAttemptTests.length} passed`
+                      : latestAttemptPending
+                        ? "Judging in progress"
+                        : "Loading test results"}
+                  </Text>
+                  <Text type="supporting" color="secondary">
+                    Score: {latestAttempt.score ?? "N/A"}
+                  </Text>
+                  <Text type="supporting" color="secondary">
+                    {latestAttempt.runtime_ms != null
+                      ? `${latestAttempt.runtime_ms}ms`
+                      : "Runtime N/A"}
+                  </Text>
+                  <Text type="supporting" color="secondary">
+                    {latestAttempt.memory_kb != null
+                      ? `${Math.round(latestAttempt.memory_kb / 1024)}MB`
+                      : "Memory N/A"}
+                  </Text>
+                </HStack>
+                {latestAttemptFirstFailed ? (
+                  <Banner
+                    status="error"
+                    title={
+                      latestAttemptFirstFailed.hidden || latestAttemptFirstFailed.is_hidden
+                        ? `Hidden test ${latestAttemptFirstFailed.test_number ?? ""} failed`
+                        : `Test ${latestAttemptFirstFailed.test_number ?? "?"} failed`
+                    }
+                    description={
+                      <Text type="supporting">
+                        {latestAttemptFirstFailed.verdict ?? "Failed"}
+                        {latestAttemptFirstFailed.runtime_ms != null &&
+                          ` · ${latestAttemptFirstFailed.runtime_ms}ms`}
+                        {latestAttemptFirstFailed.memory_kb != null &&
+                          ` · ${Math.round(latestAttemptFirstFailed.memory_kb / 1024)}MB`}
+                        {(latestAttemptFirstFailed.message ||
+                          latestAttemptFirstFailed.status_message ||
+                          latestAttemptFirstFailed.error) &&
+                          ` · ${latestAttemptFirstFailed.message ?? latestAttemptFirstFailed.status_message ?? latestAttemptFirstFailed.error}`}
+                      </Text>
+                    }
+                  />
+                ) : latestAttemptTests && latestAttemptTests.length > 0 ? (
+                  <Text type="supporting" style={{ color: "var(--color-text-green)" }}>
+                    All visible tests passed.
+                  </Text>
+                ) : (
+                  <Text type="supporting" color="secondary">
+                    Test-case details will appear here when the judge returns them.
+                  </Text>
+                )}
+              </VStack>
+            )}
+            {loadingSubmissions && submissionsList.length === 0 ? (
+              <HStack gap={2} align="center" role="status">
+                <Spinner size="sm" />
+                <Text color="secondary">Loading submissions…</Text>
+              </HStack>
+            ) : submissionsList.length === 0 ? (
+              <VStack gap={2} paddingBlock={3}>
+                <Text weight="medium">
+                  {problemLabel ? `No attempts on ${problemLabel} yet` : "No attempts yet"}
+                </Text>
+                <Text type="supporting" color="secondary">
+                  Press Submit Solution to send your code to the judge. This list shows only{" "}
+                  {problemLabel ? `problem ${problemLabel}` : "this problem"}. Each attempt is
+                  scored independently.
+                </Text>
+              </VStack>
+            ) : (
+              <VStack gap={0}>
+                {submissionsList.filter(attemptMatchesFilter).length === 0 && (
+                  <Text color="secondary">No {testResultFilter} attempts yet.</Text>
+                )}
+                {submissionsList.filter(attemptMatchesFilter).map((sub) => {
+                  const isExpanded = expandedAttemptId === sub.id;
+                  const status = sub.status;
+                  const isPending = status === "QUEUED" || status === "RUNNING";
+                  return (
+                    <VStack
+                      key={sub.id}
+                      gap={2}
+                      paddingBlock={3}
+                      style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
                     >
-                      <HStack as="span" gap={3} align="center" wrap="wrap">
-                        <VerdictBadge
-                          variant="chip"
-                          code={
-                            (isPending
-                              ? sub.status
-                              : (sub.final_verdict ?? sub.status)) as VerdictCode
-                          }
-                        />
-                        <Text type="supporting">Attempt #{sub.attempt_no}</Text>
-                        <Text type="supporting" color="secondary">
-                          {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]?.name ||
-                            sub.language}
-                        </Text>
-                        <Text type="supporting" color="secondary" hasTabularNumbers>
-                          {new Date(sub.created_at).toLocaleTimeString()}
-                        </Text>
-                      </HStack>
-                    </Button>
-                    {isExpanded && (
-                      <VStack
-                        gap={3}
-                        padding={3}
+                      <Button
+                        label={`Attempt #${sub.attempt_no}`}
+                        variant="ghost"
+                        aria-expanded={isExpanded}
+                        onClick={() => toggleExpandAttempt(sub.id)}
                         style={{
-                          borderInlineStart: "var(--border-width) solid var(--color-border)",
+                          height: "auto",
+                          minHeight: "var(--spacing-8)",
+                          width: "100%",
+                          paddingInline: 0,
+                          justifyContent: "space-between",
+                          textAlign: "start",
                         }}
+                        endContent={
+                          isExpanded ? (
+                            <ChevronUp size={14} aria-hidden="true" />
+                          ) : (
+                            <ChevronDown size={14} aria-hidden="true" />
+                          )
+                        }
                       >
-                        {isPending ? (
+                        <HStack as="span" gap={3} align="center" wrap="wrap">
+                          <VerdictBadge
+                            variant="chip"
+                            code={
+                              (isPending
+                                ? sub.status
+                                : (sub.final_verdict ?? sub.status)) as VerdictCode
+                            }
+                          />
+                          <Text type="supporting">Attempt #{sub.attempt_no}</Text>
                           <Text type="supporting" color="secondary">
-                            Grading in progress... Live results will update automatically.
+                            {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]?.name ||
+                              sub.language}
                           </Text>
-                        ) : (
-                          <>
-                            <HStack gap={3} wrap="wrap">
-                              <Text type="supporting" color="secondary">
-                                Runtime: {sub.runtime_ms !== null ? `${sub.runtime_ms} ms` : "N/A"}
-                              </Text>
-                              <Text type="supporting" color="secondary">
-                                Memory: {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
-                              </Text>
-                              <Text type="supporting" color="secondary">
-                                Score: {sub.score}
-                              </Text>
-                            </HStack>
-                            {testResults[sub.id] ? (
-                              (() => {
-                                const trs = testResults[sub.id];
-                                const passedCount = trs.filter(
-                                  (tr: any) => tr.verdict === "AC"
-                                ).length;
-                                return (
-                                  <VStack gap={2}>
-                                    <Text type="supporting" color="secondary">
-                                      {passedCount} / {trs.length} test cases passed
-                                    </Text>
-                                    {trs
-                                      .map((tr: any, originalIndex: number) => ({
-                                        tr,
-                                        originalIndex,
-                                      }))
-                                      .filter(({ tr }: any) =>
+                          <Text type="supporting" color="secondary" hasTabularNumbers>
+                            {new Date(sub.created_at).toLocaleTimeString()}
+                          </Text>
+                        </HStack>
+                      </Button>
+                      {isExpanded && (
+                        <VStack
+                          gap={3}
+                          padding={3}
+                          style={{
+                            borderInlineStart: "var(--border-width) solid var(--color-border)",
+                          }}
+                        >
+                          {isPending ? (
+                            <Text type="supporting" color="secondary">
+                              Grading in progress... Live results will update automatically.
+                            </Text>
+                          ) : (
+                            <>
+                              <HStack gap={3} wrap="wrap">
+                                <Text type="supporting" color="secondary">
+                                  Runtime:{" "}
+                                  {sub.runtime_ms !== null ? `${sub.runtime_ms} ms` : "N/A"}
+                                </Text>
+                                <Text type="supporting" color="secondary">
+                                  Memory: {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
+                                </Text>
+                                <Text type="supporting" color="secondary">
+                                  Score: {sub.score}
+                                </Text>
+                              </HStack>
+                              {testResults[sub.id] ? (
+                                (() => {
+                                  const trs = testResults[sub.id];
+                                  const passedCount = trs.filter(
+                                    (tr: any) => tr.verdict === "AC"
+                                  ).length;
+                                  return (
+                                    <VStack gap={2}>
+                                      <Text type="supporting" color="secondary">
+                                        {passedCount} / {trs.length} test cases passed
+                                      </Text>
+                                      {trs
+                                        .map((tr: any, originalIndex: number) => ({
+                                          tr,
+                                          originalIndex,
+                                        }))
+                                        .filter(({ tr }: any) =>
+                                          testResultFilter === "all"
+                                            ? true
+                                            : testResultFilter === "passed"
+                                              ? tr.verdict === "AC"
+                                              : tr.verdict !== "AC"
+                                        )
+                                        .map(({ tr, originalIndex }: any, idx: number) => {
+                                          const testNumber = tr.test_number ?? originalIndex + 1;
+                                          return (
+                                            <HStack
+                                              key={`${sub.id}-${testNumber}-${idx}`}
+                                              gap={3}
+                                              align="center"
+                                              wrap="wrap"
+                                              paddingBlock={1}
+                                            >
+                                              <Text type="supporting">Test {testNumber}</Text>
+                                              <VerdictBadge
+                                                variant="chip"
+                                                code={(tr.verdict ?? tr.status) as VerdictCode}
+                                              />
+                                              {tr.runtime_ms != null && (
+                                                <Text
+                                                  type="supporting"
+                                                  color="secondary"
+                                                  hasTabularNumbers
+                                                >
+                                                  {tr.runtime_ms}ms
+                                                </Text>
+                                              )}
+                                              {tr.memory_kb != null && (
+                                                <Text
+                                                  type="supporting"
+                                                  color="secondary"
+                                                  hasTabularNumbers
+                                                >
+                                                  {Math.round(tr.memory_kb / 1024)}MB
+                                                </Text>
+                                              )}
+                                            </HStack>
+                                          );
+                                        })}
+                                      {trs.filter((tr: any) =>
                                         testResultFilter === "all"
                                           ? true
                                           : testResultFilter === "passed"
                                             ? tr.verdict === "AC"
                                             : tr.verdict !== "AC"
-                                      )
-                                      .map(({ tr, originalIndex }: any, idx: number) => {
-                                        const testNumber = tr.test_number ?? originalIndex + 1;
-                                        return (
-                                          <HStack
-                                            key={`${sub.id}-${testNumber}-${idx}`}
-                                            gap={3}
-                                            align="center"
-                                            wrap="wrap"
-                                            paddingBlock={1}
-                                          >
-                                            <Text type="supporting">Test {testNumber}</Text>
-                                            <VerdictBadge
-                                              variant="chip"
-                                              code={(tr.verdict ?? tr.status) as VerdictCode}
-                                            />
-                                            {tr.runtime_ms != null && (
-                                              <Text
-                                                type="supporting"
-                                                color="secondary"
-                                                hasTabularNumbers
-                                              >
-                                                {tr.runtime_ms}ms
-                                              </Text>
-                                            )}
-                                            {tr.memory_kb != null && (
-                                              <Text
-                                                type="supporting"
-                                                color="secondary"
-                                                hasTabularNumbers
-                                              >
-                                                {Math.round(tr.memory_kb / 1024)}MB
-                                              </Text>
-                                            )}
-                                          </HStack>
-                                        );
-                                      })}
-                                    {trs.filter((tr: any) =>
-                                      testResultFilter === "all"
-                                        ? true
-                                        : testResultFilter === "passed"
-                                          ? tr.verdict === "AC"
-                                          : tr.verdict !== "AC"
-                                    ).length === 0 && (
-                                      <Text type="supporting" color="secondary">
-                                        No {testResultFilter} tests in this attempt.
-                                      </Text>
-                                    )}
-                                  </VStack>
-                                );
-                              })()
-                            ) : (
-                              <Text type="supporting" color="secondary">
-                                Loading test results...
-                              </Text>
-                            )}
-                          </>
-                        )}
-                      </VStack>
-                    )}
-                  </VStack>
-                );
-              })}
-            </VStack>
-          )}
-        </VStack>
+                                      ).length === 0 && (
+                                        <Text type="supporting" color="secondary">
+                                          No {testResultFilter} tests in this attempt.
+                                        </Text>
+                                      )}
+                                    </VStack>
+                                  );
+                                })()
+                              ) : (
+                                <Text type="supporting" color="secondary">
+                                  Loading test results...
+                                </Text>
+                              )}
+                            </>
+                          )}
+                        </VStack>
+                      )}
+                    </VStack>
+                  );
+                })}
+              </VStack>
+            )}
+          </VStack>
+        )}
       </VStack>
     </VStack>
   );
