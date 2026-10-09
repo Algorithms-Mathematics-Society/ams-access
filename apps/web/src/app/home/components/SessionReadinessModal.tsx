@@ -255,22 +255,23 @@ export function SessionReadinessModal({
     ? activeReport.optional_checks.filter((check) => check.outcome !== "pass").length
     : 0;
 
-  // macOS accessibility-denied gate: keyboard_lockdown is failing because the
-  // user hasn't granted Accessibility permission. The detail string emitted by
-  // core-rs contains "accessibility_denied" — that substring is macOS-specific
-  // so no explicit platform check is required.
-  const showAccessibilityRecovery = useMemo(() => {
-    if (!activeReport) return false;
-    const kbCheck = activeReport.required_checks.find(
-      (check) => check.kind === "keyboard_lockdown"
-    );
-    return (
-      !!kbCheck &&
-      kbCheck.outcome !== "pass" &&
-      typeof kbCheck.detail === "string" &&
-      kbCheck.detail.includes("accessibility_denied")
-    );
+  // macOS permission gate: keyboard_lockdown is failing because the user
+  // hasn't granted Accessibility (or, when the tap is refused, Input
+  // Monitoring) permission. The detail string emitted by core-rs carries the
+  // native method — both substrings are macOS-specific so no explicit platform
+  // check is required. Searched in every check, not only required ones:
+  // keyboard lockdown is optional on macOS.
+  const keyboardPermissionMissing = useMemo(() => {
+    if (!activeReport) return null;
+    const kbCheck = activeReport.checks.find((check) => check.kind === "keyboard_lockdown");
+    if (!kbCheck || kbCheck.outcome === "pass" || typeof kbCheck.detail !== "string") return null;
+    if (kbCheck.detail.includes("accessibility_denied")) return "accessibility" as const;
+    if (kbCheck.detail.includes("input_monitoring_denied")) return "input_monitoring" as const;
+    return null;
   }, [activeReport]);
+  const showAccessibilityRecovery = keyboardPermissionMissing !== null;
+  const permissionPane =
+    keyboardPermissionMissing === "input_monitoring" ? "Input Monitoring" : "Accessibility";
 
   const consoleLogs = useMemo(() => {
     if (scanStatus === "scanning") {
@@ -322,6 +323,8 @@ export function SessionReadinessModal({
       checkLog("keyboard_lockdown", "SEC", "Keyboard lockdown"),
       checkLog("restricted_apps", "SEC", "Restricted app check"),
       checkLog("platform", "SEC", "Platform compatibility"),
+      checkLog("external_display", "SEC", "Extra monitors"),
+      checkLog("remote_server", "SEC", "Remote access"),
       `Entry decision: ${activeReport.decision.toUpperCase()}`,
     ].filter((log): log is string => Boolean(log));
   }, [activeReport, entryWindow.reason, entryWindow.status, entryWindowChecking, scanStatus]);
@@ -387,9 +390,9 @@ export function SessionReadinessModal({
                 Unproctored development session
               </Text>
               <Text type="supporting">
-                This is a browser, not the AMS Access app, so none of the device checks can
-                run and nothing is being monitored. Entry is allowed here for testing only.
-                A real contest requires the installed app.
+                This is a browser, not the AMS Access app, so none of the device checks can run and
+                nothing is being monitored. Entry is allowed here for testing only. A real contest
+                requires the installed app.
               </Text>
             </VStack>
           )}
@@ -476,7 +479,7 @@ export function SessionReadinessModal({
             </VStack>
           </Grid>
 
-          {/* macOS accessibility-denied recovery panel — logic untouched */}
+          {/* macOS keyboard-permission recovery panel */}
           {showAccessibilityRecovery && (
             <VStack
               as="section"
@@ -492,21 +495,23 @@ export function SessionReadinessModal({
                 <HStack align="center" gap={2}>
                   <StatusDot variant="error" label="Permission required" />
                   <Heading level={4} accessibilityLevel={3}>
-                    Grant Accessibility permission
+                    Grant {permissionPane} permission
                   </Heading>
                 </HStack>
                 <Text color="secondary">
-                  AMS Access needs macOS Accessibility permission to lock the keyboard — open
-                  Settings, enable AMS Access under Privacy &amp; Security → Accessibility, then
+                  AMS Access needs macOS {permissionPane} permission to lock the keyboard — open
+                  Settings, enable AMS Access under Privacy &amp; Security → {permissionPane}, then
                   re-run the checks.
                 </Text>
                 <HStack gap={2} wrap="wrap">
                   <Button
                     theme={theme}
                     variant="primary"
-                    onClick={() => void invoke("open_accessibility_settings")}
+                    onClick={() =>
+                      void invoke("open_privacy_settings", { section: keyboardPermissionMissing })
+                    }
                   >
-                    Open Accessibility Settings
+                    Open {permissionPane} Settings
                   </Button>
                   <Button
                     theme={theme}

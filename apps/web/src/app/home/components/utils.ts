@@ -275,13 +275,40 @@ export function toPreflightPolicyItem(check: ReadinessCheck, scope: "required" |
   const needsAdmin =
     check.kind === "platform" && (check.detail?.toLowerCase().includes("administrator") ?? false);
   const failCopy = needsAdmin ? "Administrator required" : copy.fail;
+  // The display and remote-access probes say what they found ("2 displays
+  // detected", "Close: TeamViewer"). That is the answer the candidate needs,
+  // so it replaces the generic copy whenever the probe actually ran.
+  const measured =
+    (check.kind === "external_display" || check.kind === "remote_server") &&
+    check.outcome !== "unknown" &&
+    check.detail
+      ? capitalize(check.detail)
+      : null;
+  const specific = measured ?? keyboardFailCopy(check);
   return {
     key: scope + "-" + check.kind,
     label: copy.label,
     status: readinessCheckStatus(check),
-    successLabel: copy.success,
-    failLabel: check.outcome === "warn" ? warningLabel : failCopy,
+    successLabel: measured ?? copy.success,
+    failLabel: specific ?? (check.outcome === "warn" ? warningLabel : failCopy),
   };
+}
+
+function capitalize(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// The keyboard check's detail carries the native method string, which says
+// exactly what is missing. "Optional warning" told a macOS candidate nothing
+// about the permission they could grant in ten seconds.
+function keyboardFailCopy(check: ReadinessCheck): string | null {
+  if (check.kind !== "keyboard_lockdown" || check.outcome === "pass" || !check.detail) {
+    return null;
+  }
+  if (check.detail.includes("accessibility_denied")) return "Accessibility permission needed";
+  if (check.detail.includes("input_monitoring_denied")) return "Input Monitoring permission needed";
+  if (check.detail.includes("tap_create_failed")) return "Keyboard lockdown could not start";
+  return null;
 }
 
 // ── Contest entry state ───────────────────────────────────────

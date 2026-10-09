@@ -28,6 +28,7 @@ import {
 import type {
   InvitedContest,
   ReadinessState,
+  ReadinessStatus,
   SecurityLogEntry,
   SecurityLogLevel,
   TelemetryQueryState,
@@ -100,6 +101,15 @@ export default function HomePage() {
   const router = useRouter();
   const { theme } = useTheme(); // canonical single source
   const [activeNav, setActiveNav] = useState<"overview" | "settings" | "diagnostics">("overview");
+  // A contest that ended with device settings still changed sends the
+  // candidate here with ?restore=pending: open Settings, where the restore
+  // card lists each setting and its fix. Read after mount, not in the state
+  // initialiser, so the static prerender and the first client render agree.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("restore") === "pending") {
+      setActiveNav("settings");
+    }
+  }, []);
   const [signingOut, setSigningOut] = useState(false);
   const [contestSearch, setContestSearch] = useState("");
   const [homeHelpOpen, setHomeHelpOpen] = useState(false);
@@ -222,24 +232,25 @@ export default function HomePage() {
           isLoading: false,
           error: null,
         });
+        // The readiness report is the verdict: it knows the contest policy
+        // (restricted apps are advisory on macOS) and the real keyboard
+        // permission. This scan only fills checks the report has not reached
+        // yet and refreshes what it measured, without changing severity —
+        // overwriting it made a row flip between "needs action" and advisory,
+        // and reported keyboard lockdown as passed without Accessibility.
+        const supported =
+          snapshot.platform &&
+          (snapshot.platform.os === "linux" ||
+            snapshot.platform.os.toLowerCase().startsWith("windows") ||
+            snapshot.platform.os === "macos");
+        const flagged = (current: ReadinessStatus) =>
+          current === "warn" || current === "fail" ? current : "fail";
         setReadiness((r) => ({
           ...r,
-          platform:
-            snapshot.platform &&
-            (snapshot.platform.os === "linux" ||
-              snapshot.platform.os.toLowerCase().startsWith("windows") ||
-              snapshot.platform.os === "macos")
-              ? "ok"
-              : "fail",
-          keyboard:
-            snapshot.platform &&
-            (snapshot.platform.os === "linux" ||
-              snapshot.platform.os.toLowerCase().startsWith("windows") ||
-              snapshot.platform.os === "macos")
-              ? "ok"
-              : "fail",
-          restrictedApps: snapshot.processes ? (snapshot.processes.clean ? "ok" : "fail") : "fail",
-          vm: snapshot.virt ? (snapshot.virt.detected ? "fail" : "ok") : "fail",
+          platform: r.platform === "checking" ? (supported ? "ok" : "fail") : r.platform,
+          keyboard: r.keyboard === "checking" ? (supported ? "ok" : "fail") : r.keyboard,
+          restrictedApps: snapshot.processes?.clean ? "ok" : flagged(r.restrictedApps),
+          vm: snapshot.virt && !snapshot.virt.detected ? "ok" : flagged(r.vm),
           network: snapshot.network ? (snapshot.network.reachable ? "ok" : "warn") : "unavailable",
         }));
         appendSecurityEvent(

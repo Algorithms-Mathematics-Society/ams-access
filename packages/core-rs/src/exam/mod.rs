@@ -40,9 +40,9 @@ pub struct MonitorInfo {
     pub name: String,
 }
 
-/// Windows-only display topology probe. On macOS/Linux this is never populated
-/// (`DeviceState::external_displays` stays `None`) so the readiness policy
-/// remains inert on those platforms.
+/// Display topology probe, populated on Windows and macOS. On Linux it is
+/// never populated (`DeviceState::external_displays` stays `None`), so the
+/// readiness check reports the probe as unsupported there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DisplayScan {
     pub count: u32,
@@ -349,6 +349,72 @@ impl SessionPolicy {
 impl Default for SessionPolicy {
     fn default() -> Self {
         Self::strict_contest()
+    }
+}
+
+/// What a contest does about a condition it cannot prevent outright — an
+/// extra display, a remote-access tool.
+///
+/// The entry consequence is applied to the readiness policy by the frontend
+/// (`applyLockdownConfig` in api-client), before organizer overrides, so a
+/// waiver always wins. The desktop shell uses it for mid-contest changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LockdownPolicy {
+    /// Refuse entry; during the contest, record a violation.
+    Block,
+    /// Admit with a warning; during the contest, record a violation.
+    #[default]
+    Warn,
+    /// Admit silently; during the contest, record a proctoring event only.
+    LogOnly,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Per-contest desktop lockdown settings.
+///
+/// Every field has a serde default, so a contest that sends nothing — or an
+/// older server that has never heard of this — gets the full lockdown. Only
+/// the clipboard defaults to allowed: copy and paste inside the editor is
+/// ordinary work, and a contest that forbids it says so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockdownConfig {
+    #[serde(default = "default_true")]
+    pub allow_clipboard: bool,
+    #[serde(default = "default_true")]
+    pub block_function_keys: bool,
+    #[serde(default = "default_true")]
+    pub block_media_keys: bool,
+    #[serde(default = "default_true")]
+    pub disable_gestures: bool,
+    #[serde(default = "default_true")]
+    pub disable_hot_corners: bool,
+    #[serde(default = "default_true")]
+    pub disable_siri: bool,
+    #[serde(default = "default_true")]
+    pub disable_mission_control: bool,
+    #[serde(default)]
+    pub display_policy: LockdownPolicy,
+    #[serde(default)]
+    pub remote_access_policy: LockdownPolicy,
+}
+
+impl Default for LockdownConfig {
+    fn default() -> Self {
+        Self {
+            allow_clipboard: true,
+            block_function_keys: true,
+            block_media_keys: true,
+            disable_gestures: true,
+            disable_hot_corners: true,
+            disable_siri: true,
+            disable_mission_control: true,
+            display_policy: LockdownPolicy::Warn,
+            remote_access_policy: LockdownPolicy::Warn,
+        }
     }
 }
 
@@ -839,6 +905,45 @@ fn evaluate_requirement(
         // exactly as supervised as a Windows one while being measurably less
         // so. Those platforms now say `Unsupported`, and the policy decides
         // whether that warns or blocks.
+        CheckKind::ExternalDisplay if is_macos_device(device_state) => {
+            match device_state.external_displays.as_ref() {
+                // A count of zero is the probe's failure sentinel: macOS
+                // always has at least one display online, even in clamshell.
+                Some(scan) if scan.count == 0 => (
+                    false,
+                    Some(FailureReasonCode::ExternalDisplayIndeterminate),
+                    Some("Could not read the display list. Run checks again.".to_string()),
+                    vec![
+                        RecoveryAction::RetryReadinessScan,
+                        RecoveryAction::ContactOrganizer,
+                    ],
+                ),
+                Some(scan) if scan.has_extra || scan.has_wireless => (
+                    false,
+                    Some(FailureReasonCode::ExternalDisplayDetected),
+                    Some(format!(
+                        "{} detected{} — disconnect extra, mirrored, AirPlay or Sidecar displays",
+                        display_count(scan.count),
+                        if scan.has_wireless {
+                            " (wireless or virtual)"
+                        } else {
+                            ""
+                        }
+                    )),
+                    vec![
+                        RecoveryAction::DisconnectExtraDisplays,
+                        RecoveryAction::RetryReadinessScan,
+                    ],
+                ),
+                Some(scan) => (
+                    true,
+                    None,
+                    Some(format!("{} detected", display_count(scan.count))),
+                    vec![],
+                ),
+                None => unknown(FailureReasonCode::ProbeUnavailable),
+            }
+        }
         CheckKind::ExternalDisplay => {
             let is_windows = matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
             let scan = device_state.external_displays.as_ref();
@@ -890,6 +995,27 @@ fn evaluate_requirement(
                 )
             }
         }
+        // On macOS `rdp_server` carries the remote-access scan: Screen
+        // Sharing, Remote Management, Remote Login and third-party tools.
+        // The desktop shell replaces the detail with the tool names.
+        CheckKind::RemoteServer if is_macos_device(device_state) => match device_state.rdp_server {
+            Some(true) => (
+                false,
+                Some(FailureReasonCode::RemoteServerDetected),
+                Some("Remote access detected — close it to continue".to_string()),
+                vec![
+                    RecoveryAction::CloseRestrictedApplications,
+                    RecoveryAction::RetryReadinessScan,
+                ],
+            ),
+            Some(false) => (
+                true,
+                None,
+                Some("No remote access detected".to_string()),
+                vec![],
+            ),
+            None => unknown(FailureReasonCode::ProbeUnavailable),
+        },
         // Windows-only entry check, with the same false-clear as
         // `ExternalDisplay` and the same fix.
         CheckKind::RemoteServer => {
@@ -935,6 +1061,14 @@ fn evaluate_requirement(
                 && matches!(requirement.unsupported_severity, BlockingSeverity::Block),
         )
     } else if passed {
+        (CheckOutcome::Pass, false)
+    } else if matches!(requirement.severity, BlockingSeverity::Info)
+        && !matches!(reason, Some(FailureReasonCode::ProbeUnavailable))
+    {
+        // Log only (a contest's `log_only` lockdown policy): the finding is
+        // kept in the detail and the report for the organizer, but the
+        // candidate is neither warned nor blocked. A probe that could not
+        // run still warns — "we could not look" is not a finding.
         (CheckOutcome::Pass, false)
     } else if matches!(requirement.severity, BlockingSeverity::Block) && requirement.required {
         (CheckOutcome::Fail, true)
@@ -1000,6 +1134,18 @@ fn platform_name(device_state: &DeviceState) -> String {
         .platform
         .clone()
         .unwrap_or_else(|| "this platform".to_string())
+}
+
+fn is_macos_device(device_state: &DeviceState) -> bool {
+    matches!(&device_state.platform, Some(p) if p.to_ascii_lowercase().starts_with("macos"))
+}
+
+fn display_count(count: u32) -> String {
+    if count == 1 {
+        "1 display".to_string()
+    } else {
+        format!("{count} displays")
+    }
 }
 
 fn is_present(value: Option<&str>) -> bool {

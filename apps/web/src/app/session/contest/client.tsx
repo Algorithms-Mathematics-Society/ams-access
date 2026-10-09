@@ -8,6 +8,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text, Heading } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { TextArea } from "@astryxdesign/core/TextArea";
@@ -30,7 +31,7 @@ import {
   useMemo,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { invoke } from "@ams/api-client";
+import { invoke, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
@@ -188,6 +189,8 @@ declare global {
         >;
         getCurrentWindow: () => {
           setFullscreen: (v: boolean) => Promise<void>;
+          /** macOS: full-screen without a Space of its own. Elsewhere the same as setFullscreen. */
+          setSimpleFullscreen: (v: boolean) => Promise<void>;
           isFullscreen: () => Promise<boolean>;
           setAlwaysOnTop: (v: boolean) => Promise<void>;
           setDecorations: (v: boolean) => Promise<void>;
@@ -232,9 +235,29 @@ function waitForVideoFrame(video: HTMLVideoElement, timeoutMs = 3000): Promise<b
   });
 }
 
+// The camera feed is proctoring, not media. WebKit treats a playing <video>
+// with a microphone track as something to control: it offers play/pause on
+// hover, in Now Playing and on the media keys. Pausing froze the frame the
+// presence check samples, and the control then vanished because nothing was
+// playing any more. No native controls, and any pause is undone at once.
+function keepPlaying(video: HTMLVideoElement) {
+  video.controls = false;
+  video.disablePictureInPicture = true;
+  video.disableRemotePlayback = true;
+  if (video.dataset.keepPlaying) return;
+  video.dataset.keepPlaying = "1";
+  video.addEventListener("pause", () => {
+    const stream = video.srcObject as MediaStream | null;
+    if (stream?.getVideoTracks().some((track) => track.readyState === "live")) {
+      void video.play().catch(() => {});
+    }
+  });
+}
+
 async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): Promise<boolean> {
   video.muted = true;
   video.playsInline = true;
+  keepPlaying(video);
   if (video.srcObject !== stream) video.srcObject = stream;
 
   try {
@@ -385,6 +408,8 @@ export default function ContestPageClient() {
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  // Set once the exam is over: no retry or reconnect may reopen the camera.
+  const cameraClosedRef = useRef(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraVideoReady, setCameraVideoReady] = useState(false);
   const processScanInFlightRef = useRef(false);
@@ -485,6 +510,8 @@ export default function ContestPageClient() {
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
     "idle"
   );
+  // Settings a finished exam could not put back; shown on the end screen.
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus | null>(null);
   const [submittedSources, setSubmittedSources] = useState<Record<string, SourceSnapshot>>({});
   const [dismissedRecoveryQuestions, setDismissedRecoveryQuestions] = useState<string[]>([]);
   const [finalDraftSaved, setFinalDraftSaved] = useState(false);
@@ -1538,6 +1565,7 @@ export default function ContestPageClient() {
     }
     // The one place the camera is genuinely finished with: the exam is over
     // and the candidate is leaving the locked-down shell.
+    cameraClosedRef.current = true;
     cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
@@ -1547,10 +1575,23 @@ export default function ContestPageClient() {
       await win.setAlwaysOnTop(false).catch(() => {});
       await win.setDecorations(true).catch(() => {});
     }
+    // Even if the native unlock fails, the window chrome above is already
+    // restored. What must not happen is leaving quietly: a candidate whose
+    // trackpad gestures did not come back is told which settings, and how to
+    // fix them, on the screen they see next.
+    let unlockFailed = false;
     try {
       await window.__TAURI__?.core.invoke("unlock_desktop");
     } catch {
-      // even if the native unlock fails, the window chrome above is already restored
+      unlockFailed = true;
+    }
+    const status = window.__TAURI__
+      ? await window.__TAURI__.core
+          .invoke<RestoreStatus>("get_lockdown_restore_status")
+          .catch(() => null)
+      : null;
+    if (status?.pending || (unlockFailed && status === null)) {
+      setRestoreStatus(status ?? { pending: true, items: [] });
     }
   }
 
@@ -1627,6 +1668,33 @@ export default function ContestPageClient() {
   expiryHandlerRef.current = handleContestExpiry;
   const onContestExpiry = useCallback(() => expiryHandlerRef.current(), []);
 
+  // Leaving the contest room by any route ends the exam's use of the camera.
+  // The submit teardown releases it too, but a redirect (session already
+  // finished, sign-in expired) left the camera light on.
+  useEffect(() => () => cameraSession.release(), []);
+
+  // Claim the system media controls (Now Playing, media keys) so they cannot
+  // pause the camera feed.
+  useEffect(() => {
+    const session = navigator.mediaSession;
+    if (!session) return;
+    const actions: MediaSessionAction[] = ["play", "pause", "stop"];
+    for (const action of actions) {
+      try {
+        session.setActionHandler(action, () => {});
+      } catch {
+        // An action this WebKit does not support.
+      }
+    }
+    return () => {
+      for (const action of actions) {
+        try {
+          session.setActionHandler(action, null);
+        } catch {}
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (loading) return; // Wait for contest load to ensure <video> ref is in DOM
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -1684,6 +1752,7 @@ export default function ContestPageClient() {
     }
 
     async function acquire(attempt = 0) {
+      if (cameraClosedRef.current) return;
       try {
         // Through the shared session, so the track onboarding already opened
         // is adopted rather than the device being closed and reopened across
@@ -1723,7 +1792,7 @@ export default function ContestPageClient() {
         }
         void bindStream(stream, attempt);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || cameraClosedRef.current) return;
         const msg = err instanceof Error ? err.message : String(err);
         const shouldRetry =
           attempt < 2 &&
@@ -1894,6 +1963,7 @@ export default function ContestPageClient() {
     const video = document.createElement("video");
     video.muted = true;
     video.playsInline = true;
+    keepPlaying(video);
     video.srcObject = cameraStream;
     void video.play().catch(() => {});
 
@@ -2975,12 +3045,34 @@ export default function ContestPageClient() {
               </Text>
             </VStack>
           )}
+          {timeUpState !== "submitting" && restoreStatus?.pending && (
+            <VStack gap={2}>
+              <Banner
+                status="warning"
+                title="Some device settings are still changed"
+                description="AMS Access keeps retrying in the background. To fix one now, run its command in Terminal. Back to home opens Settings, which lists the same commands with copy buttons."
+              />
+              {restoreStatus.items.length > 0 && (
+                <List>
+                  {restoreStatus.items.map((item) => (
+                    <ListItem
+                      key={item.label + item.fix_command}
+                      label={item.label}
+                      description={item.fix_command}
+                    />
+                  ))}
+                </List>
+              )}
+            </VStack>
+          )}
           {timeUpState !== "submitting" && (
             <HStack gap={3} wrap="wrap">
               <Button
                 label="Back to home"
                 variant="secondary"
-                onClick={() => router.push("/home")}
+                onClick={() =>
+                  router.push(restoreStatus?.pending ? "/home?restore=pending" : "/home")
+                }
               />
               <Button
                 label="Check results status"

@@ -15,6 +15,7 @@
  */
 
 import { resolveApiBase } from "./api-base.ts";
+import type { LockdownConfig } from "@ams/api-client";
 
 const API = resolveApiBase();
 
@@ -386,6 +387,9 @@ export type ContestIndex = {
   remaining_ms: number | null;
   phase: SessionPhase;
   verification_window_minutes: number;
+  /** Per-contest desktop lockdown settings. Absent from older servers, in
+   *  which case the desktop applies the full default lockdown. */
+  lockdown?: LockdownConfig | null;
   problems: {
     label: string;
     title: string;

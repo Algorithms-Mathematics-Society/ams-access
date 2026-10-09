@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useState } from "react";
-import { invoke } from "@ams/api-client";
+import { memo, useEffect, useState } from "react";
+import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Card } from "@astryxdesign/core/Card";
@@ -60,6 +60,44 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
   const [detail, setDetail] = useState<string | null>(null);
   // A copyable escape for the one platform where relaunching cannot help.
   const [manualCommand, setManualCommand] = useState<string | null>(null);
+  // macOS: the settings lockdown changed that are still not back, each with
+  // the exact command that puts it back. The app keeps retrying on its own;
+  // this is what the candidate can do meanwhile.
+  const [unrestored, setUnrestored] = useState<RestoreStatus | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const accept = (next: RestoreStatus | null) => {
+      if (!disposed) setUnrestored(next?.pending ? next : null);
+    };
+    invoke<RestoreStatus>("get_lockdown_restore_status")
+      .then(accept)
+      .catch(() => {});
+    const unlisten = listen<RestoreStatus>("lockdown-restore-status", accept).catch(() => null);
+    return () => {
+      disposed = true;
+      void unlisten.then((stop) => stop?.());
+    };
+  }, []);
+
+  async function retryRestore() {
+    setRetrying(true);
+    try {
+      const next = await invoke<RestoreStatus>("retry_lockdown_restore");
+      setUnrestored(next.pending ? next : null);
+      if (!next.pending) {
+        setStatus("done");
+        setDetail("Every system setting changed for the contest has been restored.");
+        setManualCommand(null);
+        onSecurityEvent("RECOVERY: remaining system settings restored");
+      }
+    } catch {
+      // The status below stays as it was; the background retry continues.
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function restore() {
     setStatus("working");
@@ -74,11 +112,22 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
       invoke("disable_network_lockdown"),
     ]);
 
+    const remaining = await invoke<RestoreStatus>("get_lockdown_restore_status").catch(() => null);
+    setUnrestored(remaining?.pending ? remaining : null);
     const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     // Thrown by the api-client when not running inside the desktop shell.
     if (rejected.some((r) => String(r.reason).includes("bridge unavailable"))) {
       setStatus("error");
       setDetail("Recovery is only available inside the AMS Access desktop app.");
+      return;
+    }
+    // Settings the restore is still retrying are listed below with their fix
+    // commands; the generic "relaunch" error would only repeat them less
+    // usefully. Only an unlock_desktop failure is explained by that list.
+    if (remaining?.pending && rejected.every((r) => r === results[0])) {
+      setStatus("idle");
+      setManualCommand(null);
+      onSecurityEvent("RECOVERY: some system settings still pending restore", "warn");
       return;
     }
     if (rejected.length > 0) {
@@ -140,6 +189,44 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
             width="100%"
             style={{ userSelect: "text" }}
           />
+        )}
+        {unrestored && (
+          <VStack gap={3}>
+            <Banner
+              status="warning"
+              title="Some settings are still changed"
+              description="AMS Access keeps retrying in the background. To fix one yourself, paste its command into Terminal."
+            />
+            <List hasDividers aria-label="Settings not yet restored">
+              {unrestored.items.map((item) => (
+                <ListItem
+                  key={item.label + item.fix_command}
+                  style={{ paddingInline: 0 }}
+                  label={<Text weight="medium">{item.label}</Text>}
+                  description={
+                    <CodeBlock
+                      code={item.fix_command}
+                      language="plaintext"
+                      hasCopyButton
+                      isWrapped
+                      size="sm"
+                      width="100%"
+                      style={{ userSelect: "text" }}
+                    />
+                  }
+                />
+              ))}
+            </List>
+            <HStack>
+              <Button
+                label={retrying ? "Retrying..." : "Try again"}
+                variant="secondary"
+                onClick={() => void retryRestore()}
+                isDisabled={retrying}
+                isLoading={retrying}
+              />
+            </HStack>
+          </VStack>
         )}
       </VStack>
     </Card>

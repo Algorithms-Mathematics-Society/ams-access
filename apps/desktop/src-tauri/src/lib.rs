@@ -8,8 +8,8 @@ mod shutdown;
 use base64::Engine as _;
 use core_rs::exam::{
     evaluate_readiness, CheckOutcome, CloseAppsResult, DeviceState, EnforcementDecision,
-    KeyboardInterceptResult, NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy,
-    VirtDetectionResult,
+    KeyboardInterceptResult, LockdownConfig, NetworkCheckResult, ProcessScanResult,
+    ReadinessReport, SessionPolicy, VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -927,22 +927,54 @@ macro_rules! platform_dispatch {
     }};
 }
 
+/// What the last macOS scan found, kept so the readiness report can name the
+/// displays and remote-access tools. `DeviceState` only carries a count and a
+/// bool, and it makes a round trip through the webview between the scan and
+/// the evaluation, so the names are held here instead.
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+struct MacScanCache {
+    displays: platform_rs::macos::DisplayReport,
+    remote_tools: Vec<String>,
+}
+
+#[cfg(target_os = "macos")]
+static MAC_SCAN: Mutex<Option<MacScanCache>> = Mutex::new(None);
+
 fn collect_fast_device_state() -> DeviceState {
     let platform = Some(platform_label());
 
+    // macOS: one process snapshot feeds both the restricted-apps and the
+    // remote-access checks, so the two can never disagree about what runs.
+    #[cfg(target_os = "macos")]
+    let (restricted_processes, rdp_server, external_displays) = {
+        let (processes, remote_tools) = platform_rs::macos::scan_processes_and_remote();
+        let displays = platform_rs::macos::scan_displays();
+        let scan = displays.to_scan();
+        let rdp = !remote_tools.is_empty();
+        *MAC_SCAN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(MacScanCache {
+            displays,
+            remote_tools,
+        });
+        (Some(processes), Some(rdp), Some(scan))
+    };
+    #[cfg(not(target_os = "macos"))]
     let restricted_processes = Some(native_scan_processes());
     let virtualization = Some(native_detect_virtualization());
 
     // Windows-only native probes for the readiness policy: extra/wireless displays
-    // and an active inbound RDP listener. Left None on every other platform so the
-    // policy stays inert there (matches core-rs DisplayScan/rdp_server semantics).
+    // and an active inbound RDP listener. Linux leaves them None so the policy
+    // reports them unsupported there (matches core-rs DisplayScan/rdp_server
+    // semantics); macOS fills them from the scan above.
     #[cfg(target_os = "windows")]
     let external_displays = Some(platform_rs::windows::detect_external_displays());
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let external_displays = None;
     #[cfg(target_os = "windows")]
     let rdp_server = Some(platform_rs::windows::detect_rdp_server());
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let rdp_server = None;
 
     DeviceState {
@@ -1035,10 +1067,94 @@ fn evaluate_session_readiness(
     device_state: DeviceState,
 ) -> ReadinessReport {
     let policy = policy.unwrap_or_default();
-    evaluate_readiness(&policy, contest_id, device_id, &device_state)
+    let mut report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
+    enrich_report(&mut report, &device_state);
+    report
+}
+
+/// Name what the macOS scan found in the display and remote-access rows.
+///
+/// core-rs only sees a count and a bool, so its detail says "2 displays
+/// detected" or "Remote access detected" — true, but a candidate cannot act
+/// on it without knowing which display or which tool. The cached scan has the
+/// names. It is used only when it agrees with the device state being
+/// evaluated: a scan from a different moment must not describe this one.
+fn enrich_report(report: &mut ReadinessReport, device_state: &DeviceState) {
+    #[cfg(target_os = "macos")]
+    {
+        use core_rs::exam::CheckKind;
+        let is_macos = device_state
+            .platform
+            .as_deref()
+            .is_some_and(|p| p.to_ascii_lowercase().starts_with("macos"));
+        let Some(cache) = MAC_SCAN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        else {
+            return;
+        };
+        if !is_macos {
+            return;
+        }
+        let display_detail = device_state
+            .external_displays
+            .as_ref()
+            .filter(|scan| scan.count > 0 && scan.count == cache.displays.count)
+            .map(|_| cache.displays.describe());
+        let remote_detail = device_state
+            .rdp_server
+            .filter(|found| *found == !cache.remote_tools.is_empty())
+            .map(|found| {
+                if found {
+                    // Built-in services are not apps to quit; they are switches
+                    // in Sharing settings, and saying "close" alone sends the
+                    // candidate looking for a window that does not exist.
+                    let builtin = cache.remote_tools.iter().any(|tool| {
+                        let tool = tool.to_ascii_lowercase();
+                        ["screen sharing", "remote management", "remote login", "ssh"]
+                            .iter()
+                            .any(|service| tool.contains(service))
+                    });
+                    let mut detail = format!("Close: {}", cache.remote_tools.join(", "));
+                    if builtin {
+                        detail.push_str(
+                            " — turn built-in sharing off in System Settings → General → Sharing",
+                        );
+                    }
+                    detail
+                } else {
+                    "No remote access detected".to_string()
+                }
+            });
+        let apply = |check: &mut core_rs::exam::ReadinessCheck| match check.kind {
+            CheckKind::ExternalDisplay => {
+                if let Some(detail) = &display_detail {
+                    check.detail = Some(detail.clone());
+                }
+            }
+            CheckKind::RemoteServer => {
+                if let Some(detail) = &remote_detail {
+                    check.detail = Some(detail.clone());
+                }
+            }
+            _ => {}
+        };
+        report
+            .checks
+            .iter_mut()
+            .chain(report.required_checks.iter_mut())
+            .chain(report.optional_checks.iter_mut())
+            .for_each(apply);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (report, device_state);
 }
 
 /// Final native gate before entering the contest surface.
+// Tauri commands take their IPC arguments positionally; a struct would change
+// the JS call shape every existing caller uses.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn start_secure_session(
     app: tauri::AppHandle,
@@ -1048,9 +1164,18 @@ async fn start_secure_session(
     device_state: DeviceState,
     api_url: Option<String>,
     token: Option<String>,
+    lockdown_config: Option<LockdownConfig>,
 ) -> Result<ReadinessReport, String> {
     let policy = policy.unwrap_or_default();
-    let report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
+    let mut report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
+    enrich_report(&mut report, &device_state);
+    // The contest's lockdown choices (which keys, gestures and shortcuts) are
+    // read by the native lockdown, so they are set before it engages. The
+    // display/remote entry consequences are already in `policy`.
+    #[cfg(target_os = "macos")]
+    platform_rs::macos::set_lockdown_config(lockdown_config.unwrap_or_default());
+    #[cfg(not(target_os = "macos"))]
+    let _ = lockdown_config;
 
     // Delivered before the block check, not after. A blocked report is the
     // one an invigilator actually needs — it is what they read off the
@@ -1558,18 +1683,83 @@ fn relaunch_as_admin(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// Deep-link into the OS privacy settings page for `section` ("camera" or
-/// "microphone"). Windows opens the matching ms-settings page; other
-/// platforms are a no-op (macOS camera/mic prompts are handled natively).
+/// Deep-link into the OS privacy settings page for `section`. Windows opens
+/// the matching ms-settings page ("camera" / "microphone"). macOS opens the
+/// System Settings pane: "accessibility", "input_monitoring",
+/// "screen_recording", "camera", "microphone" or "sharing". Linux is a no-op.
 #[tauri::command]
 fn open_privacy_settings(section: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     return platform_rs::windows::open_privacy_settings(&section);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::open_privacy_pane(&section);
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = section;
         Ok(())
     }
+}
+
+/// Desktop settings a lockdown changed and could not yet put back, with the
+/// command that fixes each by hand. Empty everywhere but macOS.
+#[derive(Serialize, Clone)]
+struct LockdownRestoreStatus {
+    pending: bool,
+    items: Vec<UnrestoredSettingView>,
+}
+
+#[derive(Serialize, Clone)]
+struct UnrestoredSettingView {
+    label: String,
+    fix_command: String,
+}
+
+fn lockdown_restore_status() -> LockdownRestoreStatus {
+    // While an exam holds the lockdown its snapshot is on disk by design;
+    // that is a lockdown in progress, not settings left behind.
+    #[cfg(target_os = "macos")]
+    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        let status = platform_rs::macos::restore_status();
+        return LockdownRestoreStatus {
+            pending: status.pending,
+            items: status
+                .items
+                .into_iter()
+                .map(|item| UnrestoredSettingView {
+                    label: item.label,
+                    fix_command: item.fix_command,
+                })
+                .collect(),
+        };
+    }
+    LockdownRestoreStatus {
+        pending: false,
+        items: vec![],
+    }
+}
+
+#[tauri::command]
+fn get_lockdown_restore_status() -> LockdownRestoreStatus {
+    lockdown_restore_status()
+}
+
+/// Try the restore again now, rather than waiting for the background retry.
+#[tauri::command]
+async fn retry_lockdown_restore() -> Result<LockdownRestoreStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        // Serialized with entry and teardown, and never during a live exam:
+        // restoring then would hand the desktop back mid-contest.
+        let _owner = lockdown_lifecycle()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        #[cfg(target_os = "macos")]
+        if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+            let _ = platform_rs::macos::retry_restore();
+        }
+        lockdown_restore_status()
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// Measure the configured server transport. DNS success and another public
@@ -1791,6 +1981,21 @@ impl DesktopOperations {
             .app
             .get_webview_window("main")
             .ok_or("Exam window unavailable during cleanup")?;
+        // macOS: undo the kiosk window state, then set simple fullscreen to
+        // what it was. Never back into native fullscreen: that is its own
+        // Space, which is what the lockdown exists to avoid. `previous.1`
+        // already counts simple fullscreen (see `engage`), so a rolled-back
+        // entry returns to the covered onboarding screen it came from.
+        #[cfg(target_os = "macos")]
+        let fullscreen = {
+            if let Ok(ns_window) = window.ns_window() {
+                platform_rs::macos::restore_kiosk_window(ns_window as usize);
+            }
+            window
+                .set_simple_fullscreen(previous.1)
+                .map_err(|error| error.to_string())
+        };
+        #[cfg(not(target_os = "macos"))]
         let fullscreen = window
             .set_fullscreen(previous.1)
             .map_err(|error| error.to_string());
@@ -1811,18 +2016,72 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
             .app
             .get_webview_window("main")
             .ok_or("Exam window unavailable")?;
-        self.previous_window = Some((
+        let always_on_top = window
+            .is_always_on_top()
+            .map_err(|error| error.to_string())?;
+        let native_fullscreen = window.is_fullscreen().map_err(|error| error.to_string())?;
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.previous_window = Some((always_on_top, native_fullscreen));
             window
-                .is_always_on_top()
-                .map_err(|error| error.to_string())?,
-            window.is_fullscreen().map_err(|error| error.to_string())?,
-        ));
-        window
-            .set_always_on_top(true)
-            .map_err(|error| error.to_string())?;
-        window
-            .set_fullscreen(true)
-            .map_err(|error| error.to_string())?;
+                .set_always_on_top(true)
+                .map_err(|error| error.to_string())?;
+            window
+                .set_fullscreen(true)
+                .map_err(|error| error.to_string())?;
+        }
+        #[cfg(target_os = "macos")]
+        let ns_window = window.ns_window().map_err(|error| error.to_string())? as usize;
+        #[cfg(target_os = "macos")]
+        {
+            // tao's `is_fullscreen()` is false in simple fullscreen, which is
+            // what onboarding uses on macOS; count both as "covered".
+            let covered =
+                native_fullscreen || platform_rs::macos::simple_fullscreen_engaged(ns_window);
+            self.previous_window = Some((always_on_top, covered));
+            // Native fullscreen gives the exam its own Space, and Spaces are
+            // exactly what three-finger swipes and Ctrl+arrows move between.
+            // Leave it for simple (pre-Lion) fullscreen, which covers the
+            // screen without creating a Space.
+            //
+            // The wait is on AppKit's own state, not `is_fullscreen()`: tao
+            // clears that the moment the exit is requested and runs the exit
+            // animation later. Engaging simple fullscreen before the animation
+            // finished let it restore the title bar, frame and window level
+            // afterwards, so the exam ended up windowed and not on top. This
+            // all happens before `lock_desktop`, which restarts the Dock —
+            // the process that runs fullscreen transitions.
+            if native_fullscreen {
+                window
+                    .set_fullscreen(false)
+                    .map_err(|error| error.to_string())?;
+                if !platform_rs::macos::wait_native_fullscreen_exit(
+                    ns_window,
+                    Duration::from_secs(3),
+                ) {
+                    return Err("The exam window did not leave native full screen".into());
+                }
+            }
+            window
+                .set_always_on_top(true)
+                .map_err(|error| error.to_string())?;
+            window
+                .set_simple_fullscreen(true)
+                .map_err(|error| error.to_string())?;
+            // tao declines silently (Tauri drops its bool), so check AppKit
+            // directly and give it one more try before refusing entry.
+            if !platform_rs::macos::simple_fullscreen_engaged(ns_window) {
+                let _ = window.set_simple_fullscreen(false);
+                std::thread::sleep(Duration::from_millis(200));
+                window
+                    .set_simple_fullscreen(true)
+                    .map_err(|error| error.to_string())?;
+                std::thread::sleep(Duration::from_millis(200));
+                if !platform_rs::macos::simple_fullscreen_engaged(ns_window) {
+                    return Err("Full-screen mode could not be engaged".into());
+                }
+            }
+        }
         self.platform_attempted = true;
         let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
         let protected = platform_dispatch!(lock_desktop(), else false);
@@ -1830,6 +2089,27 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
         // but cannot waive a failed recovery snapshot or incomplete OS command.
         if let Some(error) = budget.failure() {
             return Err(format!("Desktop setup could not complete safely: {error}"));
+        }
+        // Hide the Dock and menu bar, disable app switching, Force Quit and
+        // the Apple menu, and pin the window to every Space. All of it is
+        // process-local, so it cannot outlive the app. A failure here leaves
+        // the keyboard tap and the settings lockdown in force, so it is
+        // reported rather than refusing entry.
+        #[cfg(target_os = "macos")]
+        {
+            let kiosk = platform_rs::macos::apply_kiosk(ns_window);
+            // `lock_desktop` just restarted the Dock, which is what enforces
+            // HideDock and DisableProcessSwitching; set them again once the
+            // new Dock is up.
+            platform_rs::macos::reapply_kiosk_later(ns_window);
+            if let Err(error) = kiosk {
+                record_proctoring_event(
+                    Some(&self.app),
+                    "kiosk_presentation_degraded",
+                    &error,
+                    serde_json::json!({}),
+                );
+            }
         }
         if !protected {
             if self.require_keyboard {
@@ -1870,6 +2150,8 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
 /// evaluated policy (including unsupported-platform and organizer exceptions).
 #[tauri::command]
 async fn lock_desktop(app: tauri::AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    platform_rs::macos::set_lockdown_config(LockdownConfig::default());
     engage_desktop(app, !cfg!(target_os = "macos"))
         .await
         .is_ok()
@@ -1891,9 +2173,20 @@ fn release_native_desktop() -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     if platform_rs::macos::desktop_recovery_pending() {
-        return Err(
-            "Some desktop preferences could not be restored. Retry Restore system settings.".into(),
+        // Name every setting still changed and how to put it back by hand.
+        // The app keeps retrying in the background, but a candidate who has
+        // to leave now should not be left with a Mac that will not swipe.
+        let status = platform_rs::macos::restore_status();
+        let mut message = String::from(
+            "Some desktop settings could not be restored yet. AMS Access keeps retrying; you can also select Restore system settings.",
         );
+        if !status.items.is_empty() {
+            message.push_str(" Still changed:");
+            for item in &status.items {
+                message.push_str(&format!(" {} (fix: {});", item.label, item.fix_command));
+            }
+        }
+        return Err(message);
     }
     Ok(())
 }
@@ -2828,6 +3121,17 @@ fn finish_shutdown() {
     });
 }
 
+/// The helper processes that share this binary: the macOS lockdown watchdog
+/// (restores the desktop if the app dies) and the login-time restore agent.
+/// Returns the exit code when this process is one of them; `None` means start
+/// the app normally.
+pub fn run_helper_mode() -> Option<i32> {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::helper_mode_from_args();
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
 pub fn run() {
     // F5: harden the DLL search path before anything else loads a library, so a
     // malicious DLL planted in the launch directory or %CWD% can never be
@@ -2971,6 +3275,8 @@ pub fn run() {
             apply_capture_protection,
             set_escape_blocked,
             configure_event_stream,
+            get_lockdown_restore_status,
+            retry_lockdown_restore,
         ])
         .setup(|app| {
             let shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
@@ -3071,6 +3377,26 @@ pub fn run() {
                         "lockdown-event",
                         serde_json::json!({ "kind": kind, "detail": detail }),
                     );
+                });
+
+                // Notices are proctoring-only: a log-only display change, the
+                // tap being re-enabled, restore progress. They are recorded
+                // and shown, but they are not violations.
+                let handle = app.handle().clone();
+                platform_rs::macos::set_lockdown_notice_callback(move |kind, detail| {
+                    record_proctoring_event(
+                        Some(&handle),
+                        kind,
+                        detail,
+                        serde_json::json!({ "source": "platform_lockdown" }),
+                    );
+                    let _ = handle.emit(
+                        "lockdown-event",
+                        serde_json::json!({ "kind": kind, "detail": detail }),
+                    );
+                    if kind.starts_with("lockdown_restore") {
+                        let _ = handle.emit("lockdown-restore-status", lockdown_restore_status());
+                    }
                 });
             }
             // Linux: sink for native lockdown events (the X11 focus-loss
