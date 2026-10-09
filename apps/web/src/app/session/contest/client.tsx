@@ -410,7 +410,7 @@ export default function ContestPageClient() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
-  const [cameraCollapsed, setCameraCollapsed] = useState(false);
+  const [cameraCollapsed, setCameraCollapsed] = useState(true);
   const [faceGraceCountdown, setFaceGraceCountdown] = useState(5);
   const [faceGraceActive, setFaceGraceActive] = useState(false);
 
@@ -2728,6 +2728,9 @@ export default function ContestPageClient() {
             setSidebarCollapsed={setSidebarCollapsed}
             questionStatusMap={questionStatusMap}
             acceptedQuestionCount={acceptedQuestionCount}
+            cameraPreviewAvailable={Boolean(cameraStream ?? cameraError)}
+            cameraPreviewVisible={!cameraCollapsed && Boolean(cameraStream ?? cameraError)}
+            onToggleCameraPreview={() => setCameraCollapsed((collapsed) => !collapsed)}
           />
           <ProblemPane
             markedQuestionIds={markedQuestionIds}
@@ -2878,6 +2881,7 @@ export default function ContestPageClient() {
             cameraError={cameraError}
             sidebarCollapsed={sidebarCollapsed}
             cameraStatusLabel={cameraStatusLabel}
+            cameraCollapsed={cameraCollapsed}
             cameraHealthy={cameraHealthy}
             cameraEnabled={cameraEnabled}
             micEnabled={micEnabled}

@@ -1,5 +1,5 @@
 import { memo, type Dispatch, type SetStateAction } from "react";
-import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
+import { Bookmark, Camera, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -25,6 +25,9 @@ export interface QuestionRailProps {
   questionStatusMap: Record<string, QuestionStatus>;
   acceptedQuestionCount: number;
   markedQuestionIds: string[];
+  cameraPreviewAvailable: boolean;
+  cameraPreviewVisible: boolean;
+  onToggleCameraPreview: () => void;
 }
 
 export const QuestionRail = memo(function QuestionRail({
@@ -36,6 +39,9 @@ export const QuestionRail = memo(function QuestionRail({
   questionStatusMap,
   acceptedQuestionCount,
   markedQuestionIds,
+  cameraPreviewAvailable,
+  cameraPreviewVisible,
+  onToggleCameraPreview,
 }: QuestionRailProps) {
   const markedCount = questions.filter((question) =>
     markedQuestionIds.includes(question.id)
@@ -93,6 +99,9 @@ export const QuestionRail = memo(function QuestionRail({
         style={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
+          overflowX: "hidden",
+          overflowY: "auto",
           paddingBottom: sidebarCollapsed
             ? "var(--spacing-2)"
             : "calc(var(--spacing-10) * 4 + var(--spacing-2) + var(--spacing-0-5))",
@@ -209,6 +218,39 @@ export const QuestionRail = memo(function QuestionRail({
           );
         })}
       </VStack>
+      {sidebarCollapsed && (
+        <HStack
+          padding={2}
+          style={{
+            flexShrink: 0,
+            borderTop: "var(--border-width) solid var(--color-border)",
+          }}
+        >
+          <IconButton
+            label={cameraPreviewVisible ? "Hide camera preview" : "Show camera preview"}
+            tooltip={
+              cameraPreviewAvailable
+                ? cameraPreviewVisible
+                  ? "Hide camera preview"
+                  : "Show camera preview"
+                : "Camera preview is not available yet"
+            }
+            icon={<Camera size={16} />}
+            variant="secondary"
+            size="sm"
+            aria-expanded={cameraPreviewVisible}
+            aria-controls="contest-camera-preview"
+            isDisabled={!cameraPreviewAvailable}
+            onClick={onToggleCameraPreview}
+            style={{
+              width: "100%",
+              height: "var(--spacing-8)",
+              aspectRatio: "auto",
+              border: "var(--border-width) solid var(--color-border)",
+            }}
+          />
+        </HStack>
+      )}
     </VStack>
   );
 });
