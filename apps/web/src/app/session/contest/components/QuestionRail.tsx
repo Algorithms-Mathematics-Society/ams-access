@@ -128,10 +128,12 @@ export const QuestionRail = memo(function QuestionRail({
                 position: "relative",
                 background:
                   activeQ === i
-                    ? "var(--color-background-muted)"
-                    : accepted || rejected
-                      ? `color-mix(in srgb, ${statusColor} 9%, transparent)`
-                      : undefined,
+                    ? "var(--color-background-question-active)"
+                    : accepted
+                      ? "var(--color-background-question-accepted)"
+                      : rejected
+                        ? "var(--color-background-question-review)"
+                        : undefined,
                 height: sidebarCollapsed ? "var(--spacing-10)" : "auto",
                 minHeight: "var(--spacing-10)",
                 textAlign: sidebarCollapsed ? "center" : "left",

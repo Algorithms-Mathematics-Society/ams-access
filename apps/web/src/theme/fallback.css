@@ -466,7 +466,7 @@
     --color-text-orange: #ffc9a2;
     --color-background-yellow: #deb4333D;
     --color-border-yellow: #fbbf2480;
-    --color-icon-yellow: #deb433;
+    --color-icon-yellow: #facc15;
     --color-text-yellow: #fcd34d;
     --color-background-green: #84c9803D;
     --color-border-green: #4ade8080;
@@ -754,7 +754,7 @@
 }
 @layer astryx-theme {
 :where(html:not(.light), html.theme-dark-locked) .astryx-statusdot.warning {
-    background-color: var(--color-warning);
+    background-color: var(--color-icon-yellow);
   }
 }
 @layer astryx-theme {
@@ -866,6 +866,39 @@
 }
 @layer astryx-theme {
 :where(html:not(.light), html.theme-dark-locked) .astryx-heading.accent { color: var(--color-text-accent); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.size-4xs { font-size: var(--font-size-4xs); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.size-3xs { font-size: var(--font-size-3xs); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.size-2xs { font-size: var(--font-size-2xs); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.xsm { font-size: var(--font-size-xs); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.sm { font-size: var(--font-size-sm); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.base { font-size: var(--font-size-base); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.lg { font-size: var(--font-size-lg); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.xl { font-size: var(--font-size-xl); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.size-2xl { font-size: var(--font-size-2xl); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.size-3xl { font-size: var(--font-size-3xl); }
+}
+@layer astryx-theme {
+:where(html:not(.light), html.theme-dark-locked) .astryx-text.size-4xl { font-size: var(--font-size-4xl); }
 }
 @layer astryx-theme {
 :where(html:not(.light), html.theme-dark-locked) [data-astryx-media="dark"] {
@@ -1329,10 +1362,10 @@
     --color-icon-disabled: #777777;
     --color-success: #15803d;
     --color-error: #b91c1c;
-    --color-warning: #a16207;
+    --color-warning: #946800;
     --color-success-muted: #15803d14;
     --color-error-muted: #b91c1c14;
-    --color-warning-muted: #a1620714;
+    --color-warning-muted: #fff6de;
     --color-border: #dedede;
     --color-border-emphasized: #858585;
     --color-skeleton: #dedede;
@@ -1347,13 +1380,13 @@
     --color-icon-orange: #6e3500;
     --color-text-orange: #6e3500;
     --color-background-yellow: #f8da9d;
-    --color-border-yellow: #a1620780;
-    --color-icon-yellow: #584400;
-    --color-text-yellow: #854d0e;
+    --color-border-yellow: #94680080;
+    --color-icon-yellow: #eab308;
+    --color-text-yellow: #785400;
     --color-background-green: #c5e5c0;
     --color-border-green: #15803d80;
     --color-icon-green: #0c5700;
-    --color-text-green: #166534;
+    --color-text-green: #00722f;
     --color-background-teal: #a5e3d6;
     --color-border-teal: #94d6c8;
     --color-icon-teal: #005348;
@@ -1636,7 +1669,7 @@
 }
 @layer astryx-theme {
 :where(html.light:not(.theme-dark-locked)) .astryx-statusdot.warning {
-    background-color: var(--color-warning);
+    background-color: var(--color-icon-yellow);
   }
 }
 @layer astryx-theme {
@@ -1748,6 +1781,39 @@
 }
 @layer astryx-theme {
 :where(html.light:not(.theme-dark-locked)) .astryx-heading.accent { color: var(--color-text-accent); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.size-4xs { font-size: var(--font-size-4xs); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.size-3xs { font-size: var(--font-size-3xs); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.size-2xs { font-size: var(--font-size-2xs); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.xsm { font-size: var(--font-size-xs); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.sm { font-size: var(--font-size-sm); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.base { font-size: var(--font-size-base); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.lg { font-size: var(--font-size-lg); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.xl { font-size: var(--font-size-xl); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.size-2xl { font-size: var(--font-size-2xl); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.size-3xl { font-size: var(--font-size-3xl); }
+}
+@layer astryx-theme {
+:where(html.light:not(.theme-dark-locked)) .astryx-text.size-4xl { font-size: var(--font-size-4xl); }
 }
 @layer astryx-theme {
 :where(html.light:not(.theme-dark-locked)) [data-astryx-media="dark"] {
