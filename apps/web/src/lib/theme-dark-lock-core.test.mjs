@@ -16,8 +16,8 @@ test("normalizePath: strips index.html then trailing slash; keeps root", () => {
   assert.equal(normalizePath(""), "/");
 });
 
-const LOCKED = ["/session/contest/", "/session/onboarding/", "/session/contest/index.html"];
-// /home is unlocked: its colours are tokens, so it follows the preference like /login.
+const LOCKED = [];
+// Session routes now follow the saved app theme like other user-facing routes.
 const UNLOCKED = [
   "/",
   "/login/",
@@ -27,6 +27,9 @@ const UNLOCKED = [
   "/home/index.html",
   "/home-x/",
   "/session/",
+  "/session/contest/",
+  "/session/onboarding/",
+  "/session/contest/index.html",
 ];
 
 test("isRouteDarkLocked: verified matrix", () => {

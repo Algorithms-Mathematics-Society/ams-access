@@ -58,24 +58,24 @@ test("SAFETY: footerSaveView — the footer's own presentation must not drift fr
   assert.equal(footerSaveView("saved").label, "Saved");
 });
 
-test("footerSaveView preserves the footer's exact existing presentation (colors + dot + labels)", () => {
+test("footerSaveView uses theme-aware status colors and stable labels", () => {
   assert.deepEqual(footerSaveView("error"), {
-    color: "#ef4444",
-    dotColor: "#ef4444",
+    color: "var(--color-text-red)",
+    dotColor: "var(--color-text-red)",
     label: "Not saved",
   });
   assert.deepEqual(footerSaveView("loading"), {
-    color: "#f59e0b",
-    dotColor: "#e2e8f0",
+    color: "var(--color-text-yellow)",
+    dotColor: "var(--color-text-yellow)",
     label: "Saving…",
   });
   assert.deepEqual(footerSaveView("pending"), {
-    color: "#f59e0b",
-    dotColor: "#e2e8f0",
+    color: "var(--color-text-yellow)",
+    dotColor: "var(--color-text-yellow)",
     label: "Saving…",
   });
   assert.deepEqual(footerSaveView("saved"), {
-    color: "#71717a",
+    color: "var(--color-text-secondary)",
     dotColor: "var(--verdict-ac)",
     label: "Saved",
   });

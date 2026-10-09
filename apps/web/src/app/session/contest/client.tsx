@@ -89,6 +89,7 @@ import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
 import { deriveSaveIndicator } from "./save-indicator";
+import { getSnapshot as getAppThemeSnapshot, useTheme } from "@/lib/theme";
 import { draftStatus, requestFinish, type SourceSnapshot } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
@@ -283,7 +284,10 @@ export default function ContestPageClient() {
   const [activeQ, setActiveQ] = useState(0);
   const [questionFiles, setQuestionFiles] = useState<Record<string, EditorFile[]>>({});
   const [questionActiveFile, setQuestionActiveFile] = useState<Record<string, string>>({});
-  const [editorTheme, setEditorTheme] = useState<ContestEditorThemeId>(DEFAULT_EDITOR_THEME);
+  const { theme: appTheme } = useTheme();
+  const [editorThemeOverride, setEditorThemeOverride] = useState<ContestEditorThemeId | null>(null);
+  const editorTheme =
+    editorThemeOverride ?? (appTheme === "light" ? "monaco-light" : DEFAULT_EDITOR_THEME);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState("C++17");
   const [problemPaneWidth, setProblemPaneWidth] = useState(35);
@@ -691,8 +695,19 @@ export default function ContestPageClient() {
   }, []);
 
   useEffect(() => {
-    const storedTheme = localStorage.getItem(EDITOR_THEME_KEY);
-    if (isContestEditorTheme(storedTheme)) setEditorTheme(storedTheme);
+    try {
+      const storedTheme = localStorage.getItem(EDITOR_THEME_KEY);
+      // Light-mode entry takes precedence over a previous dark editor choice.
+      // Read the applied theme directly: hydration initially reports dark.
+      if (
+        isContestEditorTheme(storedTheme) &&
+        (getAppThemeSnapshot() !== "light" || storedTheme === "monaco-light")
+      ) {
+        setEditorThemeOverride(storedTheme);
+      }
+    } catch {
+      /* Without storage, the editor follows the app theme. */
+    }
   }, []);
 
   useEffect(() => {
@@ -742,7 +757,7 @@ export default function ContestPageClient() {
 
   function handleEditorThemeChange(value: string) {
     if (isContestEditorTheme(value) === false) return;
-    setEditorTheme(value);
+    setEditorThemeOverride(value);
     try {
       localStorage.setItem(EDITOR_THEME_KEY, value);
     } catch {
@@ -2359,26 +2374,30 @@ export default function ContestPageClient() {
     ? {
         // Client-side failure reaching the judge — distinct from a judge verdict.
         label: "Couldn’t reach the judge",
-        color: "#fca5a5",
-        bg: "rgba(239,68,68,0.1)",
-        border: "rgba(239,68,68,0.28)",
+        color: "var(--color-text-red)",
+        bg: "var(--color-error-muted)",
+        border: "color-mix(in srgb, var(--color-error) 28%, transparent)",
         icon: "error" as const,
       }
     : runTimedOut
       ? {
           // Verdict not back yet — the submission is still queued on the judge.
           label: "Still running…",
-          color: "#fcd34d",
-          bg: "rgba(245,158,11,0.1)",
-          border: "rgba(245,158,11,0.28)",
+          color: "var(--color-text-yellow)",
+          bg: "color-mix(in srgb, var(--color-text-yellow) 10%, transparent)",
+          border: "color-mix(in srgb, var(--color-text-yellow) 28%, transparent)",
           icon: "pending" as const,
         }
       : runResult
         ? {
             label: runStatusLabelMap[runResult.status] ?? runResult.status,
-            color: VERDICT_COLORS[runResult.status] ?? "#94a3b8",
-            bg: VERDICT_BG[runResult.status] ?? "rgba(100,116,139,0.12)",
-            border: VERDICT_BORDER[runResult.status] ?? "rgba(100,116,139,0.3)",
+            color: VERDICT_COLORS[runResult.status] ?? "var(--color-text-secondary)",
+            bg:
+              VERDICT_BG[runResult.status] ??
+              "color-mix(in srgb, var(--color-text-secondary) 12%, transparent)",
+            border:
+              VERDICT_BORDER[runResult.status] ??
+              "color-mix(in srgb, var(--color-text-secondary) 30%, transparent)",
             icon:
               runResult.status === "QUEUED" || runResult.status === "RUNNING"
                 ? ("loading" as const)
@@ -2532,8 +2551,8 @@ export default function ContestPageClient() {
           label: "Not started",
           shortLabel: "Open",
           color: "var(--text-dim)",
-          bg: "rgba(255,255,255,0.04)",
-          border: "rgba(255,255,255,0.12)",
+          bg: "color-mix(in srgb, var(--color-text-primary) 4%, transparent)",
+          border: "color-mix(in srgb, var(--color-text-primary) 12%, transparent)",
         };
       }
     }

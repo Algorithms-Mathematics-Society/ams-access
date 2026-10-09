@@ -530,7 +530,7 @@
   color: var(--text-soft);
 }
 .route-loading-shell--onboarding {
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 .route-loading-shell--contest {
   color: var(--color-accent-base);
@@ -545,8 +545,13 @@
   position: relative;
   min-height: 0;
   min-width: 0;
-  background: #0f0f0f;
+  background: var(--color-background-body);
 }
+
+html.light [data-contest-sponsor] img[src$="-white.svg"] {
+  filter: brightness(0);
+}
+
 
 /* ─────────────────────────────────────────────────────────────
    RESULTS — leaderboard rows + shared buttons

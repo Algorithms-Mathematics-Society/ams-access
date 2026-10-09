@@ -47,6 +47,7 @@ import { Stage12_IntegrityConfirmation } from "./components/stages/Stage12_Integ
 import { createStageAdvanceController } from "./components/stage-advance";
 import { ProgressBar } from "./components/ProgressBar";
 import { DryRunSummary } from "./components/DryRunSummary";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 import {
   API_URL,
@@ -882,6 +883,7 @@ export default function OnboardingPage() {
             </Text>
           </HStack>
           <HStack gap={3} align="center" wrap="wrap">
+            <ThemeToggle />
             {wideLayout && <SetupExitShortcut />}
             <Button
               type="button"
