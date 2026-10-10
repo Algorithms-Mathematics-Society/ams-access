@@ -10,6 +10,7 @@ export interface CameraTileProps {
   cameraStream: MediaStream | null;
   cameraError: string | null;
   sidebarCollapsed: boolean;
+  cameraCollapsed: boolean;
   cameraStatusLabel: string;
   cameraHealthy: boolean;
   cameraEnabled: boolean;
@@ -25,6 +26,7 @@ export function CameraTile({
   cameraStream,
   cameraError,
   sidebarCollapsed,
+  cameraCollapsed,
   cameraStatusLabel,
   cameraHealthy,
   cameraEnabled,
@@ -33,17 +35,21 @@ export function CameraTile({
 }: CameraTileProps) {
   return (
     <VStack
+      id="contest-camera-preview"
       className="contest-camera-tile"
       aria-label={cameraStatusLabel}
       gap={0}
       style={{
         position: "absolute",
-        left: 0,
+        left: sidebarCollapsed ? "calc(var(--spacing-10) + var(--spacing-4))" : 0,
         bottom: 0,
         width: "calc(var(--spacing-10) * 5.5)",
         height: "calc(var(--spacing-10) * 4)",
         zIndex: 50,
-        display: (cameraStream ?? cameraError) && !sidebarCollapsed ? "flex" : "none",
+        display:
+          (cameraStream ?? cameraError) && (!sidebarCollapsed || !cameraCollapsed)
+            ? "flex"
+            : "none",
         background: "var(--color-background-card)",
         border: "var(--border-width) solid var(--color-border)",
         overflow: "hidden",

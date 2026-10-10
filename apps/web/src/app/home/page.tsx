@@ -183,6 +183,15 @@ export default function HomePage() {
 
   const refreshTelemetry = useCallback(
     async (force = false, source = "TELEMETRY") => {
+      if (!hasNativeBridge()) {
+        setTelemetryQuery((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: "Native device checks are unavailable in this browser. Use the desktop app.",
+        }));
+        return;
+      }
+
       const now = Date.now();
       const cachedIsFresh =
         !force &&
@@ -221,7 +230,9 @@ export default function HomePage() {
         } satisfies TelemetrySnapshot;
       });
 
-      telemetryInFlightRef.current = request;
+      // The owning scan reports failures below. Joined callers must not reject
+      // independently when a Settings effect or another panel requests the scan.
+      telemetryInFlightRef.current = request.catch(() => null);
       try {
         const snapshot = await request;
         if (!snapshot) throw new Error("Native telemetry unavailable");

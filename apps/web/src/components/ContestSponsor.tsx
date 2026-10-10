@@ -7,8 +7,8 @@ import { getContestSponsor, type ContestSponsor as Sponsor } from "@/lib/contest
 
 type Placement = "home" | "introduction" | "waiting" | "completion";
 
-/** Supporting identity, never an action or an ad. All current placements use
- * the existing dark-locked contest surfaces, suited to the supplied white logo.
+/** Supporting identity, never an action or an ad. The supplied white wordmark
+ * is recolored for light mode by the shared route stylesheet.
  * Budget: 28px wordmark on Home/receipt; 32px before entry. Wrap at narrow widths.
  */
 export function ContestSponsor({

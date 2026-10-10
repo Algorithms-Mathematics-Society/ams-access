@@ -2,7 +2,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/app/home/components/ui-primitives";
-import { useTheme } from "../hooks";
+import { useTheme } from "@/lib/theme";
 import { Spinner, StageHeader, StatusBadge } from "../ui";
 import { SetupPermissionInfo } from "../SetupPermissionInfo";
 import { cameraSession } from "@/lib/camera-session";
@@ -15,7 +15,7 @@ export function Stage7_CameraInit({
   onPass(): void;
   onCameraReady(stream: MediaStream): void;
 }) {
-  const theme = useTheme();
+  const { theme } = useTheme();
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [error, setError] = useState<string | null>(null);
   const [permissionIssue, setPermissionIssue] = useState(false);

@@ -23,9 +23,9 @@ export function deriveSaveIndicator(state: SaveIndicatorState): SaveIndicator {
   if (state.saveError) {
     return {
       label: "Couldn't save — retrying",
-      color: "#fca5a5",
-      bg: "rgba(239,68,68,0.1)",
-      border: "rgba(239,68,68,0.28)",
+      color: "var(--color-text-red)",
+      bg: "var(--color-error-muted)",
+      border: "color-mix(in srgb, var(--color-error) 28%, transparent)",
       icon: "error",
     };
   }
@@ -49,9 +49,9 @@ export function deriveSaveIndicator(state: SaveIndicatorState): SaveIndicator {
   }
   return {
     label: "All changes saved",
-    color: "#86efac",
-    bg: "rgba(34,197,94,0.08)",
-    border: "rgba(34,197,94,0.24)",
+    color: "var(--color-text-green)",
+    bg: "color-mix(in srgb, var(--color-text-green) 8%, transparent)",
+    border: "color-mix(in srgb, var(--color-text-green) 24%, transparent)",
     icon: "saved",
   };
 }
@@ -68,11 +68,19 @@ export type FooterSaveView = {
 // drift from the tested "never falsely Saved" invariant above.
 export function footerSaveView(icon: SaveIndicatorIcon): FooterSaveView {
   if (icon === "error") {
-    return { color: "#ef4444", dotColor: "#ef4444", label: "Not saved" };
+    return {
+      color: "var(--color-text-red)",
+      dotColor: "var(--color-text-red)",
+      label: "Not saved",
+    };
   }
   if (icon === "saved") {
-    return { color: "#71717a", dotColor: "var(--verdict-ac)", label: "Saved" };
+    return { color: "var(--color-text-secondary)", dotColor: "var(--verdict-ac)", label: "Saved" };
   }
   // "loading" and "pending" share the footer's in-flight presentation.
-  return { color: "#f59e0b", dotColor: "#e2e8f0", label: "Saving…" };
+  return {
+    color: "var(--color-text-yellow)",
+    dotColor: "var(--color-text-yellow)",
+    label: "Saving…",
+  };
 }
