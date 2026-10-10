@@ -472,7 +472,7 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
     };
   }
 
-  if (status === "SCHEDULED" || status === "ACTIVE") {
+  if (status === "SCHEDULED" || status === "ACTIVE" || status === "RUNNING") {
     return {
       phase: "live",
       canEnter: true,
