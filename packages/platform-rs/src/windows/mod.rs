@@ -1470,14 +1470,6 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
     }
 }
 
-/// Returns true if a process matching `name` (without .exe) is still alive.
-fn win_process_alive(name: &str) -> bool {
-    scan_processes()
-        .found
-        .iter()
-        .any(|f| f.eq_ignore_ascii_case(name))
-}
-
 // ── Clipboard monitor ─────────────────────────────────────────────────────────
 //
 // Native clipboard surveillance for the lockdown session. A message-only window
