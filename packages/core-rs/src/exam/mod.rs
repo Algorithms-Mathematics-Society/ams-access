@@ -283,6 +283,11 @@ impl SessionPolicy {
             // (lab desktops, headless setups) have no audio input. Proctoring
             // continuity does not depend on it.
             let (kind_required, kind_severity) = match kind {
+                // macOS only: camera and microphone must both be permitted to
+                // enter. Other platforms keep the advisory behavior below.
+                CheckKind::Camera | CheckKind::Microphone if is_macos => {
+                    (true, BlockingSeverity::Block)
+                }
                 CheckKind::Microphone => (false, BlockingSeverity::Warning),
                 // Network readiness is advisory on all profiles: egress lockdown is
                 // applied best-effort during the contest and is NOT a hard entry
@@ -328,11 +333,13 @@ impl SessionPolicy {
             } else {
                 BlockingSeverity::Warning
             };
+            // No organizer override for the macOS camera/microphone requirement.
+            let mac_media = is_macos && matches!(kind, CheckKind::Camera | CheckKind::Microphone);
             ReadinessRequirement {
                 kind,
                 required: kind_required,
                 severity: kind_severity,
-                organizer_override_allowed,
+                organizer_override_allowed: organizer_override_allowed && !mac_media,
                 unsupported_severity,
             }
         })

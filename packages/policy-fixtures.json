@@ -81,9 +81,9 @@
   },
   "internal_pilot/macos": {
     "camera": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
       "unsupported_severity": "warning"
     },
     "clock_integrity": {
@@ -117,9 +117,9 @@
       "unsupported_severity": "warning"
     },
     "microphone": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
       "unsupported_severity": "warning"
     },
     "network": {
@@ -641,9 +641,9 @@
   },
   "practice/macos": {
     "camera": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
       "unsupported_severity": "warning"
     },
     "clock_integrity": {
@@ -677,9 +677,9 @@
       "unsupported_severity": "warning"
     },
     "microphone": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
+      "organizer_override_allowed": false,
+      "required": true,
+      "severity": "block",
       "unsupported_severity": "warning"
     },
     "network": {
@@ -1202,8 +1202,8 @@
   "strict_contest/macos": {
     "camera": {
       "organizer_override_allowed": false,
-      "required": false,
-      "severity": "warning",
+      "required": true,
+      "severity": "block",
       "unsupported_severity": "warning"
     },
     "clock_integrity": {
@@ -1238,8 +1238,8 @@
     },
     "microphone": {
       "organizer_override_allowed": false,
-      "required": false,
-      "severity": "warning",
+      "required": true,
+      "severity": "block",
       "unsupported_severity": "warning"
     },
     "network": {
