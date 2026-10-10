@@ -514,7 +514,8 @@ jobs:
 
           $cer = Join-Path $env:RUNNER_TEMP "ams-access-msix-test.cer"
           Export-Certificate -Cert $cert -FilePath $cer | Out-Null
-          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\CurrentUser\TrustedPeople |
+          # MSIX deployment checks machine trust, not the user's signing store.
+          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople |
             Out-Null
 
           Add-AppxPackage -Path $msix.FullName
