@@ -37,7 +37,6 @@ import type {
   TelemetrySnapshot,
   ActiveSession,
   ResumeVerificationState,
-  CloseAppsResult,
 } from "./components/types";
 
 // ── Utils / hooks ──────────────────────────────────────────────
@@ -137,8 +136,6 @@ export default function HomePage() {
   const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
   const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
-  const [closingApps, setClosingApps] = useState(false);
-  const [closeFailedApps, setCloseFailedApps] = useState<string[]>([]);
   const resumeInFlightRef = useRef(false);
   const resumeConsumeInFlightRef = useRef(false);
   const resumePollInFlightRef = useRef(false);
@@ -491,33 +488,6 @@ export default function HomePage() {
     };
   }, [preflightContestId, identityHydrated]);
 
-  async function handleCloseRestrictedApps(foundApps: string[]) {
-    setClosingApps(true);
-    setCloseFailedApps([]);
-    try {
-      const result = await invoke<CloseAppsResult>("close_restricted_apps", {
-        apps: foundApps,
-      });
-      if (result.failed.length > 0) {
-        setCloseFailedApps(result.failed);
-        appendSecurityEvent(
-          `CLOSE_APPS: Could not close automatically: ${result.failed.join(", ")}`,
-          "warn"
-        );
-      }
-      if (result.closed.length > 0) {
-        appendSecurityEvent(
-          `CLOSE_APPS: Automatically closed: ${result.closed.join(", ")}`,
-          "info"
-        );
-      }
-      await new Promise<void>((r) => setTimeout(r, 1200));
-      await refreshTelemetry(true, "CLOSE_APPS_RESCAN");
-    } finally {
-      setClosingApps(false);
-    }
-  }
-
   function clearStoredActiveSession(reason: string) {
     localStorage.removeItem(ACTIVE_SESSION_KEY);
     setActiveSession(null);
@@ -827,8 +797,6 @@ export default function HomePage() {
     setTimeout(() => router.push("/"), 600);
   }
 
-  void closeFailedApps;
-
   // Match the existing resume guards; keep position stable while the action runs.
   const prioritizeRecovery = Boolean(
     activeSession &&
@@ -978,8 +946,6 @@ export default function HomePage() {
           onRetry={async (key) => {
             await refreshTelemetry(true, `RESOLVE_${key}`);
           }}
-          onCloseApps={handleCloseRestrictedApps}
-          closingApps={closingApps}
         />
       )}
     </>

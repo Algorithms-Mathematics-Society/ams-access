@@ -7,9 +7,9 @@ mod shutdown;
 
 use base64::Engine as _;
 use core_rs::exam::{
-    evaluate_readiness, CheckOutcome, CloseAppsResult, DeviceState, EnforcementDecision,
-    KeyboardInterceptResult, LockdownConfig, NetworkCheckResult, ProcessScanResult,
-    ReadinessReport, SessionPolicy, VirtDetectionResult,
+    evaluate_readiness, CheckOutcome, DeviceState, EnforcementDecision, KeyboardInterceptResult,
+    LockdownConfig, NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy,
+    VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1328,44 +1328,6 @@ fn native_scan_processes() -> ProcessScanResult {
     platform_dispatch!(scan_processes(), else ProcessScanResult {
         found: vec![],
         clean: true,
-    })
-}
-
-/// Close each restricted app by name. The `apps` list comes from the
-/// frontend and is validated server-side against the platform's RESTRICTED
-/// list before any kill is issued. Names not on the list are silently ignored.
-#[tauri::command]
-async fn close_restricted_apps(apps: Vec<String>) -> Result<CloseAppsResult, String> {
-    blocking_probe::run(blocking_probe::Priority::Readiness, move || {
-        native_close_restricted_apps(apps)
-    })
-    .await
-}
-fn native_close_restricted_apps(apps: Vec<String>) -> CloseAppsResult {
-    if apps.is_empty() {
-        return CloseAppsResult {
-            closed: vec![],
-            failed: vec![],
-        };
-    }
-
-    // Security: only kill names that appear in the platform's RESTRICTED list.
-    // The Tauri IPC boundary is not a trust boundary — validate on the backend.
-    let safe: Vec<String> = apps
-        .into_iter()
-        .filter(|n| platform_dispatch!(is_restricted_name(n), else false))
-        .collect();
-
-    if safe.is_empty() {
-        return CloseAppsResult {
-            closed: vec![],
-            failed: vec![],
-        };
-    }
-
-    platform_dispatch!(close_apps(&safe), else CloseAppsResult {
-        closed: vec![],
-        failed: safe,
     })
 }
 
@@ -3241,7 +3203,6 @@ pub fn run() {
             evaluate_session_readiness,
             start_secure_session,
             scan_processes,
-            close_restricted_apps,
             detect_virtualization,
             enable_keyboard_intercept,
             disable_keyboard_intercept,

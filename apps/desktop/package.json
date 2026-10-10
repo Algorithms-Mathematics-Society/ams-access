@@ -1,6 +1,6 @@
 {
   "name": "@ams/desktop",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "private": true,
   "scripts": {
     "dev": "tauri dev",
@@ -9,7 +9,7 @@
     "build:mac-dev": "APPLE_SIGNING_IDENTITY='AMS Access Dev' tauri build --debug --bundles app",
     "setup:mac-signing": "bash src-tauri/scripts/setup-macos-dev-signing.sh",
     "clean": "rm -rf src-tauri/target",
-    "test": "node --test src-tauri/scripts/cargo-target-directory.test.mjs",
+    "test": "node --test src-tauri/scripts/cargo-target-directory.test.mjs src-tauri/scripts/store-safety.test.mjs",
     "dev:hosted": "tauri dev --config '{\"build\":{\"devUrl\":\"http://localhost:3001\",\"beforeDevCommand\":\"pnpm --filter @ams/desktop prepare:helper && pnpm --filter @ams/web dev:hosted\"}}'"
   },
   "dependencies": {

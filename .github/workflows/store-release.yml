@@ -1,0 +1,122 @@
+name: Microsoft Store package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: microsoft-store
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release version
+        run: pnpm check:versions
+
+      - name: Build frontend
+        run: pnpm turbo run build --filter=@ams/web
+
+      - name: Build and stage network helper
+        shell: bash
+        run: |
+          cargo build --release -p network-helper
+          cp target/release/ams-access-networkhelper.exe \
+             apps/desktop/src-tauri/helpers/ams-access-networkhelper
+
+      - name: Build Windows application
+        working-directory: apps/desktop
+        # A Store package must be asInvoker. Never set AMS_FIREWALL here.
+        run: pnpm tauri build --target x86_64-pc-windows-msvc
+
+      - name: Validate Partner Center identity
+        shell: pwsh
+        env:
+          MSIX_PACKAGE_NAME: ${{ secrets.MSIX_PACKAGE_NAME }}
+          MSIX_PUBLISHER: ${{ secrets.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ secrets.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          foreach ($name in @(
+            "MSIX_PACKAGE_NAME",
+            "MSIX_PUBLISHER",
+            "MSIX_PUBLISHER_DISPLAY_NAME"
+          )) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ([string]::IsNullOrWhiteSpace($value)) {
+              throw "$name is missing from the microsoft-store environment"
+            }
+          }
+          if (-not $env:MSIX_PUBLISHER.StartsWith("CN=")) {
+            throw "MSIX_PUBLISHER must be the exact Partner Center CN=... value"
+          }
+
+      - name: Build unsigned Store MSIX
+        shell: pwsh
+        env:
+          MSIX_PACKAGE_NAME: ${{ secrets.MSIX_PACKAGE_NAME }}
+          MSIX_PUBLISHER: ${{ secrets.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ secrets.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: ./apps/desktop/msix/build-msix.ps1
+
+      - name: Verify submission package
+        shell: pwsh
+        env:
+          MSIX_PACKAGE_NAME: ${{ secrets.MSIX_PACKAGE_NAME }}
+          MSIX_PUBLISHER: ${{ secrets.MSIX_PUBLISHER }}
+        run: |
+          $msix = Get-ChildItem target/msix -Filter *.msix | Select-Object -First 1
+          if (-not $msix) { throw "no Store MSIX was produced" }
+
+          $unpack = Join-Path $env:RUNNER_TEMP "ams-store-package"
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" \
+            -Recurse -Filter makeappx.exe |
+            Where-Object { $_.FullName -match "x64" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $makeappx) { throw "makeappx.exe not found" }
+          & $makeappx.FullName unpack /p $msix.FullName /d $unpack /o
+          if ($LASTEXITCODE -ne 0) { throw "makeappx unpack failed with $LASTEXITCODE" }
+
+          [xml]$manifest = Get-Content (Join-Path $unpack "AppxManifest.xml") -Raw
+          $identity = $manifest.Package.Identity
+          if ($identity.Name -ne $env:MSIX_PACKAGE_NAME) {
+            throw "package identity name does not match Partner Center"
+          }
+          if ($identity.Publisher -ne $env:MSIX_PUBLISHER) {
+            throw "package publisher does not match Partner Center"
+          }
+          if ($identity.Version -notmatch '^\d+\.\d+\.\d+\.0$') {
+            throw "invalid Store version $($identity.Version)"
+          }
+          if (-not (Test-Path (Join-Path $unpack "ams-access.exe"))) {
+            throw "package payload is missing ams-access.exe"
+          }
+          Write-Host "READY: $($msix.Name), identity $($identity.Name), version $($identity.Version)"
+
+      - name: Upload Store submission artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: microsoft-store-msix
+          path: target/msix/*.msix
+          if-no-files-found: error
+          retention-days: 30

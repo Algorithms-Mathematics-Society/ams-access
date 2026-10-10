@@ -18,12 +18,19 @@ needs elevation and will fail. A candidate on a Store build can open a
 browser.
 
 Everything else is unaffected: keyboard interception, capture protection,
-process scanning, presence monitoring, always-on-top.
+process scanning, presence monitoring, always-on-top. Process handling is
+strictly detection-only: the candidate closes any flagged application and
+runs the scan again; AMS Access never terminates another process.
+
+The Store build also leaves Windows user settings untouched. MSIX virtualizes
+HKCU writes into a private package hive, so attempting to set `DisableTaskMgr`,
+Game Bar, or touchpad policy values would be both invasive and ineffective.
+Those registry controls remain exclusive to the unpackaged client.
 
 The app knows which it is. A Store build reports its platform as
 `windows_msix` rather than `windows` or `windows_no_admin`, so the
-invigilation console can distinguish *"Store build, no firewall by design"*
-from *"this candidate could not elevate on their own machine"* — those look
+invigilation console can distinguish _"Store build, no firewall by design"_
+from _"this candidate could not elevate on their own machine"_ — those look
 identical otherwise and need completely different responses.
 
 **Neither Windows client is code-signed by us, and that is settled** — no
@@ -33,12 +40,12 @@ raises a network firewall unless built with `AMS_FIREWALL=1`.
 
 So the only difference left is the install experience:
 
-| | Direct download | Store (this) |
-|---|---|---|
-| SmartScreen warning | once, at install | none — Microsoft signs it |
-| Administrator prompt | none | none |
-| Lockdown, camera, capture guard, process scan | yes | yes |
-| Network firewall | no | no, and cannot |
+|                                               | Direct download  | Store (this)              |
+| --------------------------------------------- | ---------------- | ------------------------- |
+| SmartScreen warning                           | once, at install | none — Microsoft signs it |
+| Administrator prompt                          | none             | none                      |
+| Lockdown, camera, capture guard, process scan | yes              | yes                       |
+| Network firewall                              | no               | no, and cannot            |
 
 The Store build is the nicer front door. Keep the direct download as the
 fallback, and as the escape hatch for a fix you need live today when
@@ -60,10 +67,10 @@ never be elevated.
 2. Reserve the app name under **Apps and games → New product → MSIX or PWA**.
 3. Open **Product identity**. It gives you three values you cannot guess:
 
-   | Partner Center field | Used as |
-   |---|---|
-   | Package/Identity/Name | `MSIX_PACKAGE_NAME` |
-   | Package/Identity/Publisher | `MSIX_PUBLISHER` |
+   | Partner Center field                    | Used as                       |
+   | --------------------------------------- | ----------------------------- |
+   | Package/Identity/Name                   | `MSIX_PACKAGE_NAME`           |
+   | Package/Identity/Publisher              | `MSIX_PUBLISHER`              |
    | Package/Properties/PublisherDisplayName | `MSIX_PUBLISHER_DISPLAY_NAME` |
 
    `Publisher` must match the certificate the Store signs with **byte for
@@ -91,6 +98,17 @@ $env:MSIX_PUBLISHER_DISPLAY_NAME = "<from Partner Center>"
 The result lands in `target/msix/`. It is **unsigned on purpose** — that is
 what the Store signs. Upload it to your submission and let Microsoft do the
 rest.
+
+For a release artifact, configure the GitHub `microsoft-store` environment
+with these three secrets and run the **Microsoft Store package** workflow:
+
+- `MSIX_PACKAGE_NAME`
+- `MSIX_PUBLISHER`
+- `MSIX_PUBLISHER_DISPLAY_NAME`
+
+That workflow refuses placeholder identity, builds the release on Windows,
+unpacks the result, verifies the exact Partner Center identity and four-part
+version, and uploads `microsoft-store-msix` for submission.
 
 The script refuses to package a `requireAdministrator` binary. That guard is
 there because the failure is silent and expensive: the package builds,
@@ -128,18 +146,25 @@ CI asserts the executable's size for exactly this reason: one that had lost
 its embedded frontend would still package, still install, and then fail at the
 face scan in front of a candidate.
 
-The bundle resources that are *not* embedded are the macOS and Linux
+The bundle resources that are _not_ embedded are the macOS and Linux
 privileged helpers, which Windows never uses.
 
-## Still unverified
+## Certification submission
 
-Two things need a real Windows machine and have not been checked:
+CI self-signs the development package, installs it, launches the packaged app,
+and runs the Windows App Certification Kit. This proves package activation in
+an MSIX identity rather than only proving that `makeappx` accepted the files.
 
-- **Registry virtualisation.** MSIX redirects HKCU writes into the package's
-  private hive. `DisableTaskMgr` may therefore write somewhere that does not
-  affect the actual system, which would mean Task Manager stays available on a
-  Store build. Test it before relying on it.
-- **Store certification.** An app that disables Task Manager and intercepts
-  Alt+Tab runs into the Store policies about interfering with OS
-  functionality. Expect questions about `runFullTrust`; the honest answer is
-  proctoring. Do not schedule a contest around winning that review.
+Partner Center certification is still the authority. The package declares the
+restricted `runFullTrust` capability, so the submission must explain that it
+is required for an explicitly started proctored contest session: foreground
+keyboard interception, capture exclusion, restricted-process detection, and
+focus monitoring. State clearly that the app does not elevate, install a
+service or driver, alter the firewall, terminate other applications, or change
+Windows registry policies in the Store build.
+
+Provide a working certification account and exact steps to reach a test
+contest. Also provide the public privacy-policy URL, support contact, and notes
+explaining the camera and microphone readiness/proctoring flow. Without those
+items Microsoft cannot exercise the primary functionality and may reject the
+submission as untestable.

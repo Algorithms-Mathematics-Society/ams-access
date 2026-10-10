@@ -136,6 +136,8 @@ at the OS firewall — and contests do not rely on it, so it is off by default.
 Everything else is unchanged: the app still takes over the screen, intercepts
 Alt+Tab and the Windows key, disables Task Manager, blocks screen capture,
 watches for restricted applications, and monitors presence through the camera.
+Restricted applications are never terminated by AMS Access; the candidate is
+shown the flagged list, closes them manually, and runs the scan again.
 
 **A signature would not have removed that prompt anyway.** A signed app that
 asks for administrator prompts exactly the same. Signing only removes the
@@ -149,9 +151,11 @@ installs with no warning, no administrator prompt, and no clicking through
 anything. If it is listed for your contest, prefer it — this page is for
 people installing the direct download.
 
-| | Direct download | Microsoft Store |
-|---|---|---|
-| SmartScreen warning | yes, once at install | none |
-| Administrator prompt | none | none |
-| Lockdown, camera, capture guard | yes | yes |
-| Network firewall | no (off by default) | no |
+|                                 | Direct download      | Microsoft Store |
+| ------------------------------- | -------------------- | --------------- |
+| SmartScreen warning             | yes, once at install | none            |
+| Administrator prompt            | none                 | none            |
+| Lockdown, camera, capture guard | yes                  | yes             |
+| Windows registry policy changes | yes                  | no              |
+| Automatic process termination   | no                   | no              |
+| Network firewall                | no (off by default)  | no              |

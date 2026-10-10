@@ -21,8 +21,6 @@ interface ResolveModalProps {
   telemetry?: TelemetryQueryState;
   onOpenSettings?: () => void;
   onRetry?: (checkKey: string) => Promise<void> | void;
-  onCloseApps?: (apps: string[]) => Promise<void>;
-  closingApps?: boolean;
 }
 
 type ResolveFlow = {
@@ -32,7 +30,6 @@ type ResolveFlow = {
   primaryLabel: string;
   primaryAction: "settings" | "retry" | "elevate" | "privacy-camera" | "privacy-microphone";
   details: Array<{ label: string; value: string }>;
-  closeAllApps?: string[];
 };
 
 function formatValue(value: unknown, fallback = "Not available") {
@@ -80,7 +77,6 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
               : "Unknown",
           },
         ],
-        closeAllApps: processes?.found?.length ? processes.found : undefined,
       };
     case "camera": {
       // On Windows the usual cause is the OS privacy toggle — deep-link
@@ -258,12 +254,9 @@ export function ResolveModal({
   telemetry,
   onOpenSettings,
   onRetry,
-  onCloseApps,
-  closingApps,
 }: ResolveModalProps) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [confirmingClose, setConfirmingClose] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const c = getThemeColors(theme);
@@ -321,17 +314,6 @@ export function ResolveModal({
     }
   }
 
-  async function handleCloseAll() {
-    if (!confirmingClose) {
-      setConfirmingClose(true);
-      return;
-    }
-    setConfirmingClose(false);
-    if (activeFlow.closeAllApps && onCloseApps) {
-      await onCloseApps(activeFlow.closeAllApps);
-    }
-  }
-
   async function copySupportDetails() {
     const payload = {
       issue: activeCheckKey,
@@ -352,12 +334,19 @@ export function ResolveModal({
 
   return (
     <>
-      <AccessDialog open={isOpen} onClose={onClose} title={activeFlow.title}
-        subtitle={activeFlow.problem} labelId="resolve-modal-title"
-        width="calc(var(--spacing-10) * 14)">
+      <AccessDialog
+        open={isOpen}
+        onClose={onClose}
+        title={activeFlow.title}
+        subtitle={activeFlow.problem}
+        labelId="resolve-modal-title"
+        width="calc(var(--spacing-10) * 14)"
+      >
         <VStack gap={6}>
           <VStack as="section" gap={3}>
-            <Heading level={4} accessibilityLevel={3}>What to do</Heading>
+            <Heading level={4} accessibilityLevel={3}>
+              What to do
+            </Heading>
             <List listStyle="decimal" density="balanced">
               {activeFlow.steps.map((step) => (
                 <ListItem key={step} label={<Text color="secondary">{step}</Text>} />
@@ -365,7 +354,9 @@ export function ResolveModal({
             </List>
           </VStack>
           <VStack as="section" gap={3}>
-            <Heading level={4} accessibilityLevel={3}>Diagnostic details</Heading>
+            <Heading level={4} accessibilityLevel={3}>
+              Diagnostic details
+            </Heading>
             <MetadataList>
               {activeFlow.details.map((item) => (
                 <MetadataListItem key={item.label} label={item.label}>
@@ -376,67 +367,35 @@ export function ResolveModal({
           </VStack>
           {actionNotice && <Banner status="warning" title={actionNotice} />}
 
-        <HStack gap={3} wrap="wrap" justify="end">
-          <Button theme={theme} variant="secondary" type="button" onClick={copySupportDetails}>
-            {copied ? "Copied" : "Copy support details"}
-          </Button>
-          <Button theme={theme} variant="secondary" type="button" onClick={() => setHelpOpen(true)}>
-            Get help
-          </Button>
-          <Button theme={theme} variant="secondary" type="button" onClick={onClose}>
-            Close
-          </Button>
-          {activeFlow.closeAllApps &&
-            (confirmingClose ? (
-              <>
-                <Button
-                  theme={theme}
-                  variant="secondary"
-                  type="button"
-                  onClick={() => setConfirmingClose(false)}
-                  disabled={closingApps}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  theme={theme}
-                  variant="danger"
-                  type="button"
-                  onClick={handleCloseAll}
-                  disabled={closingApps}
-                  aria-label={`Confirm close: ${activeFlow.closeAllApps.join(", ")}`}
-                >
-                  {closingApps
-                    ? "Closing…"
-                    : `Confirm — close ${activeFlow.closeAllApps.join(", ")}?`}
-                </Button>
-              </>
-            ) : (
-              <Button
-                theme={theme}
-                variant="danger"
-                type="button"
-                onClick={handleCloseAll}
-                disabled={busy || closingApps}
-                aria-label="Close all restricted apps automatically"
-              >
-                Close all ▸
-              </Button>
-            ))}
-          <Button
-            theme={theme}
-            variant="primary"
-            type="button"
-            onClick={handlePrimaryAction}
-            disabled={busy}
-          >
-            {busy
-              ? activeFlow.primaryAction === "elevate"
-                ? "Waiting for approval..."
-                : "Checking..."
-              : activeFlow.primaryLabel}
-          </Button>
-        </HStack>
+          <HStack gap={3} wrap="wrap" justify="end">
+            <Button theme={theme} variant="secondary" type="button" onClick={copySupportDetails}>
+              {copied ? "Copied" : "Copy support details"}
+            </Button>
+            <Button
+              theme={theme}
+              variant="secondary"
+              type="button"
+              onClick={() => setHelpOpen(true)}
+            >
+              Get help
+            </Button>
+            <Button theme={theme} variant="secondary" type="button" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              theme={theme}
+              variant="primary"
+              type="button"
+              onClick={handlePrimaryAction}
+              disabled={busy}
+            >
+              {busy
+                ? activeFlow.primaryAction === "elevate"
+                  ? "Waiting for approval..."
+                  : "Checking..."
+                : activeFlow.primaryLabel}
+            </Button>
+          </HStack>
         </VStack>
       </AccessDialog>
       <HelpRequestModal

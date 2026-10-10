@@ -446,7 +446,11 @@ jobs:
 
       - name: Package MSIX
         shell: pwsh
-        run: ./apps/desktop/msix/build-msix.ps1
+        # A signed package can be installed on the runner. This certificate is
+        # throwaway test identity only; Partner Center re-signs the real Store
+        # submission and the Store release workflow builds that package without
+        # -SelfSign.
+        run: ./apps/desktop/msix/build-msix.ps1 -SelfSign
 
       - name: A package actually came out, and contains what it claims
         shell: pwsh
@@ -495,9 +499,61 @@ jobs:
           }
           Write-Host "OK: $($names.Count) entries, exe $([math]::Round($exeSize/1MB,1)) MB"
 
+      - name: Install and launch the packaged app
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $msix = Get-ChildItem target/msix -Filter *.msix | Select-Object -First 1
+          if (-not $msix) { throw "no .msix produced" }
+
+          $cert = Get-ChildItem Cert:\CurrentUser\My |
+            Where-Object { $_.Subject -eq "CN=AMS Access Development" } |
+            Sort-Object NotBefore -Descending |
+            Select-Object -First 1
+          if (-not $cert) { throw "development signing certificate not found" }
+
+          $cer = Join-Path $env:RUNNER_TEMP "ams-access-msix-test.cer"
+          Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\CurrentUser\TrustedPeople |
+            Out-Null
+
+          Add-AppxPackage -Path $msix.FullName
+          $package = Get-AppxPackage -Name "AMSAccess.Development"
+          if (-not $package) { throw "MSIX did not register" }
+
+          Start-Process "shell:AppsFolder\$($package.PackageFamilyName)!AMSAccess"
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+            Start-Sleep -Milliseconds 500
+            $process = Get-Process -Name "ams-access" -ErrorAction SilentlyContinue
+          } until ($process -or (Get-Date) -ge $deadline)
+          if (-not $process) { throw "packaged AMS Access did not launch within 30 seconds" }
+
+          Write-Host "OK: installed $($package.PackageFullName) and launched PID $($process.Id)"
+          Stop-Process -Id $process.Id -Force
+          Remove-AppxPackage -Package $package.PackageFullName
+
+      - name: Windows App Certification Kit
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $appcert = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\App Certification Kit\appcert.exe"
+          if (-not (Test-Path $appcert)) { throw "Windows App Certification Kit not found" }
+          $msix = Get-ChildItem target/msix -Filter *.msix | Select-Object -First 1
+          $report = Join-Path $PWD "target\msix\wack-report.xml"
+          & $appcert reset
+          if ($LASTEXITCODE -ne 0) { throw "appcert reset failed with $LASTEXITCODE" }
+          & $appcert test -appxpackagepath $msix.FullName -reportoutputpath $report
+          if ($LASTEXITCODE -ne 0) { throw "WACK failed with $LASTEXITCODE; inspect $report" }
+          if (-not (Test-Path $report)) { throw "WACK produced no report" }
+          Write-Host "OK: WACK passed"
+
       - name: Upload for inspection
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: msix-package
-          path: target/msix/*.msix
+          path: |
+            target/msix/*.msix
+            target/msix/wack-report.xml
           retention-days: 14

@@ -22,6 +22,10 @@ fn hidden_command(program: &str) -> std::process::Command {
 }
 
 static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
+// Set only after SetWindowsHookExW has returned a real hook handle. Readiness
+// must key on this rather than on HOOK_ACTIVE, which represents requested
+// state and becomes true before the hook thread has initialized.
+static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
@@ -29,7 +33,12 @@ static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
 // Prevents the watchdog from treating the startup window as a dead thread.
 static HOOK_STARTING: AtomicBool = AtomicBool::new(false);
 
-/// All processes killed by the shield thread during an exam session.
+/// Processes that make a Windows device ineligible for a secured session.
+///
+/// Detection is intentionally non-destructive. AMS Access reports these
+/// processes and requires the candidate to close them; it never terminates a
+/// process on the candidate's behalf. Besides being safer, this keeps the
+/// packaged Store app from modifying unrelated applications.
 const RESTRICTED: &[&str] = &[
     // Remote access / screen share
     "teamviewer.exe",
@@ -604,25 +613,17 @@ pub fn recover_registry_if_crashed() {
 
 pub fn lock_desktop() -> bool {
     set_sleep_prevention(true);
-    apply_registry_policies(true);
-    set_game_bar_enabled(false);
-    set_touchpad_gestures_enabled(false);
+    // Packaged desktop apps virtualize HKCU writes into a private package
+    // hive. Those writes cannot control Task Manager, Game Bar, or touchpad
+    // gestures outside the package, so the Store build deliberately leaves
+    // the user's Windows settings untouched.
+    if !is_packaged() {
+        apply_registry_policies(true);
+        set_game_bar_enabled(false);
+        set_touchpad_gestures_enabled(false);
+    }
 
     SHIELD_ACTIVE.store(true, Ordering::SeqCst);
-    std::thread::spawn(|| {
-        while SHIELD_ACTIVE.load(Ordering::SeqCst) {
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-            if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
-                break;
-            }
-            for proc in scan_processes_with_pids() {
-                // Kill by PID — avoids name collision with legitimate same-named processes
-                let _ = hidden_command("taskkill")
-                    .args(["/F", "/PID", &proc.pid.to_string()])
-                    .bounded_output();
-            }
-        }
-    });
 
     let result = enable_keyboard_intercept();
     result.active
@@ -630,9 +631,13 @@ pub fn lock_desktop() -> bool {
 
 pub fn unlock_desktop() {
     set_sleep_prevention(false);
-    apply_registry_policies(false);
-    set_game_bar_enabled(true);
-    set_touchpad_gestures_enabled(true);
+    // The MSIX path changed none of these settings and must not overwrite the
+    // user's preferences during cleanup.
+    if !is_packaged() {
+        apply_registry_policies(false);
+        set_game_bar_enabled(true);
+        set_touchpad_gestures_enabled(true);
+    }
     SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
 }
@@ -943,6 +948,7 @@ pub fn detect_rdp_server() -> bool {
 
 fn spawn_hook_thread() {
     HOOK_STARTING.store(true, Ordering::SeqCst);
+    HOOK_INSTALLED.store(false, Ordering::SeqCst);
     std::thread::spawn(|| {
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -958,11 +964,13 @@ fn spawn_hook_thread() {
                 Ok(h) => h,
                 Err(_) => {
                     HOOK_ACTIVE.store(false, Ordering::SeqCst);
+                    HOOK_INSTALLED.store(false, Ordering::SeqCst);
                     HOOK_THREAD_ID.store(0, Ordering::SeqCst);
                     HOOK_STARTING.store(false, Ordering::SeqCst); // unblock watchdog startup poll
                     return;
                 }
             };
+            HOOK_INSTALLED.store(true, Ordering::SeqCst);
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
@@ -970,6 +978,7 @@ fn spawn_hook_thread() {
         }
 
         // Signal death without clearing HOOK_ACTIVE — watchdog uses TID==0 to detect
+        HOOK_INSTALLED.store(false, Ordering::SeqCst);
         HOOK_THREAD_ID.store(0, Ordering::SeqCst);
     });
 }
@@ -1014,7 +1023,7 @@ fn spawn_hook_watchdog() {
 
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
-    if HOOK_ACTIVE.load(Ordering::SeqCst) {
+    if HOOK_ACTIVE.load(Ordering::SeqCst) && HOOK_INSTALLED.load(Ordering::SeqCst) {
         return KeyboardInterceptResult {
             active: true,
             method: "ll-keyboard-hook".to_string(),
@@ -1024,10 +1033,27 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     HOOK_ACTIVE.store(true, Ordering::SeqCst);
     set_sleep_prevention(true);
     spawn_hook_thread();
-    spawn_hook_watchdog();
+
+    // Do not report readiness until the hook thread has actually installed
+    // WH_KEYBOARD_LL. Previously this returned true immediately after spawn,
+    // allowing a SetWindowsHookExW failure to look like a secured device.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while HOOK_ACTIVE.load(Ordering::SeqCst)
+        && !HOOK_INSTALLED.load(Ordering::SeqCst)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let installed = HOOK_INSTALLED.load(Ordering::SeqCst);
+    if installed {
+        spawn_hook_watchdog();
+    } else {
+        HOOK_ACTIVE.store(false, Ordering::SeqCst);
+        set_sleep_prevention(false);
+    }
 
     KeyboardInterceptResult {
-        active: true,
+        active: installed,
         method: "ll-keyboard-hook".to_string(),
         platform: "windows".to_string(),
     }
@@ -1036,6 +1062,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
 pub fn disable_keyboard_intercept() {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
     HOOK_ACTIVE.store(false, Ordering::SeqCst);
+    HOOK_INSTALLED.store(false, Ordering::SeqCst);
     set_sleep_prevention(false);
     let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
     if tid != 0 {
@@ -1430,41 +1457,17 @@ pub fn is_restricted_name(name: &str) -> bool {
         .any(|&r| r.trim_end_matches(".exe").eq_ignore_ascii_case(name))
 }
 
-/// Force-terminate each named restricted app using taskkill.
+/// Report restricted apps that the candidate still needs to close.
 ///
-/// `names` contains process names WITHOUT the `.exe` extension — the same
-/// format that `scan_processes()` returns.
-/// `/T` kills the entire process tree so child processes (Electron helpers,
-/// zoom subprocesses) are also terminated.
-/// Discord respawn guard: retry up to 3 times with a 600 ms gap.
+/// This command used to force-terminate processes. It is deliberately
+/// detection-only now: callers retain the existing response shape, but every
+/// validated name is returned as unresolved until a subsequent process scan
+/// confirms that the candidate closed it themselves.
 pub fn close_apps(names: &[String]) -> CloseAppsResult {
-    let _budget = Budget::new(std::time::Duration::from_secs(8));
-    let mut closed = Vec::new();
-    let mut failed = Vec::new();
-
-    for name in names {
-        let exe = format!("{}.exe", name);
-        let mut killed = false;
-
-        for _ in 0..3 {
-            let _ = hidden_command("taskkill")
-                .args(["/IM", &exe, "/F", "/T"])
-                .bounded_output();
-            std::thread::sleep(std::time::Duration::from_millis(600));
-            if !win_process_alive(name) {
-                killed = true;
-                break;
-            }
-        }
-
-        if killed {
-            closed.push(name.clone());
-        } else {
-            failed.push(name.clone());
-        }
+    CloseAppsResult {
+        closed: Vec::new(),
+        failed: names.to_vec(),
     }
-
-    CloseAppsResult { closed, failed }
 }
 
 /// Returns true if a process matching `name` (without .exe) is still alive.

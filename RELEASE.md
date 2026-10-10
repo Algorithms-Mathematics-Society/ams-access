@@ -46,6 +46,13 @@ avoids the warning entirely, because Microsoft signs it; see
 `apps/desktop/msix/README.md`. The signing scaffolding in `release.yml` stays
 inert unless secrets appear.
 
+The Store artifact is intentionally separate from the tagged installer
+release. Configure the three Partner Center identity secrets in the GitHub
+`microsoft-store` environment, run the **Microsoft Store package** workflow,
+and upload its `microsoft-store-msix` artifact to the matching Partner Center
+product. CI's ordinary `msix-package` artifact uses development identity and
+is only for install, launch, and certification-kit smoke tests.
+
 ### The API host is not configurable, deliberately
 
 `resolveApiBase()` returns `https://api.amsaccess.com` from its own constant,
