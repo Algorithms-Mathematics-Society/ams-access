@@ -264,6 +264,17 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   return {
     profile,
     checks: POLICY_CHECKS.map((kind) => {
+      // macOS only: camera and microphone must both be permitted to enter,
+      // with no organizer override. Other platforms keep the rules below.
+      if (isMacos && (kind === "camera" || kind === "microphone")) {
+        return {
+          kind,
+          required: true,
+          severity: "block" as const,
+          organizer_override_allowed: false,
+          unsupported_severity: unsupportedSeverity,
+        };
+      }
       // Microphone is advisory-only on every profile — many contest machines
       // (lab desktops, headless setups) have no audio input.
       if (kind === "microphone") {

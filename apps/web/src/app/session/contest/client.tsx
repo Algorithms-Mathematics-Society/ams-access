@@ -697,6 +697,13 @@ export default function ContestPageClient() {
         cameraStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = value));
       }
     } else {
+      // Without a live audio track (denied, or no device) the microphone
+      // cannot be on — never report or audit-log a state that isn't real.
+      const hasLiveAudio = cameraStreamRef.current
+        ?.getAudioTracks()
+        .some((t) => t.readyState === "live");
+      // macOS only; other platforms keep the previous toggle behavior.
+      if (value && !hasLiveAudio && /Mac/i.test(navigator.userAgent)) return;
       setMicEnabled(value);
       micEnabledRef.current = value;
       if (cameraStreamRef.current) {

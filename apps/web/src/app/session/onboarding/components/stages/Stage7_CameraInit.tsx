@@ -20,12 +20,16 @@ export function Stage7_CameraInit({
   const [error, setError] = useState<string | null>(null);
   const [permissionIssue, setPermissionIssue] = useState(false);
   const [isWindows, setIsWindows] = useState(false);
+  const [isMac, setIsMac] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     invoke<{ os: string }>("get_platform")
-      .then((p) => setIsWindows(p?.os?.toLowerCase().startsWith("windows") ?? false))
+      .then((p) => {
+        setIsWindows(p?.os?.toLowerCase().startsWith("windows") ?? false);
+        setIsMac(p?.os?.toLowerCase().startsWith("mac") ?? false);
+      })
       .catch(() => {});
   }, []);
 
@@ -201,6 +205,32 @@ export function Stage7_CameraInit({
               Open Windows camera settings
             </Button>
           )}
+          {isMac && permissionIssue && (
+            <>
+              <Button
+                theme={theme}
+                variant="primary"
+                size="small"
+                onClick={() => {
+                  void invoke("open_privacy_settings", { section: "camera" }).catch(() => {});
+                }}
+              >
+                Open System Settings
+              </Button>
+              <Text
+                style={{
+                  fontSize: "var(--font-size-sm)",
+                  fontFamily: "var(--font-family-body)",
+                  color: "var(--color-text-secondary)",
+                  textAlign: "center",
+                  lineHeight: 1.6,
+                }}
+              >
+                After allowing camera access, macOS requires AMS Access to be quit and reopened
+                before the change takes effect. Relaunch the app, then continue setup.
+              </Text>
+            </>
+          )}
           <Button
             theme={theme}
             variant="secondary"
@@ -214,7 +244,7 @@ export function Stage7_CameraInit({
           >
             Try again
           </Button>
-          {process.env.NODE_ENV === "development" && (
+          {!isMac && process.env.NODE_ENV === "development" && (
             <Button theme={theme} variant="secondary" size="small" onClick={onPass}>
               Skip (dev only)
             </Button>
