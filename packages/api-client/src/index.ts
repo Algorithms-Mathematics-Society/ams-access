@@ -156,6 +156,36 @@ export type DeviceState = {
    *  reachable. Flows opaquely back into evaluate_session_readiness; `Some(false)`
    *  hard-blocks a strict contest. `null`/absent on other platforms (inert). */
   network_helper_ready?: boolean | null;
+  /** Windows and macOS: display topology. `count === 0` means the probe failed. */
+  external_displays?: { count: number; has_extra: boolean; has_wireless: boolean } | null;
+  /** Windows: an inbound RDP host. macOS: any remote-access tool or service. */
+  rdp_server?: boolean | null;
+};
+
+/** What a contest does about an extra display or a remote-access tool. */
+export type LockdownPolicy = "block" | "warn" | "log_only";
+
+/**
+ * Per-contest desktop lockdown settings — the TS mirror of
+ * `LockdownConfig` in core-rs. Every field is optional; the native side
+ * fills anything missing with the full lockdown (clipboard allowed).
+ */
+export type LockdownConfig = {
+  allow_clipboard?: boolean;
+  block_function_keys?: boolean;
+  block_media_keys?: boolean;
+  disable_gestures?: boolean;
+  disable_hot_corners?: boolean;
+  disable_siri?: boolean;
+  disable_mission_control?: boolean;
+  display_policy?: LockdownPolicy;
+  remote_access_policy?: LockdownPolicy;
+};
+
+/** System settings lockdown changed that have not been put back yet. */
+export type RestoreStatus = {
+  pending: boolean;
+  items: { label: string; fix_command: string }[];
 };
 
 export type ReadinessCheck = {
@@ -314,6 +344,39 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   };
 }
 
+/**
+ * Overlay a contest's display and remote-access policies onto a readiness
+ * policy. Apply this BEFORE `applyOrganizerOverrides`, so an organizer's
+ * waiver still wins over what the contest asked for. Without a config the
+ * policy is returned unchanged.
+ */
+export function applyLockdownConfig(
+  policy: SessionPolicy,
+  config: LockdownConfig | null | undefined
+): SessionPolicy {
+  if (!config) return policy;
+  const shape = (choice: LockdownPolicy | undefined) =>
+    choice === "block"
+      ? { required: true, severity: "block" as const }
+      : choice === "log_only"
+        ? { required: false, severity: "info" as const }
+        : choice === "warn"
+          ? { required: false, severity: "warning" as const }
+          : null;
+  const wanted: [CheckKind, ReturnType<typeof shape>][] = [
+    ["external_display", shape(config.display_policy)],
+    ["remote_server", shape(config.remote_access_policy)],
+  ];
+  let checks = policy.checks;
+  for (const [kind, next] of wanted) {
+    if (!next) continue;
+    checks = checks.some((check) => check.kind === kind)
+      ? checks.map((check) => (check.kind === kind ? { ...check, ...next } : check))
+      : [...checks, { kind, ...next, organizer_override_allowed: true }];
+  }
+  return { ...policy, checks };
+}
+
 export function strictContestPolicy(platform?: string): SessionPolicy {
   return sessionPolicy("strict_contest", platform);
 }
@@ -416,8 +479,12 @@ export async function startSecureSession(options: {
   /** Participant bearer token. The endpoint is authenticated; without it
    *  nothing is delivered and the report exists only on this machine. */
   token?: string | null;
+  /** Per-contest desktop lockdown settings (key blocking, gestures, and
+   *  what an extra display or remote-access tool means mid-contest). */
+  lockdownConfig?: LockdownConfig | null;
 }): Promise<ReadinessReport> {
   return invoke<ReadinessReport>("start_secure_session", {
+    lockdownConfig: options.lockdownConfig ?? null,
     policy: options.policy ?? strictContestPolicy(),
     contestId: options.contestId ?? null,
     deviceId: options.deviceId ?? null,

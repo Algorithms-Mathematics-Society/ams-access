@@ -8,6 +8,12 @@ import { useEffect, useState } from "react";
 import { StageHeader, StatusBadge } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
+function missingPermissionFor(method: string | undefined) {
+  if (method === "accessibility_denied") return "accessibility" as const;
+  if (method === "input_monitoring_denied") return "input_monitoring" as const;
+  return null;
+}
+
 /**
  * Keyboard lockdown.
  *
@@ -21,14 +27,27 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
   const [phase, setPhase] = useState(0);
   const [lockFailed, setLockFailed] = useState(false);
   const [accessibilityDenied, setAccessibilityDenied] = useState(false);
+  // Which macOS permission is missing: Accessibility to create the tap, or
+  // Input Monitoring when the system refused the tap without it. Each lives
+  // on its own Settings pane.
+  const [missingPermission, setMissingPermission] = useState<"accessibility" | "input_monitoring">(
+    "accessibility"
+  );
   const [pollElapsed, setPollElapsed] = useState(0);
+  // Bumped by Re-check so the poll below starts over; the denied flag alone
+  // is already true and would not re-run it.
+  const [pollRound, setPollRound] = useState(0);
 
   const POLL_TIMEOUT_S = 60;
 
-  // Auto-poll every 2 s while waiting for the user to grant Accessibility
+  // Auto-poll every 2 s while waiting for the user to grant the permission.
+  // One call at a time: right after a grant the intercept can take longer
+  // than the interval, and two overlapping successes passed the stage twice.
   useEffect(() => {
     if (!accessibilityDenied) return;
     let elapsed = 0;
+    let inFlight = false;
+    let stopped = false;
     const id = setInterval(async () => {
       elapsed += 2;
       setPollElapsed(elapsed);
@@ -36,27 +55,31 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
         clearInterval(id);
         return; // show manual Re-check button instead
       }
+      if (inFlight) return;
+      inFlight = true;
       const result = await invoke<{ active: boolean; method: string }>("enable_keyboard_intercept");
+      inFlight = false;
+      if (stopped) return;
       if (result?.active) {
+        stopped = true;
         clearInterval(id);
         setAccessibilityDenied(false);
         setPhase(4);
         setTimeout(onPass, 600);
+        return;
       }
+      const permission = missingPermissionFor(result?.method);
+      if (permission) setMissingPermission(permission);
     }, 2000);
-    return () => clearInterval(id);
-  }, [accessibilityDenied, onPass]);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [accessibilityDenied, pollRound, onPass]);
 
-  const recheck = async () => {
+  const recheck = () => {
     setPollElapsed(0);
-    const result = await invoke<{ active: boolean; method: string }>("enable_keyboard_intercept");
-    if (result?.active) {
-      setAccessibilityDenied(false);
-      setPhase(4);
-      setTimeout(onPass, 600);
-    } else {
-      setAccessibilityDenied(true);
-    }
+    setPollRound((round) => round + 1);
   };
 
   useEffect(() => {
@@ -64,10 +87,14 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
       setPhase(1);
       const result = await withNullableTimeout(
         invoke<{ active: boolean; method: string }>("enable_keyboard_intercept"),
-        2500
+        // macOS can wait up to 3.5 s for a stale tap thread and a fresh tap.
+        4000
       );
-      // macOS hard-block: Accessibility permission required
-      if (result?.method === "accessibility_denied") {
+      // macOS: a permission is missing. Walk the candidate through granting
+      // it before entry rather than letting them in with shortcuts live.
+      const permission = missingPermissionFor(result?.method);
+      if (permission) {
+        setMissingPermission(permission);
         setAccessibilityDenied(true);
         return;
       }
@@ -110,32 +137,39 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
   // ── Accessibility denied — hard-block UI ──────────────────────────────────
   if (accessibilityDenied) {
     const timedOut = pollElapsed >= POLL_TIMEOUT_S;
+    const paneName =
+      missingPermission === "input_monitoring" ? "Input Monitoring" : "Accessibility";
     return (
       <VStack gap={6} width="100%">
         <StageHeader label="Keyboard setup" />
         <Banner
           status="warning"
-          title="Allow Accessibility access"
-          description="AMS Access needs Accessibility permission to restrict app switching and system shortcuts during the contest."
+          title={`Allow ${paneName} access`}
+          description={`AMS Access needs ${paneName} permission to restrict app switching and system shortcuts during the contest.`}
         />
-        <Text color="secondary">
-          Open System Settings and allow Accessibility access for AMS Access, then return here.
-        </Text>
+        <VStack gap={2}>
+          <Text color="secondary">1. Select Open System Settings below.</Text>
+          <Text color="secondary">
+            2. In Privacy &amp; Security → {paneName}, turn on AMS Access. If it is not listed,
+            select +, choose AMS Access from Applications, and turn it on.
+          </Text>
+          <Text color="secondary">
+            3. Come back here. The check runs again automatically every few seconds.
+          </Text>
+        </VStack>
         <HStack gap={3} wrap="wrap">
           <Button
             variant="primary"
             label="Open System Settings"
-            onClick={() => void invoke("open_accessibility_settings")}
+            onClick={() => void invoke("open_privacy_settings", { section: missingPermission })}
           />
-          {timedOut && (
-            <Button variant="secondary" label="Re-check" onClick={() => void recheck()} />
-          )}
+          {timedOut && <Button variant="secondary" label="Re-check" onClick={recheck} />}
         </HStack>
         <StatusBadge
           status="warn"
           label={
             timedOut
-              ? "Grant Accessibility access, then click Re-check"
+              ? `Grant ${paneName} access, then click Re-check`
               : `Waiting for permission… checking again in ${2 - (pollElapsed % 2)}s`
           }
         />

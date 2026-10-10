@@ -3,7 +3,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { useEffect, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
-import { tauriWindow } from "../../support";
+import { invoke, tauriWindow } from "../../support";
 
 /**
  * Full-screen lockdown.
@@ -19,7 +19,20 @@ import { tauriWindow } from "../../support";
  * records and warns rather than ejecting — and the later Setup Verification
  * stage re-reads the same fact, so a machine that drifts back out of
  * full-screen is caught twice.
+ *
+ * macOS uses simple (pre-Lion) full-screen, not native full-screen. Native
+ * full-screen puts the window in a Space of its own, and Spaces are what
+ * three-finger swipes and Ctrl+arrows switch between. It also had to be torn
+ * down again at contest entry, where the late exit animation undid the
+ * lockdown's own full-screen and left the exam windowed.
  */
+async function isMacos(): Promise<boolean> {
+  const os = await invoke<{ os?: string }>("get_platform")
+    .then((platform) => platform?.os)
+    .catch(() => undefined);
+  return os === "macos";
+}
+
 export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [done, setDone] = useState(false);
   const [engaged, setEngaged] = useState(true);
@@ -29,8 +42,13 @@ export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
 
     async function go() {
       const win = await tauriWindow();
+      const macos = await isMacos();
       if (win) {
-        await win.setFullscreen(true).catch(() => {});
+        if (macos) {
+          await win.setSimpleFullscreen(true).catch(() => {});
+        } else {
+          await win.setFullscreen(true).catch(() => {});
+        }
         await win.setAlwaysOnTop(true).catch(() => {});
         await win.setDecorations(false).catch(() => {});
       }
@@ -42,8 +60,10 @@ export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
       // Ask the window first; fall back to comparing the viewport against the
       // screen, which is what Setup Verification uses. The tolerance is for
       // the few pixels some window managers keep for themselves.
+      // `isFullscreen()` reports native full-screen only, so it is always
+      // false in simple full-screen; macOS goes straight to the viewport.
       let ok = false;
-      if (win) {
+      if (win && !macos) {
         ok = await win.isFullscreen().catch(() => false);
       }
       if (!ok) {

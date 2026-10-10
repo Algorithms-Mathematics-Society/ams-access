@@ -15,6 +15,7 @@ import { SetupContestContext } from "./components/SetupContestContext";
 import { Spinner } from "./components/ui";
 
 import {
+  applyLockdownConfig,
   applyOrganizerOverrides,
   collectDeviceState,
   fetchOrganizerOverrides,
@@ -23,6 +24,7 @@ import {
   browserDeviceState,
   strictContestPolicy,
   type OrganizerOverride,
+  type RestoreStatus,
 } from "@ams/api-client";
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
@@ -360,6 +362,7 @@ export default function OnboardingPage() {
       const win = await tauriWindow();
       if (win) {
         await win.setFullscreen(false).catch(() => {});
+        await win.setSimpleFullscreen(false).catch(() => {});
         await win.setAlwaysOnTop(false).catch(() => {});
         await win.setDecorations(true).catch(() => {});
       }
@@ -596,7 +599,14 @@ export default function OnboardingPage() {
       } catch {
         liveOverrides = overrides;
       }
-      const policy = applyOrganizerOverrides(strictContestPolicy(devicePlatform), liveOverrides);
+      // The contest's own lockdown choices (whether an extra display or a
+      // remote-access tool blocks entry) go on first, so an organizer's
+      // waiver below still wins over them.
+      const lockdownConfig = contestIndex?.lockdown ?? null;
+      const policy = applyOrganizerOverrides(
+        applyLockdownConfig(strictContestPolicy(devicePlatform), lockdownConfig),
+        liveOverrides
+      );
 
       // Locks the desktop, arms the keyboard intercept and applies egress
       // rules — all native, none of which exist in a browser. Skipped there
@@ -608,6 +618,7 @@ export default function OnboardingPage() {
           deviceId,
           policy,
           deviceState,
+          lockdownConfig,
           // Entry-gate attestation: the evaluated readiness report is
           // delivered to the backend so the server has a durable record of
           // what this device claimed — including when the gate blocked, which
@@ -724,7 +735,17 @@ export default function OnboardingPage() {
       setReadyForStart(false);
       setPolicyBlock(msg);
     }
-  }, [contestId, router, contestWindow, readyForStart, dryRun, platform, overrides, isTestAccount]);
+  }, [
+    contestId,
+    router,
+    contestWindow,
+    readyForStart,
+    dryRun,
+    platform,
+    overrides,
+    isTestAccount,
+    contestIndex,
+  ]);
 
   useEffect(() => {
     if (!contestWindow) return;
@@ -808,6 +829,9 @@ export default function OnboardingPage() {
     const win = await tauriWindow();
     if (win) {
       await win.setFullscreen(false).catch(() => {});
+      // macOS onboarding covers the screen with simple full-screen, which
+      // setFullscreen(false) does not leave.
+      await win.setSimpleFullscreen(false).catch(() => {});
       await win.setAlwaysOnTop(false).catch(() => {});
       await win.setDecorations(true).catch(() => {});
     }
@@ -820,7 +844,12 @@ export default function OnboardingPage() {
     try {
       await window.__TAURI__?.core.invoke("disable_network_lockdown");
     } catch {}
-    router.push("/home");
+    // Settings that could not be restored are listed, with their fixes, by
+    // the restore card in Settings; ?restore=pending opens it.
+    const remaining = await window.__TAURI__?.core
+      .invoke<RestoreStatus>("get_lockdown_restore_status")
+      .catch(() => null);
+    router.push(remaining?.pending ? "/home?restore=pending" : "/home");
   }, [router]);
 
   useEffect(() => {
@@ -847,6 +876,15 @@ export default function OnboardingPage() {
   const canRunChecks = isTestAccount || shouldRunChecks(entry);
   const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
   const showWaitLock = currentStage === FINAL_STAGE && readyForStart;
+  // The keyboard intercept's method names the missing macOS permission.
+  const macPermissionBlock =
+    platform !== "macos" || !policyBlock
+      ? null
+      : policyBlock.includes("accessibility_denied")
+        ? ({ section: "accessibility", pane: "Accessibility" } as const)
+        : policyBlock.includes("input_monitoring_denied")
+          ? ({ section: "input_monitoring", pane: "Input Monitoring" } as const)
+          : null;
 
   // Frame budget: 1120px page, 248px progress rail, 40px gutter and a
   // flexible check panel. Below 960px, progress becomes a compact top region.
@@ -921,29 +959,30 @@ export default function OnboardingPage() {
             />
             {policyBlock && (
               <Banner
-                status={
-                  platform === "macos" && policyBlock.includes("accessibility_denied")
-                    ? "warning"
-                    : "error"
-                }
+                status={macPermissionBlock ? "warning" : "error"}
                 title={
-                  platform === "macos" && policyBlock.includes("accessibility_denied")
-                    ? "Grant Accessibility permission"
+                  macPermissionBlock
+                    ? `Grant ${macPermissionBlock.pane} permission`
                     : "Setup needs your attention"
                 }
                 role="alert"
                 description={
-                  platform === "macos" && policyBlock.includes("accessibility_denied") ? (
+                  macPermissionBlock ? (
                     <VStack gap={4}>
                       <Text>
-                        AMS Access needs Accessibility permission to block exam keyboard shortcuts.
-                        Open System Settings, find AMS Access under Privacy &amp; Security →
-                        Accessibility, and toggle it on. Then run the device check again.
+                        AMS Access needs {macPermissionBlock.pane} permission to block exam keyboard
+                        shortcuts. Open System Settings, find AMS Access under Privacy &amp;
+                        Security → {macPermissionBlock.pane}, and toggle it on. Then run the device
+                        check again.
                       </Text>
                       <HStack gap={3} wrap="wrap">
                         <Button
-                          label="Open Accessibility settings"
-                          onClick={() => void invoke("open_accessibility_settings")}
+                          label={`Open ${macPermissionBlock.pane} settings`}
+                          onClick={() =>
+                            void invoke("open_privacy_settings", {
+                              section: macPermissionBlock.section,
+                            })
+                          }
                         />
                         <Button
                           label="Run checks again"

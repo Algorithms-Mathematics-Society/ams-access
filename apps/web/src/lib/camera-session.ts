@@ -80,6 +80,9 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   let status: CameraStatus = "idle";
   const listeners = new Set<CameraListener>();
   let deviceListenerAttached = false;
+  // Bumped by release(). An open still in flight when the exam ends must not
+  // turn the camera back on afterwards: it stops what it got and fails.
+  let generation = 0;
 
   function announce(next: CameraStatus) {
     if (next === status) return;
@@ -136,12 +139,19 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
     async ensure(options = {}) {
       const md = deps.mediaDevices;
       if (!md) throw new Error("Camera not available on this device");
+      const opened = generation;
+      const stale = (stream: MediaStream) => {
+        if (opened === generation) return false;
+        stream.getTracks().forEach((track) => track.stop());
+        return true;
+      };
       attachDeviceListener();
 
       if (!isTrackUsable(videoTrack ?? undefined)) {
         videoTrack?.stop();
         videoTrack = null;
         const stream = await md.getUserMedia({ video: VIDEO_CONSTRAINTS });
+        if (stale(stream)) throw new Error("Camera released");
         const track = stream.getVideoTracks()[0];
         if (!track) throw new Error("Camera opened without a video track");
         adopt(track, "video");
@@ -155,9 +165,11 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
         audioTrack = null;
         try {
           const stream = await md.getUserMedia({ audio: true });
+          if (stale(stream)) throw new Error("Camera released");
           const track = stream.getAudioTracks()[0];
           if (track) adopt(track, "audio");
         } catch {
+          if (opened !== generation) throw new Error("Camera released");
           // The microphone is advisory (its own stage warns rather than
           // blocks), so a refusal here must not cost the candidate the camera.
         }
@@ -182,6 +194,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
     },
 
     release() {
+      generation += 1;
       videoTrack?.stop();
       audioTrack?.stop();
       videoTrack = null;

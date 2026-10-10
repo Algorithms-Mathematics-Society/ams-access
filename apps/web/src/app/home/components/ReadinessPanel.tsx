@@ -104,7 +104,13 @@ export const ReadinessWidget = memo(function ReadinessWidget({
             </HStack>
             <List density="compact" aria-label="Advisory checks">
               {advisoryChecks.map(([key, label]) => (
-                <ReadinessItem key={key} label={label} status={readiness[key]} theme={theme} />
+                <ReadinessItem
+                  key={key}
+                  label={label}
+                  status={readiness[key]}
+                  theme={theme}
+                  onResolve={onResolve ? () => onResolve(key) : undefined}
+                />
               ))}
             </List>
           </VStack>
@@ -171,6 +177,8 @@ export const ReadinessItem = memo(function ReadinessItem({
   theme: "dark" | "light";
   onResolve?: () => void;
 }) {
+  // Advisory rows open the same guide: a flagged app does not block entry,
+  // but the candidate still needs a way to see it and close it.
   // "Checking..." is only for a scan still running. A check this machine
   // cannot run says so instead of sitting at "Checking..." for ever with the
   // real failure visible in the log underneath it.
@@ -184,7 +192,7 @@ export const ReadinessItem = memo(function ReadinessItem({
           : status === "unavailable"
             ? "Unavailable on this device"
             : "Checking...";
-  const canResolve = status === "fail" && !!onResolve;
+  const canResolve = (status === "fail" || status === "warn") && !!onResolve;
   return (
     <ListItem
       style={{ paddingInline: 0, minHeight: canResolve ? "var(--spacing-10)" : undefined }}

@@ -24,10 +24,12 @@ pub(super) fn pending(path: &Path) -> bool {
 }
 
 /// `defaults read` distinguishes an absent original from command failure.
+/// Newer macOS words it differently, and both name the exact key.
 pub(super) fn explicitly_absent(stderr: &[u8], domain: &str, key: &str) -> bool {
-    String::from_utf8_lossy(stderr).contains(&format!(
+    let text = String::from_utf8_lossy(stderr);
+    text.contains(&format!(
         "The domain/default pair of ({domain}, {key}) does not exist"
-    ))
+    )) || text.contains(&format!("Could not find key '{key}' in domain '{domain}'"))
 }
 
 /// A failed read is not evidence that an original preference was absent.

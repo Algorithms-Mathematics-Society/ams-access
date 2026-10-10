@@ -100,7 +100,11 @@ export function CameraTile({
           muted
           playsInline
           autoPlay
+          controls={false}
+          disablePictureInPicture
+          disableRemotePlayback
           style={{
+            pointerEvents: "none",
             width: "100%",
             height: "100%",
             objectFit: "cover",

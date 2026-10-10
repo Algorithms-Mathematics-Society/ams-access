@@ -4,17 +4,32 @@
 //! Sleep prevention: caffeinate subprocess.
 //! Network lockdown: pfctl anchor (requires root).
 //! Process scanning: `ps -axco comm`.
-//! VM detection: `system_profiler SPHardwareDataType` + `ioreg`.
+//! VM detection: `kern.hv_vmm_present` + `system_profiler SPHardwareDataType` + `ioreg`.
 
 use crate::process_runner::{Budget, CommandDeadlineExt};
 use block2::RcBlock;
 use core_rs::exam::{
-    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
+    CloseAppsResult, KeyboardInterceptResult, LockdownConfig, ProcessScanResult,
+    VirtDetectionResult,
 };
 use std::ffi::c_void;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+
+mod displays;
+mod kiosk_window;
+mod remote_access;
+mod system_settings;
+mod watchdog;
+
+pub use displays::{scan_displays, DisplayReport};
+pub use kiosk_window::{
+    apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
+    wait_native_fullscreen_exit,
+};
+pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
+pub use watchdog::helper_mode_from_args;
 
 // ── Restricted process list ───────────────────────────────────────────────────
 
@@ -57,8 +72,9 @@ const RESTRICTED: &[&str] = &[
     "scrcpy",
     "RustDesk",
     "Screen Sharing",
-    "screensharingd",
-    "RemoteDesktopAgent",
+    // The Screen Sharing and Remote Management daemons are reported by the
+    // remote-access scan with a "turn it off in Sharing" hint. They are root
+    // services: listing them here offered a Close button that could not work.
     // Screen recorders live in CAPTURE_TOOLS below, which scan_processes
     // also reads. They were listed here too, and the copies had already
     // drifted apart.
@@ -74,8 +90,11 @@ const RESTRICTED: &[&str] = &[
 ///
 /// macOS's own tooling was missing from both. Every third-party recorder
 /// was listed while the one every candidate already has was not:
-/// Cmd+Shift+5 runs `screencaptureui`, Screenshot.app runs as `Screenshot`,
-/// and `screencapture` is the command line they both sit on.
+/// Screenshot.app runs as `Screenshot`, and `screencapture` is the command
+/// line it sits on. `screencaptureui` is not listed: macOS starts it on the
+/// first screenshot and keeps it resident, so it was flagged on every scan
+/// with nothing the candidate could close. The keyboard tap blocks the
+/// shortcuts that would use it.
 const CAPTURE_TOOLS: &[&str] = &[
     "QuickTime Player",
     "Kap",
@@ -88,7 +107,6 @@ const CAPTURE_TOOLS: &[&str] = &[
     "OBS",
     "Screenshot",
     "screencapture",
-    "screencaptureui",
     "Snagit",
     "Snagit 2024",
     "Loom",
@@ -107,6 +125,21 @@ unsafe impl Sync for SendPtr {}
 
 static INTERCEPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
+// True between lock_desktop and unlock_desktop. Distinct from INTERCEPT_ACTIVE:
+// the readiness probe arms the tap without a lockdown, and a lockdown without
+// Accessibility still owns the observers, the display monitor and the prefs.
+static LOCKDOWN_ACTIVE: AtomicBool = AtomicBool::new(false);
+// Per-contest key policy, read by the tap callback without locking.
+static CLIPBOARD_BLOCKED: AtomicBool = AtomicBool::new(false);
+static FUNCTION_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
+static MEDIA_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
+// The live tap, so the callback can re-enable it the moment macOS disables it
+// instead of leaving keys unguarded until the 2 s watchdog tick.
+static LIVE_TAP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+// Set by the callback after such a re-enable; the watchdog reports it, since
+// the callback must not do anything slow.
+static TAP_REENABLED_IN_CALLBACK: AtomicBool = AtomicBool::new(false);
+static LOCKDOWN_CONFIG: Mutex<Option<LockdownConfig>> = Mutex::new(None);
 // Ensures the Accessibility consent dialog / System Settings deep-link fires at
 // most once per app run — readiness rescans must not spam Settings windows.
 static ACCESSIBILITY_PROMPTED: AtomicBool = AtomicBool::new(false);
@@ -122,7 +155,12 @@ static TAP_GENERATION: AtomicU64 = AtomicU64::new(0);
 // and the accumulating state is what eventually aborted the process. This flag
 // makes spawning single-shot: only one tap thread can exist at a time.
 static TAP_THREAD_PRESENT: AtomicBool = AtomicBool::new(false);
+// Set by the tap thread when CGEventTapCreate refused both tap locations —
+// the only case where a missing Input Monitoring grant is the likely cause.
+static TAP_CREATE_REFUSED: AtomicBool = AtomicBool::new(false);
 static TAP_RUNLOOP: OnceLock<Mutex<Option<SendPtr>>> = OnceLock::new();
+// Serialises publishing a new tap with disabling it. See the tap thread.
+static TAP_LIFECYCLE: Mutex<()> = Mutex::new(());
 static TAP_STARTED: OnceLock<Arc<(Mutex<bool>, Condvar)>> = OnceLock::new();
 static CAFFEINATE_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 // Retained NSNotificationCenter observer token for the space-switch observer.
@@ -160,6 +198,48 @@ fn emit_lockdown_event(kind: &str, detail: &str) {
     }
 }
 
+/// Sink for proctoring notices: things worth recording that are not the
+/// candidate's doing (a tap re-enabled, a restore completed, a display change
+/// under a log-only policy). Same rules as the violation callback.
+static LOCKDOWN_NOTICE_CALLBACK: OnceLock<LockdownEventCallback> = OnceLock::new();
+
+pub fn set_lockdown_notice_callback<F>(callback: F)
+where
+    F: Fn(&str, &str) + Send + Sync + 'static,
+{
+    let _ = LOCKDOWN_NOTICE_CALLBACK.set(Box::new(callback));
+}
+
+fn emit_lockdown_notice(kind: &str, detail: &str) {
+    eprintln!("AMS Access: {kind}: {detail}");
+    if let Some(callback) = LOCKDOWN_NOTICE_CALLBACK.get() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(kind, detail)));
+    }
+}
+
+fn lockdown_active() -> bool {
+    LOCKDOWN_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// Set the contest's lockdown settings. Takes effect at the next lock_desktop.
+pub fn set_lockdown_config(config: LockdownConfig) {
+    *LOCKDOWN_CONFIG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(config);
+}
+
+fn lockdown_config() -> LockdownConfig {
+    LOCKDOWN_CONFIG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_default()
+}
+
+fn tap_lifecycle() -> &'static Mutex<()> {
+    &TAP_LIFECYCLE
+}
+
 fn tap_runloop() -> &'static Mutex<Option<SendPtr>> {
     TAP_RUNLOOP.get_or_init(|| Mutex::new(None))
 }
@@ -185,6 +265,12 @@ const CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
 const CG_EVENT_KEY_DOWN: u32 = 10;
 const CG_EVENT_KEY_UP: u32 = 11;
 const CG_EVENT_FLAGS_CHANGED: u32 = 12;
+// NX_SYSDEFINED: media, brightness, volume and power keys arrive as this type,
+// not as key-downs.
+const CG_EVENT_SYSTEM_DEFINED: u32 = 14;
+// Not real events: macOS calls the tap with these when it has disabled it.
+const CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+const CG_EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
 // CGEventTapLocation — intercept events at the HID driver level
 const K_CG_HID_EVENT_TAP: u32 = 0;
@@ -202,13 +288,18 @@ const CG_EVENT_SWIPE: u32 = 31; // NSEventTypeSwipe    — 3/4-finger space-swit
 // CGEventMask bits — keyboard + gesture/swipe (so the tap sees swipes too)
 const KB_EVENT_MASK: u64 =
     (1u64 << CG_EVENT_KEY_DOWN) | (1u64 << CG_EVENT_KEY_UP) | (1u64 << CG_EVENT_FLAGS_CHANGED);
-const FULL_LOCK_MASK: u64 = KB_EVENT_MASK | (1u64 << CG_EVENT_GESTURE) | (1u64 << CG_EVENT_SWIPE);
+const FULL_LOCK_MASK: u64 = KB_EVENT_MASK
+    | (1u64 << CG_EVENT_GESTURE)
+    | (1u64 << CG_EVENT_SWIPE)
+    | (1u64 << CG_EVENT_SYSTEM_DEFINED);
 
 // CGEventFlags modifier masks
 const FLAG_CMD: u64 = 0x0010_0000;
 const FLAG_SHIFT: u64 = 0x0002_0000;
 const FLAG_CTRL: u64 = 0x0004_0000;
 const FLAG_OPT: u64 = 0x0008_0000;
+// kCGEventFlagMaskSecondaryFn: the fn / Globe key.
+const FLAG_FN: u64 = 0x0080_0000;
 
 // macOS virtual key codes (from <Carbon/Carbon.h> HIToolbox/Events.h)
 const VK_TAB: i64 = 48;
@@ -225,8 +316,27 @@ const VK_5: i64 = 23; // Cmd+Shift+5 screenshot
 const VK_F: i64 = 3; // f key — Ctrl+Cmd+F toggles fullscreen
 const VK_F3: i64 = 99; // Mission Control (default binding)
 const VK_F4: i64 = 118; // Launchpad
-const VK_F11: i64 = 103; // Show Desktop
 const VK_UP: i64 = 126; // Ctrl+Up = Mission Control
+const VK_DOWN: i64 = 125; // Ctrl+Down = App Exposé
+const VK_LEFT: i64 = 123; // Ctrl+Left/Right = move between Spaces
+const VK_RIGHT: i64 = 124;
+const VK_6: i64 = 22; // Cmd+Shift+6 Touch Bar screenshot
+const VK_A: i64 = 0;
+const VK_D: i64 = 2;
+const VK_C: i64 = 8;
+const VK_V: i64 = 9;
+const VK_X: i64 = 7;
+const VK_E: i64 = 14;
+const VK_N: i64 = 45;
+// Ctrl+1..9 switch to Desktop N.
+const DIGIT_KEYS: [i64; 9] = [18, 19, 20, 21, 23, 22, 26, 28, 25];
+// Bare F1–F20.
+const FUNCTION_KEYS: [i64; 20] = [
+    122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90,
+];
+// The top row of recent Apple keyboards sends these instead of F-keys:
+// Mission Control, Launchpad, Spotlight, Dictation, Do Not Disturb, Globe.
+const SYSTEM_FEATURE_KEYS: [i64; 6] = [160, 131, 177, 176, 178, 179];
 
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {
@@ -271,8 +381,14 @@ extern "C" {
         order: i64,
     ) -> *mut c_void;
     fn CFRunLoopAddSource(rl: *mut c_void, source: *mut c_void, mode: *const c_void);
+    fn CFRunLoopRemoveSource(rl: *mut c_void, source: *mut c_void, mode: *const c_void);
+    fn CFMachPortInvalidate(port: *mut c_void);
     fn CFRunLoopGetCurrent() -> *mut c_void;
-    fn CFRunLoopRun();
+    fn CFRunLoopRunInMode(
+        mode: *const c_void,
+        seconds: f64,
+        return_after_source_handled: u8,
+    ) -> i32;
     fn CFRunLoopStop(rl: *mut c_void);
     fn CFRelease(cf: *mut c_void);
     fn CFStringCreateWithCString(
@@ -291,6 +407,8 @@ extern "C" {
     // Returns a retained CFDictionaryRef describing the current WindowServer
     // session, or null when there is no session (e.g. SSH-only login).
     fn CGSessionCopyCurrentDictionary() -> *mut c_void;
+    // Input Monitoring (kTCCServiceListenEvent), macOS 10.15+.
+    fn CGPreflightListenEventAccess() -> bool;
 }
 
 #[allow(non_upper_case_globals)]
@@ -326,6 +444,19 @@ unsafe extern "C" fn kb_tap_callback(
     event: *mut c_void,
     _user_info: *mut c_void,
 ) -> *mut c_void {
+    // macOS disables a tap whose callback was slow or that the user's input
+    // overrode, and says so through the callback itself. Re-enable on the spot:
+    // waiting for the watchdog would leave every shortcut live for up to 2 s.
+    if event_type == CG_EVENT_TAP_DISABLED_BY_TIMEOUT
+        || event_type == CG_EVENT_TAP_DISABLED_BY_USER_INPUT
+    {
+        let tap = LIVE_TAP.load(Ordering::SeqCst);
+        if !tap.is_null() && INTERCEPT_ACTIVE.load(Ordering::Relaxed) {
+            unsafe { CGEventTapEnable(tap, true) };
+            TAP_REENABLED_IN_CALLBACK.store(true, Ordering::Relaxed);
+        }
+        return event;
+    }
     let decision = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         kb_tap_should_block(event_type, event)
     }));
@@ -346,7 +477,12 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
     // Layer 2: swallow 3/4-finger swipe and gesture events so WindowServer
     // never sees them and cannot switch spaces or open Mission Control.
     if event_type == CG_EVENT_SWIPE || event_type == CG_EVENT_GESTURE {
-        return true;
+        return false;
+    }
+    // Media, brightness, volume and power keys. All of them, rather than
+    // decoding the subtype: the callback must stay cheap and lock-free.
+    if event_type == CG_EVENT_SYSTEM_DEFINED {
+        return MEDIA_KEYS_BLOCKED.load(Ordering::Relaxed);
     }
     if event_type != CG_EVENT_KEY_DOWN && event_type != CG_EVENT_KEY_UP {
         return false;
@@ -354,19 +490,35 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
     let flags = CGEventGetFlags(event);
+    should_block_key(kc, flags)
+}
+
+/// The shortcut policy, free of FFI so it reads as one table.
+fn should_block_key(kc: i64, flags: u64) -> bool {
     let cmd = (flags & FLAG_CMD) != 0;
     let shift = (flags & FLAG_SHIFT) != 0;
     let ctrl = (flags & FLAG_CTRL) != 0;
     let opt = (flags & FLAG_OPT) != 0;
+    let fn_only = (flags & FLAG_FN) != 0 && !cmd && !ctrl && !opt;
+
+    if SYSTEM_FEATURE_KEYS.contains(&kc) {
+        return true;
+    }
+    if FUNCTION_KEYS.contains(&kc)
+        && (kc == VK_F3 || kc == VK_F4 || FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed))
+    {
+        return true;
+    }
+    if ctrl && !cmd && DIGIT_KEYS.contains(&kc) {
+        return true;
+    }
 
     match kc {
         // Cmd+Tab (app switcher)
         VK_TAB if cmd => true,
         // Cmd+` (in-app window switcher)
         VK_BACKTICK if cmd => true,
-        // Ctrl+Cmd+Q (lock screen) — must come before plain Cmd+Q
-        VK_Q if cmd && ctrl => true,
-        // Cmd+Q (quit) — also covers any other Cmd+Q modifier combo
+        // Cmd+Q (quit), Ctrl+Cmd+Q (lock screen), Cmd+Shift+Q (log out)
         VK_Q if cmd => true,
         // Cmd+W (close window)
         VK_W if cmd => true,
@@ -374,25 +526,27 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
         VK_H if cmd => true,
         // Cmd+M (minimize)
         VK_M if cmd => true,
-        // Cmd+Space (Spotlight)
-        VK_SPACE if cmd && !ctrl && !opt => true,
+        // Cmd+Space with any modifier: Spotlight, Finder search, Character Viewer
+        VK_SPACE if cmd => true,
         // Cmd+Option+Esc (Force Quit dialog)
         VK_ESCAPE if cmd && opt => true,
         // Bare Escape — skipped when Monaco is focused so editor can dismiss suggestions
         VK_ESCAPE if !cmd && !ctrl && !opt && !shift && ESCAPE_BLOCKED.load(Ordering::Relaxed) => {
             true
         }
-        // Cmd+Shift+3/4/5 (screenshots)
-        VK_3 | VK_4 | VK_5 if cmd && shift => true,
-        // Ctrl+Up (Mission Control)
-        VK_UP if ctrl => true,
-        // F3 (Mission Control) and F4 (Launchpad) — blocked unconditionally
-        // including Cmd+F3 (Show Desktop alternate binding)
-        VK_F3 | VK_F4 => true,
-        // F11 bare (Show Desktop on MacBook fn+F11)
-        VK_F11 if !cmd && !ctrl && !opt && !shift => true,
+        // Cmd+Shift+3/4/5/6 (screenshots, recording, Touch Bar capture)
+        VK_3 | VK_4 | VK_5 | VK_6 if cmd && shift => true,
+        // Ctrl+arrows: Mission Control, App Exposé, move between Spaces
+        VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT if ctrl => true,
+        // Cmd+Opt+D (show/hide the Dock)
+        VK_D if cmd && opt => true,
         // Ctrl+Cmd+F (fullscreen toggle — would exit AMS fullscreen)
         VK_F if cmd && ctrl => true,
+        // Globe shortcuts: Quick Note, emoji, Dock, Notification Center,
+        // Control Center, fullscreen, desktop, dictation, menu bar
+        VK_Q | VK_E | VK_A | VK_N | VK_C | VK_F | VK_H | VK_D | VK_M if fn_only => true,
+        // Clipboard, when the contest forbids it
+        VK_C | VK_V | VK_X if cmd && CLIPBOARD_BLOCKED.load(Ordering::Relaxed) => true,
         _ => false,
     }
 }
@@ -472,6 +626,12 @@ fn start_tap_watchdog(tap_cell: Arc<Mutex<Option<SendPtr>>>, generation: u64) {
             // Keep the pointer protected only while calling CoreGraphics.
             // Event recording/notification must not delay tap teardown.
             drop(cell);
+            if TAP_REENABLED_IN_CALLBACK.swap(false, Ordering::Relaxed) {
+                emit_lockdown_notice(
+                    "keyboard_tap_reenabled",
+                    "macOS disabled the keyboard tap (timeout or user input); it was re-enabled immediately",
+                );
+            }
             if let Some((kind, detail)) = event {
                 emit_lockdown_event(kind, detail);
             }
@@ -574,6 +734,17 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     // ready). Refuse to spawn a second one — that is the race that leaked taps
     // and CFRunLoop threads on every rescan until the process aborted. The
     // running thread clears this flag when it exits.
+    //
+    // A thread that is present but inactive is one a disable has already
+    // superseded; it leaves within one run-loop slice. Wait for it rather
+    // than report the probe as pending.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    while TAP_THREAD_PRESENT.load(Ordering::SeqCst)
+        && !INTERCEPT_ACTIVE.load(Ordering::SeqCst)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     if TAP_THREAD_PRESENT.swap(true, Ordering::SeqCst) {
         let active = INTERCEPT_ACTIVE.load(Ordering::SeqCst);
         let method = if active {
@@ -595,6 +766,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         }
     }
 
+    TAP_CREATE_REFUSED.store(false, Ordering::SeqCst);
     let started = tap_started().clone();
     // Stamp this install BEFORE spawning so any straggler cleanup/watchdog from
     // a previous generation immediately sees itself superseded.
@@ -634,6 +806,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             };
 
             if tap.is_null() {
+                TAP_CREATE_REFUSED.store(true, Ordering::SeqCst);
                 signal_ready();
                 TAP_THREAD_PRESENT.store(false, Ordering::SeqCst);
                 return;
@@ -651,15 +824,41 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             CFRunLoopAddSource(rl, source, kCFRunLoopDefaultMode);
             CGEventTapEnable(tap, true);
 
-            INTERCEPT_ACTIVE.store(true, Ordering::SeqCst);
-            if let Ok(mut guard) = tap_runloop().lock() {
-                *guard = Some(SendPtr(rl));
-            }
+            // Publish only if no disable has superseded this install while the
+            // tap was being created. Under the same lock as
+            // `disable_keyboard_intercept`, so a stop can never land between
+            // the check and the store and leave a tap active that its owner
+            // already released.
+            let superseded = {
+                let _lifecycle = tap_lifecycle()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let current = TAP_GENERATION.load(Ordering::SeqCst) == generation;
+                if current {
+                    LIVE_TAP.store(tap, Ordering::SeqCst);
+                    INTERCEPT_ACTIVE.store(true, Ordering::SeqCst);
+                    if let Ok(mut guard) = tap_runloop().lock() {
+                        *guard = Some(SendPtr(rl));
+                    }
+                }
+                !current
+            };
 
             signal_ready();
             let tap_cell = Arc::new(Mutex::new(Some(SendPtr(tap))));
-            start_tap_watchdog(tap_cell.clone(), generation);
-            CFRunLoopRun(); // blocks until CFRunLoopStop is called
+            if !superseded {
+                start_tap_watchdog(tap_cell.clone(), generation);
+            }
+            // Run in short slices rather than one CFRunLoopRun. The readiness
+            // probe enables and immediately disables the tap, and a
+            // CFRunLoopStop that arrives before the loop has started running
+            // is silently dropped: the thread then ran forever, inactive, and
+            // every later enable — including the real one at contest entry —
+            // was refused as "cgeventtap_pending". The generation check makes
+            // a missed stop cost at most one slice.
+            while TAP_GENERATION.load(Ordering::SeqCst) == generation {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.25, 0);
+            }
 
             // Cleanup after stop. Guarded by generation: if a rapid
             // disable→enable already installed a newer tap, this dying thread
@@ -671,123 +870,127 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
             // observe (and re-enable) a tap that is about to be freed.
             if let Ok(mut cell) = tap_cell.lock() {
                 if let Some(SendPtr(tap)) = cell.take() {
+                    // Only clear the callback's pointer if it is still ours; a
+                    // newer tap may already have replaced it.
+                    let _ = LIVE_TAP.compare_exchange(
+                        tap,
+                        std::ptr::null_mut(),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
                     CGEventTapEnable(tap, false);
+                    // Invalidate, not just release: the run-loop source holds
+                    // its own reference, and a tap that is only disabled
+                    // stays registered with the window server until the app
+                    // quits — one more for every readiness rescan.
+                    CFMachPortInvalidate(tap);
                     CFRelease(tap);
                 }
             }
+            CFRunLoopRemoveSource(rl, source, kCFRunLoopDefaultMode);
             CFRelease(source);
         }
         // This tap thread is exiting — allow a future enable to spawn a new one.
         TAP_THREAD_PRESENT.store(false, Ordering::SeqCst);
     });
 
+    // Tap creation is usually instant but can take noticeably longer right
+    // after a permission grant. A short wait reported a tap that went live a
+    // moment later as failed, and contest entry recorded a false advisory.
     let (lock, cvar) = &**tap_started();
     if let Ok(ready) = lock.lock() {
         let _wait_result =
-            cvar.wait_timeout_while(ready, std::time::Duration::from_millis(500), |ready| {
-                !*ready
-            });
+            cvar.wait_timeout_while(ready, std::time::Duration::from_secs(2), |ready| !*ready);
     }
 
     let active = INTERCEPT_ACTIVE.load(Ordering::SeqCst);
+    // Active taps need Accessibility (checked above), not Input Monitoring.
+    // Only when the system refused to create the tap at all is a missing
+    // Input Monitoring grant worth sending the candidate to; any other
+    // failure would point them at the wrong pane.
+    let method = if active {
+        "cgeventtap"
+    } else if TAP_CREATE_REFUSED.load(Ordering::SeqCst) && !check_input_monitoring_permission() {
+        "input_monitoring_denied"
+    } else {
+        "tap_create_failed"
+    };
     KeyboardInterceptResult {
         active,
-        method: if active {
-            "cgeventtap".to_string()
-        } else {
-            "tap_create_failed".to_string()
-        },
+        method: method.to_string(),
         platform: "macos".to_string(),
     }
+}
+
+/// Whether Input Monitoring (kTCCServiceListenEvent) is granted.
+fn check_input_monitoring_permission() -> bool {
+    unsafe { CGPreflightListenEventAccess() }
+}
+
+/// Open the System Settings pane the candidate needs for `section`.
+pub fn open_privacy_pane(section: &str) -> Result<(), String> {
+    let url = match section {
+        "accessibility" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        "input_monitoring" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        }
+        "screen_recording" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        "camera" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "sharing" => "x-apple.systempreferences:com.apple.Sharing-Settings.extension",
+        other => return Err(format!("unknown settings section: {other}")),
+    };
+    Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open System Settings: {error}"))
 }
 
 /// Stop the CGEventTap run loop and deactivate keyboard intercept.
 pub fn disable_keyboard_intercept() {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
-    INTERCEPT_ACTIVE.store(false, Ordering::SeqCst);
+    let _lifecycle = tap_lifecycle()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Stop the run loop BEFORE superseding the generation. The tap thread
+    // cannot exit while its generation is current, so its CFRunLoop is still
+    // alive here; bumping first let the thread finish its slice, exit and
+    // free the run loop before this CFRunLoopStop reached it. A stop consumed
+    // between slices costs one extra slice, nothing more.
     if let Ok(mut guard) = tap_runloop().lock() {
         if let Some(SendPtr(rl)) = guard.take() {
             unsafe { CFRunLoopStop(rl) };
         }
     }
-}
-
-// ── Layer 1: disable/restore trackpad space-switching gesture ────────────────
-
-const GESTURE_DOMAINS: [&str; 2] = [
-    "com.apple.AppleMultitouchTrackpad",
-    "com.apple.driver.AppleBluetoothMultitouch.trackpad",
-];
-const GESTURE_KEYS: [&str; 2] = [
-    "TrackpadThreeFingerHorizSwipeGesture",
-    "TrackpadFourFingerHorizSwipeGesture",
-];
-
-/// Write trackpad prefs to disable (or restore) 3-finger and 4-finger
-/// horizontal swipes used for Mission Control space switching.
-/// `killall cfprefsd` flushes the pref cache so the change takes effect
-/// immediately without requiring a logout.
-fn set_swipe_gesture_enabled(enabled: bool) {
-    let value = if enabled { "2" } else { "0" };
-    for domain in GESTURE_DOMAINS {
-        for key in GESTURE_KEYS {
-            let _ = Command::new("defaults")
-                .args(["write", domain, key, "-int", value])
-                .bounded_checked_output();
-        }
-    }
-    // Flush the preferences daemon so the new values are read by the Dock.
-    let _ = Command::new("killall").arg("cfprefsd").bounded_output();
+    // Superseding the generation is what actually ends the tap thread.
+    TAP_GENERATION.fetch_add(1, Ordering::SeqCst);
+    INTERCEPT_ACTIVE.store(false, Ordering::SeqCst);
 }
 
 // ── Crash-safe lockdown state ─────────────────────────────────────────────────
 //
-// Gesture prefs are written with `defaults write`, which persists across app
-// crashes and reboots. Without a journal, a crash mid-exam leaves the
-// candidate's trackpad gestures disabled forever and the caffeinate child
-// running orphaned. The state file records the original pref values (and the
-// caffeinate pid) before lockdown touches them; unlock — or crash recovery on
-// the next launch — restores from it.
+// Desktop preferences are written with `defaults write`, which persists across
+// app crashes and reboots. system_settings.rs owns the current snapshot and its
+// restore; the watchdog process, the login agent and the next launch each
+// restore it if this process cannot.
+//
+// lockdown_recovery.rs is the journal format of earlier releases, which only
+// covered two gesture keys. Nothing writes it any more, but a journal left by
+// an older version must still be restored, so its reader stays. Its writer is
+// kept for the journal tests, hence the allow.
 
+#[allow(dead_code)]
 mod lockdown_recovery;
-use lockdown_recovery::{GesturePref, LockdownState};
 
 fn lockdown_state_path() -> Option<std::path::PathBuf> {
     home_dir().map(|h| h.join("Library/Application Support/AMS Access/lockdown-state.json"))
-}
-
-fn read_default(domain: &str, key: &str) -> Result<Option<String>, String> {
-    let out = Command::new("defaults")
-        .args(["read", domain, key])
-        .bounded_output()
-        .map_err(|error| format!("Could not read original desktop preference: {error}"))?;
-    lockdown_recovery::snapshot_value(out.status.success(), &out.stdout, &out.stderr, domain, key)
-}
-
-/// Capture originals and durably publish them before any persistent change.
-fn save_lockdown_state(caffeinate_pid: Option<u32>) -> Result<(), String> {
-    let path = lockdown_state_path().ok_or("Desktop recovery directory is unavailable")?;
-    if lockdown_recovery::pending(&path) {
-        return Err("Previous desktop preferences still need restoration".into());
-    }
-    let mut gestures = Vec::new();
-    for domain in GESTURE_DOMAINS {
-        for key in GESTURE_KEYS {
-            gestures.push(GesturePref {
-                domain: domain.to_string(),
-                key: key.to_string(),
-                value: read_default(domain, key)?,
-            });
-        }
-    }
-    lockdown_recovery::save(
-        &path,
-        &LockdownState {
-            gestures,
-            caffeinate_pid,
-        },
-    )
-    .map_err(|error| format!("Could not preserve original desktop preferences: {error}"))
 }
 
 /// Kill `pid` only if it is still a caffeinate process — guards against pid
@@ -859,24 +1062,53 @@ fn restore_lockdown_state() -> bool {
 /// failures count as pending rather than claiming the desktop was restored.
 pub fn desktop_recovery_pending() -> bool {
     lockdown_state_path().is_none_or(|path| lockdown_recovery::pending(&path))
+        || system_settings::pending()
 }
 
-/// Run once at app startup, before any lockdown call: if a state file is
-/// present the previous session crashed mid-lockdown — restore the user's
-/// gesture prefs and kill the orphaned caffeinate.
+/// Run once at app startup, before any UI and before any lockdown call: a
+/// snapshot still on disk means the previous session ended without restoring
+/// (crash, force quit, power loss). Put the candidate's settings back and kill
+/// the orphaned caffeinate. A snapshot whose owner is still alive belongs to
+/// a running exam in another instance and is left alone.
 pub fn recover_lockdown_if_crashed() {
     restore_lockdown_state();
+    if system_settings::pending() && !system_settings::owner_alive_elsewhere() {
+        if let system_settings::RestoreOutcome::Failed(_) = system_settings::restore() {
+            system_settings::ensure_retry();
+        }
+    }
+}
+
+/// Run the restore now — the Restore system settings action — and report
+/// what, if anything, is still changed.
+pub fn retry_restore() -> RestoreStatus {
+    if system_settings::pending() && !system_settings::owner_alive_elsewhere() {
+        if let system_settings::RestoreOutcome::Failed(_) =
+            system_settings::restore_unless_lockdown_active()
+        {
+            system_settings::ensure_retry();
+        }
+    }
+    restore_status()
 }
 
 // ── Layer 3: space watchdog ───────────────────────────────────────────────────
 
-/// If our app is no longer the frontmost application (e.g. the user managed to
-/// switch spaces), activate it immediately.
+/// Bring the exam back to the front.
 ///
-/// Uses NSRunningApplication via raw Objective-C message sends so we don't
-/// need an extra crate dependency. NSRunningApplication is documented as
-/// thread-safe, so this may be called from any thread.
-unsafe fn refocus_our_app() {
+/// Activation is AppKit, and AppKit is main-thread-only. The space poller
+/// used to call this from its own thread; on current macOS that raises an
+/// Objective-C exception, which `catch_unwind` cannot catch, and the app
+/// aborted two seconds into every contest. So the work always runs on the
+/// main thread, behind an exception guard. Observers already on the main
+/// thread run it inline.
+fn refocus_our_app() {
+    let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), || {
+        kiosk_window::guarded(|| unsafe { refocus_on_main() })
+    });
+}
+
+unsafe fn refocus_on_main() {
     let our_pid = std::process::id() as i32;
     let cls = objc_getClass(c"NSRunningApplication".as_ptr());
     if cls.is_null() {
@@ -927,10 +1159,8 @@ fn install_space_observer() {
     let handler = RcBlock::new(|_notification: *mut c_void| {
         // Invoked as an Objective-C block on the main queue. A panic here would
         // unwind into AppKit/ObjC and abort the process — contain it.
-        if INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-                refocus_our_app()
-            }));
+        if lockdown_active() {
+            refocus_our_app();
         }
     });
 
@@ -1014,60 +1244,112 @@ fn remove_space_observer() {
 fn spawn_space_watchdog() {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
-        if !INTERCEPT_ACTIVE.load(Ordering::SeqCst) {
+        if !lockdown_active() {
             break;
         }
-        // `refocus_our_app` is raw objc_msgSend; a panic here must not unwind
-        // out of the thread and risk aborting the process.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-            refocus_our_app()
-        }));
+        // Dispatches to the main thread behind an exception guard.
+        refocus_our_app();
     });
 }
 
-/// Engage keyboard intercept and prevent display sleep during exam.
-/// Also disables trackpad space-switching gestures (Layer 1) and starts
-/// the space watchdog (Layer 3). Layer 2 (CGEventTap swipe intercept) is
-/// active as soon as the tap is installed with FULL_LOCK_MASK.
+/// Engage the full macOS lockdown for a contest.
+///
+/// Order matters. Every desktop preference is snapshotted to disk before the
+/// first one changes, and the watchdog process is running before anything a
+/// crash could strand. The keyboard tap is what needs Accessibility; nothing
+/// else depends on it, so the rest engages even when it is refused and the
+/// return value reports only the tap (the policy decides whether that blocks).
 pub fn lock_desktop() -> bool {
+    let config = lockdown_config();
+    CLIPBOARD_BLOCKED.store(!config.allow_clipboard, Ordering::SeqCst);
+    FUNCTION_KEYS_BLOCKED.store(config.block_function_keys, Ordering::SeqCst);
+    MEDIA_KEYS_BLOCKED.store(config.block_media_keys, Ordering::SeqCst);
+
     // Prevent display and system sleep via caffeinate -d (display) -i (idle)
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
         if pid_guard.is_none() {
-            if let Ok(child) = Command::new("caffeinate").args(["-d", "-i"]).spawn() {
+            if let Ok(mut child) = Command::new("caffeinate").args(["-d", "-i"]).spawn() {
                 *pid_guard = Some(child.id());
+                // Collect it once it is killed, so it never stays a zombie.
+                let _ = std::thread::Builder::new()
+                    .name("ams-caffeinate-reaper".into())
+                    .spawn(move || {
+                        let _ = child.wait();
+                    });
             }
         }
     }
-    // Journal the user's original gesture prefs (and caffeinate pid) BEFORE
-    // touching them, so unlock or crash recovery can restore them faithfully.
     let caffeinate = caffeinate_pid().lock().ok().and_then(|guard| *guard);
-    if let Err(error) = save_lockdown_state(caffeinate) {
-        crate::process_runner::record_failure(error);
-        return false;
+    // Marked active BEFORE the snapshot is written: a background restore
+    // retry that is already waiting for the snapshot lock re-checks this
+    // flag once it gets the lock, and must see the new lockdown then.
+    LOCKDOWN_ACTIVE.store(true, Ordering::SeqCst);
+    // Err means the snapshot could not be persisted, and then nothing was
+    // changed: refusing is the only way to keep the restore promise.
+    let unapplied = match system_settings::engage(&config, caffeinate) {
+        Ok(unapplied) => unapplied,
+        Err(error) => {
+            LOCKDOWN_ACTIVE.store(false, Ordering::SeqCst);
+            crate::process_runner::record_failure(error);
+            return false;
+        }
+    };
+    watchdog::spawn();
+    if !unapplied.is_empty() {
+        emit_lockdown_notice(
+            "lockdown_settings_not_applied",
+            &format!(
+                "These desktop settings could not be changed; keyboard blocking still covers their shortcuts: {}",
+                unapplied.join(", ")
+            ),
+        );
     }
-    // Layer 1: disable the OS-level gesture so Dock never sees the swipe.
-    set_swipe_gesture_enabled(false);
+
     let result = enable_keyboard_intercept();
-    if result.active {
-        // Layer 3: bring us back if the user still manages to switch away —
-        // event-driven observer first, slow poller as the safety net.
-        install_space_observer();
-        spawn_space_watchdog();
-    }
+    // Bring us back if the candidate still manages to switch away — the
+    // event-driven observers first, the slow poller as the safety net — and
+    // record every focus loss.
+    install_space_observer();
+    kiosk_window::install_focus_observers();
+    spawn_space_watchdog();
+    displays::start_monitoring(config.display_policy);
     result.active
 }
 
-/// Release keyboard intercept, restore space-switching gestures, and allow
-/// display sleep again.
+/// Release the lockdown and put every changed setting back.
+///
+/// Safe to call when nothing is locked: restore only acts on a snapshot on
+/// disk, so an idle Restore action never writes guessed defaults.
 pub fn unlock_desktop() {
+    LOCKDOWN_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
     remove_space_observer();
-    // No journal means no saved gesture changes to undo. In particular, a
-    // failed entry or an idle Restore action must not replace user preferences
-    // with guessed enabled defaults.
+    kiosk_window::remove_focus_observers();
+    displays::stop_monitoring();
+    kiosk_window::restore_kiosk_presentation();
+    // A journal from an older release, if one is still on disk.
     restore_lockdown_state();
-    // The journal restore already reaped caffeinate; this clears the in-memory
-    // guard and covers the no-journal path.
+    // A snapshot owned by another live instance is that instance's exam (this
+    // call can be the rollback of an entry refused for exactly that reason).
+    if !system_settings::owner_alive_elsewhere() {
+        match system_settings::restore() {
+            system_settings::RestoreOutcome::Failed(settings) => {
+                emit_lockdown_event(
+                    "lockdown_restore_failed",
+                    &format!(
+                        "These settings are still changed and will be retried: {}",
+                        settings.join(", ")
+                    ),
+                );
+                system_settings::ensure_retry();
+            }
+            // Verified: the watchdog has nothing left to guard. On failure it
+            // stays, so a crash before the retry succeeds is still covered.
+            _ => watchdog::stop(),
+        }
+    }
+    // The snapshot restore already reaped caffeinate; this clears the
+    // in-memory guard and covers the no-snapshot path.
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
         if let Some(pid) = pid_guard.take() {
             kill_if_caffeinate(pid);
@@ -1086,6 +1368,70 @@ pub fn unlock_desktop() {
 /// is also wrong: `-c` reports p_comm, which macOS truncates to 16 chars.)
 pub fn scan_processes() -> ProcessScanResult {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
+    let running = ps_basenames_checked();
+    restricted_in(&running, _budget.failure().is_none())
+}
+
+/// Restricted apps and remote access from ONE `ps` snapshot, so the two
+/// readiness rows cannot disagree about what was running.
+pub fn scan_processes_and_remote() -> (ProcessScanResult, Vec<String>) {
+    let _budget = Budget::new(std::time::Duration::from_secs(8));
+    let running = ps_basenames_checked();
+    let restricted = restricted_in(&running, _budget.failure().is_none());
+    let remote = remote_access::scan_remote_access(&running);
+    (restricted, remote)
+}
+
+/// Listed names that macOS itself ships from its protected system folders.
+/// Only these may match a process that lives there.
+const APPLE_SHIPPED: &[&str] = &[
+    "Screen Sharing",
+    "screensharingd",
+    "AppleVNCServer",
+    "ARDAgent",
+    "RemoteDesktopAgent",
+    "sshd",
+    "sshd-session",
+    "Terminal",
+    "QuickTime Player",
+    "Screenshot",
+    "screencapture",
+    "dtrace",
+    "lldb",
+    "gdb",
+];
+
+/// Basename of a `ps -o comm=` path, or `None` for an OS component that only
+/// shares its name with a listed app.
+///
+/// Matching on the basename alone flagged Apple's own
+/// `/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd` — the
+/// Spotlight suggestions daemon, running on every Mac — as the Parsec
+/// remote-desktop host, whose binary is also `parsecd`. SIP-protected system
+/// folders cannot contain third-party software, so a process there matches
+/// only a name macOS itself ships. `/usr/local` is user-writable (Homebrew's
+/// x11vnc lives there) and stays in scope.
+fn listed_basename(comm: &str) -> Option<&str> {
+    let comm = comm.trim();
+    let basename = comm.rsplit('/').next().unwrap_or(comm);
+    let os_owned = comm.starts_with("/System/")
+        || (comm.starts_with("/usr/") && !comm.starts_with("/usr/local/"))
+        || comm.starts_with("/bin/")
+        || comm.starts_with("/sbin/");
+    if os_owned
+        && !APPLE_SHIPPED
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(basename))
+    {
+        return None;
+    }
+    Some(basename)
+}
+
+/// Basename of each executable path (everything after the final '/'); lines
+/// without '/' are already bare names. A failed `ps` records a budget failure
+/// so the scan is reported as incomplete rather than clean.
+fn ps_basenames_checked() -> Vec<String> {
     let output = Command::new("ps")
         .args(["-axo", "comm="])
         .bounded_checked_output()
@@ -1094,25 +1440,24 @@ pub fn scan_processes() -> ProcessScanResult {
             stdout: vec![],
             stderr: vec![],
         });
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Basename of each executable path (everything after the final '/');
-    // lines without '/' are already bare names.
-    let running: Vec<String> = stdout
+    String::from_utf8_lossy(&output.stdout)
         .lines()
-        .map(|line| {
-            let line = line.trim();
-            line.rsplit('/').next().unwrap_or(line).to_string()
-        })
-        .collect();
+        .filter_map(listed_basename)
+        .map(str::to_string)
+        .collect()
+}
 
-    // Deduped case-insensitively, because the two lists match that way and a
+fn restricted_in(running: &[String], scan_complete: bool) -> ProcessScanResult {
+    // Deduped case-insensitively, because the lists match that way and a
     // program can therefore match twice under different spellings -- "obs"
     // and "OBS" are one application. Listing it twice would read as two
     // things to close.
     let mut found: Vec<String> = Vec::new();
-    for &name in RESTRICTED.iter().chain(CAPTURE_TOOLS.iter()) {
+    for &name in RESTRICTED
+        .iter()
+        .chain(CAPTURE_TOOLS.iter())
+        .chain(remote_access::REMOTE_APPS.iter())
+    {
         if running.iter().any(|p| p.eq_ignore_ascii_case(name))
             && !found.iter().any(|seen| seen.eq_ignore_ascii_case(name))
         {
@@ -1121,7 +1466,7 @@ pub fn scan_processes() -> ProcessScanResult {
     }
 
     ProcessScanResult {
-        clean: found.is_empty() && _budget.failure().is_none(),
+        clean: found.is_empty() && scan_complete,
         found,
     }
 }
@@ -1129,7 +1474,8 @@ pub fn scan_processes() -> ProcessScanResult {
 /// Detect whether the process is running inside a VM or hypervisor.
 ///
 /// Checks CPUID hypervisor leaf first (cannot be spoofed without paravirt config),
-/// then `system_profiler SPHardwareDataType` and `ioreg -l` for hypervisor markers.
+/// then `kern.hv_vmm_present`, then `system_profiler SPHardwareDataType` and the
+/// `IOPlatformExpertDevice` registry node for hypervisor markers.
 pub fn detect_virtualization() -> VirtDetectionResult {
     let _budget = Budget::new(std::time::Duration::from_secs(6));
     // CPUID leaf 0x40000000 — x86/x86_64 only; ARM Macs skip this path
@@ -1153,14 +1499,35 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         }
     }
 
+    // kern.hv_vmm_present is 1 inside any guest of Hypervisor.framework or
+    // Virtualization.framework (UTM, Parallels, Docker, Tart) on both Apple
+    // Silicon and Intel. Unlike kern.hv_support it says nothing about the host.
+    // Older macOS lacks the key and sysctl exits nonzero, which means "absent"
+    // rather than a failed probe, so this one is not checked.
+    let hv_vmm_present = Command::new("sysctl")
+        .args(["-n", "kern.hv_vmm_present"])
+        .bounded_output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+        .unwrap_or(false);
+    if hv_vmm_present {
+        return VirtDetectionResult {
+            detected: true,
+            platform: Some("Apple Hypervisor".to_string()),
+            confidence: "high".to_string(),
+        };
+    }
+
     let hw_output = Command::new("system_profiler")
         .arg("SPHardwareDataType")
         .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
 
+    // Only the platform expert node: model, manufacturer and board strings are
+    // where VMs identify themselves. `ioreg -l` dumps the whole registry, which
+    // is several MB on real hardware, overran MAX_OUTPUT, and failed the probe.
     let ioreg_output = Command::new("ioreg")
-        .args(["-l"])
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
@@ -1183,6 +1550,8 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         ("xen hypervisor", "Xen"),
         ("utm ", "UTM"),
         ("apple virtualization framework", "Apple Virtualization"),
+        // Virtualization.framework guests report model "VirtualMac2,1"
+        ("virtualmac", "Apple Virtualization"),
     ];
 
     for (marker, platform) in vm_markers {
@@ -1205,45 +1574,9 @@ pub fn detect_virtualization() -> VirtDetectionResult {
 /// Check whether any remote desktop or screen-sharing session is active.
 pub fn detect_remote_desktop() -> bool {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
-    let ps = Command::new("ps")
-        .args(["-axo", "command="])
-        .bounded_checked_output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default()
-        .to_string();
-
-    // Built-in macOS Screen Sharing (VNC server daemon)
-    if ps.contains("screensharingd") {
-        return true;
-    }
-    // Apple Remote Desktop agent
-    if ps.contains("remotedesktopagent") {
-        return true;
-    }
-    // macOS 12+ Screen Sharing controller
-    if ps.contains("applescreencontrol") {
-        return true;
-    }
-    // Third-party remote-access tools
-    if ps.contains("teamvieweragent") {
-        return true;
-    }
-    if ps.contains("anydesk") {
-        return true;
-    }
-    if ps.contains("rustdesk") {
-        return true;
-    }
-    if ps.contains("jump desktop connect") {
-        return true;
-    }
-
-    // SSH session with X11 forwarding — the remote peer can see the display
-    if std::env::var("SSH_CONNECTION").is_ok() && std::env::var("DISPLAY").is_ok() {
-        return true;
-    }
-
-    false
+    !remote_access::scan_remote_access(&running_process_basenames()).is_empty()
+        // SSH session with X11 forwarding — the remote peer can see the display
+        || (std::env::var("SSH_CONNECTION").is_ok() && std::env::var("DISPLAY").is_ok())
 }
 
 // ── Privileged helper client ──────────────────────────────────────────────────
@@ -1493,10 +1826,8 @@ fn running_process_basenames() -> Vec<String> {
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
-                .map(|line| {
-                    let line = line.trim();
-                    line.rsplit('/').next().unwrap_or(line).to_string()
-                })
+                .filter_map(listed_basename)
+                .map(str::to_string)
                 .collect()
         })
         .unwrap_or_default()
@@ -1550,7 +1881,47 @@ pub fn detect_active_screen_share() -> bool {
 
 /// Returns true if `name` appears in the macOS RESTRICTED process list.
 pub fn is_restricted_name(name: &str) -> bool {
-    RESTRICTED.iter().any(|&r| r.eq_ignore_ascii_case(name))
+    // Of the names macOS ships, only real apps a candidate can quit are
+    // closable. Daemons (sshd, screencapture, …) belong to the system or to
+    // Settings, and asking AppleScript to quit them shows a chooser dialog.
+    const QUITTABLE_APPLE_APPS: [&str; 4] = [
+        "Terminal",
+        "QuickTime Player",
+        "Screenshot",
+        "Screen Sharing",
+    ];
+    if APPLE_SHIPPED.iter().any(|n| n.eq_ignore_ascii_case(name))
+        && !QUITTABLE_APPLE_APPS
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(name))
+    {
+        return false;
+    }
+    RESTRICTED
+        .iter()
+        .chain(remote_access::REMOTE_APPS.iter())
+        .any(|&r| r.eq_ignore_ascii_case(name))
+}
+
+/// Whether `name` is an installed app bundle AppleScript can address. For a
+/// bare process name `tell application` shows a "Where is …?" chooser.
+fn app_bundle_exists(name: &str) -> bool {
+    [
+        "/Applications",
+        "/Applications/Utilities",
+        "/System/Applications",
+        "/System/Applications/Utilities",
+    ]
+    .iter()
+    .any(|dir| {
+        std::path::Path::new(dir)
+            .join(format!("{name}.app"))
+            .exists()
+    }) || home_dir().is_some_and(|home| {
+        home.join("Applications")
+            .join(format!("{name}.app"))
+            .exists()
+    })
 }
 
 /// All pids whose executable basename matches `name` exactly (case-insensitive).
@@ -1571,8 +1942,8 @@ fn pids_by_basename(name: &str) -> Vec<u32> {
                     // "  123 /Applications/QuickTime Player.app/.../QuickTime Player"
                     let (pid, comm) = line.trim_start().split_once(char::is_whitespace)?;
                     let pid = pid.parse::<u32>().ok()?;
-                    let comm = comm.trim();
-                    let basename = comm.rsplit('/').next().unwrap_or(comm);
+                    // Never signal an OS component that only shares a name.
+                    let basename = listed_basename(comm)?;
                     (pid != own_pid && basename.eq_ignore_ascii_case(name)).then_some(pid)
                 })
                 .collect()
@@ -1604,10 +1975,13 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
     let mut failed = Vec::new();
 
     for name in names {
-        // Graceful quit via AppleScript.
-        let _ = Command::new("osascript")
-            .args(["-e", &format!("tell application {:?} to quit", name)])
-            .bounded_output();
+        // Graceful quit via AppleScript, only for a real app bundle; anything
+        // else goes straight to the signals below.
+        if app_bundle_exists(name) {
+            let _ = Command::new("osascript")
+                .args(["-e", &format!("tell application {:?} to quit", name)])
+                .bounded_output();
+        }
 
         // Wait up to 800 ms for the process to exit (80 ms polling).
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
@@ -1654,11 +2028,10 @@ fn process_alive_by_name(name: &str) -> bool {
         .args(["-axo", "comm="])
         .bounded_output()
         .map(|o| {
-            String::from_utf8_lossy(&o.stdout).lines().any(|line| {
-                let line = line.trim();
-                let basename = line.rsplit('/').next().unwrap_or(line);
-                basename.eq_ignore_ascii_case(name)
-            })
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(listed_basename)
+                .any(|basename| basename.eq_ignore_ascii_case(name))
         })
         .unwrap_or(false)
 }
@@ -1700,5 +2073,21 @@ pub fn request_av_permissions() {
         req(cls, sel, AVMediaTypeVideo, &video_block);
         // Request audio (microphone).
         req(cls, sel, AVMediaTypeAudio, &audio_block);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recorded failure turns the whole result into an error upstream and
+    /// the readiness screen shows every field as Unknown. `ioreg -l` did that
+    /// on every real Mac by overrunning the output limit.
+    #[test]
+    fn virtualization_probe_records_no_failure() {
+        let budget = Budget::new(std::time::Duration::from_secs(20));
+        let result = detect_virtualization();
+        assert_eq!(budget.failure(), None);
+        assert_eq!(result.confidence, "high");
     }
 }
