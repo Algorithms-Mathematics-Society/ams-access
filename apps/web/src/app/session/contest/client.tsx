@@ -151,6 +151,16 @@ function isContestEditorTheme(value: string | null): value is ContestEditorTheme
   return Boolean(value && CONTEST_EDITOR_THEMES.some((theme) => theme.id === value));
 }
 
+// Cmd shortcuts that leave the exam or open system UI. Mirrors the native key
+// tap in platform-rs; every other Cmd combo (copy, paste, undo, find, select
+// all...) must reach the editor. `code` is used because Shift changes `key`.
+function isBlockedCmdShortcut(e: KeyboardEvent): boolean {
+  if (["Tab", "Backquote", "KeyQ", "KeyW", "KeyH", "KeyM", "Space"].includes(e.code)) return true;
+  if (e.altKey && ["Escape", "KeyD", "KeyI", "KeyJ", "KeyU"].includes(e.code)) return true;
+  if (e.shiftKey && ["Digit3", "Digit4", "Digit5", "Digit6"].includes(e.code)) return true;
+  return e.ctrlKey && e.code === "KeyF";
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -2213,7 +2223,7 @@ export default function ContestPageClient() {
         e.key === "Escape" ||
         e.key === "PrintScreen" ||
         (e.altKey && (e.key === "Tab" || e.key === "F4" || e.key === "Escape")) ||
-        e.metaKey ||
+        (e.metaKey && isBlockedCmdShortcut(e)) ||
         (e.ctrlKey && e.key === "w") ||
         (e.ctrlKey && e.key === "W") ||
         (e.ctrlKey && e.shiftKey && e.key === "I") ||
