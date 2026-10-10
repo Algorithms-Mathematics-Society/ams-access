@@ -54,6 +54,11 @@ test("MSIX keeps proctor lockdown but does not write virtualized Windows policie
 test("CI installs, launches, and certification-checks the MSIX", async () => {
   const ci = await read(".github/workflows/ci.yml");
   assert.match(ci, /build-msix\.ps1 -SelfSign/);
+  assert.match(
+    ci,
+    /Import-Certificate -FilePath \$cer -CertStoreLocation Cert:\\LocalMachine\\TrustedPeople[\s\S]*?Add-AppxPackage/
+  );
+  assert.doesNotMatch(ci, /Import-Certificate[^\n]*Cert:\\CurrentUser\\TrustedPeople/);
   assert.match(ci, /Add-AppxPackage/);
   assert.match(ci, /Start-Process "shell:AppsFolder/);
   assert.match(ci, /appcert test -appxpackagepath/);
