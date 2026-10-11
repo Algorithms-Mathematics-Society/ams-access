@@ -1265,10 +1265,16 @@ pub fn lock_desktop() -> bool {
     FUNCTION_KEYS_BLOCKED.store(config.block_function_keys, Ordering::SeqCst);
     MEDIA_KEYS_BLOCKED.store(config.block_media_keys, Ordering::SeqCst);
 
-    // Prevent display and system sleep via caffeinate -d (display) -i (idle)
+    // Prevent display and system sleep via caffeinate -d (display) -i (idle).
+    // -w ties it to this process, so a crash before the pid is persisted
+    // cannot leave an assertion nobody can find.
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
         if pid_guard.is_none() {
-            if let Ok(mut child) = Command::new("caffeinate").args(["-d", "-i"]).spawn() {
+            let own_pid = std::process::id().to_string();
+            if let Ok(mut child) = Command::new("caffeinate")
+                .args(["-d", "-i", "-w", &own_pid])
+                .spawn()
+            {
                 *pid_guard = Some(child.id());
                 // Collect it once it is killed, so it never stays a zombie.
                 let _ = std::thread::Builder::new()
@@ -1290,6 +1296,12 @@ pub fn lock_desktop() -> bool {
         Ok(unapplied) => unapplied,
         Err(error) => {
             LOCKDOWN_ACTIVE.store(false, Ordering::SeqCst);
+            // Refused: nothing will ever reap the caffeinate spawned above.
+            if let Ok(mut pid_guard) = caffeinate_pid().lock() {
+                if let Some(pid) = pid_guard.take() {
+                    kill_if_caffeinate(pid);
+                }
+            }
             crate::process_runner::record_failure(error);
             return false;
         }
@@ -1642,8 +1654,11 @@ do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchc
         return Err(stderr.trim().to_string());
     }
 
-    // Give the daemon up to 3 s to create its socket before we return.
-    for _ in 0..30 {
+    // Give the daemon up to 3 s to create its socket before we return. A
+    // ping can itself block for ~12 s, so the bound is a deadline, not a
+    // retry count.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
         if network_helper_running() {
             return Ok(());
         }
@@ -2023,17 +2038,21 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
 /// Deliberately not `pgrep -x`: pgrep matches against p_comm, which macOS
 /// truncates to 16 chars, so names like "Parallels Desktop" would never match
 /// and close_apps would falsely report them closed.
+///
+/// If `ps` itself fails or times out the answer is unknown, and unknown is
+/// reported as alive: calling a restricted app closed on no evidence is worse
+/// than asking the candidate to close it again.
 fn process_alive_by_name(name: &str) -> bool {
     Command::new("ps")
         .args(["-axo", "comm="])
-        .bounded_output()
+        .bounded_checked_output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
                 .filter_map(listed_basename)
                 .any(|basename| basename.eq_ignore_ascii_case(name))
         })
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Request macOS TCC (Privacy) permission for camera and microphone.
