@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const HOME = new URL("../app/home/", import.meta.url).pathname;
+const HOME = fileURLToPath(new URL("../app/home/", import.meta.url));
 function homeFiles(dir = HOME, acc = []) {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
@@ -49,7 +50,11 @@ test("NEUTRAL completeness: no opaque zinc/gray hex in app/home", () => {
   assert.equal(hits.length, 0, `opaque zinc remains: ${hits.join(", ")}`);
 });
 test("NEUTRAL completeness: no legacy black-alpha scrims", () => {
-  assert.equal(blackAlpha(all).length, 0, "Astryx Dialog owns its tokenized backdrop; no legacy scrims remain");
+  assert.equal(
+    blackAlpha(all).length,
+    0,
+    "Astryx Dialog owns its tokenized backdrop; no legacy scrims remain"
+  );
 });
 test("NEUTRAL completeness: no bare #ffffff foregrounds", () => {
   assert.equal(
