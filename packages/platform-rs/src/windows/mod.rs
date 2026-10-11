@@ -83,8 +83,7 @@ const RESTRICTED: &[&str] = &[
     "snagit64.exe",
     "snagiteditor.exe",
     "camtasia.exe",
-    // NVIDIA ShadowPlay / GeForce Experience
-    "nvcontainer.exe",
+    // NVIDIA ShadowPlay / GeForce Experience (not the generic driver container)
     "nvcapture.exe",
     "nvsphelper64.exe",
     // Xbox Game Bar and gaming overlays
@@ -1455,6 +1454,35 @@ pub fn is_restricted_name(name: &str) -> bool {
     RESTRICTED
         .iter()
         .any(|&r| r.trim_end_matches(".exe").eq_ignore_ascii_case(name))
+}
+
+#[cfg(test)]
+mod restricted_process_tests {
+    use super::{is_restricted_name, CAPTURE_PROCESSES, RESTRICTED};
+
+    #[test]
+    fn generic_nvidia_container_is_not_restricted_regardless_of_case() {
+        for name in ["nvcontainer", "NvContainer", "NVCONTAINER"] {
+            assert!(!is_restricted_name(name), "{name} should not be restricted");
+        }
+        assert!(!RESTRICTED.contains(&"nvcontainer.exe"));
+        assert!(!CAPTURE_PROCESSES.contains(&"nvcontainer.exe"));
+    }
+
+    #[test]
+    fn dedicated_nvidia_capture_processes_remain_restricted() {
+        for name in ["nvcapture", "NvCapture", "nvsphelper64", "NVSPHELPER64"] {
+            assert!(is_restricted_name(name), "{name} should be restricted");
+        }
+        assert!(CAPTURE_PROCESSES.contains(&"nvcapture.exe"));
+    }
+
+    #[test]
+    fn other_restricted_processes_are_unchanged() {
+        for name in ["obs64", "anydesk", "wireshark", "gamebar"] {
+            assert!(is_restricted_name(name), "{name} should be restricted");
+        }
+    }
 }
 
 /// Report restricted apps that the candidate still needs to close.
