@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering}
 use std::sync::OnceLock;
 
 pub mod instance;
+mod registry_recovery;
 
 /// CreateProcess flag that suppresses the console window of a child process.
 /// Without it, every console helper we shell out to (tasklist, reg, netsh,
@@ -464,28 +465,6 @@ fn reg_key_exists(key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn reg_set(key: &str, value_name: &str, data: &str) {
-    let _ = hidden_command("reg")
-        .args([
-            "add",
-            key,
-            "/v",
-            value_name,
-            "/t",
-            "REG_DWORD",
-            "/d",
-            data,
-            "/f",
-        ])
-        .bounded_output();
-}
-
-fn reg_delete_value(key: &str, value_name: &str) {
-    let _ = hidden_command("reg")
-        .args(["delete", key, "/v", value_name, "/f"])
-        .bounded_output();
-}
-
 // ── Sleep prevention ──────────────────────────────────────────────────────────
 
 fn set_sleep_prevention(enable: bool) {
@@ -503,144 +482,60 @@ fn set_sleep_prevention(enable: bool) {
 
 // ── Registry lockdown ─────────────────────────────────────────────────────────
 
-/// Registry policy applied for the duration of a lockdown.
-///
-/// **`NoWinKeys` is deliberately not set any more.** It was redundant and
-/// dangerous: `kbproc` already swallows LWin (0x5B), RWin (0x5C) and every
-/// `win_down` combination, and that hook dies with the process. The registry
-/// value does not — so a force-kill, a crash or a flat battery left the
-/// candidate's Windows key dead, with the only repair being "launch the exam
-/// app again", which is the last thing someone in that state will do.
-///
-/// It is still *deleted* here, and in `recover_registry_if_crashed`, so a
-/// machine that ran an older build and has the value stuck gets cleaned up.
-/// Explorer reads `NoWinKeys` when it starts, so a machine that is already
-/// enforcing it needs Explorer restarted (or a sign-out) for the deletion to
-/// take effect — that is a one-time cost for existing installs only.
-///
-/// `DisableTaskMgr` stays. Ctrl+Alt+Del runs on the secure desktop where no
-/// user-mode hook can reach it, so this is the only thing that closes that
-/// route, and there is no hook-based equivalent to fall back on.
-fn apply_registry_policies(enable: bool) {
-    const TASK_MGR_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
-    const EXPLORER_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
-
-    if enable {
-        reg_set(TASK_MGR_KEY, "DisableTaskMgr", "1");
-    } else {
-        reg_delete_value(TASK_MGR_KEY, "DisableTaskMgr");
-        // Never set by this build; cleared in case an older one left it behind.
-        // A stale value on a machine that has not yet unlocked is handled at
-        // startup by `recover_registry_if_crashed`, which runs before any lock.
-        reg_delete_value(EXPLORER_KEY, "NoWinKeys");
+/// Recover only a journal owned by this application. Legacy policy values
+/// without a snapshot cannot be distinguished from user/admin settings.
+pub fn recover_registry_if_crashed() -> Result<(), String> {
+    if !instance::owns_instance() {
+        return Err("Windows recovery requires instance ownership".into());
     }
+    if is_packaged() {
+        return Ok(());
+    }
+    registry_recovery::restore()
 }
 
-fn set_touchpad_gestures_enabled(enabled: bool) {
-    let val = if enabled { "1" } else { "0" };
-    // Windows Precision Touchpad (WPT) multi-finger gesture registry keys.
-    // These are read dynamically by the WPT driver — no restart required.
-    // Non-WPT touchpads (legacy Synaptics/Elan) use vendor-specific drivers
-    // and are not affected by these keys; the virtual desktop guard thread
-    // catches escapes from those devices instead.
-    reg_set(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad",
-        "ThreeFingerSlideEnabled",
-        val,
-    );
-    reg_set(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad",
-        "FourFingerSlideEnabled",
-        val,
-    );
-}
-
-fn set_game_bar_enabled(enabled: bool) {
-    let val = if enabled { "1" } else { "0" };
-    reg_set(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
-        "AppCaptureEnabled",
-        val,
-    );
-    reg_set(r"HKCU\System\GameConfigStore", "GameDVR_Enabled", val);
-    // Disable the Game Bar shell presence itself
-    reg_set(
-        r"HKCU\Software\Microsoft\GameBar",
-        "UseNexusForGameBarEnabled",
-        val,
-    );
-}
-
-// ── Crash recovery ────────────────────────────────────────────────────────────
-
-/// Clears registry lockdown left by a previous crashed session.
-/// Must be called before Tauri initialises so it completes before any
-/// enable_keyboard_intercept() call can race the restore.
-pub fn recover_registry_if_crashed() {
-    fn value_present(key: &str, name: &str) -> bool {
-        hidden_command("reg")
-            .args(["query", key, "/v", name])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .bounded_status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    // Both values are checked, not just DisableTaskMgr. A build at or before
-    // 2.0.7 also set `NoWinKeys`, and a machine killed while that was applied
-    // can be left with the Windows key dead but the task-manager policy
-    // already cleared — in which case the old single-value probe saw nothing
-    // wrong and left the candidate stuck.
-    let task_mgr_set = value_present(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-        "DisableTaskMgr",
-    );
-    let win_keys_set = value_present(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-        "NoWinKeys",
-    );
-    if task_mgr_set || win_keys_set {
-        eprintln!("AMS Access: crashed-session registry state detected — restoring");
-        apply_registry_policies(false);
-        set_game_bar_enabled(true);
-        set_touchpad_gestures_enabled(true);
-        let _ = disable_network_lockdown();
-        set_sleep_prevention(false);
-    }
+pub fn desktop_recovery_pending() -> bool {
+    !is_packaged() && registry_recovery::pending()
 }
 
 // ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
 pub fn lock_desktop() -> bool {
-    set_sleep_prevention(true);
-    // Packaged desktop apps virtualize HKCU writes into a private package
-    // hive. Those writes cannot control Task Manager, Game Bar, or touchpad
-    // gestures outside the package, so the Store build deliberately leaves
-    // the user's Windows settings untouched.
-    if !is_packaged() {
-        apply_registry_policies(true);
-        set_game_bar_enabled(false);
-        set_touchpad_gestures_enabled(false);
+    lock_desktop_checked().unwrap_or(false)
+}
+
+/// Registry/ownership errors cannot be waived as an unavailable keyboard hook.
+pub fn lock_desktop_checked() -> Result<bool, String> {
+    if !instance::owns_instance() {
+        return Err("Windows lockdown requires instance ownership".into());
     }
-
+    // MSIX virtualizes HKCU; packaged builds must not mutate these settings.
+    if !is_packaged() {
+        if let Err(error) = registry_recovery::engage() {
+            eprintln!("Windows registry lockdown failed: {error}");
+            if let Err(restore_error) = registry_recovery::restore() {
+                eprintln!("Windows registry rollback incomplete: {restore_error}");
+            }
+            return Err(format!("Windows registry lockdown failed: {error}"));
+        }
+    }
+    set_sleep_prevention(true);
     SHIELD_ACTIVE.store(true, Ordering::SeqCst);
-
-    let result = enable_keyboard_intercept();
-    result.active
+    // The caller decides whether unavailable keyboard interception is advisory
+    // and owns rollback when its entry policy requires the hook.
+    Ok(enable_keyboard_intercept().active)
 }
 
 pub fn unlock_desktop() {
-    set_sleep_prevention(false);
-    // The MSIX path changed none of these settings and must not overwrite the
-    // user's preferences during cleanup.
-    if !is_packaged() {
-        apply_registry_policies(false);
-        set_game_bar_enabled(true);
-        set_touchpad_gestures_enabled(true);
+    if !instance::owns_instance() {
+        return;
     }
+    set_sleep_prevention(false);
     SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
+    if let Err(error) = recover_registry_if_crashed() {
+        eprintln!("Windows registry restoration incomplete: {error}");
+    }
 }
 
 mod virtualization;
@@ -1317,6 +1212,9 @@ pub fn harden_dll_search_path() {
 ///
 /// Does NOT touch the global outbound policy so other processes keep internet.
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+    if !instance::owns_instance() {
+        return Err("Windows firewall changes require instance ownership".into());
+    }
     disable_network_lockdown()?; // Verified cleanup before replacing prior rules
 
     let exe = std::env::current_exe()
@@ -1419,6 +1317,9 @@ try {
 
 /// Remove AMS firewall rules and verify their absence before reporting recovery.
 pub fn disable_network_lockdown() -> Result<(), String> {
+    if !instance::owns_instance() {
+        return Err("Windows firewall recovery requires instance ownership".into());
+    }
     let _budget = Budget::new(std::time::Duration::from_secs(8));
     firewall_recovery::cleanup(
         |name| {

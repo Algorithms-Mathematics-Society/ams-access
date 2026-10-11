@@ -32,7 +32,17 @@ test("MSIX keeps proctor lockdown but does not write virtualized Windows policie
 
   assert.match(
     windows,
-    /if !is_packaged\(\) \{\s*apply_registry_policies\(true\);\s*set_game_bar_enabled\(false\);\s*set_touchpad_gestures_enabled\(false\);/s
+    /if !is_packaged\(\) \{\s*if let Err\(error\) = registry_recovery::engage\(\)/s
+  );
+  const recovery = windows.slice(
+    windows.indexOf("pub fn recover_registry_if_crashed()"),
+    windows.indexOf("pub fn desktop_recovery_pending()")
+  );
+  assert.match(recovery, /if is_packaged\(\) \{\s*return Ok\(\(\)\);/s);
+  assert.match(recovery, /registry_recovery::restore\(\)/);
+  assert.doesNotMatch(
+    windows,
+    /reg_delete_value|apply_registry_policies|set_game_bar_enabled|set_touchpad_gestures_enabled/
   );
   assert.match(windows, /SetWindowsHookExW/);
   assert.match(windows, /HOOK_INSTALLED\.load/);
@@ -62,9 +72,38 @@ test("Windows owns startup and teardown before recovering shared settings", asyn
   const ownedStartup = startup.slice(owner, builder);
   assert.match(ownedStartup, /instance::acquire\(wait\)/);
   assert.match(ownedStartup, /show_startup_error\(&error\);\s*return;/);
-  const recovery = ownedStartup.slice(ownedStartup.indexOf("recover_registry_if_crashed"), ownedStartup.indexOf('#[cfg(target_os = "macos")]'));
+  const recovery = ownedStartup.slice(
+    ownedStartup.indexOf("recover_registry_if_crashed"),
+    ownedStartup.indexOf('#[cfg(target_os = "macos")]')
+  );
   assert.match(recovery, /disable_network_lockdown\(\)/);
   assert.doesNotMatch(recovery, /thread::spawn/);
+});
+
+test("Windows restore failure stays visible and retry uses the journal", async () => {
+  const desktop = await read("apps/desktop/src-tauri/src/lib.rs");
+  const status = desktop.slice(
+    desktop.indexOf("fn lockdown_restore_status()"),
+    desktop.indexOf("fn get_lockdown_restore_status()")
+  );
+  assert.match(status, /cfg\(target_os = "windows"\)[\s\S]*?desktop_recovery_pending\(\)/);
+  const retry = desktop.slice(
+    desktop.indexOf("async fn retry_lockdown_restore("),
+    desktop.indexOf("async fn check_network_stability(")
+  );
+  assert.match(
+    retry,
+    /cfg\(target_os = "windows"\)[\s\S]*?!LOCKDOWN_ENGAGED[\s\S]*?owner\.stop\(&mut DesktopOperations::new\(app, false\)\)\?/
+  );
+  assert.match(
+    desktop,
+    /cfg\(target_os = "windows"\)\]\s*let protected = platform_rs::windows::lock_desktop_checked\(\)\?/
+  );
+  const release = desktop.slice(
+    desktop.indexOf("fn release_native_desktop()"),
+    desktop.indexOf("async fn engage_desktop(")
+  );
+  assert.match(release, /windows::desktop_recovery_pending\(\)[\s\S]*?return Err/);
 });
 
 test("CI installs, launches, and certification-checks the MSIX", async () => {

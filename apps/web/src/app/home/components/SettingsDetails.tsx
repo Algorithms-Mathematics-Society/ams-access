@@ -195,7 +195,11 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
             <Banner
               status="warning"
               title="Some settings are still changed"
-              description="AMS Access keeps retrying in the background. To fix one yourself, paste its command into Terminal."
+              description={
+                platform === "windows"
+                  ? "Some Windows settings could not be restored. Select Try again to retry. Changes made outside AMS Access will not be overwritten."
+                  : "AMS Access keeps retrying in the background. To fix one yourself, paste its command into Terminal."
+              }
             />
             <List hasDividers aria-label="Settings not yet restored">
               {unrestored.items.map((item) => (

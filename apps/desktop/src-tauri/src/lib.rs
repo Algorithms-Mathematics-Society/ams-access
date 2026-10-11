@@ -1663,7 +1663,7 @@ fn open_privacy_settings(section: String) -> Result<(), String> {
 }
 
 /// Desktop settings a lockdown changed and could not yet put back, with the
-/// command that fixes each by hand. Empty everywhere but macOS.
+/// command that fixes each by hand, where supported.
 #[derive(Serialize, Clone)]
 struct LockdownRestoreStatus {
     pending: bool,
@@ -1677,6 +1677,13 @@ struct UnrestoredSettingView {
 }
 
 fn lockdown_restore_status() -> LockdownRestoreStatus {
+    #[cfg(target_os = "windows")]
+    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        return LockdownRestoreStatus {
+            pending: platform_rs::windows::desktop_recovery_pending(),
+            items: vec![],
+        };
+    }
     // While an exam holds the lockdown its snapshot is on disk by design;
     // that is a lockdown in progress, not settings left behind.
     #[cfg(target_os = "macos")]
@@ -1707,8 +1714,10 @@ fn get_lockdown_restore_status() -> LockdownRestoreStatus {
 
 /// Try the restore again now, rather than waiting for the background retry.
 #[tauri::command]
-async fn retry_lockdown_restore() -> Result<LockdownRestoreStatus, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestoreStatus, String> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = &app;
+    tauri::async_runtime::spawn_blocking(move || {
         // Serialized with entry and teardown, and never during a live exam:
         // restoring then would hand the desktop back mid-contest.
         let _owner = lockdown_lifecycle()
@@ -1718,10 +1727,15 @@ async fn retry_lockdown_restore() -> Result<LockdownRestoreStatus, String> {
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
             let _ = platform_rs::macos::retry_restore();
         }
-        lockdown_restore_status()
+        #[cfg(target_os = "windows")]
+        if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+            let mut owner = _owner;
+            owner.stop(&mut DesktopOperations::new(app, false))?;
+        }
+        Ok(lockdown_restore_status())
     })
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?
 }
 
 /// Measure the configured server transport. DNS success and another public
@@ -2046,6 +2060,9 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
         }
         self.platform_attempted = true;
         let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+        #[cfg(target_os = "windows")]
+        let protected = platform_rs::windows::lock_desktop_checked()?;
+        #[cfg(not(target_os = "windows"))]
         let protected = platform_dispatch!(lock_desktop(), else false);
         // Organizer exceptions may waive unavailable keyboard interception,
         // but cannot waive a failed recovery snapshot or incomplete OS command.
@@ -2126,6 +2143,12 @@ fn release_native_desktop() -> Result<(), String> {
         return Err(format!(
             "Desktop restoration could not complete: {error}. Retry Restore system settings."
         ));
+    }
+    #[cfg(target_os = "windows")]
+    if platform_rs::windows::desktop_recovery_pending() {
+        return Err(
+            "Some Windows settings could not be restored. Retry Restore system settings; changes made outside AMS Access will not be overwritten.".into(),
+        );
     }
     #[cfg(target_os = "linux")]
     if platform_rs::linux::keyboard_recovery_pending() {
@@ -3191,7 +3214,9 @@ pub fn run() {
     };
     #[cfg(target_os = "windows")]
     {
-        platform_rs::windows::recover_registry_if_crashed();
+        if let Err(error) = platform_rs::windows::recover_registry_if_crashed() {
+            eprintln!("Windows startup registry recovery incomplete: {error}");
+        }
         // Finish stale-rule cleanup before entry can create new rules. A
         // detached cleanup could otherwise remove this instance's own lockdown.
         if let Err(error) = platform_rs::windows::disable_network_lockdown() {
