@@ -6,6 +6,8 @@ use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+pub mod instance;
+
 /// CreateProcess flag that suppresses the console window of a child process.
 /// Without it, every console helper we shell out to (tasklist, reg, netsh,
 /// taskkill, systeminfo) flashes a black cmd window — and because the live scan

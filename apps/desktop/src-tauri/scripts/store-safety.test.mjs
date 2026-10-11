@@ -51,6 +51,22 @@ test("MSIX keeps proctor lockdown but does not write virtualized Windows policie
   assert.doesNotMatch(manifest, /RegistryWriteVirtualization/);
 });
 
+test("Windows owns startup and teardown before recovering shared settings", async () => {
+  const desktop = await read("apps/desktop/src-tauri/src/lib.rs");
+  const startup = desktop.slice(desktop.indexOf("pub fn run()"));
+  const owner = startup.indexOf("let _windows_instance");
+  const recover = startup.indexOf("platform_rs::windows::recover_registry_if_crashed()");
+  const builder = startup.indexOf("tauri::Builder::default()");
+  assert.ok(startup.indexOf("platform_rs::windows::relaunch_as_admin()") < owner);
+  assert.ok(owner > 0 && recover > owner && builder > recover);
+  const ownedStartup = startup.slice(owner, builder);
+  assert.match(ownedStartup, /instance::acquire\(wait\)/);
+  assert.match(ownedStartup, /show_startup_error\(&error\);\s*return;/);
+  const recovery = ownedStartup.slice(ownedStartup.indexOf("recover_registry_if_crashed"), ownedStartup.indexOf('#[cfg(target_os = "macos")]'));
+  assert.match(recovery, /disable_network_lockdown\(\)/);
+  assert.doesNotMatch(recovery, /thread::spawn/);
+});
+
 test("CI installs, launches, and certification-checks the MSIX", async () => {
   const ci = await read(".github/workflows/ci.yml");
   assert.match(ci, /build-msix\.ps1 -SelfSign/);

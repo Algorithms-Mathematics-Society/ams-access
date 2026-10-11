@@ -3132,19 +3132,6 @@ pub fn run() {
     // startup; a tokenless disable from here would be rejected anyway.
     #[cfg(target_os = "linux")]
     platform_rs::linux::recover_keyboard_if_crashed();
-    #[cfg(target_os = "windows")]
-    {
-        platform_rs::windows::recover_registry_if_crashed();
-        // AMS_PROCTOR firewall rules persist across a crash BY DESIGN (a crash
-        // must not restore internet mid-exam), but at process start no exam can
-        // be active, so any still-present rule is a leftover that would strand the
-        // candidate offline. Flush in the background; idempotent / no-op if no
-        // rules exist. Mirrors the Linux path above. lock_desktop re-applies the
-        // firewall when a real exam starts.
-        std::thread::spawn(|| {
-            let _ = platform_rs::windows::disable_network_lockdown();
-        });
-    }
 
     // Auto-elevate on Windows: full exam lockdown (firewall, registry, taskkill)
     // requires Administrator. Rather than make the candidate discover the Resolve
@@ -3181,6 +3168,34 @@ pub fn run() {
                      will offer Relaunch as Administrator"
                 ),
             }
+        }
+    }
+
+    // Elevation must finish before acquiring ownership. A relaunched child
+    // waits for the old process to finish cleanup and release its kernel mutex.
+    #[cfg(target_os = "windows")]
+    let _windows_instance = {
+        let wait = if std::env::args().any(|arg| arg == platform_rs::windows::RELAUNCH_MARKER) {
+            Duration::from_secs(30)
+        } else {
+            Duration::ZERO
+        };
+        match platform_rs::windows::instance::acquire(wait) {
+            Ok(owner) => owner,
+            Err(error) => {
+                eprintln!("AMS Access: {error}");
+                platform_rs::windows::instance::show_startup_error(&error);
+                return;
+            }
+        }
+    };
+    #[cfg(target_os = "windows")]
+    {
+        platform_rs::windows::recover_registry_if_crashed();
+        // Finish stale-rule cleanup before entry can create new rules. A
+        // detached cleanup could otherwise remove this instance's own lockdown.
+        if let Err(error) = platform_rs::windows::disable_network_lockdown() {
+            eprintln!("Windows startup firewall recovery incomplete: {error}");
         }
     }
 
