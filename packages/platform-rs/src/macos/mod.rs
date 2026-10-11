@@ -1709,6 +1709,10 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
         return Err("helper_not_installed".to_string());
     }
 
+    // Marker-first: if the app or helper dies after the rules land, the
+    // marker is what lets a later restore know the firewall may be active.
+    write_lockdown_marker().map_err(|e| format!("write lockdown marker: {e}"))?;
+
     let request = serde_json::json!({
         "cmd": "enable",
         "ips": allowed_ips,
@@ -1721,10 +1725,75 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 /// Lift the network lockdown via the privileged helper.
 pub fn disable_network_lockdown() -> Result<(), String> {
     if !network_helper_running() {
-        // Nothing to flush — helper isn't running, rules can't be active.
-        return Ok(());
+        // pf rules outlive the helper, so an unreachable helper only means
+        // "nothing to flush" when no lockdown was recorded this boot.
+        return if lockdown_marker_may_exist() {
+            Err(format!(
+                "{HELPER_RULES_MAY_PERSIST}: network helper is not reachable"
+            ))
+        } else {
+            Ok(())
+        };
     }
-    helper_send(r#"{"cmd":"disable"}"#)
+    helper_send(r#"{"cmd":"disable"}"#)?;
+    clear_lockdown_marker().map_err(|e| format!("network restored but marker cleanup failed: {e}"))
+}
+
+/// Error prefix when the helper is down but a lockdown was recorded.
+const HELPER_RULES_MAY_PERSIST: &str = "helper_unreachable_rules_may_persist";
+
+/// Written by the app (not the root helper) so it can be read without
+/// privileges. Holds the boot time: pf rules do not survive a reboot, so a
+/// marker from an earlier boot is stale.
+fn lockdown_marker_path() -> Option<std::path::PathBuf> {
+    home_dir().map(|h| h.join("Library/Application Support/AMS Access/network-lockdown.marker"))
+}
+
+fn boot_time() -> Option<String> {
+    Command::new("sysctl")
+        .args(["-n", "kern.boottime"])
+        .bounded_output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn write_lockdown_marker() -> std::io::Result<()> {
+    let path = lockdown_marker_path().ok_or_else(|| std::io::Error::other("HOME is not set"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, boot_time().unwrap_or_default())
+}
+
+fn clear_lockdown_marker() -> std::io::Result<()> {
+    let Some(path) = lockdown_marker_path() else {
+        return Ok(());
+    };
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Fail-closed: only a definite absence, or a marker from a previous boot,
+/// permits treating the firewall as clear. Anything unreadable counts as active.
+fn lockdown_marker_may_exist() -> bool {
+    let Some(path) = lockdown_marker_path() else {
+        return true;
+    };
+    match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+        Ok(recorded) => {
+            let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && recorded != now);
+            if stale {
+                let _ = clear_lockdown_marker();
+            }
+            !stale
+        }
+    }
 }
 
 // ── Screen recording detection ────────────────────────────────────────────────
