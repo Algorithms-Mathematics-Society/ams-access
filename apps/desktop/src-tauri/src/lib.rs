@@ -2500,9 +2500,10 @@ fn get_proctoring_log_now(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
     recent_event_history(&app, "proctoring", entries)
 }
 
-/// Lock outbound network to `allowed_domains` only (resolved to IPs at call time).
-/// Rules are applied at the OS firewall level and persist until `disable_network_lockdown`
-/// is explicitly called — intentional, so an app crash does not restore internet access.
+/// Restrict outbound destinations for the native executable to `allowed_domains`
+/// (resolved to IPs at call time). On Windows, these program-scoped firewall rules
+/// do not cover WebView2 processes, so success does not mean renderer egress is locked down.
+/// Rules persist until `disable_network_lockdown` is called.
 #[tauri::command]
 async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, String> {
     // A build that never asked for elevation cannot raise a firewall, so say
