@@ -136,6 +136,35 @@ test("Windows capture affinity outcomes are recorded and remain advisory", async
   assert.match(stage, /capture\?\.status === "exclusion" \? "pass" : "warn"/);
 });
 
+test("Windows firewall installation is scoped, validated and serialized with cleanup", async () => {
+  const [windows, desktop] = await Promise.all([
+    read("packages/platform-rs/src/windows/mod.rs"),
+    read("apps/desktop/src-tauri/src/lib.rs"),
+  ]);
+  const enable = windows.slice(
+    windows.indexOf("pub fn enable_network_lockdown("),
+    windows.indexOf("mod firewall_policy;")
+  );
+  assert.ok(
+    enable.indexOf("firewall_policy::plan(allowed_ips)?") <
+      enable.indexOf("firewall_policy::install_with(")
+  );
+  assert.match(enable, /NETWORK_POLICY_LOCK\s*\.lock\(\)/);
+  assert.match(enable, /remoteip=\{addresses\}/);
+  assert.match(enable, /std::thread::spawn\(disable_network_lockdown_unlocked\)/);
+  assert.match(enable, /program=/);
+  const disable = windows.slice(
+    windows.indexOf("pub fn disable_network_lockdown()"),
+    windows.indexOf("fn disable_network_lockdown_unlocked()")
+  );
+  assert.match(disable, /NETWORK_POLICY_LOCK\s*\.lock\(\)/);
+  assert.doesNotMatch(enable, /set.*firewallpolicy|outbound.*block/i);
+  assert.match(
+    desktop,
+    /cfg\(target_os = "windows"\)\]\s*if !WANTS_FIREWALL \{\s*return Ok\(false\);/
+  );
+});
+
 test("CI installs, launches, and certification-checks the MSIX", async () => {
   const ci = await read(".github/workflows/ci.yml");
   assert.match(ci, /build-msix\.ps1 -SelfSign/);

@@ -1179,92 +1179,64 @@ pub fn harden_dll_search_path() {
 
 // ── Network lockdown (process-scoped, not global policy) ─────────────────────
 
-/// Scopes outbound firewall to this process only, allows only `allowed_ips`.
-///
-/// Uses a specific BLOCK rule for this exe plus per-IP ALLOW rules. Windows
-/// Firewall resolves specificity conflicts in favour of the more constrained
-/// rule, so ALLOW(exe → specific-ip) wins over BLOCK(exe → any).
-///
-/// Does NOT touch the global outbound policy so other processes keep internet.
+static NETWORK_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Restrict this executable's outbound destinations without overlapping blocks
+/// and allows: explicit Windows firewall blocks always take precedence.
+/// Other processes, including WebView2 children, are not covered by this rule.
+/// The global outbound policy remains unchanged.
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     if !instance::owns_instance() {
         return Err("Windows firewall changes require instance ownership".into());
     }
-    disable_network_lockdown()?; // Verified cleanup before replacing prior rules
-
-    let exe = std::env::current_exe()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .into_owned();
-
-    // netsh needs program="path with spaces"; wrap value in embedded quotes
-    let program_arg = format!("program=\"{}\"", exe);
-
-    // Block-all outbound rule for this exe
-    let out = hidden_command("netsh")
-        .args([
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
-            "name=AMS_PROCTOR_BLOCK_ALL",
-            "dir=out",
-            "action=block",
-            "enable=yes",
-            "profile=any",
-            &program_arg,
-        ])
-        .bounded_output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(format!(
-            "netsh block-all failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    // Per-IP allow rules — more specific than BLOCK_ALL so they win
-    for ip in allowed_ips {
-        // Upstream (lib.rs) already validates via parse::<IpAddr>() or to_socket_addrs().
-        // We re-validate here as a safety net. Critically, use parse::<IpAddr>() not a
-        // char-set check — the char-set approach rejects valid IPv6 addresses containing
-        // hex letters (a-f), e.g. 2607:f8b0:4004:c09::71 fails is_ascii_digit().
-        if ip.parse::<std::net::IpAddr>().is_err() {
-            continue;
-        }
-        let out = hidden_command("netsh")
-            .args([
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=AMS_PROCTOR_ALLOW",
-                "dir=out",
-                "action=allow",
-                "enable=yes",
-                "profile=any",
-                &format!("remoteip={}", ip),
-                &program_arg,
-            ])
-            .bounded_output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(format!(
-                "netsh allow {} failed: {}",
-                ip,
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        }
-    }
-
-    // IPv6: the BLOCK_ALL rule has no remoteip filter, so netsh applies it to all traffic
-    // regardless of IP version — no separate ::/0 block rule is needed.
-    // IPv6 ALLOW rules are added above when lib.rs resolves both A and AAAA records via
-    // to_socket_addrs(), which returns both IPv4 and IPv6 addresses.
-
-    Ok(())
+    // Validate before removing any existing policy.
+    let plan = firewall_policy::plan(allowed_ips)?;
+    let _policy_owner = NETWORK_POLICY_LOCK
+        .lock()
+        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let program_arg = format!("program=\"{}\"", exe.to_string_lossy());
+    firewall_policy::install_with(
+        &plan,
+        disable_network_lockdown_unlocked,
+        |action, name, addresses| {
+            let output = hidden_command("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    &format!("name={name}"),
+                    "dir=out",
+                    &format!("action={action}"),
+                    "enable=yes",
+                    "profile=any",
+                    &format!("remoteip={addresses}"),
+                    &program_arg,
+                ])
+                .bounded_output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "netsh {action} failed: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        },
+        || {
+            // A timed-out creation may have exhausted this thread's budget.
+            // Give verified rollback its own bounded cleanup worker.
+            std::thread::spawn(disable_network_lockdown_unlocked)
+                .join()
+                .unwrap_or_else(|_| Err("Windows firewall rollback worker failed".into()))
+        },
+    )
 }
 
+mod firewall_policy;
 mod firewall_recovery;
 
 // Read actual INetFwRule.Name values, not localized netsh display text. Keep COM
@@ -1295,6 +1267,15 @@ pub fn disable_network_lockdown() -> Result<(), String> {
     if !instance::owns_instance() {
         return Err("Windows firewall recovery requires instance ownership".into());
     }
+    let _policy_owner = NETWORK_POLICY_LOCK
+        .lock()
+        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    disable_network_lockdown_unlocked()
+}
+
+// The public operation retains NETWORK_POLICY_LOCK through installation and
+// rollback, including when the bounded rollback runs on a separate worker.
+fn disable_network_lockdown_unlocked() -> Result<(), String> {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
     firewall_recovery::cleanup(
         |name| {
