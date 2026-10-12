@@ -1424,6 +1424,19 @@ fn detect_screen_capture_active() -> bool {
     false
 }
 
+/// Read passive Windows hook-delivery evidence without installing a hook.
+#[tauri::command]
+fn get_windows_hook_diagnostics() -> Option<serde_json::Value> {
+    #[cfg(target_os = "windows")]
+    {
+        serde_json::to_value(platform_rs::windows::keyboard_hook_delivery_diagnostics()).ok()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 /// Request best-effort Windows window display affinity; retain the legacy bool IPC.
 #[tauri::command]
 fn apply_capture_protection(app: tauri::AppHandle) -> bool {
@@ -3309,6 +3322,7 @@ pub fn run() {
             detect_screen_capture_active,
             apply_capture_protection,
             get_windows_capture_protection_status,
+            get_windows_hook_diagnostics,
             set_escape_blocked,
             configure_event_stream,
             get_lockdown_restore_status,

@@ -22,3 +22,8 @@ mod macos_lockdown_recovery_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 #[path = "windows/firewall_recovery.rs"]
 mod windows_firewall_recovery_tests;
+
+// Test callback-delivery classification without installing a native hook.
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/hook_delivery.rs"]
+mod windows_hook_delivery_tests;

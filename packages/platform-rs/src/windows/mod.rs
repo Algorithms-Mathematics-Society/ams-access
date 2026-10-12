@@ -6,8 +6,14 @@ use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+mod hook_delivery;
 pub mod instance;
 mod registry_recovery;
+pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
+
+thread_local! {
+    static HOOK_CALLBACK_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 /// CreateProcess flag that suppresses the console window of a child process.
 /// Without it, every console helper we shell out to (tasklist, reg, netsh,
@@ -29,6 +35,7 @@ static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
 // must key on this rather than on HOOK_ACTIVE, which represents requested
 // state and becomes true before the hook thread has initialized.
 static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
+static HOOK_INSTALL_FAILED: AtomicBool = AtomicBool::new(false);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
@@ -817,15 +824,16 @@ pub fn detect_rdp_server() -> bool {
 
 // ── Keyboard intercept ────────────────────────────────────────────────────────
 
-fn spawn_hook_thread() {
+fn spawn_hook_thread(generation: u64) {
     HOOK_STARTING.store(true, Ordering::SeqCst);
     HOOK_INSTALLED.store(false, Ordering::SeqCst);
-    std::thread::spawn(|| {
+    std::thread::spawn(move || {
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::WindowsAndMessaging::{
             GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL,
         };
 
+        HOOK_CALLBACK_GENERATION.with(|slot| slot.set(generation));
         let tid = unsafe { GetCurrentThreadId() };
         HOOK_THREAD_ID.store(tid, Ordering::SeqCst);
         HOOK_STARTING.store(false, Ordering::SeqCst);
@@ -836,6 +844,7 @@ fn spawn_hook_thread() {
                 Err(_) => {
                     HOOK_ACTIVE.store(false, Ordering::SeqCst);
                     HOOK_INSTALLED.store(false, Ordering::SeqCst);
+                    HOOK_INSTALL_FAILED.store(true, Ordering::SeqCst);
                     HOOK_THREAD_ID.store(0, Ordering::SeqCst);
                     HOOK_STARTING.store(false, Ordering::SeqCst); // unblock watchdog startup poll
                     return;
@@ -878,7 +887,9 @@ fn spawn_hook_watchdog() {
             // TID==0 and not in startup window => thread died unexpectedly
             if HOOK_THREAD_ID.load(Ordering::SeqCst) == 0 && !HOOK_STARTING.load(Ordering::SeqCst) {
                 eprintln!("AMS Access: WH_KEYBOARD_LL hook thread died — respawning");
-                spawn_hook_thread();
+                let generation = hook_delivery::reset_session();
+                HOOK_INSTALL_FAILED.store(false, Ordering::SeqCst);
+                spawn_hook_thread(generation);
                 // Spin until new thread registers its TID before next watchdog check
                 let respawn_deadline =
                     std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -902,8 +913,10 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         };
     }
     HOOK_ACTIVE.store(true, Ordering::SeqCst);
+    let generation = hook_delivery::reset_session();
+    HOOK_INSTALL_FAILED.store(false, Ordering::SeqCst);
     set_sleep_prevention(true);
-    spawn_hook_thread();
+    spawn_hook_thread(generation);
 
     // Do not report readiness until the hook thread has actually installed
     // WH_KEYBOARD_LL. Previously this returned true immediately after spawn,
@@ -928,6 +941,18 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         method: "ll-keyboard-hook".to_string(),
         platform: "windows".to_string(),
     }
+}
+
+/// Return passive evidence of callback delivery. An installed hook with no
+/// callbacks is reported as unverified, never as dead based on elapsed time.
+pub fn keyboard_hook_delivery_diagnostics() -> DeliverySnapshot {
+    hook_delivery::snapshot(
+        HOOK_ACTIVE.load(Ordering::SeqCst),
+        HOOK_INSTALLED.load(Ordering::SeqCst),
+        HOOK_THREAD_ID.load(Ordering::SeqCst) != 0,
+        HOOK_STARTING.load(Ordering::SeqCst),
+        HOOK_INSTALL_FAILED.load(Ordering::SeqCst),
+    )
 }
 
 pub fn disable_keyboard_intercept() {
@@ -1012,6 +1037,9 @@ unsafe extern "system" fn kbproc(
         CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_INJECTED,
     };
 
+    HOOK_CALLBACK_GENERATION.with(|generation| {
+        hook_delivery::record_callback(generation.get());
+    });
     if code >= 0 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let vk = kb.vkCode;
