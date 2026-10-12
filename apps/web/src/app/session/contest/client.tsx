@@ -383,6 +383,11 @@ export default function ContestPageClient() {
   // Problems whose editor was opened from this device's local buffer rather
   // than the server's draft, so the candidate can be told.
   const [restoredFromDevice, setRestoredFromDevice] = useState<string[]>([]);
+  // Problems whose latest local write failed (quota, blocked storage). Their
+  // only copy is the in-memory editor. The ref is read by the finish path,
+  // which runs after awaits and would otherwise see a stale closure.
+  const [unsavedOnDevice, setUnsavedOnDevice] = useState<string[]>([]);
+  const unsavedOnDeviceRef = useRef<string[]>([]);
   // Per-problem autosave revision. A ref rather than state: it is read and
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
@@ -1373,15 +1378,11 @@ export default function ContestPageClient() {
     const runVisit = runVisitRef.current;
     setSubmitError(null);
 
-    // Persist the current code before dispatching to the judge.
-    const savedOk = await handleSave();
+    // Persist the current code before dispatching to the judge. A failed
+    // device write is surfaced by the draft status; it does not block a run,
+    // which sends the source to the judge directly.
+    await handleSave();
     if (runVisit !== runVisitRef.current) return;
-    if (!savedOk) {
-      runInFlightRef.current = false;
-      setIsRunning(false);
-      setRunError("Save failed — check your connection and retry.");
-      return;
-    }
 
     // Dispatch the run. Unscored, judged against the samples only, and at a
     // higher priority than submissions — feedback that arrives after the
@@ -1470,18 +1471,18 @@ export default function ContestPageClient() {
     // attempts row to navigate to.
   }
 
-  // Persist the current editor content locally so an unconfirmed network save
-  // is never data loss. Best-effort: storage failures (quota, private mode)
-  // must never throw into the save/submit/exit paths.
+  // Persist the current editor content locally. Storage failures (quota,
+  // private mode) must never throw into the save/submit/exit paths, but they
+  // are returned and recorded: this buffer is the only copy of the draft.
   //
   // Unlike before, this is *read back* — see `restoreAnswer` in the bootstrap.
   // It previously wrote a key nothing consulted, while the UI told candidates
   // their work was saved locally.
-  function writeLocalAnswerBuffer() {
-    if (!sessionId) return;
+  function writeLocalAnswerBuffer(): boolean {
+    if (!sessionId) return false;
     const qId = questions[activeQ]?.id;
-    if (!qId) return;
-    writeAnswerBuffer(localStorage, sessionId, qId, {
+    if (!qId) return false;
+    const saved = writeAnswerBuffer(localStorage, sessionId, qId, {
       language: toLanguageId(selectedLanguage),
       // Every tab, not just the active one. Scratch tabs were persisted
       // nowhere at all — not locally and not on the server, which only ever
@@ -1491,6 +1492,13 @@ export default function ContestPageClient() {
       savedAtMs: Date.now(),
       revision: draftRevisionsRef.current[qId] ?? 0,
     });
+    const previous = unsavedOnDeviceRef.current;
+    if (previous.includes(qId) === saved) {
+      const next = saved ? previous.filter((id) => id !== qId) : [...previous, qId];
+      unsavedOnDeviceRef.current = next;
+      setUnsavedOnDevice(next);
+    }
+    return saved;
   }
 
   function clearLocalAnswerBuffer(questionId: string) {
@@ -1513,7 +1521,8 @@ export default function ContestPageClient() {
   async function doSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) return false;
     const qId = questions[activeQ].id;
-    writeLocalAnswerBuffer();
+    // A failed write leaves the work dirty: nothing durable holds it.
+    if (!writeLocalAnswerBuffer()) return false;
     setSavedAnswers((prev) => ({
       ...prev,
       [qId]: {
@@ -1656,10 +1665,11 @@ export default function ContestPageClient() {
             ),
         })
       : { confirmed: false, draftSaved: false };
-    setFinalDraftSaved(receipt.draftSaved);
-    if (!receipt.draftSaved)
+    const draftSaved = receipt.draftSaved && unsavedOnDeviceRef.current.length === 0;
+    setFinalDraftSaved(draftSaved);
+    if (!draftSaved)
       setSubmitWarning(
-        "We could not confirm the latest draft was saved to the server. Previously acknowledged submissions are separate from draft saves."
+        "The latest draft could not be saved on this device. Previously acknowledged submissions are separate from draft saves."
       );
     try {
       await runExitTeardown();
@@ -2425,10 +2435,11 @@ export default function ContestPageClient() {
   // never sees an alarming "unsaved" warning. Any pending or in-flight write reads
   // "Saving…"; once persisted it reads "All changes saved"; only a real failure is
   // surfaced (and the debounced autosave keeps retrying in the background).
-  // Nothing can fail and nothing is ever in flight: the write is a synchronous
-  // localStorage put. The indicator exists only to say so.
+  // Nothing is ever in flight: the write is a synchronous localStorage put.
+  // It can still fail (quota, blocked storage), and then it must not say saved.
+  const activeUnsavedOnDevice = unsavedOnDevice.includes(currentQId);
   const saveIndicator = deriveSaveIndicator({
-    saveError: null,
+    saveError: activeUnsavedOnDevice ? "Not saved on this device" : null,
     saving: false,
     hasUnsavedChanges: false,
   });
@@ -2521,7 +2532,7 @@ export default function ContestPageClient() {
       ? (testResults[runResultAttemptId] ?? null)
       : null;
   const latestAttempt = submissionsList[0] ?? null;
-  const activeDraftStatus = draftStatus();
+  const activeDraftStatus = draftStatus(!activeUnsavedOnDevice);
   const submissionSource = latestAttempt ? submittedSources[latestAttempt.id] : undefined;
   const compilerText = runResult ? runResult.compile_output : latestAttempt?.compile_output;
   const compilerDiagnostic = useMemo(
@@ -2590,7 +2601,8 @@ export default function ContestPageClient() {
         (sub) => sub.status === "QUEUED" || sub.status === "RUNNING"
       );
       const hasAttempt = attempts.length > 0;
-      const isActiveUnsaved = q.id === currentQId && hasUnsavedChanges;
+      const isActiveUnsaved =
+        (q.id === currentQId && hasUnsavedChanges) || unsavedOnDevice.includes(q.id);
       if (hasAccepted) {
         map[q.id] = {
           label: "Accepted submission",
@@ -2644,7 +2656,14 @@ export default function ContestPageClient() {
       }
     }
     return map;
-  }, [currentQId, hasUnsavedChanges, questions, savedAnswers, submissionsByQuestion]);
+  }, [
+    currentQId,
+    hasUnsavedChanges,
+    questions,
+    savedAnswers,
+    submissionsByQuestion,
+    unsavedOnDevice,
+  ]);
   const attemptedQuestionCount = questions.filter(
     (q) => (submissionsByQuestion[q.id] ?? []).length > 0
   ).length;
@@ -2789,8 +2808,15 @@ export default function ContestPageClient() {
               (sub) => (sub.final_verdict ?? sub.status) === "AC"
             ),
           }))}
-          finishDraftStatus={`${activeFile?.name ?? "Active file"}: ${activeDraftStatus.label}. Other tabs are not included in this server draft.`}
-          finishDraftNeedsAttention={!activeDraftStatus.confirmed}
+          finishDraftStatus={
+            unsavedOnDevice.length
+              ? `Not saved on this device: ${questions
+                  .filter((q) => unsavedOnDevice.includes(q.id))
+                  .map((q) => q.title)
+                  .join(", ")}. That code exists only in the open editor.`
+              : "Drafts: Saved on this device."
+          }
+          finishDraftNeedsAttention={unsavedOnDevice.length > 0}
           finishReviewSuspended={
             criticalOverlayActive ||
             showSupportModal ||
@@ -2868,13 +2894,21 @@ export default function ContestPageClient() {
                     status="info"
                     container="section"
                     title="Draft restored from this device"
-                    description={`Review the recovered code. ${activeDraftStatus.confirmed ? "This active file now matches the server draft." : "Its latest server save is not yet confirmed."}`}
+                    description={`Review the recovered code. ${activeDraftStatus.confirmed ? "It is saved on this device." : "Your latest changes are not yet saved on this device."}`}
                     isDismissable
                     onDismiss={() => setDismissedRecoveryQuestions((prev) => [...prev, currentQId])}
                   />
                 </RecoveryBannerRegion>
               )}
             </AnimatePresence>
+            {activeUnsavedOnDevice && (
+              <Banner
+                status="error"
+                container="section"
+                title="Your code is not saved"
+                description="This device refused to store your draft (storage full or blocked). Your code is still in the editor: do not reload or close this window. Saving is retried on every change."
+              />
+            )}
             <EditorPanel
               diagnosticNavigation={diagnosticNavigation}
               editorFiles={editorFiles}

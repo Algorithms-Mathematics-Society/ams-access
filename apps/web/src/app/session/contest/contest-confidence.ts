@@ -9,23 +9,25 @@ export function sameSource(a: SourceSnapshot | null | undefined, b: SourceSnapsh
  * Where the candidate's work currently is.
  *
  * Drafts are not sent to the server. They are written to this device on every
- * change and read back on restart, so there is no in-flight state to report
- * and no failure mode to warn about — which is the point: the old version
- * could put "Server save not confirmed · retrying" in front of someone
- * mid-contest about code that was never at risk, and a flaky connection made
- * that a routine sight rather than an alarming one.
+ * change and read back on restart, so the network is never a failure mode.
+ * The device is: a full or blocked store means the draft exists only in the
+ * open editor, and saying "Saved" then would hide the loss of the only copy.
  *
  * Kept as a function rather than inlined so the footer keeps one place to ask,
  * and so restoring server drafts later means changing this and nothing else.
  */
-export function draftStatus(): { label: string; confirmed: boolean } {
-  return { label: "Saved on this device", confirmed: true };
+export function draftStatus(savedOnDevice = true): { label: string; confirmed: boolean } {
+  return savedOnDevice
+    ? { label: "Saved on this device", confirmed: true }
+    : { label: "Not saved on this device", confirmed: false };
 }
 
 export function submissionComparison(current: SourceSnapshot, submitted?: SourceSnapshot): string {
   // Historical API records omit source. Absence must never imply a match.
   if (!submitted) return "";
-  return sameSource(submitted, current) ? "Current code matches" : "Code or language changed since submission";
+  return sameSource(submitted, current)
+    ? "Current code matches"
+    : "Code or language changed since submission";
 }
 
 export type FinishReceipt = { confirmed: boolean; draftSaved: boolean };
@@ -40,7 +42,9 @@ export async function requestFinish(deps: {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       draftSaved = (await deps.save()) || draftSaved;
-    } catch { /* A later failed retry cannot erase an acknowledged, locked-source save. */ }
+    } catch {
+      /* A later failed retry cannot erase an acknowledged, locked-source save. */
+    }
     try {
       const response = await deps.finish();
       if (response.ok) return { confirmed: true, draftSaved };
@@ -49,7 +53,9 @@ export async function requestFinish(deps: {
       if (code === "SESSION_ALREADY_SUBMITTED") return { confirmed: true, draftSaved };
       // A deadline being over does not acknowledge this request or its drafts.
       if (code === "CONTEST_ENDED") return { confirmed: false, draftSaved };
-    } catch { /* Bounded retry; never claim there is a background uploader. */ }
+    } catch {
+      /* Bounded retry; never claim there is a background uploader. */
+    }
     if (attempt < 3) await deps.wait(attempt);
   }
   return { confirmed: false, draftSaved };
