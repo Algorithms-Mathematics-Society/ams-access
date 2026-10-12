@@ -1919,6 +1919,10 @@ export default function ContestPageClient() {
           )
         ) {
           handleContestExpiry();
+        } else {
+          // A locally rung bell is provisional. The server, on a clock just
+          // re-synced from this response, says time remains — so it does.
+          setBellRung(false);
         }
 
         if (live.status === "terminated") {
