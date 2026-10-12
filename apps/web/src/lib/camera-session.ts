@@ -83,6 +83,8 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   // Bumped by release(). An open still in flight when the exam ends must not
   // turn the camera back on afterwards: it stops what it got and fails.
   let generation = 0;
+  let pendingVideo: Promise<void> | null = null;
+  let pendingAudio: Promise<void> | null = null;
 
   function announce(next: CameraStatus) {
     if (next === status) return;
@@ -128,6 +130,28 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
     }
   }
 
+  function openTrack(kind: "video" | "audio", opened: number): Promise<void> {
+    const md = deps.mediaDevices!;
+    const request =
+      kind === "video"
+        ? md.getUserMedia({ video: VIDEO_CONSTRAINTS })
+        : md.getUserMedia({ audio: true });
+    return request.then((stream) => {
+      const track = kind === "video" ? stream.getVideoTracks()[0] : stream.getAudioTracks()[0];
+      // A grant can arrive after release, or contain tracks we did not ask for.
+      for (const granted of stream.getTracks()) {
+        if (opened !== generation || granted !== track) granted.stop();
+      }
+      if (opened !== generation) throw new Error("Camera released");
+      if (!track || !isTrackUsable(track)) {
+        track?.stop();
+        if (kind === "video") throw new Error("Camera opened without a video track");
+        return;
+      }
+      adopt(track, kind);
+    });
+  }
+
   function assemble(wantAudio: boolean): MediaStream {
     const tracks: MediaStreamTrack[] = [];
     if (videoTrack) tracks.push(videoTrack);
@@ -140,34 +164,53 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       const md = deps.mediaDevices;
       if (!md) throw new Error("Camera not available on this device");
       const opened = generation;
-      const stale = (stream: MediaStream) => {
-        if (opened === generation) return false;
-        stream.getTracks().forEach((track) => track.stop());
-        return true;
-      };
       attachDeviceListener();
 
       if (!isTrackUsable(videoTrack ?? undefined)) {
-        videoTrack?.stop();
-        videoTrack = null;
-        const stream = await md.getUserMedia({ video: VIDEO_CONSTRAINTS });
-        if (stale(stream)) throw new Error("Camera released");
-        const track = stream.getVideoTracks()[0];
-        if (!track) throw new Error("Camera opened without a video track");
-        adopt(track, "video");
+        if (!pendingVideo) {
+          videoTrack?.stop();
+          videoTrack = null;
+          const pending = openTrack("video", opened);
+          pendingVideo = pending;
+          pending.then(
+            () => {
+              if (pendingVideo === pending) pendingVideo = null;
+            },
+            () => {
+              if (pendingVideo === pending) pendingVideo = null;
+            }
+          );
+        }
+        try {
+          await pendingVideo;
+        } catch (error) {
+          if (opened !== generation) throw new Error("Camera released");
+          throw error;
+        }
+        if (opened !== generation) throw new Error("Camera released");
       }
 
       // Audio is a separate open on purpose: onboarding asks for the camera
       // several stages before it asks for the microphone, and merging them
       // would move the microphone permission prompt to the camera stage.
       if (options.audio && !isTrackUsable(audioTrack ?? undefined)) {
-        audioTrack?.stop();
-        audioTrack = null;
+        if (!pendingAudio) {
+          audioTrack?.stop();
+          audioTrack = null;
+          const pending = openTrack("audio", opened);
+          pendingAudio = pending;
+          pending.then(
+            () => {
+              if (pendingAudio === pending) pendingAudio = null;
+            },
+            () => {
+              if (pendingAudio === pending) pendingAudio = null;
+            }
+          );
+        }
         try {
-          const stream = await md.getUserMedia({ audio: true });
-          if (stale(stream)) throw new Error("Camera released");
-          const track = stream.getAudioTracks()[0];
-          if (track) adopt(track, "audio");
+          await pendingAudio;
+          if (opened !== generation) throw new Error("Camera released");
         } catch {
           if (opened !== generation) throw new Error("Camera released");
           // The microphone is advisory (its own stage warns rather than
@@ -195,6 +238,8 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
 
     release() {
       generation += 1;
+      pendingVideo = null;
+      pendingAudio = null;
       videoTrack?.stop();
       audioTrack?.stop();
       videoTrack = null;
