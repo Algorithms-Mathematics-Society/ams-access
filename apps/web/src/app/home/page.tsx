@@ -10,7 +10,7 @@ import {
   runSessionReadiness,
   sessionPolicy,
 } from "@ams/api-client";
-import { useApiQuery } from "@/lib/api-client";
+import { clearQueryCache, useApiQuery } from "@/lib/api-client";
 import { useTheme } from "@/lib/theme";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -20,6 +20,7 @@ import {
   getSession,
   latestResumeRequest,
   listContests,
+  logout,
   requestResume,
   restoreToken,
 } from "@/lib/proctor-api";
@@ -791,9 +792,18 @@ export default function HomePage() {
 
   function handleSignOut() {
     setSigningOut(true);
-    Object.keys(localStorage)
-      .filter((key) => key.startsWith("ams_"))
-      .forEach((key) => localStorage.removeItem(key));
+    // Storage is not the session: `router.push` keeps module state, so the
+    // in-memory token and cached responses must be dropped explicitly, and
+    // before touching storage, which can throw.
+    logout();
+    clearQueryCache();
+    try {
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith("ams_"))
+        .forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // Storage unavailable; the token is already gone from memory.
+    }
     setTimeout(() => router.push("/"), 600);
   }
 

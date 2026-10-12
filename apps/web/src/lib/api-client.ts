@@ -66,6 +66,12 @@ type UseApiQueryOptions = FetchJsonOptions & {
 const queryCache = new Map<string, QueryCacheEntry<unknown>>();
 const queryListeners = new Map<string, Set<() => void>>();
 
+/** Drop every cached response. Keys carry no identity, so on sign-out the
+ * next participant would otherwise be served the previous one's data. */
+export function clearQueryCache() {
+  queryCache.clear();
+}
+
 function serializeRequest(input: RequestInfo | URL, init?: RequestInit) {
   const method = init?.method ?? "GET";
   const body = typeof init?.body === "string" ? init.body : "";
