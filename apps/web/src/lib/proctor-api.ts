@@ -72,18 +72,32 @@ export class ProctorApiError extends Error {
 
 let serverOffsetMs = 0;
 let haveServerTime = false;
+// The last server time we were told, pinned to the monotonic clock. Elapsed
+// time is measured with `performance.now()`, which a wall-clock correction
+// (NTP, or the candidate) cannot move — `Date.now() + offset` jumped with the
+// system clock until the next heartbeat, long enough to ring the bell early.
+let serverAnchorMs: number | null = null;
+let monoAnchorMs = 0;
 
 function noteServerTime(iso: string | undefined): void {
   if (!iso) return;
   const server = Date.parse(iso);
   if (Number.isNaN(server)) return;
   serverOffsetMs = server - Date.now();
+  serverAnchorMs = server;
+  monoAnchorMs = performance.now();
   haveServerTime = true;
 }
 
-/** Best estimate of the server's current time, in epoch ms. */
+/** Best estimate of the server's current time, in epoch ms.
+ *
+ * The monotonic clock pauses while the machine sleeps, so after a wake this
+ * runs behind until the next server response re-anchors it. Behind is the safe
+ * direction: it never takes time away, and the server's `phase` still ends the
+ * exam on the next heartbeat. */
 export function serverNow(): number {
-  return Date.now() + serverOffsetMs;
+  if (serverAnchorMs === null) return Date.now();
+  return serverAnchorMs + (performance.now() - monoAnchorMs);
 }
 
 /** False until the first successful call — the UI should not start a timed

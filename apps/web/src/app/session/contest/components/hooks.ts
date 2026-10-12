@@ -59,7 +59,10 @@ export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: 
       document.removeEventListener("keydown", handleKeyDown, true);
       // A higher-priority dialog may already own focus when this trap pauses.
       // Restore only if focus still belongs to this dialog (or its removed DOM).
-      if (trappedRoot.contains(document.activeElement) || document.activeElement === document.body) {
+      if (
+        trappedRoot.contains(document.activeElement) ||
+        document.activeElement === document.body
+      ) {
         previousFocus?.focus({ preventScroll: true });
       }
     };
@@ -139,9 +142,11 @@ export function useCountdown(
           firedExpiryRef.current = true;
           onExpiryRef.current?.();
         }
-        if (id) clearInterval(id);
+        // Keep ticking: a bell rung on local arithmetic is provisional, and
+        // the heartbeat may withdraw it.
         return;
       }
+      firedExpiryRef.current = false;
 
       const remaining = formatRemaining(diff);
       const phase = countdownPhase(diff);
