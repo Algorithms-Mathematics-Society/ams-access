@@ -4,12 +4,18 @@ import { useEffect, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
+interface WindowsCaptureStatus {
+  status: "exclusion" | "monitor_fallback" | "failed";
+  reason: string;
+}
+
 export function Stage4_EnvironmentValidation({ onPass }: { onPass(): void }) {
   interface Check {
     label: string;
     status: "checking" | "pass" | "warn";
   }
   const [checks, setChecks] = useState<Check[]>([]);
+  const [captureMessage, setCaptureMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,14 +49,29 @@ export function Stage4_EnvironmentValidation({ onPass }: { onPass(): void }) {
       );
       resolveCheck("Keyboard controls", kbr?.active ? "pass" : "warn");
 
-      // Was `setTimeout(400)` then an unconditional pass. The command exists,
-      // is registered, and returns whether the exclusion actually applied —
-      // on Windows it is the thing that makes the exam window render black to
-      // every capture API, so claiming it without calling it is claiming the
-      // one protection a screen-recorder defeats.
       pushCheck("Screen capture guard");
-      const capture = await withNullableTimeout(invoke<boolean>("apply_capture_protection"), 2500);
-      resolveCheck("Screen capture guard", capture === true ? "pass" : "warn");
+      if (navigator.platform.toLowerCase().startsWith("win")) {
+        const capture = await withNullableTimeout(
+          invoke<WindowsCaptureStatus>("get_windows_capture_protection_status"),
+          2500
+        );
+        if (!cancelled) {
+          setCaptureMessage(
+            capture?.status === "exclusion"
+              ? `Exclusion requested. ${capture.reason}`
+              : capture?.status === "monitor_fallback"
+                ? `Limited monitor fallback. ${capture.reason}`
+                : `Capture protection failed. ${capture?.reason ?? "Status unavailable or timed out"}`
+          );
+        }
+        resolveCheck("Screen capture guard", capture?.status === "exclusion" ? "pass" : "warn");
+      } else {
+        const capture = await withNullableTimeout(
+          invoke<boolean>("apply_capture_protection"),
+          2500
+        );
+        resolveCheck("Screen capture guard", capture === true ? "pass" : "warn");
+      }
 
       // "Session baseline" is gone. It slept 300 ms and passed; there was no
       // baseline, and nothing anywhere else in the codebase referred to one.
@@ -76,6 +97,11 @@ export function Stage4_EnvironmentValidation({ onPass }: { onPass(): void }) {
           <CheckLine key={c.label} label={c.label} status={c.status} />
         ))}
       </VStack>
+      {captureMessage && (
+        <Text type="supporting" color="secondary">
+          {captureMessage}
+        </Text>
+      )}
     </VStack>
   );
 }

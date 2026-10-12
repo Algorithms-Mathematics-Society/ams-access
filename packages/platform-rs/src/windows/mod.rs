@@ -357,7 +357,7 @@ pub fn scan_processes() -> ProcessScanResult {
 
 /// Multi-layer detection of active screen capture.
 ///
-/// `apply_capture_protection()` is the prevention layer (makes window black).
+/// `apply_capture_protection()` requests display affinity for the exam window.
 /// This function is the detection layer for logging and UI warnings.
 pub fn detect_screen_capture() -> bool {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
@@ -405,35 +405,10 @@ pub fn detect_screen_capture() -> bool {
     false
 }
 
-/// Apply DWM capture exclusion to the exam window so it renders as solid black
-/// to all screen capture APIs: WGC (used by Google Meet, Teams, OBS), DXGI
-/// output duplication, BitBlt/PrintScreen, and browser-based meeting tools.
-///
-/// Requires Windows 10 2004+ (19041) for WDA_EXCLUDEFROMCAPTURE.
-/// Falls back to WDA_MONITOR on older builds which blocks DWM-path captures.
-///
-/// `hwnd_raw` is the HWND cast to isize (obtained from `WebviewWindow::hwnd()`).
-pub fn apply_capture_protection(hwnd_raw: isize) -> bool {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowDisplayAffinity, WINDOW_DISPLAY_AFFINITY,
-    };
-
-    // 0x11 = WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+)
-    // Excludes from ALL capture paths: WGC, DXGI ODuplication, GDI BitBlt, print-screen
-    const WDA_EXCLUDEFROMCAPTURE: WINDOW_DISPLAY_AFFINITY = WINDOW_DISPLAY_AFFINITY(0x11);
-    // 0x01 = WDA_MONITOR — older fallback; blocks GDI/DWM captures but not WGC
-    const WDA_MONITOR: WINDOW_DISPLAY_AFFINITY = WINDOW_DISPLAY_AFFINITY(0x01);
-
-    let hwnd = HWND(hwnd_raw as *mut _);
-    unsafe {
-        if SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok() {
-            return true;
-        }
-        // Fallback for Windows 10 pre-2004
-        SetWindowDisplayAffinity(hwnd, WDA_MONITOR).is_ok()
-    }
-}
+mod capture_protection;
+pub use capture_protection::{
+    apply_capture_protection, capture_protection_status, CaptureProtectionStatus,
+};
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
 

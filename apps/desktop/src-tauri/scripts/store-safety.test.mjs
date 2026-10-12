@@ -106,6 +106,36 @@ test("Windows restore failure stays visible and retry uses the journal", async (
   assert.match(release, /windows::desktop_recovery_pending\(\)[\s\S]*?return Err/);
 });
 
+test("Windows capture affinity outcomes are recorded and remain advisory", async () => {
+  const [engine, desktop, stage] = await Promise.all([
+    read("packages/platform-rs/src/windows/capture_protection.rs"),
+    read("apps/desktop/src-tauri/src/lib.rs"),
+    read("apps/web/src/app/session/onboarding/components/stages/Stage4_EnvironmentValidation.tsx"),
+  ]);
+  assert.match(engine, /fn exclusion_accepted_does_not_try_monitor/);
+  assert.match(engine, /fn exclusion_failure_uses_monitor_fallback/);
+  assert.match(engine, /fn both_requests_fail_with_both_reasons/);
+  assert.match(engine, /Windows 10 before 2004 may use monitor behavior/);
+  const monitors = desktop.slice(
+    desktop.indexOf("fn start_windows_monitors("),
+    desktop.indexOf("async fn unlock_desktop(")
+  );
+  assert.match(monitors, /request_windows_capture_protection\(app, "monitor_start"\)/);
+  assert.doesNotMatch(monitors, /platform_rs::windows::apply_capture_protection/);
+  const request = desktop.slice(
+    desktop.indexOf("fn request_windows_capture_protection("),
+    desktop.indexOf("fn set_escape_blocked(")
+  );
+  assert.match(
+    request,
+    /record_proctoring_event\([\s\S]*?"capture_advisory"[\s\S]*?"source": "capture_advisory"/
+  );
+  assert.match(request, /Exam window unavailable/);
+  assert.match(request, /Exam window handle unavailable/);
+  assert.match(stage, /status === "monitor_fallback"/);
+  assert.match(stage, /capture\?\.status === "exclusion" \? "pass" : "warn"/);
+});
+
 test("CI installs, launches, and certification-checks the MSIX", async () => {
   const ci = await read(".github/workflows/ci.yml");
   assert.match(ci, /build-msix\.ps1 -SelfSign/);
