@@ -48,6 +48,12 @@ export function bufferKey(sessionId: string, questionId: string): string {
   return `${PREFIX}:${sessionId}:${questionId}`;
 }
 
+/** Whether a storage key holds a buffered answer. Sign-out uses this to
+ * find work that may exist nowhere else before deleting it. */
+export function isBufferKey(key: string): boolean {
+  return key.startsWith(`${PREFIX}:`);
+}
+
 export function write(
   store: KeyValueStore,
   sessionId: string,

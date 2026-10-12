@@ -58,9 +58,12 @@ import { withTelemetryTimeout } from "./components/telemetry-timeout";
 
 // ── Components ─────────────────────────────────────────────────
 import { DashboardShell, DashboardColumns } from "./components/DashboardShell";
-import { VStack } from "@astryxdesign/core/Stack";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { AccessDialog } from "@/components/AccessDialog";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
+import { isBufferKey } from "@/app/session/contest/answer-buffer";
 import { useHomeContestNavigation } from "./components/use-home-contest-navigation";
 import { ContestCalendar } from "./components/ContestCalendar";
 import { ContestsPanel } from "./components/ContestsPanel";
@@ -74,6 +77,14 @@ import { ResolveModal } from "./components/ResolveModal";
 import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
 import { dateTimeFormatter } from "@/lib/date-time-format";
 import { deriveContestantReadiness } from "./components/readiness-context";
+
+// Keys that belong to the machine, not the candidate, so sign-out keeps them.
+// The device id is what waivers and resume continuity are scoped to; a fresh
+// one makes the next sign-in on this machine look like a different device.
+const DEVICE_SCOPED_KEYS: ReadonlySet<string> = new Set([
+  STORAGE_KEYS.DEVICE_ID,
+  STORAGE_KEYS.THEME,
+]);
 
 /** The participant API's contest shape, in the one the home UI already reads.
  *
@@ -111,6 +122,7 @@ export default function HomePage() {
     }
   }, []);
   const [signingOut, setSigningOut] = useState(false);
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [contestSearch, setContestSearch] = useState("");
   const [homeHelpOpen, setHomeHelpOpen] = useState(false);
   const { highlightedContestId, showContest } = useHomeContestNavigation(
@@ -791,6 +803,23 @@ export default function HomePage() {
   }
 
   function handleSignOut() {
+    // A local draft may be the only copy of work the server never accepted.
+    // Deleting it is the candidate's call, not a side effect of signing out.
+    let hasDrafts = false;
+    try {
+      hasDrafts = Object.keys(localStorage).some(isBufferKey);
+    } catch {
+      // Storage unavailable: there is nothing readable to lose.
+    }
+    if (hasDrafts) {
+      setConfirmDiscardOpen(true);
+      return;
+    }
+    signOut();
+  }
+
+  function signOut() {
+    setConfirmDiscardOpen(false);
     setSigningOut(true);
     // Storage is not the session: `router.push` keeps module state, so the
     // in-memory token and cached responses must be dropped explicitly, and
@@ -799,7 +828,7 @@ export default function HomePage() {
     clearQueryCache();
     try {
       Object.keys(localStorage)
-        .filter((key) => key.startsWith("ams_"))
+        .filter((key) => key.startsWith("ams_") && !DEVICE_SCOPED_KEYS.has(key))
         .forEach((key) => localStorage.removeItem(key));
     } catch {
       // Storage unavailable; the token is already gone from memory.
@@ -910,6 +939,30 @@ export default function HomePage() {
           </VStack>
         )}
       </DashboardShell>
+
+      <AccessDialog
+        open={confirmDiscardOpen}
+        onClose={() => setConfirmDiscardOpen(false)}
+        labelId="sign-out-discard-title"
+        title="Discard unsubmitted work?"
+        width="calc(var(--spacing-10) * 12)"
+      >
+        <VStack gap={5}>
+          <Text color="secondary">
+            This device holds contest answers that may not have reached the server. Signing out
+            deletes them from this device and they cannot be recovered. Stay signed in to resume
+            your session and submit them first.
+          </Text>
+          <HStack gap={3} justify="end" wrap="wrap">
+            <AstryxButton
+              label="Stay signed in"
+              variant="ghost"
+              onClick={() => setConfirmDiscardOpen(false)}
+            />
+            <AstryxButton label="Discard and sign out" variant="destructive" onClick={signOut} />
+          </HStack>
+        </VStack>
+      </AccessDialog>
 
       <HelpRequestModal
         open={homeHelpOpen}
