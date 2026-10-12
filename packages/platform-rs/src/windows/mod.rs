@@ -6,6 +6,9 @@ use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+pub mod instance;
+mod registry_recovery;
+
 /// CreateProcess flag that suppresses the console window of a child process.
 /// Without it, every console helper we shell out to (tasklist, reg, netsh,
 /// taskkill, systeminfo) flashes a black cmd window — and because the live scan
@@ -83,8 +86,7 @@ const RESTRICTED: &[&str] = &[
     "snagit64.exe",
     "snagiteditor.exe",
     "camtasia.exe",
-    // NVIDIA ShadowPlay / GeForce Experience
-    "nvcontainer.exe",
+    // NVIDIA ShadowPlay / GeForce Experience (not the generic driver container)
     "nvcapture.exe",
     "nvsphelper64.exe",
     // Xbox Game Bar and gaming overlays
@@ -355,7 +357,7 @@ pub fn scan_processes() -> ProcessScanResult {
 
 /// Multi-layer detection of active screen capture.
 ///
-/// `apply_capture_protection()` is the prevention layer (makes window black).
+/// `apply_capture_protection()` requests display affinity for the exam window.
 /// This function is the detection layer for logging and UI warnings.
 pub fn detect_screen_capture() -> bool {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
@@ -403,35 +405,10 @@ pub fn detect_screen_capture() -> bool {
     false
 }
 
-/// Apply DWM capture exclusion to the exam window so it renders as solid black
-/// to all screen capture APIs: WGC (used by Google Meet, Teams, OBS), DXGI
-/// output duplication, BitBlt/PrintScreen, and browser-based meeting tools.
-///
-/// Requires Windows 10 2004+ (19041) for WDA_EXCLUDEFROMCAPTURE.
-/// Falls back to WDA_MONITOR on older builds which blocks DWM-path captures.
-///
-/// `hwnd_raw` is the HWND cast to isize (obtained from `WebviewWindow::hwnd()`).
-pub fn apply_capture_protection(hwnd_raw: isize) -> bool {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowDisplayAffinity, WINDOW_DISPLAY_AFFINITY,
-    };
-
-    // 0x11 = WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+)
-    // Excludes from ALL capture paths: WGC, DXGI ODuplication, GDI BitBlt, print-screen
-    const WDA_EXCLUDEFROMCAPTURE: WINDOW_DISPLAY_AFFINITY = WINDOW_DISPLAY_AFFINITY(0x11);
-    // 0x01 = WDA_MONITOR — older fallback; blocks GDI/DWM captures but not WGC
-    const WDA_MONITOR: WINDOW_DISPLAY_AFFINITY = WINDOW_DISPLAY_AFFINITY(0x01);
-
-    let hwnd = HWND(hwnd_raw as *mut _);
-    unsafe {
-        if SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok() {
-            return true;
-        }
-        // Fallback for Windows 10 pre-2004
-        SetWindowDisplayAffinity(hwnd, WDA_MONITOR).is_ok()
-    }
-}
+mod capture_protection;
+pub use capture_protection::{
+    apply_capture_protection, capture_protection_status, CaptureProtectionStatus,
+};
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
 
@@ -463,28 +440,6 @@ fn reg_key_exists(key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn reg_set(key: &str, value_name: &str, data: &str) {
-    let _ = hidden_command("reg")
-        .args([
-            "add",
-            key,
-            "/v",
-            value_name,
-            "/t",
-            "REG_DWORD",
-            "/d",
-            data,
-            "/f",
-        ])
-        .bounded_output();
-}
-
-fn reg_delete_value(key: &str, value_name: &str) {
-    let _ = hidden_command("reg")
-        .args(["delete", key, "/v", value_name, "/f"])
-        .bounded_output();
-}
-
 // ── Sleep prevention ──────────────────────────────────────────────────────────
 
 fn set_sleep_prevention(enable: bool) {
@@ -502,144 +457,60 @@ fn set_sleep_prevention(enable: bool) {
 
 // ── Registry lockdown ─────────────────────────────────────────────────────────
 
-/// Registry policy applied for the duration of a lockdown.
-///
-/// **`NoWinKeys` is deliberately not set any more.** It was redundant and
-/// dangerous: `kbproc` already swallows LWin (0x5B), RWin (0x5C) and every
-/// `win_down` combination, and that hook dies with the process. The registry
-/// value does not — so a force-kill, a crash or a flat battery left the
-/// candidate's Windows key dead, with the only repair being "launch the exam
-/// app again", which is the last thing someone in that state will do.
-///
-/// It is still *deleted* here, and in `recover_registry_if_crashed`, so a
-/// machine that ran an older build and has the value stuck gets cleaned up.
-/// Explorer reads `NoWinKeys` when it starts, so a machine that is already
-/// enforcing it needs Explorer restarted (or a sign-out) for the deletion to
-/// take effect — that is a one-time cost for existing installs only.
-///
-/// `DisableTaskMgr` stays. Ctrl+Alt+Del runs on the secure desktop where no
-/// user-mode hook can reach it, so this is the only thing that closes that
-/// route, and there is no hook-based equivalent to fall back on.
-fn apply_registry_policies(enable: bool) {
-    const TASK_MGR_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System";
-    const EXPLORER_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
-
-    if enable {
-        reg_set(TASK_MGR_KEY, "DisableTaskMgr", "1");
-    } else {
-        reg_delete_value(TASK_MGR_KEY, "DisableTaskMgr");
-        // Never set by this build; cleared in case an older one left it behind.
-        // A stale value on a machine that has not yet unlocked is handled at
-        // startup by `recover_registry_if_crashed`, which runs before any lock.
-        reg_delete_value(EXPLORER_KEY, "NoWinKeys");
+/// Recover only a journal owned by this application. Legacy policy values
+/// without a snapshot cannot be distinguished from user/admin settings.
+pub fn recover_registry_if_crashed() -> Result<(), String> {
+    if !instance::owns_instance() {
+        return Err("Windows recovery requires instance ownership".into());
     }
+    if is_packaged() {
+        return Ok(());
+    }
+    registry_recovery::restore()
 }
 
-fn set_touchpad_gestures_enabled(enabled: bool) {
-    let val = if enabled { "1" } else { "0" };
-    // Windows Precision Touchpad (WPT) multi-finger gesture registry keys.
-    // These are read dynamically by the WPT driver — no restart required.
-    // Non-WPT touchpads (legacy Synaptics/Elan) use vendor-specific drivers
-    // and are not affected by these keys; the virtual desktop guard thread
-    // catches escapes from those devices instead.
-    reg_set(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad",
-        "ThreeFingerSlideEnabled",
-        val,
-    );
-    reg_set(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad",
-        "FourFingerSlideEnabled",
-        val,
-    );
-}
-
-fn set_game_bar_enabled(enabled: bool) {
-    let val = if enabled { "1" } else { "0" };
-    reg_set(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
-        "AppCaptureEnabled",
-        val,
-    );
-    reg_set(r"HKCU\System\GameConfigStore", "GameDVR_Enabled", val);
-    // Disable the Game Bar shell presence itself
-    reg_set(
-        r"HKCU\Software\Microsoft\GameBar",
-        "UseNexusForGameBarEnabled",
-        val,
-    );
-}
-
-// ── Crash recovery ────────────────────────────────────────────────────────────
-
-/// Clears registry lockdown left by a previous crashed session.
-/// Must be called before Tauri initialises so it completes before any
-/// enable_keyboard_intercept() call can race the restore.
-pub fn recover_registry_if_crashed() {
-    fn value_present(key: &str, name: &str) -> bool {
-        hidden_command("reg")
-            .args(["query", key, "/v", name])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .bounded_status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    // Both values are checked, not just DisableTaskMgr. A build at or before
-    // 2.0.7 also set `NoWinKeys`, and a machine killed while that was applied
-    // can be left with the Windows key dead but the task-manager policy
-    // already cleared — in which case the old single-value probe saw nothing
-    // wrong and left the candidate stuck.
-    let task_mgr_set = value_present(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-        "DisableTaskMgr",
-    );
-    let win_keys_set = value_present(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-        "NoWinKeys",
-    );
-    if task_mgr_set || win_keys_set {
-        eprintln!("AMS Access: crashed-session registry state detected — restoring");
-        apply_registry_policies(false);
-        set_game_bar_enabled(true);
-        set_touchpad_gestures_enabled(true);
-        let _ = disable_network_lockdown();
-        set_sleep_prevention(false);
-    }
+pub fn desktop_recovery_pending() -> bool {
+    !is_packaged() && registry_recovery::pending()
 }
 
 // ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
 pub fn lock_desktop() -> bool {
-    set_sleep_prevention(true);
-    // Packaged desktop apps virtualize HKCU writes into a private package
-    // hive. Those writes cannot control Task Manager, Game Bar, or touchpad
-    // gestures outside the package, so the Store build deliberately leaves
-    // the user's Windows settings untouched.
-    if !is_packaged() {
-        apply_registry_policies(true);
-        set_game_bar_enabled(false);
-        set_touchpad_gestures_enabled(false);
+    lock_desktop_checked().unwrap_or(false)
+}
+
+/// Registry/ownership errors cannot be waived as an unavailable keyboard hook.
+pub fn lock_desktop_checked() -> Result<bool, String> {
+    if !instance::owns_instance() {
+        return Err("Windows lockdown requires instance ownership".into());
     }
-
+    // MSIX virtualizes HKCU; packaged builds must not mutate these settings.
+    if !is_packaged() {
+        if let Err(error) = registry_recovery::engage() {
+            eprintln!("Windows registry lockdown failed: {error}");
+            if let Err(restore_error) = registry_recovery::restore() {
+                eprintln!("Windows registry rollback incomplete: {restore_error}");
+            }
+            return Err(format!("Windows registry lockdown failed: {error}"));
+        }
+    }
+    set_sleep_prevention(true);
     SHIELD_ACTIVE.store(true, Ordering::SeqCst);
-
-    let result = enable_keyboard_intercept();
-    result.active
+    // The caller decides whether unavailable keyboard interception is advisory
+    // and owns rollback when its entry policy requires the hook.
+    Ok(enable_keyboard_intercept().active)
 }
 
 pub fn unlock_desktop() {
-    set_sleep_prevention(false);
-    // The MSIX path changed none of these settings and must not overwrite the
-    // user's preferences during cleanup.
-    if !is_packaged() {
-        apply_registry_policies(false);
-        set_game_bar_enabled(true);
-        set_touchpad_gestures_enabled(true);
+    if !instance::owns_instance() {
+        return;
     }
+    set_sleep_prevention(false);
     SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
+    if let Err(error) = recover_registry_if_crashed() {
+        eprintln!("Windows registry restoration incomplete: {error}");
+    }
 }
 
 mod virtualization;
@@ -1308,89 +1179,64 @@ pub fn harden_dll_search_path() {
 
 // ── Network lockdown (process-scoped, not global policy) ─────────────────────
 
-/// Scopes outbound firewall to this process only, allows only `allowed_ips`.
-///
-/// Uses a specific BLOCK rule for this exe plus per-IP ALLOW rules. Windows
-/// Firewall resolves specificity conflicts in favour of the more constrained
-/// rule, so ALLOW(exe → specific-ip) wins over BLOCK(exe → any).
-///
-/// Does NOT touch the global outbound policy so other processes keep internet.
+static NETWORK_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Restrict this executable's outbound destinations without overlapping blocks
+/// and allows: explicit Windows firewall blocks always take precedence.
+/// Other processes, including WebView2 children, are not covered by this rule.
+/// The global outbound policy remains unchanged.
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
-    disable_network_lockdown()?; // Verified cleanup before replacing prior rules
-
-    let exe = std::env::current_exe()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .into_owned();
-
-    // netsh needs program="path with spaces"; wrap value in embedded quotes
-    let program_arg = format!("program=\"{}\"", exe);
-
-    // Block-all outbound rule for this exe
-    let out = hidden_command("netsh")
-        .args([
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
-            "name=AMS_PROCTOR_BLOCK_ALL",
-            "dir=out",
-            "action=block",
-            "enable=yes",
-            "profile=any",
-            &program_arg,
-        ])
-        .bounded_output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(format!(
-            "netsh block-all failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+    if !instance::owns_instance() {
+        return Err("Windows firewall changes require instance ownership".into());
     }
-
-    // Per-IP allow rules — more specific than BLOCK_ALL so they win
-    for ip in allowed_ips {
-        // Upstream (lib.rs) already validates via parse::<IpAddr>() or to_socket_addrs().
-        // We re-validate here as a safety net. Critically, use parse::<IpAddr>() not a
-        // char-set check — the char-set approach rejects valid IPv6 addresses containing
-        // hex letters (a-f), e.g. 2607:f8b0:4004:c09::71 fails is_ascii_digit().
-        if ip.parse::<std::net::IpAddr>().is_err() {
-            continue;
-        }
-        let out = hidden_command("netsh")
-            .args([
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=AMS_PROCTOR_ALLOW",
-                "dir=out",
-                "action=allow",
-                "enable=yes",
-                "profile=any",
-                &format!("remoteip={}", ip),
-                &program_arg,
-            ])
-            .bounded_output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(format!(
-                "netsh allow {} failed: {}",
-                ip,
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        }
-    }
-
-    // IPv6: the BLOCK_ALL rule has no remoteip filter, so netsh applies it to all traffic
-    // regardless of IP version — no separate ::/0 block rule is needed.
-    // IPv6 ALLOW rules are added above when lib.rs resolves both A and AAAA records via
-    // to_socket_addrs(), which returns both IPv4 and IPv6 addresses.
-
-    Ok(())
+    // Validate before removing any existing policy.
+    let plan = firewall_policy::plan(allowed_ips)?;
+    let _policy_owner = NETWORK_POLICY_LOCK
+        .lock()
+        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let program_arg = format!("program=\"{}\"", exe.to_string_lossy());
+    firewall_policy::install_with(
+        &plan,
+        disable_network_lockdown_unlocked,
+        |action, name, addresses| {
+            let output = hidden_command("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    &format!("name={name}"),
+                    "dir=out",
+                    &format!("action={action}"),
+                    "enable=yes",
+                    "profile=any",
+                    &format!("remoteip={addresses}"),
+                    &program_arg,
+                ])
+                .bounded_output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "netsh {action} failed: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        },
+        || {
+            // A timed-out creation may have exhausted this thread's budget.
+            // Give verified rollback its own bounded cleanup worker.
+            std::thread::spawn(disable_network_lockdown_unlocked)
+                .join()
+                .unwrap_or_else(|_| Err("Windows firewall rollback worker failed".into()))
+        },
+    )
 }
 
+mod firewall_policy;
 mod firewall_recovery;
 
 // Read actual INetFwRule.Name values, not localized netsh display text. Keep COM
@@ -1418,6 +1264,18 @@ try {
 
 /// Remove AMS firewall rules and verify their absence before reporting recovery.
 pub fn disable_network_lockdown() -> Result<(), String> {
+    if !instance::owns_instance() {
+        return Err("Windows firewall recovery requires instance ownership".into());
+    }
+    let _policy_owner = NETWORK_POLICY_LOCK
+        .lock()
+        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    disable_network_lockdown_unlocked()
+}
+
+// The public operation retains NETWORK_POLICY_LOCK through installation and
+// rollback, including when the bounded rollback runs on a separate worker.
+fn disable_network_lockdown_unlocked() -> Result<(), String> {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
     firewall_recovery::cleanup(
         |name| {
@@ -1455,6 +1313,35 @@ pub fn is_restricted_name(name: &str) -> bool {
     RESTRICTED
         .iter()
         .any(|&r| r.trim_end_matches(".exe").eq_ignore_ascii_case(name))
+}
+
+#[cfg(test)]
+mod restricted_process_tests {
+    use super::{is_restricted_name, CAPTURE_PROCESSES, RESTRICTED};
+
+    #[test]
+    fn generic_nvidia_container_is_not_restricted_regardless_of_case() {
+        for name in ["nvcontainer", "NvContainer", "NVCONTAINER"] {
+            assert!(!is_restricted_name(name), "{name} should not be restricted");
+        }
+        assert!(!RESTRICTED.contains(&"nvcontainer.exe"));
+        assert!(!CAPTURE_PROCESSES.contains(&"nvcontainer.exe"));
+    }
+
+    #[test]
+    fn dedicated_nvidia_capture_processes_remain_restricted() {
+        for name in ["nvcapture", "NvCapture", "nvsphelper64", "NVSPHELPER64"] {
+            assert!(is_restricted_name(name), "{name} should be restricted");
+        }
+        assert!(CAPTURE_PROCESSES.contains(&"nvcapture.exe"));
+    }
+
+    #[test]
+    fn other_restricted_processes_are_unchanged() {
+        for name in ["obs64", "anydesk", "wireshark", "gamebar"] {
+            assert!(is_restricted_name(name), "{name} should be restricted");
+        }
+    }
 }
 
 /// Report restricted apps that the candidate still needs to close.

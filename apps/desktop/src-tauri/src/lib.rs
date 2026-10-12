@@ -1424,26 +1424,60 @@ fn detect_screen_capture_active() -> bool {
     false
 }
 
-/// Apply DWM capture exclusion so the exam window appears black to all capture APIs.
-/// On Windows: SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE).
-/// On macOS: handled at the CGEventTap / window layer (no-op here).
+/// Request best-effort Windows window display affinity; retain the legacy bool IPC.
 #[tauri::command]
 fn apply_capture_protection(app: tauri::AppHandle) -> bool {
     #[cfg(target_os = "windows")]
-    {
-        use tauri::Manager;
-        if let Some(win) = app.get_webview_window("main") {
-            if let Ok(hwnd) = win.hwnd() {
-                return platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
-            }
-        }
-        false
-    }
+    return request_windows_capture_protection(&app, "ipc_legacy").applied();
     #[cfg(not(target_os = "windows"))]
     {
         let _ = app;
         true
     }
+}
+
+/// Structured Windows result; null on other operating systems.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn get_windows_capture_protection_status(
+    app: tauri::AppHandle,
+) -> Option<platform_rs::windows::CaptureProtectionStatus> {
+    Some(request_windows_capture_protection(&app, "ipc_status"))
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_windows_capture_protection_status(_app: tauri::AppHandle) -> Option<serde_json::Value> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn request_windows_capture_protection(
+    app: &tauri::AppHandle,
+    trigger: &str,
+) -> platform_rs::windows::CaptureProtectionStatus {
+    use platform_rs::windows::CaptureProtectionStatus;
+    use tauri::{Emitter, Manager};
+
+    let status = match app.get_webview_window("main") {
+        Some(win) => match win.hwnd() {
+            Ok(hwnd) => platform_rs::windows::capture_protection_status(hwnd.0 as isize),
+            Err(error) => CaptureProtectionStatus::Failed {
+                reason: format!("Exam window handle unavailable: {error}"),
+            },
+        },
+        None => CaptureProtectionStatus::Failed {
+            reason: "Exam window unavailable".into(),
+        },
+    };
+    record_proctoring_event(
+        Some(app),
+        "capture_advisory",
+        "Windows capture affinity request",
+        serde_json::json!({ "source": "capture_advisory", "trigger": trigger, "result": status }),
+    );
+    let _ = app.emit("capture-protection-status", &status);
+    status
 }
 
 /// Set whether the Escape key is passed through to the editor (false) or blocked (true).
@@ -1663,7 +1697,7 @@ fn open_privacy_settings(section: String) -> Result<(), String> {
 }
 
 /// Desktop settings a lockdown changed and could not yet put back, with the
-/// command that fixes each by hand. Empty everywhere but macOS.
+/// command that fixes each by hand, where supported.
 #[derive(Serialize, Clone)]
 struct LockdownRestoreStatus {
     pending: bool,
@@ -1677,6 +1711,13 @@ struct UnrestoredSettingView {
 }
 
 fn lockdown_restore_status() -> LockdownRestoreStatus {
+    #[cfg(target_os = "windows")]
+    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        return LockdownRestoreStatus {
+            pending: platform_rs::windows::desktop_recovery_pending(),
+            items: vec![],
+        };
+    }
     // While an exam holds the lockdown its snapshot is on disk by design;
     // that is a lockdown in progress, not settings left behind.
     #[cfg(target_os = "macos")]
@@ -1707,8 +1748,10 @@ fn get_lockdown_restore_status() -> LockdownRestoreStatus {
 
 /// Try the restore again now, rather than waiting for the background retry.
 #[tauri::command]
-async fn retry_lockdown_restore() -> Result<LockdownRestoreStatus, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestoreStatus, String> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = &app;
+    tauri::async_runtime::spawn_blocking(move || {
         // Serialized with entry and teardown, and never during a live exam:
         // restoring then would hand the desktop back mid-contest.
         let _owner = lockdown_lifecycle()
@@ -1718,10 +1761,15 @@ async fn retry_lockdown_restore() -> Result<LockdownRestoreStatus, String> {
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
             let _ = platform_rs::macos::retry_restore();
         }
-        lockdown_restore_status()
+        #[cfg(target_os = "windows")]
+        if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+            let mut owner = _owner;
+            owner.stop(&mut DesktopOperations::new(app, false))?;
+        }
+        Ok(lockdown_restore_status())
     })
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?
 }
 
 /// Measure the configured server transport. DNS success and another public
@@ -2046,6 +2094,9 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
         }
         self.platform_attempted = true;
         let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
+        #[cfg(target_os = "windows")]
+        let protected = platform_rs::windows::lock_desktop_checked()?;
+        #[cfg(not(target_os = "windows"))]
         let protected = platform_dispatch!(lock_desktop(), else false);
         // Organizer exceptions may waive unavailable keyboard interception,
         // but cannot waive a failed recovery snapshot or incomplete OS command.
@@ -2127,6 +2178,12 @@ fn release_native_desktop() -> Result<(), String> {
             "Desktop restoration could not complete: {error}. Retry Restore system settings."
         ));
     }
+    #[cfg(target_os = "windows")]
+    if platform_rs::windows::desktop_recovery_pending() {
+        return Err(
+            "Some Windows settings could not be restored. Retry Restore system settings; changes made outside AMS Access will not be overwritten.".into(),
+        );
+    }
     #[cfg(target_os = "linux")]
     if platform_rs::linux::keyboard_recovery_pending() {
         return Err(
@@ -2189,12 +2246,11 @@ async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result
 
 #[cfg(target_os = "windows")]
 fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
-    // Apply DWM capture exclusion (black screen in all capture APIs) and start the
-    // virtual desktop guard (moves exam window to any desktop the user switches to).
-    #[cfg(target_os = "windows")]
+    // Capture affinity is advisory; log and publish its result even without an HWND.
+    request_windows_capture_protection(app, "monitor_start");
+    // Start the virtual desktop guard for the exam window when an HWND exists.
     if let Some(win) = app.get_webview_window("main") {
         if let Ok(hwnd) = win.hwnd() {
-            platform_rs::windows::apply_capture_protection(hwnd.0 as isize);
             platform_rs::windows::spawn_virtual_desktop_guard(hwnd.0 as isize);
 
             // F6: native clipboard monitor. Subscribes to WM_CLIPBOARDUPDATE and
@@ -3132,19 +3188,6 @@ pub fn run() {
     // startup; a tokenless disable from here would be rejected anyway.
     #[cfg(target_os = "linux")]
     platform_rs::linux::recover_keyboard_if_crashed();
-    #[cfg(target_os = "windows")]
-    {
-        platform_rs::windows::recover_registry_if_crashed();
-        // AMS_PROCTOR firewall rules persist across a crash BY DESIGN (a crash
-        // must not restore internet mid-exam), but at process start no exam can
-        // be active, so any still-present rule is a leftover that would strand the
-        // candidate offline. Flush in the background; idempotent / no-op if no
-        // rules exist. Mirrors the Linux path above. lock_desktop re-applies the
-        // firewall when a real exam starts.
-        std::thread::spawn(|| {
-            let _ = platform_rs::windows::disable_network_lockdown();
-        });
-    }
 
     // Auto-elevate on Windows: full exam lockdown (firewall, registry, taskkill)
     // requires Administrator. Rather than make the candidate discover the Resolve
@@ -3181,6 +3224,36 @@ pub fn run() {
                      will offer Relaunch as Administrator"
                 ),
             }
+        }
+    }
+
+    // Elevation must finish before acquiring ownership. A relaunched child
+    // waits for the old process to finish cleanup and release its kernel mutex.
+    #[cfg(target_os = "windows")]
+    let _windows_instance = {
+        let wait = if std::env::args().any(|arg| arg == platform_rs::windows::RELAUNCH_MARKER) {
+            Duration::from_secs(30)
+        } else {
+            Duration::ZERO
+        };
+        match platform_rs::windows::instance::acquire(wait) {
+            Ok(owner) => owner,
+            Err(error) => {
+                eprintln!("AMS Access: {error}");
+                platform_rs::windows::instance::show_startup_error(&error);
+                return;
+            }
+        }
+    };
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(error) = platform_rs::windows::recover_registry_if_crashed() {
+            eprintln!("Windows startup registry recovery incomplete: {error}");
+        }
+        // Finish stale-rule cleanup before entry can create new rules. A
+        // detached cleanup could otherwise remove this instance's own lockdown.
+        if let Err(error) = platform_rs::windows::disable_network_lockdown() {
+            eprintln!("Windows startup firewall recovery incomplete: {error}");
         }
     }
 
@@ -3234,6 +3307,7 @@ pub fn run() {
             install_network_helper,
             detect_screen_capture_active,
             apply_capture_protection,
+            get_windows_capture_protection_status,
             set_escape_blocked,
             configure_event_stream,
             get_lockdown_restore_status,
