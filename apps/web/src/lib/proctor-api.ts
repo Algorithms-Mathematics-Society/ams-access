@@ -121,6 +121,7 @@ const TOKEN_KEY = "ams_participant_token";
 const TOKEN_EXPIRY_KEY = "ams_participant_token_expires_at";
 
 let token: string | null = null;
+let signedOut = false;
 
 function storage(): Storage | null {
   try {
@@ -133,6 +134,7 @@ function storage(): Storage | null {
 
 export function setToken(value: string | null, expiresInSeconds?: number): void {
   token = value;
+  if (value !== null) signedOut = false;
   const store = storage();
   if (!store) return;
   try {
@@ -152,22 +154,28 @@ export function setToken(value: string | null, expiresInSeconds?: number): void 
 
 /** Reload a token left by a previous run. Returns whether one was restored. */
 export function restoreToken(): boolean {
+  if (signedOut) return false;
   const store = storage();
   if (!store) return false;
-  const saved = store.getItem(TOKEN_KEY);
-  if (!saved) return false;
+  try {
+    const saved = store.getItem(TOKEN_KEY);
+    if (!saved) return false;
 
-  const expiresAt = Number(store.getItem(TOKEN_EXPIRY_KEY) ?? "0");
-  // Treat an unknown expiry as usable: the server is the authority and will
-  // answer 401 if it is not. Discarding it here would force a re-login for a
-  // token that still works.
-  if (expiresAt && expiresAt <= Date.now()) {
-    setToken(null);
+    const expiresAt = Number(store.getItem(TOKEN_EXPIRY_KEY) ?? "0");
+    // Treat an unknown expiry as usable: the server is the authority and will
+    // answer 401 if it is not. Discarding it here would force a re-login for a
+    // token that still works.
+    if (expiresAt && expiresAt <= Date.now()) {
+      setToken(null);
+      return false;
+    }
+
+    token = saved;
+    return true;
+  } catch {
+    // Storage may deny reads even after the storage object was obtained.
     return false;
   }
-
-  token = saved;
-  return true;
 }
 
 export function hasToken(): boolean {
@@ -500,6 +508,7 @@ export async function studentLogin(loginId: string, password: string): Promise<L
 }
 
 export function logout(): void {
+  signedOut = true;
   setToken(null);
 }
 

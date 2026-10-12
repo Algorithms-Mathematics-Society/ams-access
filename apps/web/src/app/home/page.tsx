@@ -829,11 +829,18 @@ export default function HomePage() {
     try {
       Object.keys(localStorage)
         .filter((key) => key.startsWith("ams_") && !DEVICE_SCOPED_KEYS.has(key))
-        .forEach((key) => localStorage.removeItem(key));
+        .forEach((key) => {
+          try {
+            localStorage.removeItem(key);
+          } catch {
+            // Keep clearing other keys if this one is blocked.
+          }
+        });
     } catch {
-      // Storage unavailable; the token is already gone from memory.
+      // Storage may be inaccessible even to enumeration; sign-out still navigates.
+    } finally {
+      setTimeout(() => router.push("/"), 600);
     }
-    setTimeout(() => router.push("/"), 600);
   }
 
   // Match the existing resume guards; keep position stable while the action runs.

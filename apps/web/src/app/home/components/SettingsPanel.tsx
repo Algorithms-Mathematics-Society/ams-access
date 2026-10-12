@@ -25,6 +25,7 @@ import {
 } from "./utils";
 import { SettingsAbout, SettingsPermissions, SettingsSecurity } from "./SettingsDetails";
 import type { ReadinessState, SecurityLogLevel, TelemetryQueryState } from "./types";
+import { createMediaRequestOwner } from "./media-availability";
 
 const settingsTabs = [
   { value: "hardware", label: "Hardware" },
@@ -58,16 +59,15 @@ export const SettingsPanel = memo(function SettingsPanel({
   const [selectedCam, setSelectedCam] = useState("");
   const [cameraBusy, setCameraBusy] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const cameraTestInFlightRef = useRef(false);
+  const cameraRequestOwner = useRef(createMediaRequestOwner());
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [micLevel, setMicLevel] = useState(0);
   const [micActive, setMicActive] = useState(false);
+  const [micPending, setMicPending] = useState(false);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [micError, setMicError] = useState<string | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
+  const micResources = useRef(createMediaRequestOwner());
 
   const [speakerActive, setSpeakerActive] = useState(false);
   const [speakerVolume, setSpeakerVolume] = useState(50);
@@ -83,24 +83,16 @@ export const SettingsPanel = memo(function SettingsPanel({
   );
 
   const camStreamRef = useRef<MediaStream | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
   useEffect(() => {
     camStreamRef.current = camStream;
   }, [camStream]);
-  useEffect(() => {
-    micStreamRef.current = micStream;
-  }, [micStream]);
 
   useEffect(() => {
     return () => {
+      cameraRequestOwner.current.cancel();
+      micResources.current.cancel(cancelAnimationFrame);
       camStreamRef.current?.getTracks().forEach((track) => track.stop());
-      micStreamRef.current?.getTracks().forEach((track) => track.stop());
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-      }
+      camStreamRef.current = null;
     };
   }, []);
 
@@ -129,9 +121,18 @@ export const SettingsPanel = memo(function SettingsPanel({
   }, [camStream, setReadiness]);
 
   useEffect(() => {
-    if (activeTab !== "hardware" && camStream) {
-      camStream.getTracks().forEach((track) => track.stop());
-      setCamStream(null);
+    if (activeTab !== "hardware") {
+      cameraRequestOwner.current.cancel();
+      micResources.current.cancel(cancelAnimationFrame);
+      setMicStream(null);
+      setMicActive(false);
+      setMicPending(false);
+      setMicLevel(0);
+      setCameraBusy(false);
+      if (camStream) {
+        camStream.getTracks().forEach((track) => track.stop());
+        setCamStream(null);
+      }
     }
   }, [activeTab, camStream]);
 
@@ -150,8 +151,7 @@ export const SettingsPanel = memo(function SettingsPanel({
   }
 
   async function startCameraTest() {
-    if (cameraTestInFlightRef.current) return;
-    cameraTestInFlightRef.current = true;
+    const request = cameraRequestOwner.current.begin();
     setCameraBusy(true);
     setCameraError(null);
 
@@ -160,6 +160,7 @@ export const SettingsPanel = memo(function SettingsPanel({
         camStream.getTracks().forEach((track) => track.stop());
         setCamStream(null);
         await sleep(0);
+        if (!cameraRequestOwner.current.owns(request)) return;
       }
 
       const constraints: MediaStreamConstraints = {
@@ -173,16 +174,27 @@ export const SettingsPanel = memo(function SettingsPanel({
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           stream = await getUserMediaWithTimeout(constraints, CAMERA_START_TIMEOUT_MS);
+          if (!cameraRequestOwner.current.owns(request)) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
           break;
         } catch (err) {
           lastError = err;
+          if (!cameraRequestOwner.current.owns(request)) return;
           if (attempt === 1 || !isCameraReleaseRaceError(err)) break;
           await sleep(CAMERA_RETRY_DELAY_MS);
+          if (!cameraRequestOwner.current.owns(request)) return;
         }
       }
 
       if (!stream) throw lastError ?? new Error("Camera unavailable");
+      if (!cameraRequestOwner.current.owns(request)) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
 
+      camStreamRef.current = stream;
       setCamStream(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -191,18 +203,22 @@ export const SettingsPanel = memo(function SettingsPanel({
 
       void navigator.mediaDevices
         .enumerateDevices()
-        .then((devices) => setCameras(devices.filter((d) => d.kind === "videoinput")))
+        .then((devices) => {
+          if (cameraRequestOwner.current.owns(request)) {
+            setCameras(devices.filter((d) => d.kind === "videoinput"));
+          }
+        })
         .catch(() => {});
       setReadiness((r) => ({ ...r, camera: "ok" }));
       onSecurityEvent("HARDWARE: Camera stream verified");
     } catch (err) {
+      if (!cameraRequestOwner.current.owns(request)) return;
       console.error("Camera setup failed", err);
       setCameraError(describeMediaError(err, "camera"));
       setReadiness((r) => ({ ...r, camera: "fail" }));
       onSecurityEvent("HARDWARE: Camera stream verification failed", "error");
     } finally {
-      cameraTestInFlightRef.current = false;
-      setCameraBusy(false);
+      if (cameraRequestOwner.current.owns(request)) setCameraBusy(false);
     }
   }
 
@@ -213,33 +229,33 @@ export const SettingsPanel = memo(function SettingsPanel({
   }
 
   async function toggleMicMonitor() {
-    if (micActive) {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (micStream) {
-        micStream.getTracks().forEach((track) => track.stop());
-      }
-      if (audioContextRef.current) {
-        await audioContextRef.current.close().catch(() => {});
-      }
+    if (micActive || micPending) {
+      micResources.current.cancel(cancelAnimationFrame);
       setMicStream(null);
       setMicLevel(0);
       setMicActive(false);
+      setMicPending(false);
       onSecurityEvent("HARDWARE: Microphone monitor stopped");
     } else {
+      const request = micResources.current.begin(cancelAnimationFrame);
+      setMicPending(true);
       try {
         setMicError(null);
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!micResources.current.owns(request)) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        micResources.current.setStream(stream);
         setMicStream(stream);
 
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioCtx();
-        audioContextRef.current = ctx;
+        micResources.current.setContext(ctx);
 
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
-        analyserRef.current = analyser;
+        micResources.current.setAnalyser(analyser);
 
         const source = ctx.createMediaStreamSource(stream);
         source.connect(analyser);
@@ -249,11 +265,13 @@ export const SettingsPanel = memo(function SettingsPanel({
 
         let lastMeterUpdate = -Infinity;
         const drawMicStats = (timestamp: number) => {
-          if (!analyserRef.current) return;
-          animationFrameRef.current = requestAnimationFrame(drawMicStats);
+          if (!micResources.current.owns(request)) return;
+          const currentAnalyser = micResources.current.getAnalyser();
+          if (!currentAnalyser) return;
+          micResources.current.setFrame(requestAnimationFrame(drawMicStats));
           if (timestamp - lastMeterUpdate < 125) return;
           lastMeterUpdate = timestamp;
-          analyserRef.current.getByteFrequencyData(dataArray);
+          currentAnalyser.getByteFrequencyData(dataArray);
           let sum = 0;
           for (let i = 0; i < bufferLength; i++) {
             sum += dataArray[i];
@@ -262,11 +280,17 @@ export const SettingsPanel = memo(function SettingsPanel({
           const scaledVal = Math.min(Math.round((average / 90) * 100), 100);
           setMicLevel(scaledVal);
         };
-        animationFrameRef.current = requestAnimationFrame(drawMicStats);
+        micResources.current.setFrame(requestAnimationFrame(drawMicStats));
+        setMicPending(false);
         setMicActive(true);
         setReadiness((r) => ({ ...r, mic: "ok" }));
         onSecurityEvent("HARDWARE: Microphone stream verified");
       } catch (err) {
+        if (!micResources.current.owns(request)) return;
+        micResources.current.cancel(cancelAnimationFrame);
+        setMicPending(false);
+        setMicStream(null);
+        setMicActive(false);
         console.error("Microphone capture failed", err);
         setMicError(describeMediaError(err, "microphone"));
         setReadiness((r) => ({ ...r, mic: "fail" }));
@@ -563,7 +587,13 @@ export const SettingsPanel = memo(function SettingsPanel({
                     <HStack style={{ marginTop: "auto" }}>
                       <Button
                         id="settings-microphone-control"
-                        label={micActive ? "Stop microphone" : "Start microphone"}
+                        label={
+                          micActive
+                            ? "Stop microphone"
+                            : micPending
+                              ? "Cancel microphone"
+                              : "Start microphone"
+                        }
                         variant="secondary"
                         onClick={toggleMicMonitor}
                       />
