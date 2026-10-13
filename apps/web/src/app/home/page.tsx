@@ -986,7 +986,11 @@ export default function HomePage() {
           theme={theme}
           onClose={() => setPreflightContestId(null)}
           onProceed={
-            preflightSessionType === "resume" && activeSession
+            // The card's "resume" comes from the contest phase, not from a
+            // session; only the stored session for this contest may resume.
+            preflightSessionType === "resume" &&
+            activeSession &&
+            activeSession.contest_id === preflightContestId
               ? async () => {
                   setPreflightContestId(null);
                   await submitResumeRequest(activeSession);
