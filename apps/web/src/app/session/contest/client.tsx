@@ -120,6 +120,7 @@ import {
   listMySubmissions,
   run as runAgainstSamples,
   serverNow,
+  startSession,
   submit as submitSolution,
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
@@ -146,6 +147,10 @@ const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
 // comfortably above warm latency and well below "hung". Draft saving no longer
 // uses this: it is a local write that cannot time out.
 const SAVE_TIMEOUT_MS = 10_000;
+// Automatic reloads after a retryable load failure (prestart 409, timeout,
+// unreachable). Backoff doubles from 2 s to a 15 s cap; after this many the
+// gate keeps its Retry button and stops polling on its own.
+const MAX_AUTO_LOAD_RETRIES = 20;
 
 function isContestEditorTheme(value: string | null): value is ContestEditorThemeId {
   return Boolean(value && CONTEST_EDITOR_THEMES.some((theme) => theme.id === value));
@@ -363,6 +368,10 @@ export default function ContestPageClient() {
   const runResultAttemptIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped to re-run the load effect: by the backoff timer, or by Retry.
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadRetryable, setLoadRetryable] = useState(false);
+  const autoLoadRetriesRef = useRef(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const latestActiveDraftRef = useRef<{
     questionId: string;
@@ -1105,6 +1114,21 @@ export default function ContestPageClient() {
 
     const abortController = new AbortController();
     let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // Server phase from the session read, so a 409 after the end is not
+    // mistaken for "not started yet" and polled for nothing.
+    let livePhase: string | null = null;
+    // A state the candidate can wait out: show it, offer Retry, and reload on
+    // a bounded backoff so the page really does let them in.
+    const failRetryable = (message: string) => {
+      setLoadError(message);
+      setLoadRetryable(true);
+      setLoading(false);
+      if (autoLoadRetriesRef.current >= MAX_AUTO_LOAD_RETRIES) return;
+      const delay = Math.min(2000 * 2 ** autoLoadRetriesRef.current, 15_000);
+      autoLoadRetriesRef.current += 1;
+      retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), delay);
+    };
 
     // The room does not create sessions. Onboarding does, because it is the
     // only place that can attest the lockdown engaged first — a session
@@ -1121,8 +1145,9 @@ export default function ContestPageClient() {
     (async () => {
       // `getSession` validates ownership server-side — someone else's session
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
-      const live = await getSession(stored.id);
+      let live = await getSession(stored.id);
       if (disposed) return;
+      livePhase = live.phase;
 
       if (live.status === "submitted" || live.status === "terminated") {
         // Finished. Re-entering needs an invigilator, and that lives on /home.
@@ -1132,6 +1157,15 @@ export default function ContestPageClient() {
 
       const { index, questions } = await loadContestPaper(contestId);
       if (disposed) return;
+      if (live.status === "pending" && index.phase === "running") {
+        // Created during verification and never activated: heartbeat does not
+        // promote it, and run/submit refuse a pending session. Re-open it —
+        // the same idempotent POST onboarding uses, with the server's own
+        // eligibility checks — now that the server says the clock started.
+        live = await startSession({ contestUid: contestId });
+        if (disposed) return;
+        if (live.status === "pending") throw new Error("Session is not active yet.");
+      }
       // Held for the cleanup below. Blob URLs are document references the
       // browser keeps alive until revoked explicitly, not garbage-collected
       // values.
@@ -1213,8 +1247,9 @@ export default function ContestPageClient() {
       if (questions.length > 0) {
         loadQuestionWithAnswers(questions[0], answersMap, "C++23");
         setLoadError(null);
+        autoLoadRetriesRef.current = 0;
       } else {
-        setLoadError("Questions are not available yet. Please retry in a few seconds.");
+        failRetryable("Questions are not available yet. Please retry in a few seconds.");
       }
       setLoading(false);
     })().catch((error) => {
@@ -1228,20 +1263,32 @@ export default function ContestPageClient() {
         router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
         return;
       }
-      if (error instanceof ProctorApiError && error.status === 409) {
-        // The paper is not open yet — the contest is inside its verification
-        // window. That is a state, not a failure.
-        setLoadError("The contest has not started yet. This page will let you in when it does.");
+      if (error instanceof ProctorApiError && error.status === 409 && livePhase === "ended") {
+        setLoadError("This contest has ended.");
+        setLoadRetryable(false);
         setLoading(false);
         return;
       }
-      setLoadError("Unable to load contest. Check connection and retry.");
-      setLoading(false);
+      if (error instanceof ProctorApiError && error.status === 409) {
+        // The paper is not open yet — the contest is inside its verification
+        // window. That is a state, not a failure.
+        failRetryable("The contest has not started yet. This page will let you in when it does.");
+        return;
+      }
+      if (error instanceof ProctorApiError && error.isPermanent) {
+        // Auth and other refusals: retrying will not change the answer.
+        setLoadError("Unable to load contest. Return to your contest list and try again.");
+        setLoadRetryable(false);
+        setLoading(false);
+        return;
+      }
+      failRetryable("Unable to load contest. Check connection and retry.");
     });
 
     return () => {
       disposed = true;
       abortController.abort();
+      if (retryTimer) clearTimeout(retryTimer);
       // Statement images are held as blob URLs, which the browser keeps alive
       // until they are revoked explicitly — a document reference, not a
       // garbage-collected one. `releaseCandidateQuestionAssets` existed and
@@ -1250,7 +1297,7 @@ export default function ContestPageClient() {
       releaseCandidateQuestionAssets(loadedObjectUrls);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contestId]);
+  }, [contestId, loadAttempt]);
 
   function loadQuestionWithAnswers(
     q: Question,
@@ -2777,7 +2824,21 @@ export default function ContestPageClient() {
   }
 
   if (loadError) {
-    return <ContestLoadErrorScreen loadError={loadError} router={router} />;
+    return (
+      <ContestLoadErrorScreen
+        loadError={loadError}
+        router={router}
+        onRetry={
+          loadRetryable
+            ? () => {
+                autoLoadRetriesRef.current = 0;
+                setLoading(true);
+                setLoadAttempt((n) => n + 1);
+              }
+            : undefined
+        }
+      />
+    );
   }
 
   return (

@@ -290,7 +290,7 @@ export default function OnboardingPage() {
     if (!contestWindow) return;
     const tick = () => {
       const startMs = new Date(contestWindow.startAt).getTime();
-      const now = Date.now();
+      const now = serverNow();
       setWaitMs(Math.max(0, startMs - now));
     };
     tick();
@@ -397,7 +397,7 @@ export default function OnboardingPage() {
     }
 
     if (windowMeta && !isTestAccount) {
-      const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
+      const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
       if (remaining > 0) {
         setCurrentStage(FINAL_STAGE);
         setTransitioning(false);
@@ -629,7 +629,7 @@ export default function OnboardingPage() {
         });
 
       if (windowMeta && !isTestAccount) {
-        const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
+        const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
         if (remaining > 0) {
           setCurrentStage(FINAL_STAGE);
           setTransitioning(false);
@@ -716,7 +716,7 @@ export default function OnboardingPage() {
       const rawMsg =
         error instanceof Error ? error.message : "Readiness policy blocked contest launch.";
       if (windowMeta && !isTestAccount) {
-        const remaining = new Date(windowMeta.startAt).getTime() - Date.now();
+        const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
         if (remaining > 0 && rawMsg.toLowerCase().includes("not accepting sessions")) {
           setCurrentStage(FINAL_STAGE);
           setTransitioning(false);
