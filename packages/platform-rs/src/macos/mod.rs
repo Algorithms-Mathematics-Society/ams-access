@@ -704,7 +704,7 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         if !ACCESSIBILITY_PROMPTED.swap(true, Ordering::SeqCst) {
             let granted = prompt_accessibility_permission();
             if !granted {
-                let _ = std::process::Command::new("open")
+                let _ = std::process::Command::new("/usr/bin/open")
                     .arg(
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
                     )
@@ -946,7 +946,7 @@ pub fn open_privacy_pane(section: &str) -> Result<(), String> {
         "sharing" => "x-apple.systempreferences:com.apple.Sharing-Settings.extension",
         other => return Err(format!("unknown settings section: {other}")),
     };
-    Command::new("open")
+    Command::new("/usr/bin/open")
         .arg(url)
         .spawn()
         .map(|_| ())
@@ -996,7 +996,7 @@ fn lockdown_state_path() -> Option<std::path::PathBuf> {
 /// Kill `pid` only if it is still a caffeinate process — guards against pid
 /// reuse when restoring from a stale state file.
 fn kill_if_caffeinate(pid: u32) {
-    let is_caffeinate = Command::new("ps")
+    let is_caffeinate = Command::new("/bin/ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
         .bounded_output()
         .map(|o| {
@@ -1006,7 +1006,9 @@ fn kill_if_caffeinate(pid: u32) {
         })
         .unwrap_or(false);
     if is_caffeinate {
-        let _ = Command::new("kill").arg(pid.to_string()).bounded_output();
+        let _ = Command::new("/bin/kill")
+            .arg(pid.to_string())
+            .bounded_output();
     }
 }
 
@@ -1022,7 +1024,7 @@ fn restore_lockdown_state() -> bool {
     lockdown_recovery::restore(
         &path,
         |pref| match &pref.value {
-            Some(value) => Command::new("defaults")
+            Some(value) => Command::new("/usr/bin/defaults")
                 .args(["write", &pref.domain, &pref.key, "-int", value])
                 .bounded_output()
                 .is_ok_and(|output| output.status.success()),
@@ -1030,7 +1032,7 @@ fn restore_lockdown_state() -> bool {
                 // A previous partial restore may already have deleted this
                 // originally absent key. Read first to distinguish that case
                 // from a failed deletion or a failed/expired command.
-                let Ok(current) = Command::new("defaults")
+                let Ok(current) = Command::new("/usr/bin/defaults")
                     .args(["read", &pref.domain, &pref.key])
                     .bounded_output()
                 else {
@@ -1043,14 +1045,16 @@ fn restore_lockdown_state() -> bool {
                         &pref.key,
                     );
                 }
-                Command::new("defaults")
+                Command::new("/usr/bin/defaults")
                     .args(["delete", &pref.domain, &pref.key])
                     .bounded_output()
                     .is_ok_and(|output| output.status.success())
             }
         },
         |pid| {
-            let _ = Command::new("killall").arg("cfprefsd").bounded_output();
+            let _ = Command::new("/usr/bin/killall")
+                .arg("cfprefsd")
+                .bounded_output();
             if let Some(pid) = pid {
                 kill_if_caffeinate(pid);
             }
@@ -1115,7 +1119,8 @@ unsafe fn refocus_on_main() {
         return;
     }
     let sel_for_pid = sel_registerName(c"runningApplicationWithProcessIdentifier:".as_ptr());
-    let sel_frontmost = sel_registerName(c"isFrontmost".as_ptr());
+    let sel_responds = sel_registerName(c"respondsToSelector:".as_ptr());
+    let sel_active = sel_registerName(c"isActive".as_ptr());
     let sel_activate = sel_registerName(c"activateWithOptions:".as_ptr());
 
     // +[NSRunningApplication runningApplicationWithProcessIdentifier:pid]
@@ -1126,12 +1131,17 @@ unsafe fn refocus_on_main() {
         return;
     }
 
-    // -[app isFrontmost]  →  BOOL (u8)
+    // -[app respondsToSelector:@selector(isActive)]  →  BOOL (u8)
+    type FnResponds = unsafe extern "C" fn(*mut c_void, *const c_void, *const c_void) -> u8;
+    let send_responds: FnResponds = std::mem::transmute(objc_msgSend as *const ());
+    // -[app isActive]  →  BOOL (u8). The documented getter; `isFrontmost` is
+    // not an NSRunningApplication selector (unrecognized-selector exception).
     type FnBool = unsafe extern "C" fn(*mut c_void, *const c_void) -> u8;
     let send_bool: FnBool = std::mem::transmute(objc_msgSend as *const ());
-    let frontmost = send_bool(app, sel_frontmost);
+    let active =
+        send_responds(app, sel_responds, sel_active) != 0 && send_bool(app, sel_active) != 0;
 
-    if frontmost == 0 {
+    if !active {
         // -[app activateWithOptions:NSApplicationActivateIgnoringOtherApps]
         // NSApplicationActivateIgnoringOtherApps = 1 << 1 = 2
         type FnActivate = unsafe extern "C" fn(*mut c_void, *const c_void, u64) -> u8;
@@ -1271,7 +1281,7 @@ pub fn lock_desktop() -> bool {
     if let Ok(mut pid_guard) = caffeinate_pid().lock() {
         if pid_guard.is_none() {
             let own_pid = std::process::id().to_string();
-            if let Ok(mut child) = Command::new("caffeinate")
+            if let Ok(mut child) = Command::new("/usr/bin/caffeinate")
                 .args(["-d", "-i", "-w", &own_pid])
                 .spawn()
             {
@@ -1444,7 +1454,7 @@ fn listed_basename(comm: &str) -> Option<&str> {
 /// without '/' are already bare names. A failed `ps` records a budget failure
 /// so the scan is reported as incomplete rather than clean.
 fn ps_basenames_checked() -> Vec<String> {
-    let output = Command::new("ps")
+    let output = Command::new("/bin/ps")
         .args(["-axo", "comm="])
         .bounded_checked_output()
         .unwrap_or_else(|_| std::process::Output {
@@ -1516,7 +1526,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     // Silicon and Intel. Unlike kern.hv_support it says nothing about the host.
     // Older macOS lacks the key and sysctl exits nonzero, which means "absent"
     // rather than a failed probe, so this one is not checked.
-    let hv_vmm_present = Command::new("sysctl")
+    let hv_vmm_present = Command::new("/usr/sbin/sysctl")
         .args(["-n", "kern.hv_vmm_present"])
         .bounded_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
@@ -1529,7 +1539,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
         };
     }
 
-    let hw_output = Command::new("system_profiler")
+    let hw_output = Command::new("/usr/sbin/system_profiler")
         .arg("SPHardwareDataType")
         .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
@@ -1538,7 +1548,7 @@ pub fn detect_virtualization() -> VirtDetectionResult {
     // Only the platform expert node: model, manufacturer and board strings are
     // where VMs identify themselves. `ioreg -l` dumps the whole registry, which
     // is several MB on real hardware, overran MAX_OUTPUT, and failed the probe.
-    let ioreg_output = Command::new("ioreg")
+    let ioreg_output = Command::new("/usr/sbin/ioreg")
         .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .bounded_checked_output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
@@ -1904,7 +1914,7 @@ fn running_app_with_screen_capture_grant(running_basenames: &[String]) -> Option
 
 /// Basenames of every running executable (`ps -axo comm=`, full path, no args).
 fn running_process_basenames() -> Vec<String> {
-    Command::new("ps")
+    Command::new("/bin/ps")
         .args(["-axo", "comm="])
         .bounded_output()
         .map(|o| {
@@ -2016,7 +2026,7 @@ fn app_bundle_exists(name: &str) -> bool {
 /// process the way a `pkill -f` command-line regex can.
 fn pids_by_basename(name: &str) -> Vec<u32> {
     let own_pid = std::process::id();
-    Command::new("ps")
+    Command::new("/bin/ps")
         .args(["-axo", "pid=,comm="])
         .bounded_output()
         .map(|o| {
@@ -2038,7 +2048,7 @@ fn pids_by_basename(name: &str) -> Vec<u32> {
 /// Send `signal` to every process whose executable basename is `name`.
 fn signal_by_basename(name: &str, signal: &str) {
     for pid in pids_by_basename(name) {
-        let _ = Command::new("kill")
+        let _ = Command::new("/bin/kill")
             .args([signal, &pid.to_string()])
             .bounded_output();
     }
@@ -2062,7 +2072,7 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
         // Graceful quit via AppleScript, only for a real app bundle; anything
         // else goes straight to the signals below.
         if app_bundle_exists(name) {
-            let _ = Command::new("osascript")
+            let _ = Command::new("/usr/bin/osascript")
                 .args(["-e", &format!("tell application {:?} to quit", name)])
                 .bounded_output();
         }
@@ -2112,7 +2122,7 @@ pub fn close_apps(names: &[String]) -> CloseAppsResult {
 /// reported as alive: calling a restricted app closed on no evidence is worse
 /// than asking the candidate to close it again.
 fn process_alive_by_name(name: &str) -> bool {
-    Command::new("ps")
+    Command::new("/bin/ps")
         .args(["-axo", "comm="])
         .bounded_checked_output()
         .map(|o| {
