@@ -37,7 +37,7 @@ const pending = new Map();
 function onboardingFixtures() {
   window.__onboardingCommands=[];
   const pending=()=>new Promise(()=>{});
-  window.__TAURI__={core:{invoke:(command,args)=>{window.__onboardingCommands.push({command,args});if(['unlock_desktop','configure_event_stream','stop_event_stream','stop_proctoring','stop_keyboard_monitoring'].includes(command))return Promise.resolve();if(command==='get_lockdown_restore_status')return Promise.resolve({pending:false,items:[]});return pending()}},window:{availableMonitors:pending,getCurrentWindow:()=>({setFullscreen:async()=>{},isFullscreen:async()=>false,setAlwaysOnTop:async()=>{},setDecorations:async()=>{},setResizable:async()=>{}})}};
+  window.__TAURI__={core:{invoke:(command,args)=>{window.__onboardingCommands.push({command,args});if(command==='is_lockdown_engaged')return Promise.resolve(true);if(['unlock_desktop','configure_event_stream','stop_event_stream','stop_proctoring','stop_keyboard_monitoring'].includes(command))return Promise.resolve();if(command==='get_lockdown_restore_status')return Promise.resolve({pending:false,items:[]});return pending()}},window:{availableMonitors:pending,getCurrentWindow:()=>({setFullscreen:async()=>{},isFullscreen:async()=>false,setAlwaysOnTop:async()=>{},setDecorations:async()=>{},setResizable:async()=>{}})}};
   if(navigator.mediaDevices)navigator.mediaDevices.getUserMedia=pending;
 }
 function confidenceFixtures(config) {
@@ -213,7 +213,7 @@ try {
   await send('Fetch.enable', { patterns: [{ urlPattern: 'http*', requestStage: 'Request' }] });
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
   async function size(width,height){viewport={width,height};await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});}
-  const route='/session/contest/?contestId=p0-contest&mode=dry-run';
+  const route='/session/contest/?contestId=p0-contest';
   async function openContest(){await navigate(route,{ready:"document.querySelector('.cm-editor')&&document.body.innerText.includes('Binary Search')"});await delay(400);}
   async function geometry(){await recordCheck('No horizontal page overflow',"document.body.scrollWidth<=innerWidth");await recordCheck('One main landmark',"document.querySelectorAll('main,[role=main]').length===1");await recordCheck('Single mounted camera',"document.querySelectorAll('video').length===1");await recordCheck('Editor has usable area',"document.querySelector('.cm-editor').getBoundingClientRect().height>=180");}
 
