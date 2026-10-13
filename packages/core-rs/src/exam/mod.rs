@@ -884,6 +884,18 @@ fn evaluate_requirement(
                 Some("supported platform: windows (Administrator)".to_string()),
                 vec![],
             ),
+            Some(platform) if platform == "windows_no_firewall" => (
+                true,
+                None,
+                Some("supported platform: windows (this build does not require a firewall)".to_string()),
+                vec![],
+            ),
+            Some(platform) if platform == "windows_msix" => (
+                true,
+                None,
+                Some("supported platform: windows (Microsoft Store build)".to_string()),
+                vec![],
+            ),
             Some(platform) if platform == "windows_no_admin" => (
                 false,
                 Some(FailureReasonCode::UnsupportedPlatform),
@@ -1964,6 +1976,92 @@ mod tests {
             matches!(windows_kbd.severity, BlockingSeverity::Block),
             "keyboard_lockdown must be Block on Windows"
         );
+    }
+
+    #[test]
+    fn ordinary_windows_builds_pass_platform_readiness() {
+        for label in ["windows_no_firewall", "windows_msix"] {
+            let mut state = windows_state();
+            state.platform = Some(label.into());
+            // A supported OS must pass even if the caller supplied a strict
+            // baseline rather than a platform-conditioned policy.
+            for policy in [
+                SessionPolicy::strict_contest(),
+                SessionPolicy::for_profile_with_platform(
+                    EnforcementProfile::StrictContest,
+                    Some(label),
+                ),
+            ] {
+                let report =
+                    evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+                let platform = report
+                    .checks
+                    .iter()
+                    .find(|c| c.kind == CheckKind::Platform)
+                    .unwrap();
+                assert_eq!(platform.outcome, CheckOutcome::Pass, "{label}");
+                assert!(!platform.blocking, "{label}");
+                assert_eq!(platform.reason, None, "{label}");
+                assert_ne!(report.decision, EnforcementDecision::Blocked, "{label}");
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_windows_builds_preserve_required_security_checks() {
+        for label in ["windows_no_firewall", "windows_msix"] {
+            let policy = SessionPolicy::for_profile_with_platform(
+                EnforcementProfile::StrictContest,
+                Some(label),
+            );
+            for kind in [
+                CheckKind::Camera,
+                CheckKind::ExternalDisplay,
+                CheckKind::RemoteServer,
+                CheckKind::KeyboardLockdown,
+            ] {
+                let mut state = windows_state();
+                state.platform = Some(label.into());
+                match kind {
+                    CheckKind::Camera => state.camera_available = Some(false),
+                    CheckKind::ExternalDisplay => {
+                        state.external_displays.as_mut().unwrap().has_extra = true
+                    }
+                    CheckKind::RemoteServer => state.rdp_server = Some(true),
+                    CheckKind::KeyboardLockdown => state.keyboard.as_mut().unwrap().active = false,
+                    _ => unreachable!(),
+                }
+                let report =
+                    evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+                assert_eq!(
+                    report.decision,
+                    EnforcementDecision::Blocked,
+                    "{label} {kind:?}"
+                );
+                assert!(
+                    report
+                        .checks
+                        .iter()
+                        .any(|check| check.kind == kind && check.blocking),
+                    "{label} {kind:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unrecognized_windows_build_is_still_blocked() {
+        let policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows_unknown"),
+        );
+        let mut state = windows_state();
+        state.platform = Some("windows_unknown".into());
+        let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
+        assert_eq!(report.decision, EnforcementDecision::Blocked);
+        assert!(report
+            .blocking_reasons
+            .contains(&FailureReasonCode::UnsupportedPlatform));
     }
 
     #[test]

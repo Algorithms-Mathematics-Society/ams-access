@@ -32,7 +32,7 @@ test("MSIX keeps proctor lockdown but does not write virtualized Windows policie
 
   assert.match(
     windows,
-    /if !is_packaged\(\) \{\s*if let Err\(error\) = registry_recovery::engage\(\)/s
+    /let registry = if is_packaged\(\) \{\s*RegistryLockdownStatus::NotApplicablePackaged\s*\} else \{\s*match registry_recovery::engage\(is_elevated\(\)\)/s
   );
   const recovery = windows.slice(
     windows.indexOf("pub fn recover_registry_if_crashed()"),
@@ -97,13 +97,42 @@ test("Windows restore failure stays visible and retry uses the journal", async (
   );
   assert.match(
     desktop,
-    /cfg\(target_os = "windows"\)\]\s*let protected = platform_rs::windows::lock_desktop_checked\(\)\?/
+    /cfg\(target_os = "windows"\)\]\s*let protected = \{\s*let status = platform_rs::windows::lock_desktop_with_status\(\)\?/
   );
   const release = desktop.slice(
     desktop.indexOf("fn release_native_desktop()"),
     desktop.indexOf("async fn engage_desktop(")
   );
   assert.match(release, /windows::desktop_recovery_pending\(\)[\s\S]*?return Err/);
+});
+
+test("unelevated Windows entry records skipped registry controls without waiving keyboard protection", async () => {
+  const [windows, desktop, registry] = await Promise.all([
+    read("packages/platform-rs/src/windows/mod.rs"),
+    read("apps/desktop/src-tauri/src/lib.rs"),
+    read("packages/platform-rs/src/windows/registry_recovery.rs"),
+  ]);
+  const engage = desktop.slice(
+    desktop.indexOf("impl lockdown_lifecycle::Operations for DesktopOperations"),
+    desktop.indexOf("async fn lock_desktop(")
+  );
+  assert.match(engage, /lock_desktop_with_status\(\)\?/);
+  assert.match(
+    engage,
+    /SkippedUnelevated[\s\S]*?record_proctoring_event\([\s\S]*?"registry_lockdown_advisory"/
+  );
+  assert.match(engage, /"registry_status": status\.registry/);
+  assert.match(engage, /if !protected \{\s*if self\.require_keyboard \{\s*return Err/);
+  assert.match(windows, /keyboard_active: enable_keyboard_intercept\(\)\.active/);
+  const privilege = registry.slice(
+    registry.indexOf("fn engage_for_privilege_with("),
+    registry.indexOf("fn engage_with(")
+  );
+  assert.match(privilege, /if elevated \{\s*engage_with\(registry, storage\)\?/);
+  assert.match(
+    privilege,
+    /else \{[\s\S]*?restore_with\(registry, storage\)\?;\s*Ok\(RegistryLockdownStatus::SkippedUnelevated\)/
+  );
 });
 
 test("Windows capture affinity outcomes are recorded and remain advisory", async () => {
@@ -167,7 +196,10 @@ test("Windows firewall installation is scoped, validated and serialized with cle
 
 test("Windows hook diagnostics only read evidence and stay unavailable elsewhere", async () => {
   const desktop = await read("apps/desktop/src-tauri/src/lib.rs");
-  const command = desktop.slice(desktop.indexOf("fn get_windows_hook_diagnostics()"), desktop.indexOf("fn apply_capture_protection("));
+  const command = desktop.slice(
+    desktop.indexOf("fn get_windows_hook_diagnostics()"),
+    desktop.indexOf("fn apply_capture_protection(")
+  );
   assert.match(command, /keyboard_hook_delivery_diagnostics\(\)/);
   assert.match(command, /cfg\(not\(target_os = "windows"\)\)[\s\S]*?None/);
   assert.doesNotMatch(command, /enable_keyboard_intercept|SendInput|SetWindowsHookExW/);

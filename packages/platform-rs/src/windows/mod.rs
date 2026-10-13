@@ -10,6 +10,7 @@ mod hook_delivery;
 pub mod instance;
 mod registry_recovery;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
+pub use registry_recovery::RegistryLockdownStatus;
 
 thread_local! {
     static HOOK_CALLBACK_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -486,26 +487,43 @@ pub fn lock_desktop() -> bool {
     lock_desktop_checked().unwrap_or(false)
 }
 
-/// Registry/ownership errors cannot be waived as an unavailable keyboard hook.
+pub struct DesktopLockdownStatus {
+    pub keyboard_active: bool,
+    pub registry: RegistryLockdownStatus,
+}
+
 pub fn lock_desktop_checked() -> Result<bool, String> {
+    lock_desktop_with_status().map(|status| status.keyboard_active)
+}
+
+/// Unelevated entry skips new registry policies, never unfinished recovery.
+pub fn lock_desktop_with_status() -> Result<DesktopLockdownStatus, String> {
     if !instance::owns_instance() {
         return Err("Windows lockdown requires instance ownership".into());
     }
     // MSIX virtualizes HKCU; packaged builds must not mutate these settings.
-    if !is_packaged() {
-        if let Err(error) = registry_recovery::engage() {
-            eprintln!("Windows registry lockdown failed: {error}");
-            if let Err(restore_error) = registry_recovery::restore() {
-                eprintln!("Windows registry rollback incomplete: {restore_error}");
+    let registry = if is_packaged() {
+        RegistryLockdownStatus::NotApplicablePackaged
+    } else {
+        match registry_recovery::engage(is_elevated()) {
+            Ok(status) => status,
+            Err(error) => {
+                eprintln!("Windows registry lockdown failed: {error}");
+                if let Err(restore_error) = registry_recovery::restore() {
+                    eprintln!("Windows registry rollback incomplete: {restore_error}");
+                }
+                return Err(format!("Windows registry lockdown failed: {error}"));
             }
-            return Err(format!("Windows registry lockdown failed: {error}"));
         }
-    }
+    };
     set_sleep_prevention(true);
     SHIELD_ACTIVE.store(true, Ordering::SeqCst);
     // The caller decides whether unavailable keyboard interception is advisory
     // and owns rollback when its entry policy requires the hook.
-    Ok(enable_keyboard_intercept().active)
+    Ok(DesktopLockdownStatus {
+        keyboard_active: enable_keyboard_intercept().active,
+        registry,
+    })
 }
 
 pub fn unlock_desktop() {

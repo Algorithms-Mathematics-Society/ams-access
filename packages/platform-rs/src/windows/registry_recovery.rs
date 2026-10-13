@@ -38,6 +38,14 @@ const SETTINGS: [(&str, &str, u32); 6] = [
 ];
 static LOCK: Mutex<()> = Mutex::new(());
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistryLockdownStatus {
+    Applied,
+    SkippedUnelevated,
+    NotApplicablePackaged,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawValue {
@@ -96,6 +104,22 @@ trait Storage {
     fn load(&mut self) -> Result<Option<Journal>, String>;
     fn publish(&mut self, journal: &Journal) -> Result<(), String>;
     fn remove(&mut self) -> Result<(), String>;
+}
+
+fn engage_for_privilege_with(
+    registry: &mut impl Registry,
+    storage: &mut impl Storage,
+    elevated: bool,
+) -> Result<RegistryLockdownStatus, String> {
+    if elevated {
+        engage_with(registry, storage)?;
+        Ok(RegistryLockdownStatus::Applied)
+    } else {
+        // Never leave a previous session's changes behind or replace its
+        // snapshot. With no journal this performs no registry reads or writes.
+        restore_with(registry, storage)?;
+        Ok(RegistryLockdownStatus::SkippedUnelevated)
+    }
 }
 
 fn engage_with(registry: &mut impl Registry, storage: &mut impl Storage) -> Result<(), String> {
@@ -425,11 +449,11 @@ impl Drop for Key {
     }
 }
 
-pub(super) fn engage() -> Result<(), String> {
+pub(super) fn engage(elevated: bool) -> Result<RegistryLockdownStatus, String> {
     let _lock = LOCK
         .lock()
         .map_err(|_| "Registry transaction lock poisoned")?;
-    engage_with(&mut WindowsRegistry, &mut FileStorage::local()?)
+    engage_for_privilege_with(&mut WindowsRegistry, &mut FileStorage::local()?, elevated)
 }
 
 pub(super) fn restore() -> Result<(), String> {
@@ -524,6 +548,94 @@ mod tests {
         fn remove(&mut self) -> Result<(), String> {
             self.0.remove()
         }
+    }
+
+    #[test]
+    fn unelevated_entry_skips_registry_without_probing_protected_values() {
+        let mut store = TestStore::new();
+        let mut reg = Fake {
+            fail_read: Some("DisableTaskMgr".into()),
+            fail_at: Some(1),
+            ..Default::default()
+        };
+        let before = reg.values.clone();
+        assert_eq!(
+            engage_for_privilege_with(&mut reg, &mut store.storage, false).unwrap(),
+            RegistryLockdownStatus::SkippedUnelevated
+        );
+        assert_eq!(reg.writes, 0);
+        assert_eq!(reg.values, before);
+        assert!(store.storage.load().unwrap().is_none());
+        restore_with(&mut reg, &mut store.storage).unwrap();
+        assert_eq!(reg.writes, 0);
+    }
+
+    #[test]
+    fn unelevated_entry_restores_existing_owned_changes_without_reapplying() {
+        let mut store = TestStore::new();
+        let mut reg = Fake::default();
+        let (key, name, _) = SETTINGS[0];
+        reg.values.insert((key.into(), name.into()), applied(0));
+        let before = reg.values.clone();
+        engage_with(&mut reg, &mut store.storage).unwrap();
+        assert_eq!(
+            engage_for_privilege_with(&mut reg, &mut store.storage, false).unwrap(),
+            RegistryLockdownStatus::SkippedUnelevated
+        );
+        assert_eq!(reg.values, before);
+        assert!(store.storage.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn unelevated_entry_cannot_waive_failed_recovery_or_corrupt_journals() {
+        let mut store = TestStore::new();
+        let mut reg = Fake::default();
+        engage_with(&mut reg, &mut store.storage).unwrap();
+        reg.fail_at = Some(reg.writes + 1);
+        assert!(engage_for_privilege_with(&mut reg, &mut store.storage, false).is_err());
+        assert!(store.storage.load().unwrap().is_some());
+        reg.fail_at = None;
+        assert_eq!(
+            engage_for_privilege_with(&mut reg, &mut store.storage, false).unwrap(),
+            RegistryLockdownStatus::SkippedUnelevated
+        );
+        assert!(reg.values.is_empty());
+        assert!(store.storage.load().unwrap().is_none());
+        fs::write(&store.storage.0, b"broken").unwrap();
+        let writes = reg.writes;
+        assert!(engage_for_privilege_with(&mut reg, &mut store.storage, false).is_err());
+        assert_eq!(reg.writes, writes);
+        assert_eq!(fs::read(&store.storage.0).unwrap(), b"broken");
+    }
+
+    #[test]
+    fn unelevated_entry_preserves_external_edits_and_their_recovery_journal() {
+        let mut store = TestStore::new();
+        let mut reg = Fake::default();
+        engage_with(&mut reg, &mut store.storage).unwrap();
+        let (key, name, _) = SETTINGS[0];
+        reg.values.insert((key.into(), name.into()), applied(42));
+        assert!(engage_for_privilege_with(&mut reg, &mut store.storage, false).is_err());
+        assert_eq!(
+            reg.values.get(&(key.into(), name.into())),
+            Some(&applied(42))
+        );
+        assert!(store.storage.load().unwrap().is_some());
+    }
+
+    #[test]
+    fn elevated_entry_still_applies_registry_and_propagates_write_failures() {
+        let mut store = TestStore::new();
+        let mut reg = Fake::default();
+        assert_eq!(
+            engage_for_privilege_with(&mut reg, &mut store.storage, true).unwrap(),
+            RegistryLockdownStatus::Applied
+        );
+        assert!(store.storage.load().unwrap().is_some());
+        restore_with(&mut reg, &mut store.storage).unwrap();
+        reg.fail_at = Some(reg.writes + 1);
+        assert!(engage_for_privilege_with(&mut reg, &mut store.storage, true).is_err());
+        assert!(store.storage.load().unwrap().is_some());
     }
 
     #[test]
