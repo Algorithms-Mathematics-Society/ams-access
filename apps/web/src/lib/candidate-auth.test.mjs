@@ -563,6 +563,7 @@ test("auth redirect releases all native controls before navigation and retains r
     "setAlwaysOnTop",
     "setDecorations",
     "unlock_desktop",
+    "disable_network_lockdown",
     "get_lockdown_restore_status",
     "redirect:/login",
   ]);
