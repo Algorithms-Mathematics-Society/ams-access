@@ -1745,6 +1745,20 @@ export default function ContestPageClient() {
     } catch {
       unlockFailed = true;
     }
+    // The network lockdown (macOS PF / firewall allowlist) is released apart
+    // from the desktop, and the restore status below does not track it.
+    let networkFailed = false;
+    try {
+      if (window.__TAURI__) {
+        await withTimeout(
+          window.__TAURI__.core.invoke("disable_network_lockdown"),
+          10000,
+          "Network release timed out"
+        );
+      }
+    } catch {
+      networkFailed = true;
+    }
     const status = window.__TAURI__
       ? await withTimeout(
           window.__TAURI__.core.invoke<RestoreStatus>("get_lockdown_restore_status"),
@@ -1752,8 +1766,8 @@ export default function ContestPageClient() {
           "Restore status timed out"
         ).catch(() => null)
       : null;
-    if (status?.pending || unlockFailed || (window.__TAURI__ && status === null)) {
-      setRestoreStatus(status ?? { pending: true, items: [] });
+    if (status?.pending || unlockFailed || networkFailed || (window.__TAURI__ && status === null)) {
+      setRestoreStatus(status?.pending ? status : { pending: true, items: status?.items ?? [] });
       released = false;
     } else {
       setRestoreStatus(null);
