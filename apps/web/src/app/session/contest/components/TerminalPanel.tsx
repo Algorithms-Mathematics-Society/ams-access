@@ -16,6 +16,7 @@ import {
   type SubmissionAttemptRecord,
 } from "../submission-state";
 import { CustomCasesPanel } from "./CustomCasesPanel";
+import { ResultsPanel } from "./ResultsPanel";
 import type { CustomCase } from "../custom-cases";
 import { VerdictBadge } from "@/lib/VerdictBadge";
 import { isPublicSample, outputText } from "../execution-output";
@@ -218,8 +219,11 @@ export function TerminalPanel({
   runProgressPhase,
   terminalUnread,
 }: TerminalPanelProps) {
-  const [activeTab, setActiveTab] = useState<"all" | "custom">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "custom" | "attempts">("all");
   useEffect(() => {
+    // A run pulls the pane back to what it is about to produce. Without this
+    // a candidate who was reading their history watches the spinner run in a
+    // tab they cannot see.
     if (isRunning) setActiveTab(runMode);
   }, [isRunning, runMode]);
   const runIsCustom = runMode === "custom";
@@ -310,7 +314,7 @@ export function TerminalPanel({
       <VStack gap={0} style={{ display: terminalCollapsed ? "none" : "flex", flexShrink: 0 }}>
         <TabList
           value={activeTab}
-          onChange={(value) => setActiveTab(value as "all" | "custom")}
+          onChange={(value) => setActiveTab(value as "all" | "custom" | "attempts")}
           size="sm"
           hasDivider
           role="tablist"
@@ -318,8 +322,13 @@ export function TerminalPanel({
         >
           {(
             [
-              { value: "all", label: "All Cases" },
-              { value: "custom", label: "Custom" },
+              { value: "all", label: "Test Result" },
+              { value: "custom", label: "Testcase" },
+              // History, out of the results scroll. It used to sit below the
+              // verdict, so scrolling a failed run led straight into the
+              // results of an attempt from twenty minutes earlier with
+              // nothing to tell them apart.
+              { value: "attempts", label: "Attempts" },
             ] as const
           ).map((tab) => (
             <Tab
@@ -369,316 +378,31 @@ export function TerminalPanel({
             description="These results belong to the earlier code. Run the active file again to check your changes."
           />
         )}
-        {((activeTab === "all" && latestAttempt) || (showRunOutput && runStatus)) && (
-          <HStack
-            gap={3}
-            align="center"
-            justify="between"
-            wrap="wrap"
-            paddingInline={4}
-            paddingBlock={2}
-            style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
-          >
-            {activeTab === "all" && latestAttempt && (
-              <HStack
-                gap={2}
-                align="center"
-                {...{ title: "Last submitted attempt — not the current draft or sample run" }}
-              >
-                <Text type="supporting" color="secondary">
-                  Last submission
-                </Text>
-                {(() => {
-                  const latestCode = (latestAttempt.final_verdict ??
-                    latestAttempt.status) as VerdictCode;
-                  return (
-                    <VerdictBadge
-                      key={`${latestAttempt?.id ?? ""}-${String(latestCode)}`}
-                      variant="chip"
-                      code={latestCode}
-                      reveal
-                    />
-                  );
-                })()}
-              </HStack>
-            )}
-            {showRunOutput && runStatus && (
-              <HStack gap={2} align="center" wrap="wrap" role="status" aria-live="polite">
-                {runStatus.icon === "loading" && <Spinner size="sm" />}
-                <Text type="supporting" weight="medium">
-                  {runIsCustom ? "Custom run" : "Sample run"}: {runStatus.label}
-                </Text>
-                {runMetrics && (
-                  <Text type="supporting" color="secondary" hasTabularNumbers>
-                    {runMetrics}
-                  </Text>
-                )}
-              </HStack>
-            )}
-          </HStack>
-        )}
-        {showRunOutput && shouldShowRunProgress && (
-          <HStack
-            gap={2}
-            align="center"
-            wrap="wrap"
-            paddingInline={4}
-            paddingBlock={2}
-            role="status"
-            aria-live="polite"
-            style={{
-              background: "var(--color-background-muted)",
-              borderBottom: "var(--border-width) solid var(--color-border)",
-            }}
-          >
-            {isRunning && <Spinner size="sm" />}
-            {runProgressSteps.map((step, index) => (
-              <HStack key={step} gap={2} align="center">
-                <Text
-                  type="supporting"
-                  color={index === runProgressPhase ? "primary" : "secondary"}
-                  weight={index === runProgressPhase ? "semibold" : "normal"}
-                  aria-current={index === runProgressPhase ? "step" : undefined}
-                >
-                  {step}
-                </Text>
-                {index < runProgressSteps.length - 1 && (
-                  <Text type="supporting" color="secondary" aria-hidden="true">
-                    →
-                  </Text>
-                )}
-              </HStack>
-            ))}
-          </HStack>
-        )}
-        {showRunPane && (
-          <VStack gap={0} style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}>
-            <VStack gap={3} padding={4}>
-              {/* Keep the original sample/hidden test masking and branch order. */}
-              {!isRunning && runResult?.status !== "CE" && runSampleTests && (
-                <VStack gap={0}>
-                  {runSampleTests.length === 0 ? (
-                    <Text color="secondary">No sample tests to run for this problem.</Text>
-                  ) : (
-                    runSampleTests.map((tr: any, idx: number) => {
-                      const isAC = tr.verdict === "AC";
-                      // A custom case is the candidate's own input, so there
-                      // is nothing of the problem's to withhold -- its output
-                      // always shows. cxxprobe emits stdout for every custom
-                      // case and for no other kind, which is what makes this
-                      // safe to key on.
-                      const isCustom = tr.stdout_text != null || tr.stderr_text != null;
-                      const isSample = isCustom || isSampleTestRow(tr);
-                      const testNumber = tr.test_number ?? tr.testcase_no ?? idx + 1;
-                      const expected = tr.expected ?? tr.expected_output ?? tr.answer ?? null;
-                      const got =
-                        tr.stdout_text ??
-                        tr.got_output ??
-                        tr.got ??
-                        tr.actual ??
-                        tr.output ??
-                        tr.stdout ??
-                        null;
-                      return (
-                        <VStack
-                          key={`run-sample-${testNumber}-${idx}`}
-                          gap={2}
-                          paddingBlock={3}
-                          style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
-                        >
-                          <HStack gap={3} align="center" wrap="wrap">
-                            <Text type="label" weight="medium">
-                              {isCustom
-                                ? (tr.label ?? `Case ${testNumber}`)
-                                : `${isSample ? "Sample" : "Test"} ${testNumber}`}
-                            </Text>
-                            {/* An unjudged custom case has no verdict at all
-                                -- the candidate gave no expected output. A
-                                badge there would invent a result. */}
-                            {tr.verdict ? (
-                              <VerdictBadge variant="chip" code={tr.verdict as VerdictCode} />
-                            ) : isCustom ? (
-                              <Text type="supporting" color="secondary">
-                                not checked
-                              </Text>
-                            ) : (
-                              <VerdictBadge
-                                variant="chip"
-                                code={(isAC ? "AC" : "Failed") as VerdictCode}
-                              />
-                            )}
-                            {tr.runtime_ms != null && (
-                              <Text type="supporting" color="secondary" hasTabularNumbers>
-                                {tr.runtime_ms}ms
-                              </Text>
-                            )}
-                            {!isSample && (
-                              <Text type="supporting" color="secondary">
-                                Output details hidden
-                              </Text>
-                            )}
-                          </HStack>
-                          {isSample && tr.checker_message && (
-                            <Text type="supporting" color="secondary">
-                              {tr.checker_message}
-                            </Text>
-                          )}
-                          {!isAC && isSample && (expected != null || got != null) && (
-                            <VStack gap={3}>
-                              <SampleOutput label="Expected output" value={expected} />
-                              <SampleOutput label="Actual output" value={got} />
-                            </VStack>
-                          )}
-                          {isAC && isSample && got != null && String(got).length > 0 && (
-                            <SampleOutput label="Actual output" value={got} />
-                          )}
-                          {/* An unchecked custom case falls through both
-                              branches above (no verdict, so neither AC nor
-                              not-AC); its output is the only thing the
-                              candidate asked for. */}
-                          {isCustom && !tr.verdict && (
-                            <SampleOutput label="Output" value={got ?? ""} />
-                          )}
-                          {isCustom && tr.stderr_text ? (
-                            <SampleOutput label="Errors" value={tr.stderr_text} />
-                          ) : null}
-                        </VStack>
-                      );
-                    })
-                  )}
-                </VStack>
-              )}
-              {isRunning ? (
-                <Text color="secondary">Running…</Text>
-              ) : runResult?.status === "CE" ? (
-                <Text color="secondary">Compilation failed — messages below.</Text>
-              ) : runTimedOut ? (
-                <Banner
-                  status="warning"
-                  title="Run is taking longer than expected"
-                  description="It may still be queued. Check again for its result."
-                  endContent={
-                    <Button
-                      label="Check again"
-                      variant="secondary"
-                      size="sm"
-                      onClick={onCheckRunAgain}
-                    />
-                  }
-                />
-              ) : runResultAttemptId &&
-                runSampleTests === null &&
-                runResult &&
-                !isPendingSubmissionStatus(runResult.status) ? (
-                <Text color="secondary">Loading sample results…</Text>
-              ) : runSampleTests && runSampleTests.length > 0 ? (
-                runResult?.stdout ? (
-                  <Text
-                    type="code"
-                    color="secondary"
-                    style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-                  >
-                    {runResult.stdout}
-                  </Text>
-                ) : null
-              ) : runResult?.stdout ? (
-                <Text
-                  type="code"
-                  color="secondary"
-                  style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-                >
-                  {runResult.stdout}
-                </Text>
-              ) : runResult?.stderr ? (
-                <Text
-                  type="code"
-                  style={{
-                    color: "var(--color-text-orange)",
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  {runResult.stderr}
-                </Text>
-              ) : runResult ? (
-                <Text color="secondary">No output.</Text>
-              ) : runError ? (
-                <Banner status="error" title={runError} />
-              ) : (
-                <Text color="secondary">
-                  {isEditorEmpty
-                    ? "Write code to prepare a run."
-                    : "Run your code to see stdout and stderr."}
-                </Text>
-              )}
-            </VStack>
-            {compilerText && (
-              <VStack
-                gap={2}
-                style={{
-                  borderTop: "var(--border-width) solid var(--color-border)",
-                  paddingTop: "var(--spacing-3)",
-                }}
-              >
-                <Text type="supporting" color="secondary">
-                  {runResult
-                    ? "Compiler messages from this run"
-                    : "Compiler messages from your last submission"}
-                </Text>
-                {compilerDiagnostic && (
-                  <VStack
-                    gap={2}
-                    padding={3}
-                    style={{
-                      background: "var(--color-background-body)",
-                      borderRadius: "var(--radius-element)",
-                    }}
-                  >
-                    <Text weight="medium" style={{ overflowWrap: "anywhere" }}>
-                      {compilerDiagnostic.message}
-                    </Text>
-                    <HStack gap={2} align="center" wrap="wrap">
-                      <Text
-                        type="supporting"
-                        color="secondary"
-                        style={{ overflowWrap: "anywhere" }}
-                      >
-                        {compilerDiagnostic.filename} · line {compilerDiagnostic.line}
-                        {compilerDiagnostic.column ? `, column ${compilerDiagnostic.column}` : ""}
-                      </Text>
-                      {onJumpToCompilerError && (
-                        <Button
-                          label={`Go to line ${compilerDiagnostic.line}`}
-                          variant="secondary"
-                          size="sm"
-                          onClick={onJumpToCompilerError}
-                        />
-                      )}
-                    </HStack>
-                    {!onJumpToCompilerError && (
-                      <Text type="supporting" color="secondary">
-                        This location cannot be matched to the current file and code version.
-                      </Text>
-                    )}
-                  </VStack>
-                )}
-                <Text
-                  type="code"
-                  style={{
-                    color: compilerIsError
-                      ? "var(--color-text-red)"
-                      : "var(--color-text-secondary)",
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  {compilerText}
-                </Text>
-              </VStack>
-            )}
-          </VStack>
-        )}
         {activeTab === "all" && (
+          <ResultsPanel
+            tests={showRunOutput ? runSampleTests : latestAttemptTests}
+            verdict={
+              showRunOutput
+                ? (runResult?.status ?? null)
+                : ((latestAttempt?.final_verdict ?? latestAttempt?.status) as string | null)
+            }
+            runtimeMs={showRunOutput ? runResult?.runtime_ms : latestAttempt?.runtime_ms}
+            memoryKb={showRunOutput ? runResult?.memory_kb : latestAttempt?.memory_kb}
+            isRunning={isRunning || Boolean(latestAttemptPending && !showRunOutput)}
+            progressLabel={runProgressSteps[runProgressPhase] ?? runMetrics}
+            error={runTimedOut ? "The judge did not answer in time." : runError}
+            compilerText={compilerText}
+            compilerIsError={compilerIsError}
+            onJumpToCompilerError={onJumpToCompilerError}
+            stale={showRunOutput && runSourceChanged}
+            emptyHint={
+              showRunOutput
+                ? "Run your code to check it against the sample cases."
+                : "Nothing submitted for this problem yet."
+            }
+          />
+        )}
+        {activeTab === "attempts" && (
           <VStack gap={4} padding={4}>
             <HStack gap={3} align="center" justify="between" wrap="wrap">
               <Text type="supporting" color="secondary" weight="medium">
