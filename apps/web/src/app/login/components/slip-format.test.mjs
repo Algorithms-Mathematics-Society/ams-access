@@ -43,13 +43,14 @@ test("a half-typed @access does not eat the handle", () => {
 
 test("spaces and stray punctuation are dropped rather than rejected", () => {
   assert.equal(formatHandle("  ayush.s-kqmwd  "), "ayush.s-kqmwd");
-  assert.equal(formatHandle("ayush.s_kqmwd"), "ayush.skqmwd");
+  assert.equal(formatHandle("ayush.s kqmwd!"), "ayush.skqmwd");
 });
 
-test("digits are dropped, because no handle contains one", () => {
-  // That is the property that makes 0/o and 1/l unambiguous when a handle is
-  // read aloud across a room.
-  assert.equal(formatHandle("ayush.s-kqmw0"), "ayush.s-kqmw");
+test("digits and underscores survive, since reused usernames carry them", () => {
+  // An existing username is issued as the login id unchanged, so stripping
+  // these would turn a real login into one that matches nothing.
+  assert.equal(formatHandle("john_doe"), "john_doe");
+  assert.equal(formatHandle("ayush-shukla-2@access"), "ayush-shukla-2");
 });
 
 test("dots and hyphens survive, since handles are built from them", () => {

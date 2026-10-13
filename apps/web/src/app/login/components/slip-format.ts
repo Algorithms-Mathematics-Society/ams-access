@@ -24,15 +24,17 @@ export const HANDLE_SUFFIX = "@access";
  * the candidate's email shows them `ayush.s-kqmwd@access`, so pasting the whole
  * string is the normal case rather than the exceptional one.
  *
- * Letters, dots and hyphens survive; digits do not, because no handle contains
- * a digit. That is what removes the `0`/`o` and `1`/`l` ambiguity when one is
- * read aloud across a room.
+ * Letters, digits, dots, underscores and hyphens survive. Newly allocated
+ * handles are letters only, but an existing username is reused as the login id
+ * when a credential is issued, and those can carry digits and underscores
+ * (`john_doe`, `ayush-shukla-2`). Only what the server can never issue is
+ * dropped, so a real login id is never changed into a different one.
  */
 export function formatHandle(raw: string): string {
   const beforeAt = raw.split("@", 1)[0];
   return beforeAt
     .toLowerCase()
-    .replace(/[^a-z.-]/g, "")
+    .replace(/[^a-z0-9._-]/g, "")
     .slice(0, 64);
 }
 
