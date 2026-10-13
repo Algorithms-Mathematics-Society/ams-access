@@ -47,6 +47,7 @@ export function Stage12_IntegrityConfirmation({
   results,
   onPass,
   blocked = false,
+  blockReason,
   warningDetails = {},
 }: {
   results: Record<number, StageStatus>;
@@ -55,13 +56,20 @@ export function Stage12_IntegrityConfirmation({
   /** True when the orchestrator is showing a block. The summary still
    * renders — it is the useful part — but nothing advances. */
   blocked?: boolean;
+  blockReason?: string | null;
 }) {
   // Every stage before this one — this stage is the summary, and the one
   // after it is the secure start, so neither has a result to report.
-  const items = STAGES.filter((s) => s.id < REVIEW_STAGE).map((s) => ({
-    stage: s.id,
-    label: OUTCOME_LABEL[s.label] ?? s.label,
-  })).sort((a, b) => Number(results[b.stage] === "warn" || results[b.stage] === "fail") - Number(results[a.stage] === "warn" || results[a.stage] === "fail"));
+  const items = STAGES.filter((s) => s.id < REVIEW_STAGE)
+    .map((s) => ({
+      stage: s.id,
+      label: OUTCOME_LABEL[s.label] ?? s.label,
+    }))
+    .sort(
+      (a, b) =>
+        Number(results[b.stage] === "warn" || results[b.stage] === "fail") -
+        Number(results[a.stage] === "warn" || results[a.stage] === "fail")
+    );
 
   const warnCount = items.filter(({ stage }) => results[stage] === "warn").length;
   const hasWarns = warnCount > 0;
@@ -76,20 +84,67 @@ export function Stage12_IntegrityConfirmation({
     <VStack gap={5} style={{ width: "100%", minWidth: 0 }}>
       <StageHeader label="Review your setup" />
       <Banner
-        status={blocked || hasFailures ? "error" : hasWarns || notRun > 0 || hasPending ? "warning" : "success"}
-        title={blocked ? "Contest entry is blocked" : hasFailures ? "Some checks need attention" : notRun > 0 ? `${notRun} check${notRun > 1 ? "s" : ""} did not run` : hasPending ? "Some checks are still in progress" : hasWarns ? `${warnCount} advisory warning${warnCount > 1 ? "s" : ""}` : "Your setup checks passed"}
-        description={blocked ? "Follow the guidance above before trying again." : "Review your results, then continue. Your contest’s entry requirements are checked before the workspace opens."}
+        status={
+          blocked || hasFailures
+            ? "error"
+            : hasWarns || notRun > 0 || hasPending
+              ? "warning"
+              : "success"
+        }
+        title={
+          blocked
+            ? "Contest entry is blocked"
+            : hasFailures
+              ? "Some checks need attention"
+              : notRun > 0
+                ? `${notRun} check${notRun > 1 ? "s" : ""} did not run`
+                : hasPending
+                  ? "Some checks are still in progress"
+                  : hasWarns
+                    ? `${warnCount} advisory warning${warnCount > 1 ? "s" : ""}`
+                    : "Your setup checks passed"
+        }
+        description={
+          blocked ? (
+            <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+              {blockReason?.trim() ||
+                "Contest entry could not be verified. Exit setup and run device checks again. If entry is still blocked, ask your invigilator for help."}
+            </Text>
+          ) : (
+            "Review your results, then continue. Your contest’s entry requirements are checked before the workspace opens."
+          )
+        }
       />
       <VStack gap={0}>
-        {items.map(({ label, stage }) => <VStack key={label} style={{ borderBottom: "var(--border-width) solid var(--color-border)", paddingBlock: "var(--spacing-1)" }}>
-          <CheckLine
-            label={STAGES.find(s => s.id === stage)?.label ?? label}
-            status={results[stage] === undefined || results[stage] === "pending" ? "unknown" : results[stage]}
-          />
-          {results[stage] === "warn" && <Text type="supporting" color="secondary" style={{ paddingInline: "var(--spacing-3)", paddingBottom: "var(--spacing-3)" }}>
-            {warningDetails[stage] ?? WARNING_GUIDANCE[stage] ?? "This check completed with a warning. Ask your invigilator if you need help; contest entry requirements are checked before your workspace opens."}
-          </Text>}
-        </VStack>)}
+        {items.map(({ label, stage }) => (
+          <VStack
+            key={label}
+            style={{
+              borderBottom: "var(--border-width) solid var(--color-border)",
+              paddingBlock: "var(--spacing-1)",
+            }}
+          >
+            <CheckLine
+              label={STAGES.find((s) => s.id === stage)?.label ?? label}
+              status={
+                results[stage] === undefined || results[stage] === "pending"
+                  ? "unknown"
+                  : results[stage]
+              }
+            />
+            {results[stage] === "warn" && (
+              <Text
+                type="supporting"
+                color="secondary"
+                style={{ paddingInline: "var(--spacing-3)", paddingBottom: "var(--spacing-3)" }}
+              >
+                {warningDetails[stage] ??
+                  WARNING_GUIDANCE[stage] ??
+                  "This check completed with a warning. Ask your invigilator if you need help; contest entry requirements are checked before your workspace opens."}
+              </Text>
+            )}
+          </VStack>
+        ))}
       </VStack>
       {!blocked && <Button type="button" variant="primary" label="Continue" onClick={onPass} />}
     </VStack>

@@ -33,7 +33,7 @@ import { cameraSession } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { decideNetworkLockdown } from "./network-gate";
-import { readinessBlockMessage } from "./components/labels";
+import { readinessBlockMessage, readinessErrorText } from "./components/labels";
 import { Stage1_Fullscreen } from "./components/stages/Stage1_Fullscreen";
 import { Stage2_MonitorDetection } from "./components/stages/Stage2_MonitorDetection";
 import { Stage3_KeyboardLockdown } from "./components/stages/Stage3_KeyboardLockdown";
@@ -713,8 +713,7 @@ export default function OnboardingPage() {
         }, 3000);
         return;
       }
-      const rawMsg =
-        error instanceof Error ? error.message : "Readiness policy blocked contest launch.";
+      const rawMsg = readinessErrorText(error);
       if (windowMeta && !isTestAccount) {
         const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
         if (remaining > 0 && rawMsg.toLowerCase().includes("not accepting sessions")) {
@@ -1327,6 +1326,7 @@ export default function OnboardingPage() {
                               warningDetails={warningDetails}
                               onPass={advancePass}
                               blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
+                              blockReason={policyBlock || entryBlockedMessage}
                             />
                           )}
                         </>

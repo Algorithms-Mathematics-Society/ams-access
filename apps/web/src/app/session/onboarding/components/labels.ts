@@ -15,6 +15,8 @@ export const CHECK_KIND_LABELS: Record<string, string> = {
   camera: "Camera",
   microphone: "Microphone",
   network: "Network connection",
+  network_lockdown: "Network restrictions",
+  clock_integrity: "Device clock",
   keyboard_lockdown: "Keyboard lockdown",
   restricted_apps: "Restricted applications",
   virtualization: "Virtual machine check",
@@ -25,6 +27,15 @@ export const CHECK_KIND_LABELS: Record<string, string> = {
 
 export function checkKindLabel(kind: string): string {
   return CHECK_KIND_LABELS[kind] ?? kind;
+}
+
+// Tauri rejects Rust Result<_, String> commands with strings, not Error objects.
+export function readinessErrorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return (
+    message.trim() ||
+    "Contest launch failed without an error description. Exit setup and retry. If it still fails, ask your invigilator for help."
+  );
 }
 
 /**
@@ -46,9 +57,7 @@ export function readinessBlockMessage(raw: string): string | null {
   if (!report || report.decision !== "blocked" || !Array.isArray(report.checks)) {
     return null;
   }
-  const blocking = report.checks.filter(
-    (c): c is ReadinessCheck => !!c && c.blocking && c.outcome === "fail"
-  );
+  const blocking = report.checks.filter((c): c is ReadinessCheck => !!c && c.blocking === true);
   if (blocking.length === 0) return null;
   const lines = blocking.map((c) => {
     const label = checkKindLabel(c.kind);

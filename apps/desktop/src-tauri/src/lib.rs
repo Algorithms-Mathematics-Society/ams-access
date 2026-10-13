@@ -2176,7 +2176,21 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
         self.platform_attempted = true;
         let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
         #[cfg(target_os = "windows")]
-        let protected = platform_rs::windows::lock_desktop_checked()?;
+        let protected = {
+            let status = platform_rs::windows::lock_desktop_with_status()?;
+            if status.registry == platform_rs::windows::RegistryLockdownStatus::SkippedUnelevated {
+                record_proctoring_event(
+                    Some(&self.app),
+                    "registry_lockdown_advisory",
+                    "Unelevated Windows session: registry controls for Task Manager, Game DVR/Game Bar and touchpad gestures were not applied. Keyboard and full-screen protections are checked separately.",
+                    serde_json::json!({
+                        "registry_status": status.registry,
+                        "keyboard_active": status.keyboard_active,
+                    }),
+                );
+            }
+            status.keyboard_active
+        };
         #[cfg(not(target_os = "windows"))]
         let protected = platform_dispatch!(lock_desktop(), else false);
         // Organizer exceptions may waive unavailable keyboard interception,
