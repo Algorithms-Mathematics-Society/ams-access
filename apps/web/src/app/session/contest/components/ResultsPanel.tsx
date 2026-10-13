@@ -4,6 +4,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { outputText } from "../execution-output";
 import { GATE_KIND } from "../family-summary";
+import { ruleLanguage, shortChip } from "../rule-language";
 
 /**
  * What the judge said, for one run or one submission.
@@ -227,7 +228,7 @@ export function ResultsPanel({
           </Text>
           {brokenRules.map((rule, index) => (
             <Text key={index} type="supporting">
-              {rule.checker_message || rule.label || "Rule violated"}
+              {ruleLanguage(rule.label ?? "", rule.checker_message).sentence}
             </Text>
           ))}
         </VStack>
@@ -385,8 +386,17 @@ function CaseChip({
 }) {
   const ok = passed(row);
   const family = familyOf(row);
-  const name =
-    family === "io" ? `Case ${index + 1}` : `${FAMILY[family].label} ${row.label || index + 1}`;
+  const full =
+    family === GATE_KIND
+      ? ruleLanguage(row.label ?? "", row.checker_message).chip
+      : family === "behavior"
+        ? row.label || `Check ${index + 1}`
+        : `Case ${index + 1}`;
+
+  // Colour carries the outcome, so a candidate can read the strip at a
+  // glance without opening anything. The previous version put a 0.5rem dot
+  // beside grey text, which at a glance is just grey text.
+  const tint = ok ? "success" : "error";
 
   return (
     <button
@@ -394,32 +404,29 @@ function CaseChip({
       role="tab"
       aria-selected={active}
       onClick={onSelect}
-      title={FAMILY[family].hint}
+      title={`${full} — ${ok ? "passed" : "failed"}. ${FAMILY[family].hint}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: "var(--spacing-2)",
+        maxWidth: "100%",
         padding: "var(--spacing-2) var(--spacing-3)",
         borderRadius: "var(--radius-element)",
         border: `var(--border-width) solid ${
-          active ? "var(--color-border-strong)" : "transparent"
+          active ? `var(--color-border-${tint})` : "var(--color-border)"
         }`,
-        background: active ? "var(--color-background-raised)" : "transparent",
-        color: "var(--color-text-primary)",
+        background: active ? `var(--color-background-${tint}-subtle)` : "transparent",
+        color: `var(--color-text-${tint})`,
+        fontWeight: active ? 600 : 400,
         font: "inherit",
         cursor: "pointer",
+        whiteSpace: "nowrap",
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          width: "0.5rem",
-          height: "0.5rem",
-          borderRadius: "50%",
-          background: ok ? "var(--color-text-success)" : "var(--color-text-error)",
-        }}
-      />
-      {name}
+      <span aria-hidden style={{ fontSize: "0.85em" }}>
+        {ok ? "✓" : "✕"}
+      </span>
+      {shortChip(full)}
     </button>
   );
 }
@@ -430,18 +437,20 @@ function CaseDetail({ row }: { row: TestRow }) {
   const ok = passed(row);
 
   if (family === GATE_KIND) {
+    const rule = ruleLanguage(row.label ?? "", row.checker_message);
     return (
       <VStack gap={3} style={{ minWidth: 0 }}>
         <Text type="supporting" color="secondary">
           {FAMILY[GATE_KIND].hint}
         </Text>
         <VStack gap={2}>
-          <Text type="supporting" weight="medium">
+          <Text
+            weight="semibold"
+            style={{ color: ok ? "var(--color-text-success)" : "var(--color-text-error)" }}
+          >
             {ok ? "Satisfied" : "Broken"}
           </Text>
-          <pre style={codeBlock("var(--color-text-primary)")}>
-            {row.checker_message || row.label || "No detail from the judge"}
-          </pre>
+          <Text>{rule.sentence}</Text>
         </VStack>
       </VStack>
     );
