@@ -210,6 +210,10 @@ function homeSignOutHandler(context, name = "signOut") {
   const bindings = {
     setConfirmDiscardOpen() {},
     clearQueryCache() {},
+    hasNativeBridge: () => false,
+    withTelemetryTimeout: (promise) => promise,
+    setResumeStatus() {},
+    setActiveNav() {},
     DEVICE_SCOPED_KEYS: new Set([STORAGE_KEYS.DEVICE_ID, STORAGE_KEYS.THEME]),
     isBufferKey,
     ...context,
@@ -244,12 +248,12 @@ test("home sign-out preserves draft confirmation before credential teardown", ()
   assert.equal(localStorage.getItem(key), "sole draft");
 });
 
-test("confirmed sign-out preserves device keys and clears query caches", () => {
+test("confirmed sign-out preserves device keys and clears query caches", async () => {
   setToken("device-owner");
   localStorage.setItem(STORAGE_KEYS.DEVICE_ID, "stable-device");
   localStorage.setItem(STORAGE_KEYS.THEME, "dark");
   let cacheCleared = false;
-  homeSignOutHandler({
+  await homeSignOutHandler({
     localStorage,
     logout,
     clearQueryCache: () => {
@@ -265,7 +269,7 @@ test("confirmed sign-out preserves device keys and clears query caches", () => {
   assert.equal(localStorage.getItem(STORAGE_KEYS.THEME), "dark");
 });
 
-test("home sign-out invokes shared logout before bulk cleanup and still navigates when removal fails", () => {
+test("home sign-out invokes shared logout before bulk cleanup and still navigates when removal fails", async () => {
   const calls = [];
   const router = { push: (path) => calls.push(`push:${path}`) };
   const setTimeout = (callback, delay) => {
@@ -291,7 +295,7 @@ test("home sign-out invokes shared logout before bulk cleanup and still navigate
     setTimeout,
     router,
   });
-  handlerFn();
+  await handlerFn();
   assert.deepEqual(calls.slice(0, 2), ["signingOut:true", "logout"]);
   assert.ok(calls.indexOf("remove:ams_draft") > calls.indexOf("logout"));
   assert.equal(calls.at(-1), "push:/");
@@ -305,7 +309,7 @@ test("home sign-out invokes shared logout before bulk cleanup and still navigate
   assert.equal(localStorage.getItem("unrelated"), "keep");
 });
 
-test("home sign-out swallows inaccessible storage and cannot restore an old token later", () => {
+test("home sign-out swallows inaccessible storage and cannot restore an old token later", async () => {
   const store = localStorage;
   setToken("still-persisted", 3600);
   const calls = [];
@@ -328,7 +332,7 @@ test("home sign-out swallows inaccessible storage and cannot restore an old toke
     },
   });
   try {
-    assert.doesNotThrow(() => handler());
+    await assert.doesNotReject(() => handler());
     assert.deepEqual(calls, ["signingOut:true", "logout", "push:/"]);
     assert.equal(currentToken(), null);
     assert.equal(hasToken(), false);
@@ -345,7 +349,7 @@ test("home sign-out swallows inaccessible storage and cannot restore an old toke
   assert.equal("Authorization" in authHeaders(), false);
 });
 
-test("home sign-out navigates when storage enumeration throws", () => {
+test("home sign-out navigates when storage enumeration throws", async () => {
   setToken("enumeration-token");
   const calls = [];
   const blocked = new Proxy(localStorage, {
@@ -363,7 +367,7 @@ test("home sign-out navigates when storage enumeration throws", () => {
     setTimeout: (callback) => callback(),
     router: { push: (path) => calls.push(`push:${path}`) },
   });
-  assert.doesNotThrow(() => handler());
+  await assert.doesNotReject(() => handler());
   assert.deepEqual(calls, ["signingOut", "logout", "push:/"]);
   assert.equal(currentToken(), null);
 });
@@ -389,4 +393,291 @@ test("nothing is emitted, and nothing throws, during SSR", () => {
   const headers = authHeaders();
   assert.equal(Object.prototype.hasOwnProperty.call(headers, "Authorization"), false);
   assert.equal(headers["X-Device-Id"], undefined);
+});
+
+test("native sign-out awaits revocation before deleting recovery data or navigating", async () => {
+  setToken("native-owner");
+  localStorage.setItem("ams_active_session", "recoverable");
+  const calls = [];
+  let resolve;
+  const pending = new Promise((done) => {
+    resolve = done;
+  });
+  const handler = homeSignOutHandler({
+    localStorage,
+    logout,
+    hasNativeBridge: () => true,
+    setSigningOut() {},
+    invoke: (command, args) => {
+      assert.equal(command, "configure_event_stream");
+      assert.deepEqual(args, { apiUrl: "", sessionId: null, token: null });
+      calls.push("revoke");
+      return pending;
+    },
+    setTimeout: (callback) => callback(),
+    router: { push: () => calls.push("navigate") },
+  });
+  const signedOut = handler();
+  assert.equal(currentToken(), null);
+  assert.equal(localStorage.getItem("ams_active_session"), "recoverable");
+  assert.deepEqual(calls, ["revoke"]);
+  resolve();
+  await signedOut;
+  assert.equal(localStorage.getItem("ams_active_session"), null);
+  assert.deepEqual(calls, ["revoke", "navigate"]);
+});
+
+test("native sign-out failure retains recovery data and reports a retry instead of success", async () => {
+  setToken("native-owner");
+  localStorage.setItem("ams_active_session", "recoverable");
+  const calls = [];
+  await homeSignOutHandler({
+    localStorage,
+    logout,
+    hasNativeBridge: () => true,
+    setSigningOut: (value) => calls.push(value),
+    invoke: async () => {
+      throw Error("native unavailable");
+    },
+    setResumeStatus: (message) => calls.push(message),
+    setTimeout: () => assert.fail("must not schedule navigation"),
+    router: { push: () => assert.fail("must not navigate") },
+  })();
+  assert.equal(currentToken(), null);
+  assert.equal(localStorage.getItem("ams_active_session"), "recoverable");
+  assert.deepEqual(calls.slice(0, 2), [true, false]);
+  assert.match(calls[2], /Native uploads may still be active/);
+});
+
+function contestExitHandlers(context) {
+  const source = readFileSync(
+    new URL("../app/session/contest/client.tsx", import.meta.url),
+    "utf8"
+  );
+  const ast = ts.createSourceFile(
+    "client.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+  const handlers = [];
+  function visit(node) {
+    if (
+      ts.isFunctionDeclaration(node) &&
+      ["withTimeout", "runExitTeardown", "redirectAfterRelease"].includes(node.name?.text)
+    )
+      handlers.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.equal(handlers.length, 3);
+  const js = ts.transpileModule(handlers.map((handler) => handler.getText(ast)).join("\n"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  return new Function(
+    ...Object.keys(context),
+    `${js}; return {runExitTeardown, redirectAfterRelease};`
+  )(...Object.values(context));
+}
+
+function contestExitFixture(fail = "", browser = false, hang = "") {
+  const calls = [];
+  let error = null;
+  const context = {
+    localStorage,
+    logout,
+    clearQueryCache() {},
+    setTimeout: (callback, delay) => setTimeout(callback, hang ? 1 : delay),
+    clearTimeout,
+    ACTIVE_SESSION_KEY: "ams_active_session",
+    STORAGE_KEYS,
+    redirectInFlightRef: { current: false },
+    exitInFlightRef: { current: false },
+    redirectSaveRef: {
+      current: () => {
+        calls.push("save");
+        if (fail === "storage") throw Error("blocked");
+      },
+    },
+    cameraClosedRef: { current: false },
+    cameraStreamRef: { current: {} },
+    cameraSession: { release: () => calls.push("camera") },
+    setCameraStream() {},
+    setPendingRedirect() {},
+    setLoadError: (message) => {
+      error = message;
+    },
+    setRestoreStatus() {},
+    router: { replace: (path) => calls.push(`redirect:${path}`) },
+    window: browser
+      ? {}
+      : {
+          __TAURI__: {
+            window: {
+              getCurrentWindow: () =>
+                Object.fromEntries(
+                  ["setFullscreen", "setAlwaysOnTop", "setDecorations"].map((method) => [
+                    method,
+                    async () => {
+                      calls.push(method);
+                      if (hang === method) return new Promise(() => {});
+                      if (fail === method) throw Error("window failed");
+                    },
+                  ])
+                ),
+            },
+            core: {
+              invoke: async (command, args) => {
+                calls.push(command);
+                if (hang === command) return new Promise(() => {});
+                if (command === fail) throw Error("native failed");
+                if (command === "configure_event_stream")
+                  assert.deepEqual(args, {
+                    apiUrl: "",
+                    sessionId: null,
+                    token: null,
+                    preserveBinding: true,
+                  });
+                if (command === "get_lockdown_restore_status")
+                  return { pending: fail === "pending", items: [] };
+              },
+            },
+          },
+        },
+  };
+  return { ...contestExitHandlers(context), calls, context, error: () => error };
+}
+
+test("auth redirect releases all native controls before navigation and retains recovery", async () => {
+  setToken("expired-but-cached");
+  localStorage.setItem("ams_active_session", "recoverable");
+  localStorage.setItem(bufferKey("session", "question"), "draft");
+  const fixture = contestExitFixture();
+  await fixture.redirectAfterRelease("/login");
+  assert.deepEqual(fixture.calls, [
+    "save",
+    "configure_event_stream",
+    "camera",
+    "setFullscreen",
+    "setAlwaysOnTop",
+    "setDecorations",
+    "unlock_desktop",
+    "get_lockdown_restore_status",
+    "redirect:/login",
+  ]);
+  assert.equal(localStorage.getItem("ams_active_session"), "recoverable");
+  assert.equal(localStorage.getItem(bufferKey("session", "question")), "draft");
+  assert.equal(localStorage.getItem(STORAGE_KEYS.LAST_SESSION), null);
+  assert.equal(fixture.context.cameraClosedRef.current, true);
+  assert.equal(currentToken(), null);
+});
+
+test("every cleanup failure still tries native unlock and exposes retry without redirect", async () => {
+  for (const failure of [
+    "configure_event_stream",
+    "setFullscreen",
+    "setAlwaysOnTop",
+    "setDecorations",
+    "unlock_desktop",
+    "get_lockdown_restore_status",
+    "pending",
+  ]) {
+    const fixture = contestExitFixture(failure);
+    await fixture.redirectAfterRelease("/login");
+    assert.ok(fixture.calls.includes("unlock_desktop"), failure);
+    assert.ok(!fixture.calls.includes("redirect:/login"), failure);
+    assert.match(fixture.error(), /cleanup could not be confirmed/);
+    assert.equal(fixture.context.redirectInFlightRef.current, false);
+  }
+});
+
+test("browser redirects and blocked draft storage still release before navigating", async () => {
+  for (const fixture of [contestExitFixture("", true), contestExitFixture("storage")]) {
+    await fixture.redirectAfterRelease("/home");
+    assert.ok(fixture.calls.includes("camera"));
+    assert.equal(fixture.calls.at(-1), "redirect:/home");
+  }
+});
+
+test("concurrent auth redirects run teardown once", async () => {
+  const fixture = contestExitFixture();
+  await Promise.all([
+    fixture.redirectAfterRelease("/login"),
+    fixture.redirectAfterRelease("/login"),
+  ]);
+  assert.equal(fixture.calls.filter((call) => call === "unlock_desktop").length, 1);
+  assert.equal(fixture.calls.filter((call) => call === "redirect:/login").length, 1);
+});
+
+test("stalled native cleanup times out, attempts unlock and offers retry", async () => {
+  for (const hang of [
+    "configure_event_stream",
+    "setFullscreen",
+    "setAlwaysOnTop",
+    "setDecorations",
+    "unlock_desktop",
+    "get_lockdown_restore_status",
+  ]) {
+    const fixture = contestExitFixture("", false, hang);
+    await fixture.redirectAfterRelease("/login");
+    assert.ok(fixture.calls.includes("unlock_desktop"), hang);
+    assert.ok(!fixture.calls.includes("redirect:/login"), hang);
+    assert.match(fixture.error(), /cleanup could not be confirmed/);
+  }
+});
+
+test("heartbeat 401 uses the actual release handler before redirect", async () => {
+  const source = readFileSync(
+    new URL("../app/session/contest/client.tsx", import.meta.url),
+    "utf8"
+  );
+  const ast = ts.createSourceFile(
+    "client.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+  let effect;
+  function visit(node) {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("await heartbeat(sessionId)")
+    )
+      effect = node.arguments[0];
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(effect);
+  const js = ts.transpileModule(`const effect = ${effect.getText(ast)};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const fixture = contestExitFixture();
+  class ProctorApiError extends Error {
+    status = 401;
+  }
+  let released;
+  const bindings = {
+    sessionId: "active",
+    ProctorApiError,
+    heartbeat: async () => {
+      throw new ProctorApiError();
+    },
+    redirectAfterRelease: (destination) => {
+      released = fixture.redirectAfterRelease(destination);
+      return released;
+    },
+    setInterval: () => 1,
+    clearInterval() {},
+  };
+  const cleanup = new Function(...Object.keys(bindings), `${js}; return effect();`)(
+    ...Object.values(bindings)
+  );
+  await Promise.resolve();
+  await released;
+  cleanup();
+  assert.equal(fixture.calls.at(-1), "redirect:/login");
+  assert.ok(fixture.calls.indexOf("unlock_desktop") < fixture.calls.indexOf("redirect:/login"));
 });

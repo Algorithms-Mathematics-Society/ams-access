@@ -14,10 +14,11 @@ use core_rs::exam::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future as _;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
@@ -265,11 +266,10 @@ fn next_chain_link(
     payload_digest: &str,
 ) -> (u64, String, String) {
     // Caller holds EVENT_RECORD_LOCK; scope cannot change before append.
-    let binding = event_sync_config()
+    let binding = event_record_binding()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .map(|config| config.binding.clone());
+        .clone();
     let mut chains = event_chain()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -341,11 +341,10 @@ fn persist_jsonl<T: Serialize>(
     stream: event_store::EventStream,
     entry: &T,
 ) -> Result<usize, String> {
-    let binding = event_sync_config()
+    let binding = event_record_binding()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .map(|config| config.binding.clone());
+        .clone();
     local_event_store(app)
         .append(binding.as_ref(), stream, entry)
         .map_err(|error| {
@@ -517,6 +516,14 @@ struct EventSyncConfig {
     /// machine the candidate controls and anything shipped inside it is
     /// theirs.
     token: String,
+    // Each configuration owns one revocable lease, including token refreshes
+    // for the same binding. Stale requests cannot acknowledge a newer lease.
+    lease: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+static EVENT_RECORD_BINDING: OnceLock<Mutex<Option<event_store::SessionBinding>>> = OnceLock::new();
+fn event_record_binding() -> &'static Mutex<Option<event_store::SessionBinding>> {
+    EVENT_RECORD_BINDING.get_or_init(|| Mutex::new(None))
 }
 
 static EVENT_SYNC_CONFIG: OnceLock<Mutex<Option<EventSyncConfig>>> = OnceLock::new();
@@ -536,15 +543,26 @@ async fn configure_event_stream(
     api_url: String,
     session_id: Option<String>,
     token: Option<String>,
+    preserve_binding: Option<bool>,
 ) -> Result<(), String> {
     event_recorder()?
         .submit(move || {
-            configure_event_stream_now(api_url, session_id, token);
+            configure_event_stream_now(
+                api_url,
+                session_id,
+                token,
+                preserve_binding.unwrap_or(false),
+            );
             Ok(())
         })
         .await
 }
-fn configure_event_stream_now(api_url: String, session_id: Option<String>, token: Option<String>) {
+fn configure_event_stream_now(
+    api_url: String,
+    session_id: Option<String>,
+    token: Option<String>,
+    preserve_binding: bool,
+) {
     let _scope = EVENT_RECORD_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -563,12 +581,19 @@ fn configure_event_stream_now(api_url: String, session_id: Option<String>, token
                     api_url: api_url.trim().trim_end_matches('/').into(),
                     session_id: session.trim().into(),
                     token: token.trim().into(),
+                    lease: Arc::new(tokio::sync::watch::channel(false).0),
                 })
         });
-    if config.as_ref().map(|config| &config.binding) != next.as_ref().map(|config| &config.binding)
-    {
-        if let (Some(previous), Some(store)) = (config.as_ref(), EVENT_STORE.get()) {
-            if let Err(error) = store.close_binding(&previous.binding) {
+    let mut recording = event_record_binding()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let next_binding = next
+        .as_ref()
+        .map(|config| config.binding.clone())
+        .or_else(|| preserve_binding.then(|| recording.clone()).flatten());
+    if *recording != next_binding {
+        if let (Some(previous), Some(store)) = (recording.as_ref(), EVENT_STORE.get()) {
+            if let Err(error) = store.close_binding(previous) {
                 note_event_error("close previous event run", error);
             }
         }
@@ -581,7 +606,50 @@ fn configure_event_stream_now(api_url: String, session_id: Option<String>, token
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
     }
+    *recording = next_binding;
+    if let Some(previous) = config.as_ref() {
+        previous.lease.send_replace(true);
+    }
     *config = next;
+}
+
+// Poll revocation before delivery so an already revoked lease never starts a
+// request. Dropping the request future cancels pending I/O; bytes already sent
+// cannot be recalled, so acknowledgement is independently guarded below.
+async fn while_event_lease_active<T>(
+    config: &EventSyncConfig,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    let mut revoked = config.lease.subscribe();
+    let cancellation = revoked.wait_for(|revoked| *revoked);
+    tokio::pin!(cancellation);
+    tokio::pin!(work);
+    std::future::poll_fn(|cx| {
+        if cancellation.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        work.as_mut().poll(cx).map(Some)
+    })
+    .await
+}
+
+fn acknowledge_current_event_batch(
+    store: &event_store::EventStore,
+    config: &EventSyncConfig,
+    batch: &event_store::UploadBatch,
+) -> std::io::Result<bool> {
+    // Keep the ownership check and disk checkpoint atomic with revocation.
+    let current = event_sync_config()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !current
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.lease, &config.lease))
+    {
+        return Ok(false);
+    }
+    store.acknowledge(&config.binding, batch)?;
+    Ok(true)
 }
 
 fn spawn_event_sync_task(app: tauri::AppHandle) {
@@ -669,23 +737,23 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                 // event is falsely acknowledged and no empty POST is needed.
                 true
             } else {
-                match client
+                let request = client
                     .post(&url)
                     .bearer_auth(&config.token)
                     .header(reqwest::header::CONTENT_TYPE, "application/json")
                     .body(std::mem::take(&mut batch.body))
-                    .send()
-                    .await
-                {
-                    Ok(response) if response.status().is_success() => true,
-                    Ok(response) => {
+                    .send();
+                match while_event_lease_active(&config, request).await {
+                    None => continue,
+                    Some(Ok(response)) if response.status().is_success() => true,
+                    Some(Ok(response)) => {
                         note_event_error(
                             "upload event batch",
                             format!("HTTP {}", response.status().as_u16()),
                         );
                         false
                     }
-                    Err(error) => {
+                    Some(Err(error)) => {
                         note_event_error("upload event batch", error.without_url());
                         false
                     }
@@ -693,11 +761,11 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
             };
             if delivered {
                 match tauri::async_runtime::spawn_blocking(move || {
-                    store.acknowledge(&config.binding, &batch)
+                    acknowledge_current_event_batch(store, &config, &batch)
                 })
                 .await
                 {
-                    Ok(Ok(())) => delay = EVENT_SYNC_INTERVAL_SECS,
+                    Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
                     error => {
                         note_event_error("acknowledge event batch", format!("{error:?}"));
                         delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
@@ -1422,6 +1490,19 @@ fn detect_screen_capture_active() -> bool {
     return platform_rs::windows::detect_screen_capture();
     #[cfg(not(target_os = "windows"))]
     false
+}
+
+/// Read passive Windows hook-delivery evidence without installing a hook.
+#[tauri::command]
+fn get_windows_hook_diagnostics() -> Option<serde_json::Value> {
+    #[cfg(target_os = "windows")]
+    {
+        serde_json::to_value(platform_rs::windows::keyboard_hook_delivery_diagnostics()).ok()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
 }
 
 /// Request best-effort Windows window display affinity; retain the legacy bool IPC.
@@ -2380,11 +2461,10 @@ fn recent_event_history<T: for<'de> Deserialize<'de> + Serialize + Clone>(
     stream: &str,
     mut entries: Vec<T>,
 ) -> Vec<T> {
-    let binding = event_sync_config()
+    let binding = event_record_binding()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .map(|config| config.binding.clone());
+        .clone();
     let mut seen: HashSet<String> = entries
         .iter()
         .filter_map(|entry| event_store::event_identity(entry).ok())
@@ -2500,9 +2580,10 @@ fn get_proctoring_log_now(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
     recent_event_history(&app, "proctoring", entries)
 }
 
-/// Lock outbound network to `allowed_domains` only (resolved to IPs at call time).
-/// Rules are applied at the OS firewall level and persist until `disable_network_lockdown`
-/// is explicitly called — intentional, so an app crash does not restore internet access.
+/// Restrict outbound destinations for the native executable to `allowed_domains`
+/// (resolved to IPs at call time). On Windows, these program-scoped firewall rules
+/// do not cover WebView2 processes, so success does not mean renderer egress is locked down.
+/// Rules persist until `disable_network_lockdown` is called.
 #[tauri::command]
 async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, String> {
     // A build that never asked for elevation cannot raise a firewall, so say
@@ -3308,6 +3389,7 @@ pub fn run() {
             detect_screen_capture_active,
             apply_capture_protection,
             get_windows_capture_protection_status,
+            get_windows_hook_diagnostics,
             set_escape_blocked,
             configure_event_stream,
             get_lockdown_restore_status,
@@ -3629,11 +3711,12 @@ mod event_integration_tests {
         assert_ne!(first.1, other.1);
     }
     #[test]
-    fn actual_config_switch_keeps_inflight_destination_and_ack_binding() {
+    fn actual_config_revocation_cancels_upload_and_preserves_recoverable_evidence() {
         configure_event_stream_now(
             "https://first.invalid".into(),
             Some("one".into()),
             Some("token-one".into()),
+            false,
         );
         let first = event_sync_config().lock().unwrap().clone().unwrap();
         let root = std::env::temp_dir().join(format!(
@@ -3657,6 +3740,7 @@ mod event_integration_tests {
             "https://second.invalid".into(),
             Some("two".into()),
             Some("token-two".into()),
+            false,
         );
         let second = event_sync_config().lock().unwrap().clone().unwrap();
         assert_eq!(
@@ -3665,12 +3749,81 @@ mod event_integration_tests {
         );
         assert_ne!(first.binding, second.binding);
         assert!(store.acknowledge(&second.binding, &batch).is_err());
-        store.acknowledge(&first.binding, &batch).unwrap();
+        assert!(!acknowledge_current_event_batch(&store, &first, &batch).unwrap());
+        assert!(store
+            .next_batch(&first.binding, 200, event_store::MAX_BATCH_BYTES)
+            .unwrap()
+            .is_some());
         assert!(store
             .next_batch(&second.binding, 200, event_store::MAX_BATCH_BYTES)
             .unwrap()
             .is_none());
-        configure_event_stream_now(String::new(), None, None);
+
+        // A request already waiting on I/O must be cancelled by revocation.
+        // This future models pending transport I/O without touching the OS.
+        struct PendingUpload(Arc<AtomicBool>);
+        impl std::future::Future for PendingUpload {
+            type Output = ();
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<()> {
+                std::task::Poll::Pending
+            }
+        }
+        impl Drop for PendingUpload {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let upload = while_event_lease_active(&second, PendingUpload(dropped.clone()));
+            tokio::pin!(upload);
+            assert!(
+                std::future::poll_fn(|cx| std::task::Poll::Ready(
+                    upload.as_mut().poll(cx).is_pending()
+                ))
+                .await
+            );
+            configure_event_stream_now(String::new(), None, None, true);
+            assert!(event_sync_config().lock().unwrap().is_none());
+            assert_eq!(
+                event_record_binding().lock().unwrap().as_ref(),
+                Some(&second.binding)
+            );
+            assert!(upload.await.is_none());
+            assert!(dropped.load(Ordering::SeqCst));
+            assert!(while_event_lease_active(&second, async {
+                panic!("revoked request must not start")
+            })
+            .await
+            .is_none());
+        });
+        // Re-authentication to the same binding owns a new lease. Even an old
+        // successful response must leave its batch queued for that new owner.
+        configure_event_stream_now(
+            "https://first.invalid".into(),
+            Some("one".into()),
+            Some("fresh-token".into()),
+            false,
+        );
+        let fresh = event_sync_config().lock().unwrap().clone().unwrap();
+        assert_eq!(fresh.binding, first.binding);
+        assert!(!acknowledge_current_event_batch(&store, &first, &batch).unwrap());
+        assert!(acknowledge_current_event_batch(&store, &fresh, &batch).unwrap());
+        assert!(store
+            .next_batch(&fresh.binding, 200, event_store::MAX_BATCH_BYTES)
+            .unwrap()
+            .is_none());
+        // Explicit sign-out clears both recording scope and credentials.
+        configure_event_stream_now(String::new(), None, None, false);
+        assert!(event_sync_config().lock().unwrap().is_none());
+        assert!(event_record_binding().lock().unwrap().is_none());
+        assert!(!acknowledge_current_event_batch(&store, &fresh, &batch).unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

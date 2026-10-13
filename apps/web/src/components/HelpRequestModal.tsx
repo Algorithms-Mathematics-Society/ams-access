@@ -11,6 +11,7 @@ import { Banner } from "@astryxdesign/core/Banner";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { resolveApiBase } from "@/lib/api-base";
 import { createAbortTimeout } from "@/lib/abort-timeout";
+import { authHeaders, participantToken } from "@/lib/candidate-auth";
 
 const API_URL = resolveApiBase();
 
@@ -54,21 +55,23 @@ export function HelpRequestModal({
   const [note, setNote] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [reference, setReference] = useState<string | null>(null);
+  const authenticated = Boolean(participantToken());
 
   if (!open) return null;
 
   async function submit() {
+    if (!authenticated) return;
     if (!email.trim()) {
       setState("error");
       return;
     }
     setState("sending");
     const payload = {
-      candidate_email: email.trim(),
-      contest_id: contestId ?? undefined,
-      kind,
-      summary,
-      details: { ...(details ?? {}), candidate_note: note.trim() || undefined },
+      category: kind,
+      message: [summary, note.trim()].filter(Boolean).join("\n\n"),
+      diagnostics: details ?? {},
+      contact: email.trim(),
+      contest_uid: contestId ?? undefined,
     };
     const timeout = createAbortTimeout(10_000);
     try {
@@ -78,17 +81,17 @@ export function HelpRequestModal({
       const res = await fetch(url, {
         method: "POST",
         signal: timeout.signal,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
         setState("error");
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { id?: string };
-      // Empty success bodies are allowed, but an aborted body is not success.
+      const data = (await res.json()) as { id?: string };
       if (timeout.signal.aborted) throw new Error("Help request timed out");
-      setReference(data.id ?? null);
+      if (!data.id) throw new Error("Help request was not acknowledged");
+      setReference(data.id);
       setState("sent");
     } catch {
       setState("error");
@@ -119,21 +122,52 @@ export function HelpRequestModal({
       ) : (
         <VStack gap={5}>
           <Text color="secondary">{summary}</Text>
-          <TextInput label="Your email" type="email" value={email} onChange={setEmail}
-            placeholder="you@institution.edu" isRequired />
-          <TextArea label="What happened?" isOptional value={note} onChange={setNote} rows={3}
-            placeholder="Describe the problem so your proctor can help faster." />
-          <Text type="supporting">
-            Diagnostic details about your device and the error are included automatically.
-          </Text>
-          {state === "error" && <Banner status="error" title="Couldn't send the request"
-            description="Check your email and connection, then try again." />}
-          <HStack gap={3} justify="end" wrap="wrap">
-            <Button label="Cancel" variant="ghost" onClick={onClose} />
-            <Button label={state === "sending" ? "Sending…" : "Send to organizer"}
-              onClick={() => void submit()} isDisabled={state === "sending"}
-              isLoading={state === "sending"} variant="primary" />
-          </HStack>
+          {!authenticated ? (
+            <>
+              <Banner status="info" title="Sign in to send a help request"
+                description="After signing in, use Get help to send your organizer the details. If you cannot sign in, contact your contest organizer or an invigilator directly." />
+              <HStack justify="end"><Button label="Done" variant="primary" onClick={onClose} /></HStack>
+            </>
+          ) : (
+            <>
+              <TextInput
+                label="Your email"
+                type="email"
+                value={email}
+                onChange={setEmail}
+                placeholder="you@institution.edu"
+                isRequired
+              />
+              <TextArea
+                label="What happened?"
+                isOptional
+                value={note}
+                onChange={setNote}
+                rows={3}
+                placeholder="Describe the problem so your proctor can help faster."
+              />
+              <Text type="supporting">
+                Diagnostic details about your device and the error are included automatically.
+              </Text>
+              {state === "error" && (
+                <Banner
+                  status="error"
+                  title="Couldn't send the request"
+                  description="Check your email and connection, then try again."
+                />
+              )}
+              <HStack gap={3} justify="end" wrap="wrap">
+                <Button label="Cancel" variant="ghost" onClick={onClose} />
+                <Button
+                  label={state === "sending" ? "Sending…" : "Send to organizer"}
+                  onClick={() => void submit()}
+                  isDisabled={state === "sending"}
+                  isLoading={state === "sending"}
+                  variant="primary"
+                />
+              </HStack>
+            </>
+          )}
         </VStack>
       )}
     </AccessDialog>

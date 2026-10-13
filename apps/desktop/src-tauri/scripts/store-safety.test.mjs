@@ -165,6 +165,15 @@ test("Windows firewall installation is scoped, validated and serialized with cle
   );
 });
 
+test("Windows hook diagnostics only read evidence and stay unavailable elsewhere", async () => {
+  const desktop = await read("apps/desktop/src-tauri/src/lib.rs");
+  const command = desktop.slice(desktop.indexOf("fn get_windows_hook_diagnostics()"), desktop.indexOf("fn apply_capture_protection("));
+  assert.match(command, /keyboard_hook_delivery_diagnostics\(\)/);
+  assert.match(command, /cfg\(not\(target_os = "windows"\)\)[\s\S]*?None/);
+  assert.doesNotMatch(command, /enable_keyboard_intercept|SendInput|SetWindowsHookExW/);
+  assert.match(desktop, /get_windows_hook_diagnostics,\s*set_escape_blocked/);
+});
+
 test("CI installs, launches, and certification-checks the MSIX", async () => {
   const ci = await read(".github/workflows/ci.yml");
   assert.match(ci, /build-msix\.ps1 -SelfSign/);
