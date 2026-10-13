@@ -501,6 +501,13 @@ export default function ContestPageClient() {
   useEffect(() => {
     runResultAttemptIdRef.current = runResultAttemptId;
   }, [runResultAttemptId]);
+  // Leaving the page cancels any run poll still waiting on the judge.
+  useEffect(
+    () => () => {
+      runVisitRef.current += 1;
+    },
+    []
+  );
   // PRIMARY — auto-expand ONCE per NEW attempt result, keyed on the runResultAttemptId
   // transition (a new id), NOT on runResult presence. A candidate who reads the output and
   // deliberately re-collapses stays collapsed until the NEXT run's result. A same-attempt status
@@ -1433,7 +1440,18 @@ export default function ContestPageClient() {
     }
 
     // Poll for the result with exponential back-off (max ~25 s total).
-    const delays = [600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500];
+    await pollRun(
+      sessionId,
+      attemptId,
+      runVisit,
+      [600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500]
+    );
+  }
+
+  // Polls one run by uid until it has a verdict or `delays` runs out. Out of
+  // budget is not the end of the run: it stays identified by
+  // runResultAttemptId, and "Check again" (recheckRun) resumes polling it.
+  async function pollRun(sessionId: string, attemptId: string, runVisit: number, delays: number[]) {
     for (const ms of delays) {
       await new Promise<void>((r) => setTimeout(r, ms));
       if (runVisit !== runVisitRef.current) return;
@@ -1469,6 +1487,17 @@ export default function ContestPageClient() {
     setRunTimedOut(true);
     // The timed-out state stays visible in the run pane — the run is never an
     // attempts row to navigate to.
+  }
+
+  // Status-only re-poll of the run that timed out. Never POSTs a new run, so a
+  // congested judge isn't handed a duplicate job. A new run or a question
+  // switch bumps runVisitRef, which cancels this like the original poll.
+  function recheckRun() {
+    const attemptId = runResultAttemptIdRef.current;
+    if (!sessionId || !attemptId || isRunning) return;
+    setRunTimedOut(false);
+    setIsRunning(true);
+    void pollRun(sessionId, attemptId, runVisitRef.current, [0, 2000, 4000]);
   }
 
   // Persist the current editor content locally. Storage failures (quota,
@@ -2976,6 +3005,7 @@ export default function ContestPageClient() {
               runResult={runResult}
               isRunning={isRunning}
               runTimedOut={runTimedOut}
+              onCheckRunAgain={recheckRun}
               runResultAttemptId={runResultAttemptId}
               runSampleTests={runSampleTests}
               runError={runError}

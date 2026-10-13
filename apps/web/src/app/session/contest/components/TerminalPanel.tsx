@@ -148,6 +148,8 @@ export interface TerminalPanelProps {
   runResult: RunAttempt | null;
   isRunning: boolean;
   runTimedOut: boolean;
+  /** Re-polls the timed-out run by uid. Never starts a new run. */
+  onCheckRunAgain: () => void;
   runResultAttemptId: string | null;
   runSampleTests: any[] | null;
   runError: string | null;
@@ -192,6 +194,7 @@ export function TerminalPanel({
   runResult,
   isRunning,
   runTimedOut,
+  onCheckRunAgain,
   runResultAttemptId,
   runSampleTests,
   runError,
@@ -553,7 +556,15 @@ export function TerminalPanel({
                 <Banner
                   status="warning"
                   title="Run is taking longer than expected"
-                  description="It may still be queued. Try Run again."
+                  description="It may still be queued. Check again for its result."
+                  endContent={
+                    <Button
+                      label="Check again"
+                      variant="secondary"
+                      size="sm"
+                      onClick={onCheckRunAgain}
+                    />
+                  }
                 />
               ) : runResultAttemptId &&
                 runSampleTests === null &&
