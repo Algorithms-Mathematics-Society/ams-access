@@ -34,7 +34,12 @@ import {
 import { invoke, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import { fetchJson, postJsonKeepalive, SessionBindingError } from "@/lib/api-client";
+import {
+  clearQueryCache,
+  fetchJson,
+  postJsonKeepalive,
+  SessionBindingError,
+} from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession } from "@/lib/camera-session";
 import { isGatingRelaxed } from "@/lib/gating";
@@ -118,6 +123,7 @@ import {
   getSession,
   heartbeat,
   listMySubmissions,
+  logout,
   run as runAgainstSamples,
   serverNow,
   startSession,
@@ -547,6 +553,10 @@ export default function ContestPageClient() {
   );
   // Settings a finished exam could not put back; shown on the end screen.
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus | null>(null);
+  const redirectInFlightRef = useRef(false);
+  const redirectSaveRef = useRef(writeLocalAnswerBuffer);
+  redirectSaveRef.current = writeLocalAnswerBuffer;
+  const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
   const [submittedSources, setSubmittedSources] = useState<Record<string, SourceSnapshot>>({});
   const [dismissedRecoveryQuestions, setDismissedRecoveryQuestions] = useState<string[]>([]);
   const [finalDraftSaved, setFinalDraftSaved] = useState(false);
@@ -574,7 +584,9 @@ export default function ContestPageClient() {
         } else {
           // Reached the contest without lockdown — never render it.
           setLockGate("redirecting");
-          router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+          void redirectAfterRelease(
+            `/session/onboarding?contestId=${encodeURIComponent(contestId)}`
+          );
         }
       } catch {
         // Tauri unavailable (dev/browser) — no real lockdown exists here.
@@ -1112,7 +1124,7 @@ export default function ContestPageClient() {
     if (!participantToken()) {
       setLoadError("Your sign-in has expired. Please sign in again.");
       setLoading(false);
-      router.push("/login");
+      void redirectAfterRelease("/login");
       return;
     }
 
@@ -1142,7 +1154,7 @@ export default function ContestPageClient() {
 
     const stored = readStoredSession();
     if (!stored || stored.contest_id !== contestId) {
-      router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+      void redirectAfterRelease(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
       return;
     }
 
@@ -1155,7 +1167,7 @@ export default function ContestPageClient() {
 
       if (live.status === "submitted" || live.status === "terminated") {
         // Finished. Re-entering needs an invigilator, and that lives on /home.
-        router.replace("/home");
+        await redirectAfterRelease("/home");
         return;
       }
 
@@ -1258,13 +1270,17 @@ export default function ContestPageClient() {
       setLoading(false);
     })().catch((error) => {
       if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (error instanceof ProctorApiError && error.status === 401) {
+        void redirectAfterRelease("/login");
+        return;
+      }
       if (error instanceof SessionBindingError) {
-        router.push("/home");
+        void redirectAfterRelease("/home");
         return;
       }
       if (error instanceof ProctorApiError && error.status === 404) {
         // The stored session is gone or was never ours. Go and get a real one.
-        router.replace(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+        void redirectAfterRelease(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
         return;
       }
       if (error instanceof ProctorApiError && error.status === 409 && livePhase === "ended") {
@@ -1674,27 +1690,44 @@ export default function ContestPageClient() {
   // Exit teardown: release every OS-level lock and stop proctoring. This MUST run
   // on every exit path — confirmed or not — so a network failure can never trap a
   // candidate inside the locked-down shell. Every step is failure-tolerant.
-  async function runExitTeardown() {
+  async function runExitTeardown(preserveSession = false): Promise<boolean> {
+    let released = true;
     try {
       // Remember which session this was before dropping it. The results
       // screen opens after this runs and has nothing else to go on.
-      const finished = localStorage.getItem(ACTIVE_SESSION_KEY);
-      if (finished) localStorage.setItem(STORAGE_KEYS.LAST_SESSION, finished);
-      localStorage.removeItem(ACTIVE_SESSION_KEY);
+      if (!preserveSession) {
+        const finished = localStorage.getItem(ACTIVE_SESSION_KEY);
+        if (finished) localStorage.setItem(STORAGE_KEYS.LAST_SESSION, finished);
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+      }
     } catch {
       // ignore storage errors
     }
     // The one place the camera is genuinely finished with: the exam is over
     // and the candidate is leaving the locked-down shell.
     cameraClosedRef.current = true;
-    cameraSession.release();
+    try {
+      cameraSession.release();
+    } catch {
+      released = false;
+    }
     cameraStreamRef.current = null;
     setCameraStream(null);
-    const win = window.__TAURI__?.window.getCurrentWindow();
-    if (win) {
-      await win.setFullscreen(false).catch(() => {});
-      await win.setAlwaysOnTop(false).catch(() => {});
-      await win.setDecorations(true).catch(() => {});
+    try {
+      const win = window.__TAURI__?.window.getCurrentWindow();
+      if (win) {
+        await withTimeout(win.setFullscreen(false), 5000, "Window release timed out").catch(() => {
+          released = false;
+        });
+        await withTimeout(win.setAlwaysOnTop(false), 5000, "Window release timed out").catch(() => {
+          released = false;
+        });
+        await withTimeout(win.setDecorations(true), 5000, "Window release timed out").catch(() => {
+          released = false;
+        });
+      }
+    } catch {
+      released = false;
     }
     // Even if the native unlock fails, the window chrome above is already
     // restored. What must not happen is leaving quietly: a candidate whose
@@ -1702,17 +1735,77 @@ export default function ContestPageClient() {
     // fix them, on the screen they see next.
     let unlockFailed = false;
     try {
-      await window.__TAURI__?.core.invoke("unlock_desktop");
+      if (window.__TAURI__) {
+        await withTimeout(
+          window.__TAURI__.core.invoke("unlock_desktop"),
+          10000,
+          "Device release timed out"
+        );
+      }
     } catch {
       unlockFailed = true;
     }
     const status = window.__TAURI__
-      ? await window.__TAURI__.core
-          .invoke<RestoreStatus>("get_lockdown_restore_status")
-          .catch(() => null)
+      ? await withTimeout(
+          window.__TAURI__.core.invoke<RestoreStatus>("get_lockdown_restore_status"),
+          5000,
+          "Restore status timed out"
+        ).catch(() => null)
       : null;
-    if (status?.pending || (unlockFailed && status === null)) {
+    if (status?.pending || unlockFailed || (window.__TAURI__ && status === null)) {
       setRestoreStatus(status ?? { pending: true, items: [] });
+      released = false;
+    } else {
+      setRestoreStatus(null);
+    }
+    return released;
+  }
+
+  // Redirects release native controls without finishing the exam or removing
+  // its recovery record. Revoke upload credentials while retaining the native
+  // recording binding, so teardown evidence remains with the same session.
+  async function redirectAfterRelease(destination: string) {
+    if (redirectInFlightRef.current || exitInFlightRef.current) return;
+    redirectInFlightRef.current = true;
+    setPendingRedirect(destination);
+    setLoadError(null);
+    if (destination === "/login") {
+      logout();
+      clearQueryCache();
+    }
+    let revoked = true;
+    try {
+      try {
+        redirectSaveRef.current();
+      } catch {
+        // Storage failures must never prevent releasing native controls.
+      }
+      try {
+        if (window.__TAURI__) {
+          await withTimeout(
+            window.__TAURI__.core.invoke("configure_event_stream", {
+              apiUrl: "",
+              sessionId: null,
+              token: null,
+              preserveBinding: true,
+            }),
+            5000,
+            "Credential cleanup timed out"
+          );
+        }
+      } catch {
+        revoked = false;
+      }
+      const released = await runExitTeardown(true);
+      if (released && revoked) {
+        router.replace(destination);
+      } else {
+        setLoadError(
+          "Device cleanup could not be confirmed. Your saved work and session recovery are kept. Retry cleanup before continuing; ask an invigilator if device controls remain restricted."
+        );
+      }
+    } finally {
+      redirectInFlightRef.current = false;
     }
   }
 
@@ -2015,7 +2108,7 @@ export default function ContestPageClient() {
         if (caught instanceof ProctorApiError && caught.status === 401) {
           // The token expired mid-exam. Keep `ams_active_session` so the
           // resume path still has something to resume.
-          router.push("/login");
+          void redirectAfterRelease("/login");
           return;
         }
         setHeartbeatState(onHeartbeatFailure);
@@ -2061,7 +2154,7 @@ export default function ContestPageClient() {
   // violation/proctoring spool and ships batches to
   // POST /sessions/:id/events with retry/backoff once it knows the session.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || redirectInFlightRef.current || pendingRedirect) return;
     void window.__TAURI__?.core
       .invoke("configure_event_stream", { apiUrl: API_URL, sessionId, token: participantToken() })
       .catch(() => {});
@@ -2821,6 +2914,19 @@ export default function ContestPageClient() {
     )
       setThemeMenuOpen(false);
   }, [criticalOverlayActive, submitConfirm, showSupportModal, showMediaToggleWarning, timeUpState]);
+
+  if (pendingRedirect) {
+    return loadError ? (
+      <ContestLoadErrorScreen
+        loadError={loadError}
+        router={router}
+        onRetry={() => void redirectAfterRelease(pendingRedirect)}
+        hideBack
+      />
+    ) : (
+      <BootScreen label="Releasing device controls..." />
+    );
+  }
 
   // SECURITY: while the lockdown probe is pending — or while bouncing an
   // unlocked direct-entry back to onboarding — render a neutral securing screen.

@@ -26,11 +26,13 @@ export interface ContestLoadErrorScreenProps {
   router: ReturnType<typeof useRouter>;
   /** Present only for retryable failures. */
   onRetry?: () => void;
+  hideBack?: boolean;
 }
 export function ContestLoadErrorScreen({
   loadError,
   router,
   onRetry,
+  hideBack = false,
 }: ContestLoadErrorScreenProps) {
   return (
     <AppShell height="fill" style={{ height: "100dvh" }}>
@@ -43,11 +45,13 @@ export function ContestLoadErrorScreen({
           <Heading level={1}>Unable to open your contest</Heading>
           <Banner status="error" title="Contest load error" description={loadError} />
           {onRetry && <Button label="Retry" variant="primary" onClick={onRetry} />}
-          <Button
-            label="Back to contests"
-            variant={onRetry ? "secondary" : "primary"}
-            onClick={() => router.push("/home")}
-          />
+          {!hideBack && (
+            <Button
+              label="Back to contests"
+              variant={onRetry ? "secondary" : "primary"}
+              onClick={() => router.push("/home")}
+            />
+          )}
         </VStack>
       </VStack>
     </AppShell>

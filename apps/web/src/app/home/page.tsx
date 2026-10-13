@@ -818,7 +818,7 @@ export default function HomePage() {
     signOut();
   }
 
-  function signOut() {
+  async function signOut() {
     setConfirmDiscardOpen(false);
     setSigningOut(true);
     // Storage is not the session: `router.push` keeps module state, so the
@@ -826,6 +826,20 @@ export default function HomePage() {
     // before touching storage, which can throw.
     logout();
     clearQueryCache();
+    try {
+      if (hasNativeBridge()) {
+        await withTelemetryTimeout(
+          invoke("configure_event_stream", { apiUrl: "", sessionId: null, token: null })
+        );
+      }
+    } catch {
+      setSigningOut(false);
+      setActiveNav("overview");
+      setResumeStatus(
+        "Sign-out cleanup could not be confirmed. Native uploads may still be active. Retry Sign out, or close AMS Access before another candidate signs in. Saved work has been kept."
+      );
+      return;
+    }
     try {
       Object.keys(localStorage)
         .filter((key) => key.startsWith("ams_") && !DEVICE_SCOPED_KEYS.has(key))
