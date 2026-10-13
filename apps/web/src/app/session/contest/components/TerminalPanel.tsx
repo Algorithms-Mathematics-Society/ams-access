@@ -229,6 +229,28 @@ export function TerminalPanel({
   const runIsCustom = runMode === "custom";
   const showRunOutput = activeTab === runMode;
   const showRunPane = showRunOutput && Boolean(runResult || isRunning || runError || runTimedOut);
+
+  // Which of the two the result pane is showing. `runMode` is not this: it is
+  // "all cases or custom cases" and stays "all" whether the last thing the
+  // candidate pressed was Run or Submit, so reading it meant a finished
+  // submission rendered the *run* branch — empty — and the panel said "Run
+  // your code" directly underneath a badge counting six results.
+  //
+  // Whichever started most recently wins, which is what a candidate means by
+  // "the result".
+  const [resultSource, setResultSource] = useState<"run" | "submission">("run");
+  useEffect(() => {
+    if (isRunning || runResult || runError || runTimedOut) setResultSource("run");
+  }, [isRunning, runResult, runError, runTimedOut]);
+  useEffect(() => {
+    if (!latestAttempt?.id && !latestAttemptPending) return;
+    setResultSource("submission");
+    // Submitting is the moment a candidate most wants the verdict, so the
+    // pane comes to the front rather than waiting to be found.
+    setActiveTab("all");
+  }, [latestAttempt?.id, latestAttemptPending]);
+
+  const viewingRun = resultSource === "run";
   // Compiler messages follow the run when there is one, and otherwise fall back
   // to the last submission -- the precedence the Compiler output tab used before
   // the two output tabs were folded into this one pane.
@@ -380,23 +402,24 @@ export function TerminalPanel({
         )}
         {activeTab === "all" && (
           <ResultsPanel
-            tests={showRunOutput ? runSampleTests : latestAttemptTests}
+            tests={viewingRun ? runSampleTests : latestAttemptTests}
             verdict={
-              showRunOutput
+              viewingRun
                 ? (runResult?.status ?? null)
                 : ((latestAttempt?.final_verdict ?? latestAttempt?.status) as string | null)
             }
-            runtimeMs={showRunOutput ? runResult?.runtime_ms : latestAttempt?.runtime_ms}
-            memoryKb={showRunOutput ? runResult?.memory_kb : latestAttempt?.memory_kb}
-            isRunning={isRunning || Boolean(latestAttemptPending && !showRunOutput)}
+            runtimeMs={viewingRun ? runResult?.runtime_ms : latestAttempt?.runtime_ms}
+            memoryKb={viewingRun ? runResult?.memory_kb : latestAttempt?.memory_kb}
+            isRunning={viewingRun ? isRunning : latestAttemptPending}
+            submitted={!viewingRun}
             progressLabel={runProgressSteps[runProgressPhase] ?? runMetrics}
             error={runTimedOut ? "The judge did not answer in time." : runError}
             compilerText={compilerText}
             compilerIsError={compilerIsError}
             onJumpToCompilerError={onJumpToCompilerError}
-            stale={showRunOutput && runSourceChanged}
+            stale={viewingRun && runSourceChanged}
             emptyHint={
-              showRunOutput
+              viewingRun
                 ? "Run your code to check it against the sample cases."
                 : "Nothing submitted for this problem yet."
             }

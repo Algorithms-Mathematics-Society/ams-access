@@ -101,6 +101,7 @@ export function ResultsPanel({
   compilerIsError,
   onJumpToCompilerError,
   stale,
+  submitted = false,
   emptyHint,
 }: {
   tests: TestRow[] | null | undefined;
@@ -116,6 +117,9 @@ export function ResultsPanel({
   onJumpToCompilerError?: () => void;
   /** The code has been edited since this result was produced. */
   stale?: boolean;
+  /** A submission rather than a sample run. Only a submission is worth
+   *  celebrating — a passing Run means two sample cases agreed. */
+  submitted?: boolean;
   emptyHint: string;
 }) {
   const rows = useMemo(() => tests ?? [], [tests]);
@@ -179,7 +183,8 @@ export function ResultsPanel({
         </Text>
       )}
 
-      <HStack gap={3} align="center" wrap="wrap">
+      <HStack gap={3} align="center" wrap="wrap" style={{ position: "relative" }}>
+        {good && submitted && <Celebration />}
         <Text
           size="xl"
           weight="semibold"
@@ -263,6 +268,83 @@ export function ResultsPanel({
         )
       )}
     </VStack>
+  );
+}
+
+/**
+ * A small burst behind an accepted submission.
+ *
+ * Hand-rolled rather than pulled in: the contest screen has about 160 KB of
+ * budget left and a confetti library spends a chunk of it to draw sixteen
+ * squares. Sixteen is also the point — this is a contest, not a game, and a
+ * candidate with four problems left should feel a flicker of good news and
+ * then be able to read the verdict underneath it.
+ *
+ * Fires once per mount, which is once per accepted submission, and skips
+ * entirely for anyone who has asked for reduced motion.
+ */
+function Celebration() {
+  const [done, setDone] = useState(false);
+  const reduced =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  useEffect(() => {
+    if (reduced) return;
+    const timer = setTimeout(() => setDone(true), 1400);
+    return () => clearTimeout(timer);
+  }, [reduced]);
+
+  if (reduced || done) return null;
+
+  const colors = [
+    "var(--color-text-success)",
+    "var(--color-text-accent)",
+    "var(--color-text-primary)",
+  ];
+
+  return (
+    <span
+      aria-hidden
+      style={{
+        position: "absolute",
+        left: "1.5rem",
+        top: "50%",
+        width: 0,
+        height: 0,
+        pointerEvents: "none",
+      }}
+    >
+      {Array.from({ length: 16 }, (_, index) => {
+        const angle = (index / 16) * Math.PI * 2;
+        const distance = 34 + (index % 4) * 11;
+        return (
+          <span
+            key={index}
+            style={
+              {
+                position: "absolute",
+                width: "0.3rem",
+                height: "0.3rem",
+                borderRadius: index % 3 === 0 ? "50%" : "1px",
+                background: colors[index % colors.length],
+                opacity: 0,
+                animation: `ams-pop 1.1s cubic-bezier(0.16, 1, 0.3, 1) ${index * 12}ms forwards`,
+                "--dx": `${Math.cos(angle) * distance}px`,
+                "--dy": `${Math.sin(angle) * distance}px`,
+              } as React.CSSProperties
+            }
+          />
+        );
+      })}
+      <style>{`
+        @keyframes ams-pop {
+          0%   { opacity: 1; transform: translate(0, 0) scale(0.6); }
+          70%  { opacity: 1; }
+          100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1); }
+        }
+      `}</style>
+    </span>
   );
 }
 
