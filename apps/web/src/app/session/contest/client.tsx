@@ -683,14 +683,16 @@ export default function ContestPageClient() {
       `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
       {
         category: enabled ? "media_toggle_on" : "media_toggle_off",
-        detail,
-        telemetry: {
+        message: detail,
+        diagnostics: {
           timestamp,
           contest_id: contestId,
           session_id: sessionId ?? "unregistered",
           media: type,
           enabled,
         },
+        contact: "",
+        contest_uid: contestId,
       },
       { headers: authHeaders() }
     ).catch(() => {});
@@ -995,8 +997,10 @@ export default function ContestPageClient() {
         `${API_URL}/participant/sessions/${sessionId}/incidents`,
         {
           category: supportCategory,
-          detail: customIssueDetail.trim(),
-          telemetry: supportTelemetry,
+          message: customIssueDetail.trim(),
+          diagnostics: supportTelemetry,
+          contact: "",
+          contest_uid: contestId,
         },
         { headers: authHeaders() },
         { timeoutMs: 10000 }
@@ -2240,12 +2244,14 @@ export default function ContestPageClient() {
                 `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
                 {
                   category: "blocked_app_resolved",
-                  detail: previousDetail,
-                  telemetry: {
+                  message: previousDetail,
+                  diagnostics: {
                     timestamp: new Date().toISOString(),
                     contest_id: contestId,
                     session_id: sessionId ?? "unregistered",
                   },
+                  contact: "",
+                  contest_uid: contestId,
                 },
                 { headers: authHeaders() }
               ).catch(() => {});
@@ -2261,12 +2267,14 @@ export default function ContestPageClient() {
               `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
               {
                 category: "blocked_app_started",
-                detail: result.found.join(", "),
-                telemetry: {
+                message: result.found.join(", "),
+                diagnostics: {
                   timestamp: new Date().toISOString(),
                   contest_id: contestId,
                   session_id: sessionId ?? "unregistered",
                 },
+                contact: "",
+                contest_uid: contestId,
               },
               { headers: authHeaders() }
             ).catch(() => {});
@@ -2284,12 +2292,14 @@ export default function ContestPageClient() {
               `${API_URL}/participant/sessions/${sessionId ?? "unregistered"}/incidents`,
               {
                 category: "blocked_app_resolved",
-                detail: previousDetail,
-                telemetry: {
+                message: previousDetail,
+                diagnostics: {
                   timestamp: new Date().toISOString(),
                   contest_id: contestId,
                   session_id: sessionId ?? "unregistered",
                 },
+                contact: "",
+                contest_uid: contestId,
               },
               { headers: authHeaders() }
             ).catch(() => {});
