@@ -81,7 +81,7 @@ export function Stage12_IntegrityConfirmation({
   const hasPending = items.some(({ stage }) => results[stage] === "checking");
 
   return (
-    <VStack gap={5} style={{ width: "100%", minWidth: 0 }}>
+    <VStack gap={5} style={{ width: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>
       <StageHeader label="Review your setup" />
       <Banner
         status={
@@ -115,7 +115,10 @@ export function Stage12_IntegrityConfirmation({
           )
         }
       />
-      <VStack gap={0}>
+      {/* Eleven check rows plus a button is taller than a laptop viewport,
+          and Continue was the part that fell off the bottom. The list scrolls
+          on its own; the action below it does not move. */}
+      <VStack gap={0} style={{ minHeight: 0, overflowY: "auto", flex: "1 1 auto" }}>
         {items.map(({ label, stage }) => (
           <VStack
             key={label}
@@ -146,7 +149,15 @@ export function Stage12_IntegrityConfirmation({
           </VStack>
         ))}
       </VStack>
-      {!blocked && <Button type="button" variant="primary" label="Continue" onClick={onPass} />}
+      {!blocked && (
+        <Button
+          type="button"
+          variant="primary"
+          label="Continue"
+          onClick={onPass}
+          style={{ flexShrink: 0 }}
+        />
+      )}
     </VStack>
   );
 }

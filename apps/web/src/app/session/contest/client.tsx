@@ -421,11 +421,11 @@ export default function ContestPageClient() {
   // Drives the full-screen soft-block/grace-period ONLY — a cheap, fast (1s)
   // camera-stream-health check, NOT real face detection. Left untouched here.
   const [faceStatus, setFaceStatus] = useState<"ok" | "away" | "unknown">("unknown");
-  // The footer's "Face detected" indicator — real BlazeFace presence, not
+  // Presence is sampled and logged for the invigilator; it is deliberately
+  // not held in state any more, because state is what gets rendered. See
   // camera health. Deliberately does NOT feed the block/grace-period above;
   // it only reflects the existing audit-tick's result (see the presence
   // monitor effect), so there is zero added inference cost.
-  const [presenceDetected, setPresenceDetected] = useState<"ok" | "away" | "unknown">("unknown");
   // Ambient connection signal for the trust strip. Defaults online; the effect
   // syncs the real value on mount (navigator is unavailable during SSR).
   const [browserOnline, setBrowserOnline] = useState(true);
@@ -2180,11 +2180,11 @@ export default function ContestPageClient() {
   // anomalies — see lib/presence-monitor.ts for the retention notes). Uses a
   // detached <video> bound to the stream so sampling is independent of the
   // camera panel being collapsed. Deliberately does NOT drive faceStatus (the
-  // block/grace-period signal) — only the footer's presenceDetected, on this
-  // same tick, at zero added inference cost.
+  // block/grace-period signal), and since the footer stopped reporting
+  // presence it drives no candidate-facing UI at all: the sample is logged
+  // for the invigilation timeline and nothing else.
   useEffect(() => {
     if (!cameraStream) {
-      setPresenceDetected("unknown");
       return;
     }
     let cancelled = false;
@@ -2222,7 +2222,6 @@ export default function ContestPageClient() {
             "presence check skipped: camera disabled by contestant",
             {}
           );
-          setPresenceDetected("unknown");
         } else {
           if (!detector && !detectorFailed) {
             try {
@@ -2234,7 +2233,6 @@ export default function ContestPageClient() {
                 "face detector failed to initialise; periodic presence checks disabled",
                 {}
               );
-              setPresenceDetected("unknown");
             }
           }
           if (detector && !cancelled) {
@@ -2244,9 +2242,6 @@ export default function ContestPageClient() {
                 faces: sample.faces,
                 thumbnail: sample.thumbnail,
               });
-              // presence_ok = exactly one face confirmed by BlazeFace; anything
-              // else (none, or multiple) is not a clean confirmed presence.
-              setPresenceDetected(sample.status === "presence_ok" ? "ok" : "away");
             }
           }
         }
@@ -3199,6 +3194,10 @@ export default function ContestPageClient() {
               onCheckRunAgain={recheckRun}
               runResultAttemptId={runResultAttemptId}
               runSampleTests={runSampleTests}
+              /* The worked examples the statement already shows. The judge
+                 sends no input or expected output for a sample and does not
+                 need to -- the candidate is reading both a few inches up. */
+              sampleExamples={questions[activeQ]?.samples}
               runError={runError}
               isEditorEmpty={isEditorEmpty}
               submissionsList={submissionsList}
@@ -3237,7 +3236,7 @@ export default function ContestPageClient() {
         <FooterTrustStrip
           proctoringOk={proctoringOk}
           footerStatusDot={footerStatusDot}
-          faceStatus={presenceDetected}
+          cameraStatus={cameraError ? "off" : cameraVideoReady ? "on" : "starting"}
           online={online}
           saveIndicator={saveIndicator}
           draftStatusLabel={activeDraftStatus.label}

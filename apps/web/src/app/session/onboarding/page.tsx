@@ -895,7 +895,13 @@ export default function OnboardingPage() {
         style={{
           width: "100%",
           maxWidth: "calc(var(--spacing-10) * 28)",
-          minHeight: "100dvh",
+          // Fixed, not minimum. With `minHeight` the column grew past the
+          // viewport and the whole page scrolled, which put Continue below
+          // the fold on any stage with more than a few rows -- a button
+          // nobody scrolls to find is a button that is not there.
+          height: "100dvh",
+          minHeight: 0,
+          overflow: "hidden",
           marginInline: "auto",
           padding: "clamp(var(--spacing-4), 4vw, var(--spacing-10))",
           fontFamily: "var(--font-sans)",
@@ -1123,7 +1129,9 @@ export default function OnboardingPage() {
                 align="start"
                 style={{
                   flexDirection: wideLayout ? "row" : "column",
-                  paddingBottom: "var(--spacing-8)",
+                  flex: 1,
+                  minHeight: 0,
+                  paddingBottom: "var(--spacing-4)",
                 }}
               >
                 <VStack
@@ -1131,6 +1139,10 @@ export default function OnboardingPage() {
                   style={{
                     width: wideLayout ? "calc(var(--spacing-8) * 8)" : "100%",
                     flexShrink: 0,
+                    // Thirteen steps on a short window scroll on their own
+                    // rather than stretching the page.
+                    maxHeight: "100%",
+                    overflowY: "auto",
                   }}
                 >
                   <ProgressBar
@@ -1140,7 +1152,7 @@ export default function OnboardingPage() {
                     blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
                   />
                 </VStack>
-                <VStack gap={5} style={{ flex: 1, width: "100%", minWidth: 0 }}>
+                <VStack gap={5} style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0 }}>
                   <Heading level={1} style={{ fontSize: "var(--font-size-xl)" }}>
                     {dryRun ? "Practice setup" : "Pre-contest setup"}
                   </Heading>
@@ -1149,6 +1161,9 @@ export default function OnboardingPage() {
                     style={{
                       width: "100%",
                       minWidth: 0,
+                      minHeight: 0,
+                      flex: 1,
+                      display: "flex",
                       border: 0,
                       borderRadius: "var(--radius-container)",
                       background: "var(--color-background-card)",
@@ -1160,6 +1175,13 @@ export default function OnboardingPage() {
                       style={{
                         padding: "clamp(var(--spacing-4), 3vw, var(--spacing-8))",
                         minWidth: 0,
+                        width: "100%",
+                        // The card is the only thing that scrolls. A long
+                        // check list moves inside it while the frame, the
+                        // progress rail and the stage's own action stay where
+                        // the candidate last saw them.
+                        minHeight: 0,
+                        overflowY: "auto",
                         opacity: transitioning ? 0.5 : 1,
                       }}
                     >

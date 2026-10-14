@@ -5,6 +5,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { outputText } from "../execution-output";
 import { GATE_KIND } from "../family-summary";
 import { ruleLanguage, shortChip } from "../rule-language";
+import { exampleFor, sampleOrdinals, type WorkedExample } from "../sample-join";
 
 /**
  * What the judge said, for one run or one submission.
@@ -103,6 +104,7 @@ export function ResultsPanel({
   onJumpToCompilerError,
   stale,
   submitted = false,
+  examples,
   emptyHint,
 }: {
   tests: TestRow[] | null | undefined;
@@ -121,10 +123,19 @@ export function ResultsPanel({
   /** A submission rather than a sample run. Only a submission is worth
    *  celebrating — a passing Run means two sample cases agreed. */
   submitted?: boolean;
+  /** The problem's worked examples, as printed in the statement. The judge
+   *  sends no input or expected output for a sample, and does not need to:
+   *  the candidate already has both. */
+  examples?: WorkedExample[];
   emptyHint: string;
 }) {
   const rows = useMemo(() => tests ?? [], [tests]);
+  const ordinals = useMemo(() => sampleOrdinals(rows), [rows]);
   const [selected, setSelected] = useState(0);
+
+  // Left/right along the strip, the way a tab list is expected to behave.
+  const move = (delta: number) =>
+    setSelected((current) => Math.min(Math.max(current + delta, 0), rows.length - 1));
 
   // Land on the first failure, which is the one being looked for. Re-run with
   // everything passing and it falls back to the first case rather than
@@ -253,18 +264,48 @@ export function ResultsPanel({
       ) : (
         rows.length > 0 && (
           <>
-            <HStack gap={2} wrap="wrap" role="tablist" aria-label="Cases">
+            {/* One row, scrolled rather than wrapped. Wrapping meant a
+                problem with a dozen checks reflowed the strip into three
+                lines and pushed the case detail off the bottom of the pane --
+                the thing the strip exists to reveal. */}
+            <div
+              role="tablist"
+              aria-label="Cases"
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  move(1);
+                } else if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  move(-1);
+                }
+              }}
+              style={{
+                display: "flex",
+                gap: "var(--spacing-2)",
+                overflowX: "auto",
+                overflowY: "hidden",
+                paddingBottom: "var(--spacing-1)",
+                scrollbarWidth: "thin",
+              }}
+            >
               {rows.map((row, index) => (
                 <CaseChip
                   key={index}
                   row={row}
                   index={index}
+                  ordinal={ordinals[index]}
                   active={index === selected}
                   onSelect={() => setSelected(index)}
                 />
               ))}
-            </HStack>
-            {current && <CaseDetail row={current} />}
+            </div>
+            {current && (
+              <CaseDetail
+                row={current}
+                example={exampleFor(current, ordinals[selected] ?? -1, examples)}
+              />
+            )}
           </>
         )
       )}
@@ -376,11 +417,14 @@ function codeBlock(color: string): React.CSSProperties {
 function CaseChip({
   row,
   index,
+  ordinal,
   active,
   onSelect,
 }: {
   row: TestRow;
   index: number;
+  /** Position among the samples, or -1 for a rule or behaviour check. */
+  ordinal: number;
   active: boolean;
   onSelect: () => void;
 }) {
@@ -391,7 +435,7 @@ function CaseChip({
       ? ruleLanguage(row.label ?? "", row.checker_message).chip
       : family === "behavior"
         ? row.label || `Check ${index + 1}`
-        : `Case ${index + 1}`;
+        : `Case ${(ordinal >= 0 ? ordinal : index) + 1}`;
 
   // Colour carries the outcome, so a candidate can read the strip at a
   // glance without opening anything. The previous version put a 0.5rem dot
@@ -403,6 +447,9 @@ function CaseChip({
       type="button"
       role="tab"
       aria-selected={active}
+      // Only the selected tab is in the tab order; the arrow keys move
+      // between them. Fourteen stops for fourteen cases is not navigation.
+      tabIndex={active ? 0 : -1}
       onClick={onSelect}
       title={`${full} — ${ok ? "passed" : "failed"}. ${FAMILY[family].hint}`}
       style={{
@@ -421,6 +468,7 @@ function CaseChip({
         font: "inherit",
         cursor: "pointer",
         whiteSpace: "nowrap",
+        flexShrink: 0,
       }}
     >
       <span aria-hidden style={{ fontSize: "0.85em" }}>
@@ -432,7 +480,7 @@ function CaseChip({
 }
 
 /** The selected check, shown the way that family actually fails. */
-function CaseDetail({ row }: { row: TestRow }) {
+function CaseDetail({ row, example }: { row: TestRow; example?: WorkedExample | null }) {
   const family = familyOf(row);
   const ok = passed(row);
 
@@ -475,17 +523,43 @@ function CaseDetail({ row }: { row: TestRow }) {
     );
   }
 
+  // Input and expected come from the statement's own worked example when the
+  // judge did not send them, which for a sample is always. Nothing is
+  // revealed: the candidate is reading these two values a few inches up.
+  const input = row.input ?? example?.input ?? null;
+  const expected = row.expected ?? example?.output ?? null;
+  // What the program actually printed. Present for a case the candidate
+  // supplied; withheld on the problem's own tests, because a hidden test
+  // whose output came back would be an answer key.
+  const got = row.stdout_text ?? row.output ?? row.actual ?? null;
+  const hidden = input == null && expected == null && got == null;
+
   return (
     <VStack gap={3} style={{ minWidth: 0 }}>
-      {row.input != null && <Block label="Input" value={row.input} />}
-      {/* `stdout_text` is populated only for a case the candidate supplied.
-          On an ordinary sample the judge never sends output back, so showing
-          an empty "Output" box would read as "your program printed nothing"
-          when it means "we do not tell you". */}
-      {(row.stdout_text != null || row.output != null || row.actual != null) && (
-        <Block label="Output" value={row.stdout_text ?? row.output ?? row.actual} />
+      {hidden ? (
+        <Text type="supporting" color="secondary">
+          This case is hidden. Only the verdict is shown.
+        </Text>
+      ) : (
+        <>
+          {input != null && <Block label="Input" value={input} />}
+          {got != null ? (
+            <Block label="Your output" value={got} tone={ok ? "success" : "error"} />
+          ) : (
+            <VStack gap={2}>
+              <Text type="supporting" weight="medium">
+                Your output
+              </Text>
+              <Text type="supporting" color="secondary">
+                Not returned for the problem&apos;s own tests. Put this input under Testcase and run
+                it to see what your code prints.
+              </Text>
+            </VStack>
+          )}
+          {expected != null && <Block label="Expected" value={expected} />}
+        </>
       )}
-      {row.expected != null && <Block label="Expected" value={row.expected} />}
+      {row.stderr_text ? <Block label="Stderr" value={row.stderr_text} /> : null}
       {row.checker_message ? (
         <VStack gap={2}>
           <Text type="supporting" weight="medium">
@@ -496,22 +570,27 @@ function CaseDetail({ row }: { row: TestRow }) {
           </Text>
         </VStack>
       ) : null}
-      {row.input == null && row.expected == null && !row.checker_message && (
-        <Text type="supporting" color="secondary">
-          This case is hidden. Only the verdict is shown.
-        </Text>
-      )}
     </VStack>
   );
 }
 
-function Block({ label, value }: { label: string; value: unknown }) {
+function Block({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: unknown;
+  tone?: "success" | "error";
+}) {
   return (
     <VStack gap={2} style={{ minWidth: 0 }}>
       <Text type="supporting" weight="medium">
         {label}
       </Text>
-      <pre style={codeBlock("var(--color-text-primary)")}>{outputText(value)}</pre>
+      <pre style={codeBlock(tone ? `var(--color-text-${tone})` : "var(--color-text-primary)")}>
+        {outputText(value)}
+      </pre>
     </VStack>
   );
 }

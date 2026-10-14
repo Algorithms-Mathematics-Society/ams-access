@@ -153,6 +153,8 @@ export interface TerminalPanelProps {
   onCheckRunAgain: () => void;
   runResultAttemptId: string | null;
   runSampleTests: any[] | null;
+  /** The active problem's worked examples, for pairing with judged samples. */
+  sampleExamples?: { label?: string; input: string; output: string }[];
   runError: string | null;
   isEditorEmpty: boolean;
   submissionsList: SubmissionAttemptRecord[];
@@ -198,6 +200,7 @@ export function TerminalPanel({
   onCheckRunAgain,
   runResultAttemptId,
   runSampleTests,
+  sampleExamples,
   runError,
   isEditorEmpty,
   submissionsList,
@@ -417,6 +420,7 @@ export function TerminalPanel({
             compilerText={compilerText}
             compilerIsError={compilerIsError}
             onJumpToCompilerError={onJumpToCompilerError}
+            examples={sampleExamples}
             stale={viewingRun && runSourceChanged}
             emptyHint={
               viewingRun
