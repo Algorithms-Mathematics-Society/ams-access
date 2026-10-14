@@ -1534,7 +1534,7 @@ mod tests {
         // case where images used to stay on disk for good.
         let fixture = Fixture::new();
         let store = fixture.store("current");
-        let spool = fixture.0.join("unbound");
+        let spool = fixture.0.join("bound-events-v1").join("unbound");
         fs::create_dir_all(&spool).unwrap();
         let path = spool.join("older-run.jsonl");
         fs::write(
@@ -1557,7 +1557,7 @@ mod tests {
     fn a_fresh_spool_keeps_its_thumbnails() {
         let fixture = Fixture::new();
         let store = fixture.store("current");
-        let spool = fixture.0.join("unbound");
+        let spool = fixture.0.join("bound-events-v1").join("unbound");
         fs::create_dir_all(&spool).unwrap();
         let path = spool.join("recent-run.jsonl");
         fs::write(
@@ -1581,9 +1581,9 @@ mod tests {
     fn the_spool_being_written_now_is_never_touched() {
         let fixture = Fixture::new();
         let store = fixture.store("current");
-        let spool = fixture.0.join("unbound");
+        let spool = fixture.0.join("bound-events-v1").join("unbound");
         fs::create_dir_all(&spool).unwrap();
-        let path = spool.join("current.jsonl");
+        let path = spool.join(format!("{}.jsonl", store.run_key));
         fs::write(
             &path,
             br#"{"kind":"face_missing","payload":{"thumbnail":"data:image/jpeg;base64,ZZZZ"}}"#,
