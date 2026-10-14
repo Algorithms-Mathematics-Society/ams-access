@@ -507,6 +507,74 @@ impl EventStore {
         Ok(removed)
     }
 
+    /// Strip candidate face thumbnails from spools older than
+    /// [`THUMBNAIL_RETENTION_SECS`], whatever state the run is in.
+    ///
+    /// `cleanup_acknowledged` deletes a run only once it is closed, thirty
+    /// days old, fully acknowledged and unquarantined, and it skips `unbound`
+    /// entirely. Every other run keeps its files for good — and if upload has
+    /// been failing, or the app crashed before close, the thing kept for good
+    /// is a set of JPEGs of someone's face. Retention that depends on a
+    /// successful upload is not retention.
+    ///
+    /// So this is deliberately not a deletion. The diagnostic record is what
+    /// makes an unacknowledged run worth keeping: the event kinds, their
+    /// timestamps, the face counts. Only the image goes.
+    ///
+    /// **The replacement is written in place, byte for byte.** Checkpoints
+    /// record absolute offsets into the spool and `cleanup_acknowledged`
+    /// compares one against the file length, so a rewrite that changed any
+    /// length would desynchronise resumption and could replay or skip events.
+    /// The marker is therefore padded with spaces to the exact width of the
+    /// data URL it replaces — still valid JSON, still the same offsets, and
+    /// no longer an image.
+    pub fn redact_stale_thumbnails(&self, now: std::time::SystemTime) -> io::Result<usize> {
+        let _guard = self
+            .io_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let roots = match fs::read_dir(&self.root) {
+            Ok(roots) => roots,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error),
+        };
+        let mut redacted = 0;
+        for root in roots {
+            let root = root?;
+            // `unbound` is included here, unlike in the deletion pass: a run
+            // that never got a session binding is exactly the kind that is
+            // never acknowledged and never cleaned.
+            if !root.file_type()?.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(root.path())? {
+                let path = entry?.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                // Never the spool this process is still appending to.
+                if path.file_stem().and_then(|s| s.to_str()) == Some(&self.run_key) {
+                    continue;
+                }
+                let metadata = fs::metadata(&path)?;
+                if now.duration_since(metadata.modified()?).unwrap_or_default()
+                    < std::time::Duration::from_secs(THUMBNAIL_RETENTION_SECS)
+                {
+                    continue;
+                }
+                let mut bytes = fs::read(&path)?;
+                if redact_thumbnails_in_place(&mut bytes) {
+                    let original = bytes.len() as u64;
+                    fs::write(&path, &bytes)?;
+                    debug_assert_eq!(fs::metadata(&path)?.len(), original);
+                    sync_directory(path.parent().expect("spool parent"))?;
+                    redacted += 1;
+                }
+            }
+        }
+        Ok(redacted)
+    }
+
     /// Call only after the exact returned batch received a successful HTTP
     /// response. This is at-least-once delivery: a crash before acknowledgment
     /// can replay events; server-side identity handles any deduplication.
@@ -726,6 +794,66 @@ fn tighten_permissions(_: &Path) -> io::Result<()> {
     Ok(())
 }
 #[cfg(unix)]
+/// How long a face thumbnail may sit in a local spool.
+///
+/// Much shorter than the thirty-day diagnostic retention, because the two are
+/// not the same kind of data: a line saying `face_missing at 14:02` is a
+/// record, and a JPEG of someone's face is a photograph of a person.
+pub const THUMBNAIL_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+
+const THUMBNAIL_KEY: &[u8] = b"\"thumbnail\":\"";
+const REDACTED_MARKER: &[u8] = b"<redacted: thumbnail retention>";
+
+/// Overwrite every `payload.thumbnail` value with a same-length marker.
+///
+/// Returns whether anything changed. Works on bytes rather than parsed JSON
+/// for two reasons: a spool is append-only JSONL that may contain a partially
+/// written final line, and re-serialising would change widths. Every offset in
+/// the file survives this untouched.
+///
+/// JSON strings may not contain a raw quote, so the first unescaped `"` ends
+/// the value; a backslash escape is skipped over rather than counted.
+fn redact_thumbnails_in_place(bytes: &mut [u8]) -> bool {
+    let mut changed = false;
+    let mut at = 0usize;
+    while let Some(found) = find_subslice(&bytes[at..], THUMBNAIL_KEY) {
+        let value_start = at + found + THUMBNAIL_KEY.len();
+        let mut end = value_start;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'\\' => end += 2,
+                b'"' => break,
+                _ => end += 1,
+            }
+        }
+        if end > bytes.len() {
+            break; // a truncated final line: leave it alone
+        }
+        let width = end.saturating_sub(value_start);
+        // `null` is what a presence_ok sample carries, and an already redacted
+        // value must not be rewritten on every pass.
+        let already = width >= REDACTED_MARKER.len()
+            && &bytes[value_start..value_start + REDACTED_MARKER.len()] == REDACTED_MARKER;
+        if width > 0 && !already {
+            for (offset, slot) in bytes[value_start..end].iter_mut().enumerate() {
+                *slot = *REDACTED_MARKER.get(offset).unwrap_or(&b' ');
+            }
+            changed = true;
+        }
+        at = end.max(value_start + 1);
+    }
+    changed
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
 }
@@ -1353,5 +1481,120 @@ mod tests {
                 & 0o777,
             0o600
         );
+    }
+
+    // ── #114: thumbnails must not outlive their retention ─────────────────
+
+    #[test]
+    fn thumbnails_are_replaced_without_moving_a_single_byte() {
+        // The offsets are the point. Checkpoints address this file by byte,
+        // so a redaction that changed any length would desynchronise
+        // resumption and could replay or skip events.
+        let line = br#"{"kind":"face_missing","payload":{"faces":0,"thumbnail":"data:image/jpeg;base64,AAAABBBBCCCC"}}"#;
+        let mut bytes = line.to_vec();
+        let before = bytes.len();
+
+        assert!(redact_thumbnails_in_place(&mut bytes));
+        assert_eq!(bytes.len(), before, "length must be preserved exactly");
+
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(!text.contains("data:image/jpeg"), "the image is gone");
+        assert!(text.contains("<redacted: thumbnail retention>"));
+        assert!(text.contains(r#""faces":0"#), "the diagnostic record stays");
+        serde_json::from_str::<Value>(&text).expect("still valid JSON");
+
+        // Idempotent: a second hourly pass must not rewrite the file again.
+        assert!(!redact_thumbnails_in_place(&mut bytes));
+    }
+
+    #[test]
+    fn a_sample_without_a_thumbnail_is_left_alone() {
+        let mut bytes =
+            br#"{"kind":"presence_ok","payload":{"faces":1,"thumbnail":null}}"#.to_vec();
+        let original = bytes.clone();
+        assert!(!redact_thumbnails_in_place(&mut bytes));
+        assert_eq!(bytes, original);
+    }
+
+    #[test]
+    fn a_truncated_final_line_is_not_corrupted() {
+        // A spool is append-only and the app can die mid-write.
+        let mut bytes =
+            br#"{"kind":"face_missing","payload":{"thumbnail":"data:image/jpeg;base64,AAA"#
+                .to_vec();
+        let original = bytes.clone();
+        redact_thumbnails_in_place(&mut bytes);
+        assert_eq!(bytes.len(), original.len());
+    }
+
+    #[test]
+    fn stale_unbound_spools_lose_their_thumbnails() {
+        // The run cleanup skips `unbound` entirely and only deletes
+        // acknowledged, closed, thirty-day-old runs -- so this is exactly the
+        // case where images used to stay on disk for good.
+        let fixture = Fixture::new();
+        let store = fixture.store("current");
+        let spool = fixture.0.join("unbound");
+        fs::create_dir_all(&spool).unwrap();
+        let path = spool.join("older-run.jsonl");
+        fs::write(
+            &path,
+            br#"{"kind":"face_missing","payload":{"thumbnail":"data:image/jpeg;base64,ZZZZ"}}
+"#,
+        )
+        .unwrap();
+
+        let later = std::time::SystemTime::now()
+            + std::time::Duration::from_secs(THUMBNAIL_RETENTION_SECS + 60);
+        assert_eq!(store.redact_stale_thumbnails(later).unwrap(), 1);
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("data:image/jpeg"));
+        assert!(text.contains("face_missing"), "the event itself survives");
+    }
+
+    #[test]
+    fn a_fresh_spool_keeps_its_thumbnails() {
+        let fixture = Fixture::new();
+        let store = fixture.store("current");
+        let spool = fixture.0.join("unbound");
+        fs::create_dir_all(&spool).unwrap();
+        let path = spool.join("recent-run.jsonl");
+        fs::write(
+            &path,
+            br#"{"kind":"face_missing","payload":{"thumbnail":"data:image/jpeg;base64,ZZZZ"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store
+                .redact_stale_thumbnails(std::time::SystemTime::now())
+                .unwrap(),
+            0
+        );
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("data:image/jpeg"));
+    }
+
+    #[test]
+    fn the_spool_being_written_now_is_never_touched() {
+        let fixture = Fixture::new();
+        let store = fixture.store("current");
+        let spool = fixture.0.join("unbound");
+        fs::create_dir_all(&spool).unwrap();
+        let path = spool.join("current.jsonl");
+        fs::write(
+            &path,
+            br#"{"kind":"face_missing","payload":{"thumbnail":"data:image/jpeg;base64,ZZZZ"}}"#,
+        )
+        .unwrap();
+
+        let later = std::time::SystemTime::now()
+            + std::time::Duration::from_secs(THUMBNAIL_RETENTION_SECS + 60);
+        assert_eq!(store.redact_stale_thumbnails(later).unwrap(), 0);
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("data:image/jpeg"));
     }
 }

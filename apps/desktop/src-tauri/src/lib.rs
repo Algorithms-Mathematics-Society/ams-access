@@ -695,6 +695,20 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                     Ok(Ok(_)) => {}
                     error => note_event_error("acknowledged spool retention", format!("{error:?}")),
                 }
+                // Face thumbnails have their own, shorter clock. The pass
+                // above only deletes runs that are closed, thirty days old
+                // and fully acknowledged, and it skips `unbound` entirely --
+                // so if upload has been failing, or the app crashed before
+                // close, the images stayed on disk for good. This one keeps
+                // the diagnostic record and removes only the photograph.
+                match tauri::async_runtime::spawn_blocking(move || {
+                    store.redact_stale_thumbnails(std::time::SystemTime::now())
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    error => note_event_error("thumbnail retention", format!("{error:?}")),
+                }
                 next_cleanup = Instant::now() + Duration::from_secs(60 * 60);
             }
             let config = event_sync_config()
