@@ -793,7 +793,6 @@ fn tighten_permissions(path: &Path) -> io::Result<()> {
 fn tighten_permissions(_: &Path) -> io::Result<()> {
     Ok(())
 }
-#[cfg(unix)]
 /// How long a face thumbnail may sit in a local spool.
 ///
 /// Much shorter than the thirty-day diagnostic retention, because the two are
@@ -854,6 +853,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
 }
