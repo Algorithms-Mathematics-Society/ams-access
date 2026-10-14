@@ -63,9 +63,28 @@ export type CameraSession = {
   release(): void;
 };
 
-/** A track that can still produce frames. `ended` tracks never recover. */
+/** A handle that may yet produce frames. `ended` tracks never recover.
+ *
+ * Deliberately permissive, because this decides whether to *reuse* a track.
+ * A track is briefly `muted` at acquisition on several browsers, and
+ * rejecting it here would fail the open it was granted by. */
 export function isTrackUsable(track: Pick<MediaStreamTrack, "readyState"> | undefined): boolean {
   return track !== undefined && track.readyState === "live";
+}
+
+/** A track that is producing frames *now*.
+ *
+ * `readyState` alone said yes to a camera that had stopped delivering: a
+ * `muted` track — the device claimed by another application, a laptop lid
+ * closed, a privacy shutter — stays `live`, and `<video>` goes on showing its
+ * last decoded frame, so every check agreed the camera was fine while the
+ * picture had been frozen for ten minutes. That is the failure mode
+ * proctoring can least afford, because it looks exactly like a candidate
+ * sitting still. */
+export function isTrackDelivering(
+  track: Pick<MediaStreamTrack, "readyState" | "muted"> | undefined
+): boolean {
+  return isTrackUsable(track) && track!.muted !== true;
 }
 
 export const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
@@ -84,6 +103,9 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   // turn the camera back on afterwards: it stops what it got and fails.
   let generation = 0;
   let pendingVideo: Promise<void> | null = null;
+  // Whether a camera has ever been opened in this session. Guards the replug
+  // recovery so it can never raise a permission prompt by itself.
+  let everOpened = false;
   let pendingAudio: Promise<void> | null = null;
 
   function announce(next: CameraStatus) {
@@ -101,12 +123,48 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   }
 
   function reassess() {
-    const live = isTrackUsable(videoTrack ?? undefined);
-    if (!live && videoTrack !== null) {
-      announce("lost");
-    } else if (live) {
+    if (isTrackDelivering(videoTrack ?? undefined)) {
       announce("live");
+      return;
     }
+    if (videoTrack !== null) announce("lost");
+
+    // This is the replug. An `ended` handle will never produce another frame
+    // however many times it is inspected, so a change in the *device list* is
+    // the only hint that a replacement exists — and the old check returned
+    // early on exactly this case, which is why the camera stayed dead until
+    // the page was reloaded, behind a soft block with no button.
+    //
+    // A merely muted track is left alone: it is still a valid handle and the
+    // `unmute` event will bring it back on its own.
+    //
+    // `everOpened` keeps this from prompting. Without it a `devicechange`
+    // before the first `ensure` would call getUserMedia and put a permission
+    // dialog in front of a candidate who had not asked for one.
+    if (everOpened && !isTrackUsable(videoTrack ?? undefined)) {
+      videoTrack?.stop();
+      videoTrack = null;
+      void recover();
+    }
+  }
+
+  /** Try to reopen after a loss. Never prompts; failure changes nothing. */
+  function recover(): Promise<void> {
+    if (pendingVideo || !deps.mediaDevices) return Promise.resolve();
+    const opened = generation;
+    const pending = openTrack("video", opened);
+    pendingVideo = pending;
+    return pending.then(
+      () => {
+        if (pendingVideo === pending) pendingVideo = null;
+        if (opened === generation && isTrackDelivering(videoTrack ?? undefined)) {
+          announce("live");
+        }
+      },
+      () => {
+        if (pendingVideo === pending) pendingVideo = null;
+      }
+    );
   }
 
   function attachDeviceListener() {
@@ -120,10 +178,19 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   function adopt(track: MediaStreamTrack, kind: "video" | "audio") {
     if (kind === "video") {
       videoTrack = track;
+      everOpened = true;
       // `ended` is terminal for a track: the device went away and this handle
       // will never produce another frame, whatever the UI is still showing.
       track.addEventListener("ended", () => {
         if (videoTrack === track) announce("lost");
+      });
+      // A muted track is still `live`. Nothing watched for this, so a camera
+      // claimed by another application reported healthy indefinitely.
+      track.addEventListener?.("mute", () => {
+        if (videoTrack === track) announce("lost");
+      });
+      track.addEventListener?.("unmute", () => {
+        if (videoTrack === track) announce("live");
       });
     } else {
       audioTrack = track;
@@ -218,12 +285,12 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
         }
       }
 
-      announce("live");
+      announce(isTrackDelivering(videoTrack ?? undefined) ? "live" : "lost");
       return assemble(Boolean(options.audio));
     },
 
     current() {
-      if (!isTrackUsable(videoTrack ?? undefined)) return null;
+      if (!isTrackDelivering(videoTrack ?? undefined)) return null;
       return assemble(isTrackUsable(audioTrack ?? undefined));
     },
 

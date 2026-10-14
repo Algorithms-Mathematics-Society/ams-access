@@ -41,7 +41,7 @@ import {
   SessionBindingError,
 } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
-import { cameraSession } from "@/lib/camera-session";
+import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -2023,9 +2023,16 @@ export default function ContestPageClient() {
       } catch (err) {
         if (cancelled || cameraClosedRef.current) return;
         const msg = err instanceof Error ? err.message : String(err);
+        // `NotFound` belongs here. A camera unplugged mid-exam fails the
+        // retry with NotFoundError, which was not in this list, so the one
+        // scheduled attempt gave up and monitoring stayed down until the
+        // candidate reloaded — behind a soft-block overlay with no button.
+        // Retrying costs nothing: permission is already granted, so a failed
+        // open is silent, and `cameraSession` reopens on replug anyway.
         const shouldRetry =
           attempt < 2 &&
           (msg.includes("NotReadable") ||
+            msg.includes("NotFound") ||
             msg.includes("Abort") ||
             msg.includes("busy") ||
             msg.includes("timed out"));
@@ -2051,10 +2058,18 @@ export default function ContestPageClient() {
     // seeing a face, which reads to a proctor exactly like a candidate who
     // walked away.
     const unsubscribe = cameraSession.subscribe((status) => {
-      if (cancelled || status !== "lost") return;
+      if (cancelled) return;
+      if (status === "live") {
+        // It came back -- replugged, or unmuted by whatever had claimed it.
+        // Without this the error banner and the soft block stayed up after
+        // the camera was working again, and only a reload cleared them.
+        setCameraError(null);
+        void acquire();
+        return;
+      }
+      if (status !== "lost") return;
       setCameraVideoReady(false);
       setProctoringOk(false);
-      setFaceStatus("away");
       setCameraError("The camera was disconnected. Reconnect it to resume monitoring.");
       retryTimer = setTimeout(() => {
         if (!cancelled) void acquire();
@@ -2282,7 +2297,17 @@ export default function ContestPageClient() {
 
     const updateCameraStatus = () => {
       const video = cameraVideoRef.current;
-      const cameraOk = cameraStream.active && Boolean(video && isVideoRendering(video));
+      // The video track specifically, and delivering rather than merely live.
+      //
+      // `cameraStream.active` is true while *any* track survives, so a stream
+      // reduced to its microphone still read as a working camera. And
+      // `isVideoRendering` only asks whether a frame was ever decoded — a
+      // muted track leaves the last one on screen indefinitely, so a camera
+      // claimed by another application looked healthy while the picture had
+      // been frozen for ten minutes. Both together said "fine" about a
+      // candidate nobody could see.
+      const track = cameraStream.getVideoTracks()[0];
+      const cameraOk = isTrackDelivering(track) && Boolean(video && isVideoRendering(video));
       const next = { cameraOk, blockedCount: blockedApps.length };
       const prev = prevCameraStatusRef.current;
       if (prev?.cameraOk === next.cameraOk && prev.blockedCount === next.blockedCount) return;

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCameraSession, isTrackUsable } from "./camera-session.ts";
+import { createCameraSession, isTrackDelivering, isTrackUsable } from "./camera-session.ts";
 
 function makeTrack(kind) {
   const handlers = {};
   return {
     kind,
     readyState: "live",
+    muted: false,
     stopped: false,
     stop() {
       this.stopped = true;
@@ -20,6 +21,15 @@ function makeTrack(kind) {
     end() {
       this.readyState = "ended";
       for (const fn of handlers.ended ?? []) fn();
+    },
+    /** Claimed by another app, lid closed, privacy shutter: still "live". */
+    mute() {
+      this.muted = true;
+      for (const fn of handlers.mute ?? []) fn();
+    },
+    unmute() {
+      this.muted = false;
+      for (const fn of handlers.unmute ?? []) fn();
     },
   };
 }
@@ -389,4 +399,65 @@ test("unsubscribing stops delivery", async () => {
 test("with no mediaDevices at all, ensure fails rather than hanging", async () => {
   const session = createCameraSession({ mediaDevices: null, createStream: (t) => ({ tracks: t }) });
   await assert.rejects(() => session.ensure(), /not available/i);
+});
+
+// ── #113: replug, and a camera that stops delivering ──────────────────────
+
+test("a muted track is not a working camera", () => {
+  // `readyState` alone said yes to this, which is the whole bug: the device
+  // was claimed by another application and every check agreed it was fine.
+  assert.equal(isTrackUsable({ readyState: "live", muted: true }), true);
+  assert.equal(isTrackDelivering({ readyState: "live", muted: true }), false);
+  assert.equal(isTrackDelivering({ readyState: "live", muted: false }), true);
+  assert.equal(isTrackDelivering({ readyState: "ended", muted: false }), false);
+  assert.equal(isTrackDelivering(undefined), false);
+});
+
+test("muting the camera is announced as a loss, and unmuting as a recovery", async () => {
+  const deps = makeDeps();
+  const session = createCameraSession(deps);
+  const seen = [];
+  session.subscribe((status) => seen.push(status));
+
+  await session.ensure();
+  assert.equal(session.status(), "live");
+
+  deps.tracks.video[0].mute();
+  assert.equal(session.status(), "lost", "a frozen picture is not a healthy camera");
+  assert.equal(session.current(), null, "nothing should be handed out while muted");
+
+  deps.tracks.video[0].unmute();
+  assert.equal(session.status(), "live");
+  assert.deepEqual(seen, ["live", "lost", "live"]);
+});
+
+test("replugging the camera brings monitoring back without a reload", async () => {
+  const deps = makeDeps();
+  const session = createCameraSession(deps);
+  await session.ensure();
+
+  // Unplugged. The track ends and is cleared, which is what left the old
+  // `reassess` with nothing to look at.
+  deps.tracks.video[0].end();
+  assert.equal(session.status(), "lost");
+
+  // Plugged back in: the device list changes.
+  deps.fireDeviceChange();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(session.status(), "live", "the camera came back on its own");
+  assert.equal(deps.opens.length, 2, "exactly one reopen, not a storm");
+});
+
+test("a device change while the camera is still absent leaves it lost", async () => {
+  const deps = makeDeps();
+  const session = createCameraSession(deps);
+  await session.ensure();
+  deps.tracks.video[0].end();
+
+  deps.failWith = new Error("NotFoundError");
+  deps.fireDeviceChange();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(session.status(), "lost", "a failed reopen changes nothing");
 });
