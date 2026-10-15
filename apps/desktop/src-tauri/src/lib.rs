@@ -101,6 +101,8 @@ static PROCTORING_LOG: OnceLock<Mutex<RecentEventLog<ProctoringEventEntry>>> = O
 // and release the intercept otherwise (a probe must not leave Cmd+Tab/Cmd+Q
 // blocked while the candidate is still on the home screen).
 static LOCKDOWN_ENGAGED: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static LOCKDOWN_REQUIRES_KEYBOARD: AtomicBool = AtomicBool::new(false);
 static LOCKDOWN_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LOCKDOWN_LIFECYCLE: OnceLock<Mutex<lockdown_lifecycle::Lifecycle>> = OnceLock::new();
 fn lockdown_lifecycle() -> &'static Mutex<lockdown_lifecycle::Lifecycle> {
@@ -2330,6 +2332,10 @@ async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result
         match state.start(&mut operations) {
             Ok(started) => {
                 LOCKDOWN_GENERATION.store(state.generation, Ordering::SeqCst);
+                #[cfg(target_os = "windows")]
+                if started {
+                    LOCKDOWN_REQUIRES_KEYBOARD.store(require_keyboard, Ordering::SeqCst);
+                }
                 LOCKDOWN_ENGAGED.store(true, Ordering::SeqCst);
                 #[cfg(target_os = "windows")]
                 if started {
@@ -2400,6 +2406,7 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
                 use tauri::Manager;
                 let start = std::time::Instant::now();
                 let mut state = platform_rs::kiosk::KioskState::default();
+                let mut keyboard_ready = true;
                 loop {
                     std::thread::sleep(Duration::from_millis(750));
                     let now_ms = start.elapsed().as_millis() as u64;
@@ -2443,6 +2450,27 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
                         }
                         break;
                     }
+                    let ready = platform_rs::windows::keyboard_hook_ready();
+                    if ready != keyboard_ready {
+                        record_proctoring_event(
+                            Some(&app_handle),
+                            if ready {
+                                "keyboard_hook_recovered"
+                            } else {
+                                "keyboard_hook_degraded"
+                            },
+                            if ready {
+                                "Keyboard hook installed again; callback delivery remains unverified"
+                            } else {
+                                "Keyboard hook unavailable or renewal failed; protection is degraded"
+                            },
+                            serde_json::json!({
+                                "required": LOCKDOWN_REQUIRES_KEYBOARD.load(Ordering::SeqCst),
+                                "diagnostics": platform_rs::windows::keyboard_hook_delivery_diagnostics(),
+                            }),
+                        );
+                        keyboard_ready = ready;
+                    }
                     for action in platform_rs::kiosk::decide(&mut state, input) {
                         execute_kiosk_action(&app_handle, hwnd_raw, action);
                     }
@@ -2475,13 +2503,19 @@ async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
-/// Read-only probe: is a real exam lockdown (lock_desktop) currently engaged?
+/// Read-only probe: is a real exam lockdown engaged with its required protections?
 ///
 /// The contest UI uses this as a defense-in-depth chokepoint — no real
 /// (non-dry-run) proctored session may render the contest unless lockdown is
 /// engaged. Read-only: it never mutates state or touches the OS.
 #[tauri::command]
 fn is_lockdown_engaged() -> bool {
+    #[cfg(target_os = "windows")]
+    if LOCKDOWN_REQUIRES_KEYBOARD.load(Ordering::SeqCst)
+        && !platform_rs::windows::keyboard_hook_ready()
+    {
+        return false;
+    }
     LOCKDOWN_ENGAGED.load(Ordering::SeqCst)
 }
 
