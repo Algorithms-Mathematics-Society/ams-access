@@ -14,8 +14,9 @@
 // more than signing would have.
 //
 // **AMS_FIREWALL=1 asks for elevation back**, for a contest where blocking
-// internet access at the OS level is worth a UAC prompt every launch. Nothing
-// else in the build changes; the app simply becomes able to run netsh.
+// internet access at the OS level is worth a UAC prompt every launch.
+// The supervised build also packages and verifies an app-private Fixed Version
+// WebView2 runtime, so renderer traffic has its own safe program target.
 //
 // An MSIX/Store build must never set it: packaged processes cannot be
 // elevated at all, and a requireAdministrator binary inside an MSIX will not
@@ -71,6 +72,19 @@ fn main() {
     // build that cannot elevate, or a normal build that prompts anyway.
     println!("cargo:rerun-if-env-changed=AMS_FIREWALL");
     let firewall = std::env::var("AMS_FIREWALL").as_deref() == Ok("1");
+    println!("cargo:rerun-if-env-changed=AMS_FIXED_WEBVIEW2_PATH");
+    let private_folder = if firewall {
+        let source = std::path::PathBuf::from(std::env::var_os("AMS_FIXED_WEBVIEW2_PATH")
+            .expect("AMS_FIREWALL=1 requires build:windows-supervised with a supplied Fixed Version WebView2 runtime"));
+        assert!(
+            source.is_absolute() && source.join("msedgewebview2.exe").is_file(),
+            "AMS_FIXED_WEBVIEW2_PATH must name an extracted Fixed Version runtime"
+        );
+        "ams-supervised-webview2".to_owned()
+    } else {
+        String::new()
+    };
+    println!("cargo:rustc-env=AMS_PRIVATE_WEBVIEW2_FOLDER={private_folder}");
     let execution_level = if firewall {
         "requireAdministrator"
     } else {

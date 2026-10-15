@@ -4,6 +4,8 @@ mod event_store;
 mod lockdown_lifecycle;
 mod network_probe;
 mod shutdown;
+#[cfg(target_os = "windows")]
+mod windows_firewall;
 
 use base64::Engine as _;
 use core_rs::exam::{
@@ -2608,12 +2610,14 @@ fn get_proctoring_log_now(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
     recent_event_history(&app, "proctoring", entries)
 }
 
-/// Restrict outbound destinations for the native executable to `allowed_domains`
-/// (resolved to IPs at call time). On Windows, these program-scoped firewall rules
-/// do not cover WebView2 processes, so success does not mean renderer egress is locked down.
+/// Restrict native and (for supervised Windows builds) verified private WebView2
+/// outbound destinations to `allowed_domains`, resolved to IPs at call time.
 /// Rules persist until `disable_network_lockdown` is called.
 #[tauri::command]
-async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, String> {
+async fn enable_network_lockdown(
+    app: tauri::AppHandle,
+    allowed_domains: Vec<String>,
+) -> Result<bool, String> {
     // A build that never asked for elevation cannot raise a firewall, so say
     // so instead of resolving every allowlist host and then handing netsh a
     // command it will refuse. `false` is the existing "not applied" answer —
@@ -2624,6 +2628,8 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
         return Ok(false);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
     let mut ips: Vec<String> = Vec::new();
 
     for domain in &allowed_domains {
@@ -2668,6 +2674,9 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
     // installed/running. Propagate that failure to ContestLaunch's final network
     // gate; the earlier readiness policy treats CheckKind::Network as advisory.
     // The frontend's decideNetworkLockdown applies the final platform policy.
+    #[cfg(target_os = "windows")]
+    return windows_firewall::enable(app, ips).await;
+    #[cfg(not(target_os = "windows"))]
     platform_dispatch!(
         enable_network_lockdown(&ips),
         else Err("Network lockdown not supported on this platform".to_string())
@@ -2753,6 +2762,9 @@ async fn disable_network_lockdown() -> Result<bool, String> {
         return Ok(false);
     }
 
+    #[cfg(target_os = "windows")]
+    return windows_firewall::disable().await;
+    #[cfg(not(target_os = "windows"))]
     platform_dispatch!(
         disable_network_lockdown(),
         else Err("Network lockdown not supported on this platform".to_string())

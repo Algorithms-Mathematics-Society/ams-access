@@ -5,11 +5,12 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:windows-supervised": "node src-tauri/scripts/build-windows-supervised.mjs",
     "prepare:helper": "node src-tauri/scripts/prepare-network-helper.mjs",
     "build:mac-dev": "APPLE_SIGNING_IDENTITY='AMS Access Dev' tauri build --debug --bundles app",
     "setup:mac-signing": "bash src-tauri/scripts/setup-macos-dev-signing.sh",
     "clean": "rm -rf src-tauri/target",
-    "test": "node --test src-tauri/scripts/cargo-target-directory.test.mjs src-tauri/scripts/store-safety.test.mjs",
+    "test": "node --test src-tauri/scripts/cargo-target-directory.test.mjs src-tauri/scripts/store-safety.test.mjs src-tauri/scripts/build-windows-supervised.test.mjs",
     "dev:hosted": "tauri dev --config '{\"build\":{\"devUrl\":\"http://localhost:3001\",\"beforeDevCommand\":\"pnpm --filter @ams/desktop prepare:helper && pnpm --filter @ams/web dev:hosted\"}}'"
   },
   "dependencies": {

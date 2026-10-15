@@ -43,6 +43,7 @@ webkit2gtk = { version = "2.0", features = ["v2_22"] }
 # WebView2 PermissionRequested auto-allow for camera/mic. Same version wry
 # already pins, so this adds no new transitive deps.
 webview2-com = "0.38"
+windows-core = "0.61"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

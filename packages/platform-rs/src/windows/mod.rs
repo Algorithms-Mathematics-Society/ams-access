@@ -1229,9 +1229,12 @@ static NETWORK_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Restrict this executable's outbound destinations without overlapping blocks
 /// and allows: explicit Windows firewall blocks always take precedence.
-/// Other processes, including WebView2 children, are not covered by this rule.
+/// The verified private WebView2 image is covered by the same policy.
 /// The global outbound policy remains unchanged.
-pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+pub fn enable_network_lockdown(
+    allowed_ips: &[String],
+    runtime: &VerifiedRuntime,
+) -> Result<(), String> {
     if !instance::owns_instance() {
         return Err("Windows firewall changes require instance ownership".into());
     }
@@ -1240,12 +1243,19 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     let _policy_owner = NETWORK_POLICY_LOCK
         .lock()
         .map_err(|_| "Windows firewall operation lock poisoned")?;
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let program_arg = format!("program=\"{}\"", exe.to_string_lossy());
-    firewall_policy::install_with(
+    runtime.revalidate_layout()?;
+    // Firewall program identities use DOS paths; canonicalize returns the
+    // extended-length prefix, which is not part of the executable identity.
+    let native_path = runtime.app_image.to_string_lossy();
+    let browser_path = runtime.browser_image.to_string_lossy();
+    let native = native_path.strip_prefix(r"\\?\").unwrap_or(&native_path);
+    let browser = browser_path.strip_prefix(r"\\?\").unwrap_or(&browser_path);
+    firewall_policy::install_programs_with(
         &plan,
+        &[(native, ""), (browser, "_WEBVIEW2")],
         disable_network_lockdown_unlocked,
-        |action, name, addresses| {
+        |program, action, name, addresses| {
+            let program_arg = format!("program=\"{program}\"");
             let output = hidden_command("netsh")
                 .args([
                     "advfirewall",
@@ -1284,6 +1294,8 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 
 mod firewall_policy;
 mod firewall_recovery;
+mod private_webview;
+pub use private_webview::{prepare_private_runtime, VerifiedRuntime};
 
 // Read actual INetFwRule.Name values, not localized netsh display text. Keep COM
 // enumeration in a bounded child so a stalled firewall service cannot strand
@@ -1296,7 +1308,9 @@ try {
     $names = @(foreach ($rule in $policy.Rules) {
         $name = [string]$rule.Name
         if ([string]::Equals($name, 'AMS_PROCTOR_BLOCK_ALL', [StringComparison]::OrdinalIgnoreCase) -or
-            [string]::Equals($name, 'AMS_PROCTOR_ALLOW', [StringComparison]::OrdinalIgnoreCase)) {
+            [string]::Equals($name, 'AMS_PROCTOR_ALLOW', [StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($name, 'AMS_PROCTOR_BLOCK_ALL_WEBVIEW2', [StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($name, 'AMS_PROCTOR_ALLOW_WEBVIEW2', [StringComparison]::OrdinalIgnoreCase)) {
             $name
         }
     })
@@ -1794,6 +1808,7 @@ mod firewall_inventory_query_tests {
             ("@()", vec![]),
             ("@([pscustomobject]@{Name='ams_proctor_allow'})", vec!["ams_proctor_allow"]),
             ("@([pscustomobject]@{Name='AMS_PROCTOR_ALLOW'}, [pscustomobject]@{Name='AMS_PROCTOR_BLOCK_ALL'})", vec!["AMS_PROCTOR_ALLOW", "AMS_PROCTOR_BLOCK_ALL"]),
+            ("@([pscustomobject]@{Name='AMS_PROCTOR_ALLOW_WEBVIEW2'}, [pscustomobject]@{Name='AMS_PROCTOR_BLOCK_ALL_WEBVIEW2'})", vec!["AMS_PROCTOR_ALLOW_WEBVIEW2", "AMS_PROCTOR_BLOCK_ALL_WEBVIEW2"]),
             ("@([pscustomobject]@{Name='AMS_PROCTOR_ALLOW (backup)'}, [pscustomobject]@{Name='Other'; Description='AMS_PROCTOR_ALLOW'})", vec![]),
         ] {
             let output = mock_inventory(&format!("$policy = [pscustomobject]@{{Rules={rules}}}"));
