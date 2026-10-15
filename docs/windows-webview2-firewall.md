@@ -74,6 +74,19 @@ size depends on the selected runtime and has not been measured here.
 
 ## Automated proof and remaining qualification
 
+Local verification on 2026-10-15 used combined code revision `a0b9375`:
+775 tests passed across the Rust workspace, web, desktop scripts, and API client.
+The physical-host diagnostic and Linux-only helper staging check were not run
+on this Windows host. The unsigned supervised installer was installed successfully
+on Windows build 26200; installed app/runtime hashes, Microsoft runtime signature,
+administrator manifest, and sandbox ACLs matched the verified build. Seven private
+WebView2 processes were observed, and the operator confirmed the app opened normally.
+
+Tauri reported a Windows sharing violation after producing the installer. Its
+archive integrity, embedded image hashes, and actual installation passed independent
+checks; the source of that post-output file lock remains unconfirmed. This startup
+smoke test does not establish live hook-timeout recovery or firewall traffic coverage.
+
 Focused tests use fake rule installers, synthetic inventories, detached COM
 rules, and disposable local fixture files. They verify second-target rollback,
 exact rule ownership, address complements, private/shared image rejection,
