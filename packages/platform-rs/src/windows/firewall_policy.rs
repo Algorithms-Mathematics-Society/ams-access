@@ -53,28 +53,61 @@ pub(super) fn plan(allowed_ips: &[String]) -> Result<Plan, String> {
 /// Install a prevalidated plan. `cleanup` must verify removal of old rules;
 /// `rollback` must remove and verify any partially installed rules. The caller
 /// owns the time budget for each callback, including independent rollback.
+#[cfg(test)]
 pub(super) fn install_with(
     plan: &Plan,
-    mut cleanup: impl FnMut() -> Result<(), String>,
+    cleanup: impl FnMut() -> Result<(), String>,
     mut add_rule: impl FnMut(&str, &str, &str) -> Result<(), String>,
+    rollback: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    install_programs_with(
+        plan,
+        &[("native", "")],
+        cleanup,
+        |_, action, name, addresses| add_rule(action, name, addresses),
+        rollback,
+    )
+}
+
+/// All targets share one cleanup/rollback boundary. A second-target failure
+/// must not leave the first target's restrictions active.
+pub(super) fn install_programs_with(
+    plan: &Plan,
+    programs: &[(&str, &str)],
+    mut cleanup: impl FnMut() -> Result<(), String>,
+    mut add_rule: impl FnMut(&str, &str, &str, &str) -> Result<(), String>,
     mut rollback: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     if plan.allowed.is_empty() || plan.allowed.iter().any(String::is_empty) {
         return Err("Cannot install firewall policy without allowed IPs".into());
     }
+    if programs.is_empty() || programs.iter().any(|(path, _)| path.is_empty()) {
+        return Err("Cannot install firewall policy without verified programs".into());
+    }
     cleanup()?;
-
     let install = (|| {
-        for addresses in [&plan.blocked_ipv4, &plan.blocked_ipv6] {
-            if !addresses.is_empty() {
-                add_rule("block", "AMS_PROCTOR_BLOCK_ALL", &addresses.join(","))
+        for (program, suffix) in programs {
+            for addresses in [&plan.blocked_ipv4, &plan.blocked_ipv6] {
+                if !addresses.is_empty() {
+                    add_rule(
+                        program,
+                        "block",
+                        &format!("AMS_PROCTOR_BLOCK_ALL{suffix}"),
+                        &addresses.join(","),
+                    )
                     .map_err(|error| format!("Cannot install block rule: {error}"))?;
+                }
             }
+            add_rule(
+                program,
+                "allow",
+                &format!("AMS_PROCTOR_ALLOW{suffix}"),
+                &plan.allowed.join(","),
+            )
+            .map_err(|error| format!("Cannot install allow rule: {error}"))?;
         }
-        add_rule("allow", "AMS_PROCTOR_ALLOW", &plan.allowed.join(","))
-            .map_err(|error| format!("Cannot install allow rule: {error}"))
+        Ok(())
     })();
-
     match install {
         Ok(()) => Ok(()),
         Err(error) => match rollback() {
@@ -236,6 +269,58 @@ try {{
                 &plan.blocked_ipv6
             };
             assert!(!contains(blocks, ip), "allow overlaps block: {ip}");
+        }
+    }
+
+    #[test]
+    fn both_programs_install_together_and_every_failure_rolls_back_all_owned_rules() {
+        use std::cell::RefCell;
+        let plan = make(&["203.0.113.10", "2001:db8::10"]);
+        for failure in 0..=6 {
+            let active = RefCell::new(Vec::new());
+            let rollbacks = RefCell::new(0);
+            let mut adds = 0;
+            let result = install_programs_with(
+                &plan,
+                &[("ams.exe", ""), ("private/msedgewebview2.exe", "_WEBVIEW2")],
+                || {
+                    active.borrow_mut().clear();
+                    Ok(())
+                },
+                |program, _, name, _| {
+                    active
+                        .borrow_mut()
+                        .push((program.to_owned(), name.to_owned()));
+                    let failed = adds == failure;
+                    adds += 1;
+                    if failed {
+                        Err("mock add failure".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                || {
+                    *rollbacks.borrow_mut() += 1;
+                    active.borrow_mut().clear();
+                    Ok(())
+                },
+            );
+            if failure < 6 {
+                assert!(result.is_err());
+                assert!(
+                    active.borrow().is_empty(),
+                    "both targets must be removed after failure {failure}"
+                );
+                assert_eq!(*rollbacks.borrow(), 1);
+            } else {
+                result.unwrap();
+                assert_eq!(active.borrow().len(), 6);
+                assert!(active.borrow()[3..]
+                    .iter()
+                    .all(|(program, name)| program == "private/msedgewebview2.exe"
+                        && name.ends_with("_WEBVIEW2")));
+                assert_eq!(*rollbacks.borrow(), 0);
+            }
         }
     }
 

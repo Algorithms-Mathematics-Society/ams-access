@@ -1,12 +1,17 @@
 //! Verify complete rule names from a structured inventory, independently of
 //! localized netsh labels or unrelated descriptions. Tests never change rules.
-pub(super) const AMS_RULES: [&str; 2] = ["AMS_PROCTOR_BLOCK_ALL", "AMS_PROCTOR_ALLOW"];
+pub(super) const AMS_RULES: [&str; 4] = [
+    "AMS_PROCTOR_BLOCK_ALL",
+    "AMS_PROCTOR_ALLOW",
+    "AMS_PROCTOR_BLOCK_ALL_WEBVIEW2",
+    "AMS_PROCTOR_ALLOW_WEBVIEW2",
+];
 
 pub(super) fn cleanup(
     mut delete: impl FnMut(&str) -> Result<(), String>,
     inspect: impl FnOnce() -> Result<String, String>,
 ) -> Result<(), String> {
-    // Always attempt both deletions; an absent rule may produce a nonzero exit.
+    // Always attempt every owned deletion; an absent rule may produce a nonzero exit.
     // Only a successful, complete inventory can establish that cleanup worked.
     for name in AMS_RULES {
         let _ = delete(name);
@@ -92,6 +97,8 @@ mod tests {
             "AMS_PROCTOR_ALLOW",
             "AMS_PROCTOR_BLOCK_ALL",
             "ams_proctor_allow",
+            "AMS_PROCTOR_ALLOW_WEBVIEW2",
+            "ams_proctor_block_all_webview2",
         ] {
             let names = serde_json::json!(["Other rule", name]);
             assert!(cleanup(|_| Ok(()), || Ok(names.to_string())).is_err());

@@ -4,6 +4,8 @@ mod event_store;
 mod lockdown_lifecycle;
 mod network_probe;
 mod shutdown;
+#[cfg(target_os = "windows")]
+mod windows_firewall;
 
 use base64::Engine as _;
 use core_rs::exam::{
@@ -99,6 +101,8 @@ static PROCTORING_LOG: OnceLock<Mutex<RecentEventLog<ProctoringEventEntry>>> = O
 // and release the intercept otherwise (a probe must not leave Cmd+Tab/Cmd+Q
 // blocked while the candidate is still on the home screen).
 static LOCKDOWN_ENGAGED: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static LOCKDOWN_REQUIRES_KEYBOARD: AtomicBool = AtomicBool::new(false);
 static LOCKDOWN_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LOCKDOWN_LIFECYCLE: OnceLock<Mutex<lockdown_lifecycle::Lifecycle>> = OnceLock::new();
 fn lockdown_lifecycle() -> &'static Mutex<lockdown_lifecycle::Lifecycle> {
@@ -2328,6 +2332,10 @@ async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result
         match state.start(&mut operations) {
             Ok(started) => {
                 LOCKDOWN_GENERATION.store(state.generation, Ordering::SeqCst);
+                #[cfg(target_os = "windows")]
+                if started {
+                    LOCKDOWN_REQUIRES_KEYBOARD.store(require_keyboard, Ordering::SeqCst);
+                }
                 LOCKDOWN_ENGAGED.store(true, Ordering::SeqCst);
                 #[cfg(target_os = "windows")]
                 if started {
@@ -2398,6 +2406,7 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
                 use tauri::Manager;
                 let start = std::time::Instant::now();
                 let mut state = platform_rs::kiosk::KioskState::default();
+                let mut keyboard_ready = true;
                 loop {
                     std::thread::sleep(Duration::from_millis(750));
                     let now_ms = start.elapsed().as_millis() as u64;
@@ -2441,6 +2450,27 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
                         }
                         break;
                     }
+                    let ready = platform_rs::windows::keyboard_hook_ready();
+                    if ready != keyboard_ready {
+                        record_proctoring_event(
+                            Some(&app_handle),
+                            if ready {
+                                "keyboard_hook_recovered"
+                            } else {
+                                "keyboard_hook_degraded"
+                            },
+                            if ready {
+                                "Keyboard hook installed again; callback delivery remains unverified"
+                            } else {
+                                "Keyboard hook unavailable or renewal failed; protection is degraded"
+                            },
+                            serde_json::json!({
+                                "required": LOCKDOWN_REQUIRES_KEYBOARD.load(Ordering::SeqCst),
+                                "diagnostics": platform_rs::windows::keyboard_hook_delivery_diagnostics(),
+                            }),
+                        );
+                        keyboard_ready = ready;
+                    }
                     for action in platform_rs::kiosk::decide(&mut state, input) {
                         execute_kiosk_action(&app_handle, hwnd_raw, action);
                     }
@@ -2473,13 +2503,23 @@ async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
-/// Read-only probe: is a real exam lockdown (lock_desktop) currently engaged?
+/// Read-only probe: is a real exam lockdown engaged with its required protections?
 ///
 /// The contest UI uses this as a defense-in-depth chokepoint — no real
 /// (non-dry-run) proctored session may render the contest unless lockdown is
 /// engaged. Read-only: it never mutates state or touches the OS.
 #[tauri::command]
 fn is_lockdown_engaged() -> bool {
+    #[cfg(target_os = "windows")]
+    if !windows_firewall::protection_ready() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    if LOCKDOWN_REQUIRES_KEYBOARD.load(Ordering::SeqCst)
+        && !platform_rs::windows::keyboard_hook_ready()
+    {
+        return false;
+    }
     LOCKDOWN_ENGAGED.load(Ordering::SeqCst)
 }
 
@@ -2608,12 +2648,14 @@ fn get_proctoring_log_now(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
     recent_event_history(&app, "proctoring", entries)
 }
 
-/// Restrict outbound destinations for the native executable to `allowed_domains`
-/// (resolved to IPs at call time). On Windows, these program-scoped firewall rules
-/// do not cover WebView2 processes, so success does not mean renderer egress is locked down.
+/// Restrict native and (for supervised Windows builds) verified private WebView2
+/// outbound destinations to `allowed_domains`, resolved to IPs at call time.
 /// Rules persist until `disable_network_lockdown` is called.
 #[tauri::command]
-async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, String> {
+async fn enable_network_lockdown(
+    app: tauri::AppHandle,
+    allowed_domains: Vec<String>,
+) -> Result<bool, String> {
     // A build that never asked for elevation cannot raise a firewall, so say
     // so instead of resolving every allowlist host and then handing netsh a
     // command it will refuse. `false` is the existing "not applied" answer —
@@ -2624,6 +2666,8 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
         return Ok(false);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
     let mut ips: Vec<String> = Vec::new();
 
     for domain in &allowed_domains {
@@ -2668,6 +2712,9 @@ async fn enable_network_lockdown(allowed_domains: Vec<String>) -> Result<bool, S
     // installed/running. Propagate that failure to ContestLaunch's final network
     // gate; the earlier readiness policy treats CheckKind::Network as advisory.
     // The frontend's decideNetworkLockdown applies the final platform policy.
+    #[cfg(target_os = "windows")]
+    return windows_firewall::enable(app, ips).await;
+    #[cfg(not(target_os = "windows"))]
     platform_dispatch!(
         enable_network_lockdown(&ips),
         else Err("Network lockdown not supported on this platform".to_string())
@@ -2753,6 +2800,9 @@ async fn disable_network_lockdown() -> Result<bool, String> {
         return Ok(false);
     }
 
+    #[cfg(target_os = "windows")]
+    return windows_firewall::disable().await;
+    #[cfg(not(target_os = "windows"))]
     platform_dispatch!(
         disable_network_lockdown(),
         else Err("Network lockdown not supported on this platform".to_string())

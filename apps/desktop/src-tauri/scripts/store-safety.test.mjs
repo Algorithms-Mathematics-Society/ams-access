@@ -24,10 +24,11 @@ test("Windows restricted-process handling is detection-only", async () => {
 });
 
 test("MSIX keeps proctor lockdown but does not write virtualized Windows policies", async () => {
-  const [windows, desktop, manifest] = await Promise.all([
+  const [windows, desktop, manifest, hookLifecycle] = await Promise.all([
     read("packages/platform-rs/src/windows/mod.rs"),
     read("apps/desktop/src-tauri/src/lib.rs"),
     read("apps/desktop/msix/AppxManifest.xml"),
+    read("packages/platform-rs/src/windows/hook_lifecycle.rs"),
   ]);
 
   assert.match(
@@ -45,7 +46,11 @@ test("MSIX keeps proctor lockdown but does not write virtualized Windows policie
     /reg_delete_value|apply_registry_policies|set_game_bar_enabled|set_touchpad_gestures_enabled/
   );
   assert.match(windows, /SetWindowsHookExW/);
-  assert.match(windows, /HOOK_INSTALLED\.load/);
+  assert.match(windows, /let installed = session\.ready\(\) && spawn_hook_watchdog/);
+  assert.match(
+    hookLifecycle,
+    /pub fn ready\(&self\) -> bool \{\s*self\.active\.load\(Ordering::SeqCst\)\s*&& self\.alive\.load\(Ordering::SeqCst\)\s*&& self\.installed\.load\(Ordering::SeqCst\)/
+  );
   assert.match(windows, /Alt\+Tab/);
   assert.match(windows, /Any Win\+ combo/);
   assert.match(desktop, /set_always_on_top\(true\)/);
@@ -174,10 +179,13 @@ test("Windows firewall installation is scoped, validated and serialized with cle
     windows.indexOf("pub fn enable_network_lockdown("),
     windows.indexOf("mod firewall_policy;")
   );
-  assert.ok(
-    enable.indexOf("firewall_policy::plan(allowed_ips)?") <
-      enable.indexOf("firewall_policy::install_with(")
-  );
+  const install = enable.indexOf("firewall_policy::install_programs_with(");
+  assert.ok(install >= 0);
+  for (const preflight of ["firewall_policy::plan(allowed_ips)?", "runtime.revalidate_layout()?"]) {
+    const position = enable.indexOf(preflight);
+    assert.ok(position >= 0 && position < install);
+  }
+  assert.match(enable, /\&\[\(native, ""\), \(browser, "_WEBVIEW2"\)\]/);
   assert.match(enable, /NETWORK_POLICY_LOCK\s*\.lock\(\)/);
   assert.match(enable, /remoteip=\{addresses\}/);
   assert.match(enable, /std::thread::spawn\(disable_network_lockdown_unlocked\)/);
