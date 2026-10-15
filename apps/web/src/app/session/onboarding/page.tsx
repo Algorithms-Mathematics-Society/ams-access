@@ -895,13 +895,12 @@ export default function OnboardingPage() {
         style={{
           width: "100%",
           maxWidth: "calc(var(--spacing-10) * 28)",
-          // Fixed, not minimum. With `minHeight` the column grew past the
-          // viewport and the whole page scrolled, which put Continue below
-          // the fold on any stage with more than a few rows -- a button
-          // nobody scrolls to find is a button that is not there.
+          // Keep checks bounded, but let the introduction, practice summary
+          // and short-window overflow remain reachable by wheel/touchpad.
           height: "100dvh",
           minHeight: 0,
-          overflow: "hidden",
+          overflowX: "hidden",
+          overflowY: "auto",
           marginInline: "auto",
           padding: "clamp(var(--spacing-4), 4vw, var(--spacing-10))",
           fontFamily: "var(--font-sans)",
@@ -1126,10 +1125,12 @@ export default function OnboardingPage() {
             {currentStage > 0 && !dryRunComplete && (
               <HStack
                 gap={10}
-                align="start"
+                align="stretch"
                 style={{
                   flexDirection: wideLayout ? "row" : "column",
-                  flex: 1,
+                  // Stacked progress and checks need their natural height;
+                  // squeezing both into a short column clips the card.
+                  flex: wideLayout ? 1 : "0 0 auto",
                   minHeight: 0,
                   paddingBottom: "var(--spacing-4)",
                 }}
