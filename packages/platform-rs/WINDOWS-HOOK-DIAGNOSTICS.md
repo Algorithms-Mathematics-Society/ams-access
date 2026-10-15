@@ -51,6 +51,12 @@ Other platforms return `null`. Consumers should treat `install_failed`,
 Recent callbacks and successful renewals attest past events only. Diagnostics
 contain no key codes or candidate input.
 
+The desktop admission probe returns false while a policy-required hook is not
+ready; organizer policies that permit unavailable keyboard interception retain
+that exception. During an active session the existing monitor records
+`keyboard_hook_degraded` and `keyboard_hook_recovered` transitions, including the
+passive snapshot. It does not automatically end a contest on a transient failure.
+
 ## Verification and remaining VM gates
 
 Deterministic fake-adapter tests simulate silent OS removal while the owner is
