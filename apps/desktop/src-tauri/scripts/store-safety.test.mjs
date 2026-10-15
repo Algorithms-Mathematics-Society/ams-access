@@ -179,10 +179,13 @@ test("Windows firewall installation is scoped, validated and serialized with cle
     windows.indexOf("pub fn enable_network_lockdown("),
     windows.indexOf("mod firewall_policy;")
   );
-  assert.ok(
-    enable.indexOf("firewall_policy::plan(allowed_ips)?") <
-      enable.indexOf("firewall_policy::install_with(")
-  );
+  const install = enable.indexOf("firewall_policy::install_programs_with(");
+  assert.ok(install >= 0);
+  for (const preflight of ["firewall_policy::plan(allowed_ips)?", "runtime.revalidate_layout()?"]) {
+    const position = enable.indexOf(preflight);
+    assert.ok(position >= 0 && position < install);
+  }
+  assert.match(enable, /\&\[\(native, ""\), \(browser, "_WEBVIEW2"\)\]/);
   assert.match(enable, /NETWORK_POLICY_LOCK\s*\.lock\(\)/);
   assert.match(enable, /remoteip=\{addresses\}/);
   assert.match(enable, /std::thread::spawn\(disable_network_lockdown_unlocked\)/);

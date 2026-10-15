@@ -16,6 +16,8 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
+type ProcessSnapshot = (u32, Vec<u32>);
+
 #[derive(Clone)]
 pub struct VerifiedRuntime {
     pub(super) app_image: PathBuf,
@@ -24,7 +26,7 @@ pub struct VerifiedRuntime {
     // Deny rename/delete/write of the selected image and directory for the
     // policy lifetime. Path validation without retained handles has a TOCTOU gap.
     _pins: Arc<Vec<File>>,
-    processes: Arc<Mutex<Option<(u32, Vec<u32>)>>>,
+    processes: Arc<Mutex<Option<ProcessSnapshot>>>,
 }
 
 pub fn prepare_private_runtime(folder: &Path) -> Result<VerifiedRuntime, String> {

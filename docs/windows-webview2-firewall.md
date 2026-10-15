@@ -54,6 +54,9 @@ size depends on the selected runtime and has not been measured here.
   The periodic guard detects drift; it does not establish that a mismatched
   runtime was ever restricted. It records degraded/restored health transitions
   without ending the contest or discarding candidate work.
+  The desktop admission probe returns false while a previously installed
+  supervised policy has degraded identity verification; verified recovery or
+  explicit successful disable clears that state.
 - Replacement renderer/network-service processes running the same private image
   remain covered by executable-path rules. This is an application-installation
   boundary, not a per-PID, per-user, or hostile-administrator boundary. Another

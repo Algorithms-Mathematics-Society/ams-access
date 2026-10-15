@@ -2511,6 +2511,10 @@ async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn is_lockdown_engaged() -> bool {
     #[cfg(target_os = "windows")]
+    if !windows_firewall::protection_ready() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
     if LOCKDOWN_REQUIRES_KEYBOARD.load(Ordering::SeqCst)
         && !platform_rs::windows::keyboard_hook_ready()
     {
