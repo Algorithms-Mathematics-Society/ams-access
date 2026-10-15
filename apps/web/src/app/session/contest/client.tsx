@@ -88,6 +88,7 @@ import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
 import { KioskBanner } from "./components/KioskBanner";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
+import { footerCameraStatus } from "./camera-status";
 import { TopBar } from "./components/TopBar";
 import { QuestionRail } from "./components/QuestionRail";
 import { ProblemPane } from "./components/ProblemPane";
@@ -3261,7 +3262,7 @@ export default function ContestPageClient() {
         <FooterTrustStrip
           proctoringOk={proctoringOk}
           footerStatusDot={footerStatusDot}
-          cameraStatus={cameraError ? "off" : cameraVideoReady ? "on" : "starting"}
+          cameraStatus={footerCameraStatus(cameraEnabled, cameraHealthy, cameraError)}
           online={online}
           saveIndicator={saveIndicator}
           draftStatusLabel={activeDraftStatus.label}
