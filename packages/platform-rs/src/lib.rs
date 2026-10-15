@@ -27,3 +27,8 @@ mod windows_firewall_recovery_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 #[path = "windows/hook_delivery.rs"]
 mod windows_hook_delivery_tests;
+
+// Exercise renewal and lifecycle races using fake handles, never native input.
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/hook_lifecycle.rs"]
+mod windows_hook_lifecycle_tests;

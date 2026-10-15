@@ -7,13 +7,14 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering}
 use std::sync::OnceLock;
 
 mod hook_delivery;
+mod hook_lifecycle;
 pub mod instance;
 mod registry_recovery;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
 pub use registry_recovery::RegistryLockdownStatus;
 
 thread_local! {
-    static HOOK_CALLBACK_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static HOOK_CALLBACK_SESSION: std::cell::RefCell<Option<std::sync::Arc<hook_lifecycle::Session>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// CreateProcess flag that suppresses the console window of a child process.
@@ -31,18 +32,11 @@ fn hidden_command(program: &str) -> std::process::Command {
     cmd
 }
 
-static HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
-// Set only after SetWindowsHookExW has returned a real hook handle. Readiness
-// must key on this rather than on HOOK_ACTIVE, which represents requested
-// state and becomes true before the hook thread has initialized.
-static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
-static HOOK_INSTALL_FAILED: AtomicBool = AtomicBool::new(false);
-static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+static HOOK_OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static HOOK_SESSION: std::sync::Mutex<Option<std::sync::Arc<hook_lifecycle::Session>>> =
+    std::sync::Mutex::new(None);
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
-// Set to true between spawn_hook_thread() call and HOOK_THREAD_ID becoming non-zero.
-// Prevents the watchdog from treating the startup window as a dead thread.
-static HOOK_STARTING: AtomicBool = AtomicBool::new(false);
 
 /// Processes that make a Windows device ineligible for a secured session.
 ///
@@ -842,150 +836,207 @@ pub fn detect_rdp_server() -> bool {
 
 // ── Keyboard intercept ────────────────────────────────────────────────────────
 
-fn spawn_hook_thread(generation: u64) {
-    HOOK_STARTING.store(true, Ordering::SeqCst);
-    HOOK_INSTALLED.store(false, Ordering::SeqCst);
-    std::thread::spawn(move || {
-        use windows::Win32::System::Threading::GetCurrentThreadId;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL,
-        };
-
-        HOOK_CALLBACK_GENERATION.with(|slot| slot.set(generation));
-        let tid = unsafe { GetCurrentThreadId() };
-        HOOK_THREAD_ID.store(tid, Ordering::SeqCst);
-        HOOK_STARTING.store(false, Ordering::SeqCst);
-
-        unsafe {
-            let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbproc), None, 0) {
-                Ok(h) => h,
-                Err(_) => {
-                    HOOK_ACTIVE.store(false, Ordering::SeqCst);
-                    HOOK_INSTALLED.store(false, Ordering::SeqCst);
-                    HOOK_INSTALL_FAILED.store(true, Ordering::SeqCst);
-                    HOOK_THREAD_ID.store(0, Ordering::SeqCst);
-                    HOOK_STARTING.store(false, Ordering::SeqCst); // unblock watchdog startup poll
-                    return;
-                }
-            };
-            HOOK_INSTALLED.store(true, Ordering::SeqCst);
-
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
-            UnhookWindowsHookEx(hook).ok();
-        }
-
-        // Signal death without clearing HOOK_ACTIVE — watchdog uses TID==0 to detect
-        HOOK_INSTALLED.store(false, Ordering::SeqCst);
-        HOOK_THREAD_ID.store(0, Ordering::SeqCst);
-    });
+struct WindowsHookApi {
+    started: std::time::Instant,
 }
 
-fn spawn_hook_watchdog() {
-    std::thread::spawn(|| {
-        // Wait until the hook thread is fully started (TID registered) before the
-        // first check — avoids a false "thread died" during the startup window.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            if HOOK_THREAD_ID.load(Ordering::SeqCst) != 0 {
-                break;
-            }
-            if std::time::Instant::now() > deadline {
-                eprintln!("AMS Access: WH_KEYBOARD_LL hook thread failed to start within 10s");
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+impl hook_lifecycle::HookApi for WindowsHookApi {
+    type Handle = windows::Win32::UI::WindowsAndMessaging::HHOOK;
 
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            if !HOOK_ACTIVE.load(Ordering::SeqCst) {
-                break; // deliberate stop via disable_keyboard_intercept
+    fn install(&mut self) -> Result<Self::Handle, String> {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_KEYBOARD_LL};
+        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbproc), None, 0) }
+            .map_err(|error| error.to_string())
+    }
+
+    fn retire(&mut self, hook: Self::Handle) {
+        // A silently removed handle may already be invalid. The owner still
+        // retires every handle it received, including cancellation races.
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
+        }
+    }
+
+    fn pump(&mut self) -> bool {
+        use windows::Win32::Foundation::WAIT_FAILED;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, MsgWaitForMultipleObjectsEx, PeekMessageW, TranslateMessage, MSG,
+            MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT, WM_QUIT,
+        };
+        // Bound the batch so a message flood cannot indefinitely postpone the
+        // renewal deadline. PeekMessage also dispatches sent hook callbacks.
+        for _ in 0..64 {
+            let mut msg = MSG::default();
+            if !unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+                break;
             }
-            // TID==0 and not in startup window => thread died unexpectedly
-            if HOOK_THREAD_ID.load(Ordering::SeqCst) == 0 && !HOOK_STARTING.load(Ordering::SeqCst) {
-                eprintln!("AMS Access: WH_KEYBOARD_LL hook thread died — respawning");
-                let generation = hook_delivery::reset_session();
-                HOOK_INSTALL_FAILED.store(false, Ordering::SeqCst);
-                spawn_hook_thread(generation);
-                // Spin until new thread registers its TID before next watchdog check
-                let respawn_deadline =
-                    std::time::Instant::now() + std::time::Duration::from_secs(5);
-                while HOOK_THREAD_ID.load(Ordering::SeqCst) == 0
-                    && std::time::Instant::now() < respawn_deadline
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
+            if msg.message == WM_QUIT {
+                return false;
+            }
+            unsafe {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
             }
         }
-    });
+        // Wake immediately for input; cancellation is checked at least every
+        // 50 ms while idle without a busy poll or synthetic input probe.
+        unsafe {
+            MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE) != WAIT_FAILED
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
+    }
+
+    fn report_failure(&mut self, error: &str) {
+        eprintln!("AMS Access: keyboard hook installation/renewal failed: {error}");
+    }
+}
+
+fn spawn_hook_thread(session: std::sync::Arc<hook_lifecycle::Session>) {
+    session.starting.store(true, Ordering::SeqCst);
+    let owner = session.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("ams-keyboard-hook".into())
+        .spawn(move || {
+            HOOK_CALLBACK_SESSION.with(|slot| *slot.borrow_mut() = Some(owner.clone()));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                hook_lifecycle::run(
+                    &owner,
+                    &mut WindowsHookApi {
+                        started: std::time::Instant::now(),
+                    },
+                );
+            }));
+            if result.is_err() {
+                eprintln!("AMS Access: keyboard hook owner panicked");
+                owner.installed.store(false, Ordering::SeqCst);
+                owner.starting.store(false, Ordering::SeqCst);
+                // Publish exit last: after this store the watchdog may start
+                // a new owner. This thread must never mutate session again.
+                owner.alive.store(false, Ordering::SeqCst);
+            }
+            HOOK_CALLBACK_SESSION.with(|slot| *slot.borrow_mut() = None);
+        })
+    {
+        eprintln!("AMS Access: keyboard hook thread spawn failed: {error}");
+        session.failed.store(true, Ordering::SeqCst);
+        session.starting.store(false, Ordering::SeqCst);
+        session.cancel();
+    }
+}
+
+fn spawn_hook_watchdog(session: std::sync::Arc<hook_lifecycle::Session>) -> bool {
+    let result = std::thread::Builder::new()
+        .name("ams-hook-watchdog".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if !session.active.load(Ordering::SeqCst) {
+                break;
+            }
+            if !session.alive.load(Ordering::SeqCst) && !session.starting.load(Ordering::SeqCst) {
+                spawn_hook_thread(session.clone());
+            }
+        });
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("AMS Access: keyboard hook watchdog spawn failed: {error}");
+            false
+        }
+    }
 }
 
 pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
-    if HOOK_ACTIVE.load(Ordering::SeqCst) && HOOK_INSTALLED.load(Ordering::SeqCst) {
-        return KeyboardInterceptResult {
-            active: true,
-            method: "ll-keyboard-hook".to_string(),
-            platform: "windows".to_string(),
-        };
+    let _operation = HOOK_OPERATION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let existing = HOOK_SESSION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    if let Some(session) = existing.as_ref() {
+        if session.ready() {
+            return keyboard_intercept_result(true);
+        }
+        session.cancel();
     }
-    HOOK_ACTIVE.store(true, Ordering::SeqCst);
-    let generation = hook_delivery::reset_session();
-    HOOK_INSTALL_FAILED.store(false, Ordering::SeqCst);
+    let session = std::sync::Arc::new(hook_lifecycle::Session::new(hook_delivery::reset_session()));
+    *HOOK_SESSION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(session.clone());
     set_sleep_prevention(true);
-    spawn_hook_thread(generation);
-
-    // Do not report readiness until the hook thread has actually installed
-    // WH_KEYBOARD_LL. Previously this returned true immediately after spawn,
-    // allowing a SetWindowsHookExW failure to look like a secured device.
+    spawn_hook_thread(session.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while HOOK_ACTIVE.load(Ordering::SeqCst)
-        && !HOOK_INSTALLED.load(Ordering::SeqCst)
+    while session.active.load(Ordering::SeqCst)
+        && !session.ready()
         && std::time::Instant::now() < deadline
     {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    let installed = HOOK_INSTALLED.load(Ordering::SeqCst);
-    if installed {
-        spawn_hook_watchdog();
-    } else {
-        HOOK_ACTIVE.store(false, Ordering::SeqCst);
+    let installed = session.ready() && spawn_hook_watchdog(session.clone());
+    if !installed {
+        session.cancel();
         set_sleep_prevention(false);
     }
+    keyboard_intercept_result(installed)
+}
 
+fn keyboard_intercept_result(active: bool) -> KeyboardInterceptResult {
     KeyboardInterceptResult {
-        active: installed,
+        active,
         method: "ll-keyboard-hook".to_string(),
         platform: "windows".to_string(),
     }
 }
 
-/// Return passive evidence of callback delivery. An installed hook with no
-/// callbacks is reported as unverified, never as dead based on elapsed time.
+/// Whether the current lifecycle has a successful installation/renewal and a
+/// live owner. This is readiness evidence, not proof of callback delivery.
+pub fn keyboard_hook_ready() -> bool {
+    HOOK_SESSION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        .is_some_and(|session| session.ready())
+}
+
+/// Passive callback evidence; renewal failure is visible as install_failed even
+/// when a previous handle remains installed as best-effort protection.
 pub fn keyboard_hook_delivery_diagnostics() -> DeliverySnapshot {
-    hook_delivery::snapshot(
-        HOOK_ACTIVE.load(Ordering::SeqCst),
-        HOOK_INSTALLED.load(Ordering::SeqCst),
-        HOOK_THREAD_ID.load(Ordering::SeqCst) != 0,
-        HOOK_STARTING.load(Ordering::SeqCst),
-        HOOK_INSTALL_FAILED.load(Ordering::SeqCst),
-    )
+    let session = HOOK_SESSION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    if let Some(session) = session {
+        hook_delivery::snapshot(
+            session.active.load(Ordering::SeqCst),
+            session.installed.load(Ordering::SeqCst),
+            session.alive.load(Ordering::SeqCst),
+            session.starting.load(Ordering::SeqCst),
+            session.failed.load(Ordering::SeqCst),
+        )
+    } else {
+        hook_delivery::snapshot(false, false, false, false, false)
+    }
 }
 
 pub fn disable_keyboard_intercept() {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
-    HOOK_ACTIVE.store(false, Ordering::SeqCst);
-    HOOK_INSTALLED.store(false, Ordering::SeqCst);
-    set_sleep_prevention(false);
-    let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
-    if tid != 0 {
-        unsafe {
-            use windows::Win32::Foundation::{LPARAM, WPARAM};
-            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
-            PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).ok();
-        }
+    let _operation = HOOK_OPERATION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(session) = HOOK_SESSION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+    {
+        session.cancel();
     }
+    // The owner observes cancellation during its bounded pump. No TID-based
+    // WM_QUIT can be lost before queue creation or target a reused thread ID.
+    set_sleep_prevention(false);
 }
 
 // ── Injected-input event callback (F11) ───────────────────────────────────────
@@ -1055,9 +1106,20 @@ unsafe extern "system" fn kbproc(
         CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_INJECTED,
     };
 
-    HOOK_CALLBACK_GENERATION.with(|generation| {
-        hook_delivery::record_callback(generation.get());
+    let active = HOOK_CALLBACK_SESSION.with(|slot| {
+        slot.borrow().as_ref().is_some_and(|session| {
+            if !session.active.load(Ordering::SeqCst) {
+                return false;
+            }
+            hook_delivery::record_callback(session.generation);
+            true
+        })
     });
+    // A cancelled owner's hook may remain in the chain until its next pump.
+    // It must never intercept keys for a replacement lifecycle.
+    if !active {
+        return CallNextHookEx(None, code, wparam, lparam);
+    }
     if code >= 0 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let vk = kb.vkCode;
@@ -1066,7 +1128,7 @@ unsafe extern "system" fn kbproc(
         // a tampering signal, never legitimate candidate input. Swallow it every
         // time; the violation emit is throttled below so a flood can't spam events.
         let injected = kb.flags.0 & LLKHF_INJECTED.0 != 0;
-        if injected && HOOK_ACTIVE.load(Ordering::SeqCst) {
+        if injected {
             emit_injected_input_event("injected_input", "synthetic_keystroke_blocked");
             return LRESULT(1);
         }
