@@ -1591,6 +1591,24 @@ fn set_escape_blocked(blocked: bool) {
     let _ = blocked;
 }
 
+/// Points at the top of the exam window hidden behind a MacBook notch, so
+/// the contest page can keep its top bar (and the countdown) below it.
+/// Zero everywhere else.
+#[tauri::command]
+fn get_top_safe_inset(app: tauri::AppHandle) -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(ns_window) = app
+            .get_webview_window("main")
+            .and_then(|win| win.ns_window().ok())
+        {
+            return platform_rs::macos::top_safe_inset(ns_window as usize);
+        }
+    }
+    let _ = app;
+    0.0
+}
+
 /// Check whether the privileged network helper daemon is reachable.
 ///
 /// macOS: LaunchDaemon over /private/var/run/ams-proctor.sock.
@@ -3469,6 +3487,7 @@ pub fn run() {
             get_windows_capture_protection_status,
             get_windows_hook_diagnostics,
             set_escape_blocked,
+            get_top_safe_inset,
             configure_event_stream,
             get_lockdown_restore_status,
             retry_lockdown_restore,
