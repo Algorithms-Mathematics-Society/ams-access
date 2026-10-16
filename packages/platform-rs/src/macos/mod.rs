@@ -26,7 +26,7 @@ mod watchdog;
 pub use displays::{scan_displays, DisplayReport};
 pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
-    wait_native_fullscreen_exit,
+    top_safe_inset, wait_native_fullscreen_exit,
 };
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;

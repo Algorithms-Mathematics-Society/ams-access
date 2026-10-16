@@ -390,6 +390,53 @@ pub fn simple_fullscreen_engaged(ns_window: usize) -> bool {
     .unwrap_or(false)
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+// SAFETY: identical layout and encoding to NSEdgeInsets.
+unsafe impl objc2::Encode for EdgeInsets {
+    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
+        "NSEdgeInsets",
+        &[f64::ENCODING, f64::ENCODING, f64::ENCODING, f64::ENCODING],
+    );
+}
+
+/// Height, in points, of the camera housing strip the window is drawn under.
+///
+/// Simple fullscreen sizes the window to the whole screen frame and kiosk
+/// mode hides the menu bar, so on a notched MacBook the top of the page sits
+/// behind the notch. Zero when the window is not in simple fullscreen, on a
+/// screen without a notch, and before macOS 12 (no `safeAreaInsets`).
+pub fn top_safe_inset(ns_window: usize) -> f64 {
+    if !simple_fullscreen_engaged(ns_window) {
+        return 0.0;
+    }
+    on_main(Duration::from_secs(1), move || {
+        let window = ns_window as *mut AnyObject;
+        guarded(|| unsafe {
+            let screen: *mut AnyObject = msg_send![window, screen];
+            if screen.is_null() {
+                return 0.0;
+            }
+            let supported: Bool =
+                msg_send![screen, respondsToSelector: objc2::sel!(safeAreaInsets)];
+            if !supported.as_bool() {
+                return 0.0;
+            }
+            let insets: EdgeInsets = msg_send![screen, safeAreaInsets];
+            insets.top.max(0.0)
+        })
+        .unwrap_or(0.0)
+    })
+    .unwrap_or(0.0)
+}
+
 /// Put the exam window's level and Spaces behaviour back. Only touches the
 /// saved window: a different pointer means the saved one may be gone.
 pub fn restore_kiosk_window(ns_window: usize) {

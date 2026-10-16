@@ -439,6 +439,23 @@ export default function ContestPageClient() {
   // a minute.
   const connection = connectionLevel(heartbeatState);
   const online = browserOnline && connection !== "offline";
+  // macOS simple fullscreen draws the page under a MacBook notch, which hid
+  // the countdown in the middle of the top bar. Keep the page below it; the
+  // desktop reports 0 everywhere else, and a browser has no __TAURI__.
+  const [topSafeInset, setTopSafeInset] = useState(0);
+  useEffect(() => {
+    const tauri = window.__TAURI__;
+    if (!tauri) return;
+    const measure = () => {
+      void tauri.core
+        .invoke<number>("get_top_safe_inset")
+        .then((inset) => setTopSafeInset(inset > 0 ? inset : 0))
+        .catch(() => {});
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
   const [blockedApps, setBlockedApps] = useState<string[]>([]);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -3003,7 +3020,10 @@ export default function ContestPageClient() {
         color: "var(--color-text-primary)",
       }}
     >
-      <VStack gap={0} style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+      <VStack
+        gap={0}
+        style={{ height: "100%", minHeight: 0, overflow: "hidden", paddingTop: topSafeInset }}
+      >
         <KioskBanner />
         {lockGraceActive && lockGraceCountdown > 0 && (
           <LockGraceToast lockGraceCountdown={lockGraceCountdown} />
