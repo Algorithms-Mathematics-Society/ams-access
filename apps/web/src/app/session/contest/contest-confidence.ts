@@ -22,6 +22,12 @@ export function draftStatus(savedOnDevice = true): { label: string; confirmed: b
     : { label: "Not saved on this device", confirmed: false };
 }
 
+export function connectionDraftAssurance(savedOnDevice: boolean): string {
+  return savedOnDevice
+    ? "Your draft is saved on this device. We’re trying to reconnect. Submit your solution when connected and before the contest ends."
+    : "Some changes could not be saved on this device. Keep this app open and ask an invigilator for help.";
+}
+
 export function submissionComparison(current: SourceSnapshot, submitted?: SourceSnapshot): string {
   // Historical API records omit source. Absence must never imply a match.
   if (!submitted) return "";

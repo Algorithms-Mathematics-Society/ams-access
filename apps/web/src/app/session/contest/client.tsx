@@ -97,7 +97,12 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
 import { deriveSaveIndicator } from "./save-indicator";
 import { getSnapshot as getAppThemeSnapshot, useTheme } from "@/lib/theme";
-import { draftStatus, requestFinish, type SourceSnapshot } from "./contest-confidence";
+import {
+  connectionDraftAssurance,
+  draftStatus,
+  requestFinish,
+  type SourceSnapshot,
+} from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
@@ -2663,7 +2668,7 @@ export default function ContestPageClient() {
       : !paperIsOpen({ endsAtMs: null, phase: contestPhase })
         ? "The contest has not started yet."
         : editorLocked
-          ? "We can't reach the exam server. Editing is paused. Check the draft status below for the last confirmed server save."
+          ? `We can't reach the exam server. Editing is paused. ${connectionDraftAssurance(unsavedOnDevice.length === 0)}`
           : null;
 
   // One trustworthy, invisible-saving model (Google-Docs style): the candidate
@@ -3166,6 +3171,15 @@ export default function ContestPageClient() {
                 </RecoveryBannerRegion>
               )}
             </AnimatePresence>
+            {(!browserOnline || connection !== "online") && (
+              <Banner
+                status="warning"
+                container="section"
+                title="Reconnecting to the exam server"
+                description={connectionDraftAssurance(unsavedOnDevice.length === 0)}
+                role="status"
+              />
+            )}
             {activeUnsavedOnDevice && (
               <Banner
                 status="error"
@@ -3357,8 +3371,8 @@ export default function ContestPageClient() {
               </Text>
               {finalDraftSaved && (
                 <Text color="secondary">
-                  The active file’s final draft save was also confirmed. A draft save is not a
-                  scored submission.
+                  Your final draft is saved on this device. A local draft is not a scored
+                  submission.
                 </Text>
               )}
               {submitWarning && (
@@ -3383,8 +3397,8 @@ export default function ContestPageClient() {
               />
               <Text color="secondary">
                 {finalDraftSaved
-                  ? "The active file’s draft save was confirmed, but finishing the session was not."
-                  : "The latest draft save was not confirmed either."}{" "}
+                  ? "Your final draft is saved on this device, but the server has not confirmed the session finish."
+                  : "The latest draft could not be saved on this device. Keep this app open."}{" "}
                 Ask an invigilator to check your session and submissions.
               </Text>
             </VStack>
