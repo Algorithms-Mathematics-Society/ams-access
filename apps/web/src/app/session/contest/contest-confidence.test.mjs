@@ -1,7 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { draftStatus, sameSource, submissionComparison, requestFinish } from './contest-confidence.ts';
+import { connectionDraftAssurance, draftStatus, sameSource, submissionComparison, requestFinish } from './contest-confidence.ts';
 const current = {source:'answer',language:'cpp'};
+
+test('connection reassurance confirms only a successful local save, without promising upload', () => {
+  const message = connectionDraftAssurance(true);
+  assert.match(message, /draft is saved on this device/i);
+  assert.match(message, /trying to reconnect/i);
+  assert.match(message, /submit your solution.*before the contest ends/i);
+  assert.doesNotMatch(message, /automatically.*(sync|upload)|synced|saved.*server/i);
+});
+
+test('connection reassurance warns when any local draft write failed', () => {
+  const message = connectionDraftAssurance(false);
+  assert.match(message, /could not be saved on this device/i);
+  assert.match(message, /keep this app open/i);
+  assert.doesNotMatch(message, /draft is saved|will be synced|will be uploaded/i);
+});
 // Drafts no longer go to the server, so there is no in-flight or failed state
 // to describe: the write is a synchronous localStorage put on every change.
 // What the label must not do is imply a server copy exists.
