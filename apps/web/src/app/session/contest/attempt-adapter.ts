@@ -92,7 +92,7 @@ export function toAttemptRecords(submissions: SubmissionResult[]): AttemptRecord
       score: submission.score,
       runtime_ms: submission.max_runtime_ms,
       memory_kb: submission.max_memory_kb,
-      error_message: null,
+      error_message: submission.error_message ?? null,
       compile_output: submission.compile_output || null,
       source_code: null,
       created_at: submission.created_at,

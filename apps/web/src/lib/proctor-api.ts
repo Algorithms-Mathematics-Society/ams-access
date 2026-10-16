@@ -458,6 +458,9 @@ export type SubmissionResult = {
   max_memory_kb: number;
   compile_output: string;
   testcases: TestcaseResult[];
+  /** Set only when judging failed: what the candidate should do about it.
+   * Optional because older API builds don't send it. */
+  error_message?: string | null;
 };
 
 export type ResumeRequest = {

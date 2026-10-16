@@ -123,6 +123,26 @@ test("an empty compile output becomes null rather than an empty panel", () => {
   assert.equal(record.compile_output, null);
 });
 
+test("a judging failure carries the server's message to the run pane", async () => {
+  // Hard-coded to null, a failed run showed a bare "System error" with
+  // nothing telling the candidate it wasn't their fault or what to do.
+  const { normalizeAttemptForRunResult } = await import("./submission-state.ts");
+  const message = "System error: the judge could not finish this submission.";
+  const [record] = toAttemptRecords([
+    submission({ status: "failed", verdict: null, error_message: message }),
+  ]);
+  assert.equal(record.status, "FAILED");
+  assert.equal(record.error_message, message);
+  const run = normalizeAttemptForRunResult(record);
+  assert.equal(run.status, "SE");
+  assert.equal(run.compile_output, message);
+});
+
+test("an older API without error_message still adapts", () => {
+  const [record] = toAttemptRecords([submission({ status: "failed", verdict: null })]);
+  assert.equal(record.error_message, null);
+});
+
 test("an empty list stays empty", () => {
   assert.deepEqual(toAttemptRecords([]), []);
 });
