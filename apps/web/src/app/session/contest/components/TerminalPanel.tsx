@@ -302,7 +302,16 @@ export function TerminalPanel({
           <Text type="supporting" weight="medium">
             Test Results
           </Text>
-          {submissionsList.length > 0 && <Badge label={submissionsList.length} variant="neutral" />}
+          {/* The count is attempts, not tests. Beside the words "Test
+              Results" a bare number reads as a number of tests, so a
+              candidate on their thirteenth attempt was told they had 13
+              tests on a problem with two. */}
+          {submissionsList.length > 0 && (
+            <Badge
+              label={`${submissionsList.length} ${submissionsList.length === 1 ? "attempt" : "attempts"}`}
+              variant="neutral"
+            />
+          )}
           {runResult?.status === "CE" && <Badge label="CE" variant="error" />}
         </HStack>
         <IconButton

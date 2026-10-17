@@ -4,7 +4,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { outputText } from "../execution-output";
 import { GATE_KIND } from "../family-summary";
-import { ruleLanguage, shortChip } from "../rule-language";
+import { behaviourLanguage, ruleLanguage, shortChip } from "../rule-language";
 import { exampleFor, sampleOrdinals, type WorkedExample } from "../sample-join";
 
 /**
@@ -430,12 +430,17 @@ function CaseChip({
 }) {
   const ok = passed(row);
   const family = familyOf(row);
+  // A behaviour check is numbered like an I/O case rather than wearing its
+  // GTest name: `PokemonRAII.ConstructionAcquiresAndDestructionReleases` is
+  // wider than the whole strip and truncates to `PokemonRAII.Constructi…`,
+  // which cannot be told apart from the next one along. The readable name
+  // goes in the tooltip and in the detail pane, where there is room for it.
   const full =
     family === GATE_KIND
       ? ruleLanguage(row.label ?? "", row.checker_message).chip
-      : family === "behavior"
-        ? row.label || `Check ${index + 1}`
-        : `Case ${(ordinal >= 0 ? ordinal : index) + 1}`;
+      : `Case ${(ordinal >= 0 ? ordinal : index) + 1}`;
+  const described =
+    family === "behavior" ? behaviourLanguage(row.label ?? "", row.checker_message).chip : "";
 
   // Colour carries the outcome, so a candidate can read the strip at a
   // glance without opening anything. The previous version put a 0.5rem dot
@@ -451,7 +456,7 @@ function CaseChip({
       // between them. Fourteen stops for fourteen cases is not navigation.
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
-      title={`${full} — ${ok ? "passed" : "failed"}. ${FAMILY[family].hint}`}
+      title={`${described || full} — ${ok ? "passed" : "failed"}. ${FAMILY[family].hint}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -459,16 +464,19 @@ function CaseChip({
         maxWidth: "100%",
         padding: "var(--spacing-2) var(--spacing-3)",
         borderRadius: "var(--radius-element)",
-        border: `var(--border-width) solid ${
-          active ? `var(--color-border-${tint})` : "var(--color-border)"
-        }`,
-        background: active ? `var(--color-background-${tint}-subtle)` : "transparent",
+        // Selection is carried by the grey fill, not by a coloured border:
+        // tinting the border too meant a failed-and-selected chip and a
+        // failed-and-not chip differed only in how saturated their outline
+        // was, which is not a difference you can see at a glance.
+        border: "var(--border-width) solid transparent",
+        background: active ? "var(--color-background-gray)" : "transparent",
         color: `var(--color-text-${tint})`,
         fontWeight: active ? 600 : 400,
         font: "inherit",
         cursor: "pointer",
         whiteSpace: "nowrap",
         flexShrink: 0,
+        transition: "background 120ms ease",
       }}
     >
       <span aria-hidden style={{ fontSize: "0.85em" }}>
@@ -505,18 +513,32 @@ function CaseDetail({ row, example }: { row: TestRow; example?: WorkedExample | 
   }
 
   if (family === "behavior") {
+    const behaviour = behaviourLanguage(row.label ?? "", row.checker_message);
+    // The judge's own identifier is kept, quietly, below the English: it is
+    // what a candidate quotes when they ask an invigilator about a check,
+    // and what the setter greps for. It is just no longer the headline.
+    const identifier = (row.label ?? "").trim();
     return (
       <VStack gap={3} style={{ minWidth: 0 }}>
         <Text type="supporting" color="secondary">
           {FAMILY.behavior.hint}
         </Text>
         <VStack gap={2}>
-          <Text type="supporting" weight="medium">
-            {row.label || "Check"}
+          <Text
+            weight="semibold"
+            style={{ color: ok ? "var(--color-text-success)" : "var(--color-text-error)" }}
+          >
+            {ok ? "Passed" : "Failed"}
           </Text>
-          <pre style={codeBlock("var(--color-text-primary)")}>
-            {row.checker_message || (ok ? "Passed" : "Failed, with no detail from the judge")}
-          </pre>
+          <Text>{behaviour.sentence}</Text>
+          {identifier && identifier !== behaviour.sentence ? (
+            <Text type="supporting" color="secondary" style={{ fontFamily: "var(--font-mono)" }}>
+              {identifier}
+            </Text>
+          ) : null}
+          {!ok && row.checker_message ? (
+            <pre style={codeBlock("var(--color-text-primary)")}>{row.checker_message}</pre>
+          ) : null}
         </VStack>
         {row.stderr_text ? <Block label="Stderr" value={row.stderr_text} /> : null}
       </VStack>

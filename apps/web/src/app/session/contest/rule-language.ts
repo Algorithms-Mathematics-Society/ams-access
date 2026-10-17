@@ -83,3 +83,60 @@ export function ruleLanguage(label: string, checkerMessage?: string): RuleLangua
 export function shortChip(text: string, max = 26): string {
   return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 }
+
+/**
+ * Split an identifier into words, keeping acronyms whole.
+ *
+ * `MoveAssignmentReleasesOld` → `Move Assignment Releases Old`, and
+ * `HandlesZeroHP` → `Handles Zero HP` rather than `Handles Zero H P`.
+ */
+function splitIdentifier(name: string): string[] {
+  return (
+    name
+      .replace(/[_\-.]+/g, " ")
+      // A lower-to-upper boundary is always a new word.
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      // An acronym run followed by a capitalised word: `RAIIHolder` is two.
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .split(/\s+/)
+      .filter(Boolean)
+  );
+}
+
+/**
+ * What to call a behaviour check, given the judge's label and the setter's
+ * message.
+ *
+ * A GTest name arrives as `PokemonRAII.ConstructionAcquiresAndDestructionReleases`
+ * — the suite, a dot, and a sentence with the spaces taken out. Candidates
+ * were shown exactly that, truncated mid-word by the tab strip, which tells
+ * them nothing about what their code got wrong.
+ *
+ * Same order of preference as `ruleLanguage`: the setter's own sentence
+ * first, then the identifier turned back into the sentence it started as. An
+ * all-caps run is left alone, because `HP` and `RAII` are words here.
+ */
+export function behaviourLanguage(label: string, checkerMessage?: string): RuleLanguage {
+  const raw = (label ?? "").trim();
+  // Drop the suite: every check in a problem shares it, so it is the one part
+  // that cannot tell two of them apart.
+  const bare = raw.includes(".") ? raw.slice(raw.lastIndexOf(".") + 1) : raw;
+  const words = splitIdentifier(bare);
+
+  const described = words
+    .map((word, index) => {
+      // An acronym stays as written. Everything else is lower case, except
+      // the first word, which starts the sentence.
+      if (word.length > 1 && word === word.toUpperCase()) return word;
+      const lower = word.toLowerCase();
+      return index === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    })
+    .join(" ");
+
+  const message = (checkerMessage ?? "").trim();
+
+  return {
+    chip: described || raw || "Behaviour check",
+    sentence: message || described || raw || "Behaviour check",
+  };
+}
