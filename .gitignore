@@ -13,6 +13,7 @@ node_modules
 
 # Next.js
 apps/web/.next/
+apps/web/.next-dev/
 apps/web/out/
 
 # Tauri

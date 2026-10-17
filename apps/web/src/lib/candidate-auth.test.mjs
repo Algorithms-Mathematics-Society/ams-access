@@ -662,6 +662,7 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
   let released;
   const bindings = {
     sessionId: "active",
+    browserOnline: true,
     ProctorApiError,
     heartbeat: async () => {
       throw new ProctorApiError();
