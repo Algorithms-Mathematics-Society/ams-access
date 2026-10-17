@@ -50,10 +50,26 @@ pub struct DisplayScan {
     pub has_wireless: bool, // a Miracast/virtual/wireless output present
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProcessScanResult {
+    /// Processes that make the device ineligible: screen share, screen
+    /// recording, remote access. These block entry to a strict contest.
     pub found: Vec<String>,
     pub clean: bool,
+    /// Chat apps that can share a screen but are not, on their own, grounds
+    /// to turn a candidate away.
+    ///
+    /// Discord and WhatsApp keep running in the system tray after their
+    /// window is closed, so a candidate who has genuinely quit still scans
+    /// dirty and cannot tell why. Blocking on that stranded people minutes
+    /// before a contest over something they could not see. These are
+    /// reported and recorded against the session instead, which is what an
+    /// invigilator actually needs.
+    ///
+    /// `serde(default)` so a shell and a core from different builds still
+    /// talk: an older scan simply reports none.
+    #[serde(default)]
+    pub advisory: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1202,6 +1218,7 @@ mod tests {
             restricted_processes: Some(ProcessScanResult {
                 found: vec![],
                 clean: true,
+                advisory: vec![],
             }),
             virtualization: Some(VirtDetectionResult {
                 detected: false,
@@ -1764,6 +1781,7 @@ mod tests {
             restricted_processes: Some(ProcessScanResult {
                 found: vec![],
                 clean: true,
+                advisory: vec![],
             }),
             virtualization: Some(VirtDetectionResult {
                 detected: false,

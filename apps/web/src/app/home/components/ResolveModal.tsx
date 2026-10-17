@@ -12,6 +12,7 @@ import { Banner } from "@astryxdesign/core/Banner";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import type { TelemetryQueryState } from "./types";
+import { appList, trayHint } from "@/app/session/contest/restricted-apps";
 
 interface ResolveModalProps {
   isOpen: boolean;
@@ -64,9 +65,14 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
           {
             label: "Flagged apps",
             value: processes?.found?.length
-              ? processes.found.join(", ")
+              ? appList(processes.found)
               : "No process details available",
           },
+          // Only when a chat app is involved, and worded so a candidate who
+          // has already closed the window knows what is left to do.
+          ...(trayHint(processes?.advisory)
+            ? [{ label: "Also running", value: trayHint(processes?.advisory) as string }]
+            : []),
           { label: "Latest scan", value: lastScanned },
           {
             label: "Status",

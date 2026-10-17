@@ -15,7 +15,6 @@ const RESTRICTED: &[&str] = &[
     "obs",
     "obs-studio",
     "obs64",
-    "discord",
     "teamviewer",
     "teamviewerd",
     "anydesk",
@@ -79,7 +78,13 @@ const RESTRICTED: &[&str] = &[
     "synergyc",
     "synergys",
     "deskreen",
-    // Comms apps that can screen-share
+];
+
+/// Chat apps: reported at readiness, never a reason to turn someone away.
+/// They keep a tray process alive after their window closes, so "I closed
+/// it" and "the scan still sees it" are both true at once.
+const ADVISORY: &[&str] = &[
+    "discord",
     "telegram-desktop",
     "telegram",
     "signal-desktop",
@@ -149,10 +154,19 @@ fn match_restricted(names: &[String]) -> Option<&'static str> {
         .find(|&r| names.iter().any(|n| n == r))
 }
 
+/// Return the first ADVISORY entry that exactly matches any of `names`.
+fn match_advisory(names: &[String]) -> Option<&'static str> {
+    ADVISORY
+        .iter()
+        .copied()
+        .find(|&a| names.iter().any(|n| n == a))
+}
+
 /// Scan /proc for running restricted processes.
 pub fn scan_processes() -> ProcessScanResult {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
     let mut found: Vec<String> = Vec::new();
+    let mut advisory: Vec<String> = Vec::new();
 
     let proc_dir = match std::fs::read_dir("/proc") {
         Ok(entries) => entries,
@@ -161,6 +175,7 @@ pub fn scan_processes() -> ProcessScanResult {
             return ProcessScanResult {
                 found,
                 clean: false,
+                advisory: Vec::new(),
             };
         }
     };
@@ -182,15 +197,27 @@ pub fn scan_processes() -> ProcessScanResult {
         let Some(pid) = name.to_str().and_then(|name| name.parse::<u32>().ok()) else {
             continue;
         };
-        if let Some(r) = match_restricted(&proc_identity_names(pid)) {
+        let names = proc_identity_names(pid);
+        if let Some(r) = match_restricted(&names) {
             if !found.iter().any(|f| f == r) {
                 found.push(r.to_string());
             }
         }
+        // Deduplicated: one entry per app, however many processes it runs.
+        if let Some(a) = match_advisory(&names) {
+            if !advisory.iter().any(|f| f == a) {
+                advisory.push(a.to_string());
+            }
+        }
     }
 
+    // `advisory` deliberately does not affect `clean`.
     let clean = found.is_empty() && _budget.failure().is_none();
-    ProcessScanResult { found, clean }
+    ProcessScanResult {
+        found,
+        clean,
+        advisory,
+    }
 }
 
 /// systemd-detect-virt prints the detected technology only without --quiet.

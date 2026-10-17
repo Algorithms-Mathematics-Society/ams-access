@@ -1414,6 +1414,7 @@ fn native_scan_processes() -> ProcessScanResult {
     platform_dispatch!(scan_processes(), else ProcessScanResult {
         found: vec![],
         clean: true,
+        advisory: vec![],
     })
 }
 

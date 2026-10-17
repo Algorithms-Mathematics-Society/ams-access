@@ -39,8 +39,6 @@ const RESTRICTED: &[&str] = &[
     "zoom.us",
     "ZoomOpener",
     "zoom",
-    "discord",
-    "Discord",
     "TeamViewer",
     "TeamViewerAgent",
     "AnyDesk",
@@ -48,12 +46,8 @@ const RESTRICTED: &[&str] = &[
     "Vine Server",
     "RealVNC",
     "Skype",
-    "slack",
-    "Slack",
     "Microsoft Teams",
     "Teams",
-    "WhatsApp",
-    "Telegram",
     "lldb",
     "gdb",
     "dtrace",
@@ -78,6 +72,13 @@ const RESTRICTED: &[&str] = &[
     // Screen recorders live in CAPTURE_TOOLS below, which scan_processes
     // also reads. They were listed here too, and the copies had already
     // drifted apart.
+];
+
+/// Chat apps: reported at readiness, never a reason to turn someone away.
+/// They keep running after their window closes, so "I quit it" and "the scan
+/// still sees it" are both true at once.
+const ADVISORY: &[&str] = &[
+    "discord", "Discord", "slack", "Slack", "WhatsApp", "Telegram",
 ];
 
 /// Tools that can capture the screen.
@@ -1487,9 +1488,20 @@ fn restricted_in(running: &[String], scan_complete: bool) -> ProcessScanResult {
         }
     }
 
+    // Chat apps are listed separately and never affect `clean`.
+    let mut advisory: Vec<String> = Vec::new();
+    for &name in ADVISORY.iter() {
+        if running.iter().any(|p| p.eq_ignore_ascii_case(name))
+            && !advisory.iter().any(|seen| seen.eq_ignore_ascii_case(name))
+        {
+            advisory.push(name.to_string());
+        }
+    }
+
     ProcessScanResult {
         clean: found.is_empty() && scan_complete,
         found,
+        advisory,
     }
 }
 

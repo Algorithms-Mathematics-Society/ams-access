@@ -58,14 +58,13 @@ const RESTRICTED: &[&str] = &[
     "remotedesktopmanager.exe",
     "mstsc.exe",
     "rdpclip.exe",
-    // Communication tools with built-in screen share
-    "discord.exe",
+    // Conferencing tools whose whole purpose is sharing a screen. A call
+    // can be in progress with no window in front, so these still block.
     "zoom.exe",
     "teams.exe",
     "ms-teams.exe",
     "skype.exe",
     "webex.exe",
-    "slack.exe",
     // Screen recorders
     "obs64.exe",
     "obs32.exe",
@@ -119,6 +118,14 @@ const RESTRICTED: &[&str] = &[
     "mitmweb.exe",
     "ngrok.exe",
 ];
+
+/// Chat apps: reported at readiness, never a reason to turn someone away.
+///
+/// Every one of these keeps a tray process alive after its window closes, so
+/// "I closed it" and "the scan still sees it" are both true at once. Blocking
+/// on that strands a candidate who has done everything asked of them. They
+/// are recorded against the session so an invigilator can see them.
+const ADVISORY: &[&str] = &["discord.exe", "slack.exe", "whatsapp.exe", "telegram.exe"];
 
 /// Processes whose mere presence is sufficient to declare active screen capture.
 /// Game Bar and nvcontainer are intentionally absent — they are gated in
@@ -352,7 +359,45 @@ pub fn scan_processes() -> ProcessScanResult {
         .into_iter()
         .map(|p| p.name.trim_end_matches(".exe").to_string())
         .collect();
-    ProcessScanResult { found, clean }
+    // Chat apps are scanned separately and never affect `clean`: a tray
+    // process nobody can see must not be what stops a candidate entering.
+    // Deduplicated, because Discord alone is six processes and listing it
+    // six times told a candidate nothing except that something was wrong.
+    let advisory = scan_advisory();
+    ProcessScanResult {
+        found,
+        clean,
+        advisory,
+    }
+}
+
+/// Chat apps currently running, deduplicated and without the `.exe`.
+fn scan_advisory() -> Vec<String> {
+    let Ok(out) = hidden_command("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .bounded_checked_output()
+    else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut names: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let image = line
+            .splitn(5, ',')
+            .next()
+            .unwrap_or("")
+            .trim_matches('"')
+            .to_lowercase();
+        for &a in ADVISORY {
+            if image == a {
+                let name = a.trim_end_matches(".exe").to_string();
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
 }
 
 // ── Screen capture detection ──────────────────────────────────────────────────

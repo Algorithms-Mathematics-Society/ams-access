@@ -134,8 +134,17 @@ export type KeyboardInterceptResult = {
 };
 
 export type ProcessScanResult = {
+  /** Apps that block entry: screen share, recording, remote access. */
   found: string[];
   clean: boolean;
+  /**
+   * Chat apps. Reported and recorded, never a reason to turn someone away:
+   * they keep a tray process alive after their window closes, so a candidate
+   * who has genuinely quit still scans dirty with nothing left to click.
+   *
+   * Optional because an older shell does not send it.
+   */
+  advisory?: string[];
 };
 
 export type VirtDetectionResult = {

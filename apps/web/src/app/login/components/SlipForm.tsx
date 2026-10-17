@@ -64,7 +64,7 @@ export function SlipForm({
               className={styles.fieldInput}
               value={loginId}
               onChange={(event) => setLoginId(formatHandle(event.target.value))}
-              placeholder="ayush.s-kqmwd"
+              placeholder="username"
               autoComplete="username"
               // Preserve lowercase handles on mobile keyboards.
               autoCapitalize="none"
