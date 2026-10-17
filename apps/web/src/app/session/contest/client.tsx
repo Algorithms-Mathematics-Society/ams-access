@@ -137,7 +137,13 @@ import {
   submit as submitSolution,
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
-import { type CustomCase, canRun as canRunCustom, newCase, toWire } from "./custom-cases";
+import {
+  MAX_CUSTOM_CASES,
+  type CustomCase,
+  canRun as canRunCustom,
+  newCase,
+  toWire,
+} from "./custom-cases";
 
 const SUPPORT_CATEGORIES = [
   { value: "camera_not_detected", label: "Camera not detected" },
@@ -1463,7 +1469,11 @@ export default function ContestPageClient() {
     }));
   }
 
-  async function triggerRun(useCustomCases = false) {
+  // `casesOverride` exists because this reads `customCases` out of the render
+  // closure. A caller that has just queued a state update — "run this sample
+  // as my own" does exactly that — would otherwise send the list as it was
+  // before its own case was added.
+  async function triggerRun(useCustomCases = false, casesOverride?: CustomCase[]) {
     if (!questions[activeQ] || !sessionId || isRunning) return;
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
@@ -1501,7 +1511,7 @@ export default function ContestPageClient() {
         source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
         // Only when the candidate pressed Run Custom. An ordinary Run must
         // send nothing here, or the samples are never reached.
-        customCases: useCustomCases ? toWire(customCases) : null,
+        customCases: useCustomCases ? toWire(casesOverride ?? customCases) : null,
       });
       if (runVisit !== runVisitRef.current) return;
       const resolvedId = created.uid;
@@ -2599,6 +2609,32 @@ export default function ContestPageClient() {
       [currentQId]: next(previous[currentQId] ?? []),
     }));
   }
+
+  /**
+   * Run one of the problem's own sample cases as a custom case.
+   *
+   * The judge never returns stdout for the problem's own tests — its
+   * `CaseDetail` type structurally cannot carry it, so a hidden case's output
+   * cannot exist anywhere in the system. That guarantee is worth keeping, and
+   * it is also why a candidate who failed sample 2 could not see what their
+   * code printed.
+   *
+   * A sample is already public: its input and expected output are in the
+   * statement on screen. Sending it back through the custom path is therefore
+   * not a disclosure, and that path does return stdout.
+   */
+  function runSampleAsCustomCase(input: string, expected: string | null) {
+    const existing = questionCustomCases[currentQId] ?? [];
+    // Same input twice is the same case, not a second one: re-running after an
+    // edit is the normal way to use this.
+    const kept = existing.filter((c) => c.input !== input);
+    const next = [...kept, { id: `sample-${Date.now()}`, input, expected }].slice(
+      -MAX_CUSTOM_CASES
+    );
+    setQuestionCustomCases((previous) => ({ ...previous, [currentQId]: next }));
+    // Passed explicitly: the state update above has not landed yet.
+    void triggerRun(true, next);
+  }
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
@@ -3254,6 +3290,7 @@ export default function ContestPageClient() {
               customCases={customCases}
               onCustomCasesChange={mutateCustomCases}
               onRunCustom={() => void triggerRun(true)}
+              onRunSampleAsCustom={runSampleAsCustomCase}
               readOnly={editorLocked}
               judgingUnavailableReason={judgingUnavailableReason}
               compilerDiagnostic={compilerDiagnostic}

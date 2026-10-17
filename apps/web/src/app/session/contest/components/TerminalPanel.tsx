@@ -135,6 +135,8 @@ export interface TerminalPanelProps {
   customCases: CustomCase[];
   onCustomCasesChange: (next: (previous: CustomCase[]) => CustomCase[]) => void;
   onRunCustom: () => void;
+  /** Re-run one sample through the custom path, which returns stdout. */
+  onRunSampleAsCustom?: (input: string, expected: string | null) => void;
   /** Editing is locked (session ended, or the heartbeat said so). */
   readOnly: boolean;
   /** Why judging is unavailable, if it is. Disables Run custom with a reason. */
@@ -185,6 +187,7 @@ export function TerminalPanel({
   customCases,
   onCustomCasesChange,
   onRunCustom,
+  onRunSampleAsCustom,
   readOnly,
   judgingUnavailableReason,
   compilerDiagnostic,
@@ -436,6 +439,7 @@ export function TerminalPanel({
                 ? "Run your code to check it against the sample cases."
                 : "Nothing submitted for this problem yet."
             }
+            onRunAsCustom={onRunSampleAsCustom}
           />
         )}
         {activeTab === "attempts" && (

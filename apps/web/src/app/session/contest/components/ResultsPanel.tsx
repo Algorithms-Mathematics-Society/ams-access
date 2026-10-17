@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Spinner } from "@astryxdesign/core/Spinner";
+import { Button } from "@astryxdesign/core/Button";
 import { outputText } from "../execution-output";
 import { GATE_KIND } from "../family-summary";
 import { behaviourLanguage, ruleLanguage, shortChip } from "../rule-language";
@@ -106,6 +107,7 @@ export function ResultsPanel({
   submitted = false,
   examples,
   emptyHint,
+  onRunAsCustom,
 }: {
   tests: TestRow[] | null | undefined;
   /** The overall verdict. Null while judging. */
@@ -120,6 +122,8 @@ export function ResultsPanel({
   onJumpToCompilerError?: () => void;
   /** The code has been edited since this result was produced. */
   stale?: boolean;
+  /** Re-run one sample through the custom-case path, which returns stdout. */
+  onRunAsCustom?: (input: string, expected: string | null) => void;
   /** A submission rather than a sample run. Only a submission is worth
    *  celebrating — a passing Run means two sample cases agreed. */
   submitted?: boolean;
@@ -304,6 +308,7 @@ export function ResultsPanel({
               <CaseDetail
                 row={current}
                 example={exampleFor(current, ordinals[selected] ?? -1, examples)}
+                onRunAsCustom={onRunAsCustom}
               />
             )}
           </>
@@ -488,7 +493,16 @@ function CaseChip({
 }
 
 /** The selected check, shown the way that family actually fails. */
-function CaseDetail({ row, example }: { row: TestRow; example?: WorkedExample | null }) {
+function CaseDetail({
+  row,
+  example,
+  onRunAsCustom,
+}: {
+  row: TestRow;
+  example?: WorkedExample | null;
+  /** Hand this sample to the custom-case path, which does return stdout. */
+  onRunAsCustom?: (input: string, expected: string | null) => void;
+}) {
   const family = familyOf(row);
   const ok = passed(row);
 
@@ -573,9 +587,27 @@ function CaseDetail({ row, example }: { row: TestRow; example?: WorkedExample | 
                 Your output
               </Text>
               <Text type="supporting" color="secondary">
-                Not returned for the problem&apos;s own tests. Put this input under Testcase and run
-                it to see what your code prints.
+                Not returned for the problem&apos;s own tests. Run this case as your own to see what
+                your code prints.
               </Text>
+              {/* The instruction used to end at "put this input under
+                  Testcase and run it", which is three manual steps — copy
+                  the input, switch tab, paste, run — at the moment a
+                  candidate is already stuck. The sample's input and expected
+                  output are both on screen, so handing them to the custom
+                  path reveals nothing and returns stdout, which the
+                  problem's own tests structurally cannot. */}
+              {onRunAsCustom && input != null ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  label="Run this case as my own"
+                  onClick={() =>
+                    onRunAsCustom(String(input), expected == null ? null : String(expected))
+                  }
+                  style={{ alignSelf: "flex-start" }}
+                />
+              ) : null}
             </VStack>
           )}
           {expected != null && <Block label="Expected" value={expected} />}
