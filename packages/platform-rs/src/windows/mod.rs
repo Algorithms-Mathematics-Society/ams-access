@@ -379,11 +379,19 @@ fn scan_advisory() -> Vec<String> {
     else {
         return Vec::new();
     };
-    let text = String::from_utf8_lossy(&out.stdout);
+    advisory_in(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The advisory apps named in `tasklist /FO CSV /NH` output.
+///
+/// Split out from the command so it can be tested without a Windows host --
+/// the rest of this module cannot even be compiled on the build machine.
+fn advisory_in(tasklist_csv: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for line in text.lines() {
+    for line in tasklist_csv.lines() {
+        // CSV: "image.exe","PID",... -- only the image name is needed.
         let image = line
-            .splitn(5, ',')
+            .split(',')
             .next()
             .unwrap_or("")
             .trim_matches('"')
@@ -1480,6 +1488,47 @@ pub fn is_restricted_name(name: &str) -> bool {
     RESTRICTED
         .iter()
         .any(|&r| r.trim_end_matches(".exe").eq_ignore_ascii_case(name))
+}
+
+#[cfg(test)]
+mod advisory_tests {
+    use super::{advisory_in, ADVISORY, RESTRICTED};
+
+    /// Real `tasklist /FO CSV /NH` output: Discord runs six processes.
+    const SIX_DISCORDS: &str = concat!(
+        "\"Discord.exe\",\"1234\",\"Console\",\"1\",\"180,000 K\"\n",
+        "\"Discord.exe\",\"1235\",\"Console\",\"1\",\"90,000 K\"\n",
+        "\"Discord.exe\",\"1236\",\"Console\",\"1\",\"60,000 K\"\n",
+        "\"Discord.exe\",\"1237\",\"Console\",\"1\",\"50,000 K\"\n",
+        "\"Discord.exe\",\"1238\",\"Console\",\"1\",\"40,000 K\"\n",
+        "\"Discord.exe\",\"1239\",\"Console\",\"1\",\"30,000 K\"\n",
+        "\"explorer.exe\",\"900\",\"Console\",\"1\",\"20,000 K\"\n",
+    );
+
+    #[test]
+    fn one_entry_per_app_however_many_processes_it_runs() {
+        // The dialog used to read "discord, discord, discord, discord,
+        // discord, discord" from exactly this.
+        assert_eq!(advisory_in(SIX_DISCORDS), vec!["discord".to_string()]);
+    }
+
+    #[test]
+    fn an_unlisted_process_is_not_reported() {
+        assert!(advisory_in("\"explorer.exe\",\"900\",\"Console\",\"1\",\"20,000 K\"").is_empty());
+        assert!(advisory_in("").is_empty());
+    }
+
+    #[test]
+    fn a_chat_app_is_never_also_a_blocking_app() {
+        // The whole point: an advisory app must not reach `found`, or it
+        // would still set `clean = false` and still block entry.
+        for &a in ADVISORY {
+            assert!(
+                !RESTRICTED.contains(&a),
+                "{a} is in both lists, so it would still block"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
