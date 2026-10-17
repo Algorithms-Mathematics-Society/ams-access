@@ -3,7 +3,11 @@
 import { canNavigateDiagnostic, type DiagnosticNavigation } from "./compiler-diagnostics";
 import { toLanguageId } from "./components/language";
 import { editorLockExtensions } from "./editor-lock";
-import { DEFAULT_EDITOR_PREFERENCES, editorPreferenceExtensions, type EditorPreferences } from "./editor-preferences";
+import {
+  DEFAULT_EDITOR_PREFERENCES,
+  editorPreferenceExtensions,
+  type EditorPreferences,
+} from "./editor-preferences";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cppStdlibCompletions } from "./cpp-stdlib";
@@ -310,7 +314,7 @@ const contestEditorThemes: Record<ContestEditorThemeId, ContestEditorTheme> = {
     surface: "#ffffff",
     text: "#1f1f1f",
     fontSize: "13px",
-    line: "1.7",
+    line: "1.5",
     gutter: "#f3f3f3",
     gutterText: "#237893",
     gutterActive: "#e8f2ff",
@@ -403,7 +407,9 @@ function resolveLanguageBundle(language: string): Extension[] {
 // CodeMirror retains mounted style modules; reuse the four immutable themes.
 const editorThemeCache = new Map<ContestEditorThemeId, Extension>();
 function createContestEditorTheme(themeId: ContestEditorThemeId): Extension {
-  const key = CONTEST_EDITOR_THEMES.some(theme => theme.id === themeId) ? themeId : "ams-terminal";
+  const key = CONTEST_EDITOR_THEMES.some((theme) => theme.id === themeId)
+    ? themeId
+    : "ams-terminal";
   const cached = editorThemeCache.get(key);
   if (cached) return cached;
   const theme = contestEditorThemes[key];
@@ -813,7 +819,9 @@ export default function EditorPane({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: preferencesCompartment.reconfigure(editorPreferenceExtensions(preferences)) });
+    view.dispatch({
+      effects: preferencesCompartment.reconfigure(editorPreferenceExtensions(preferences)),
+    });
   }, [preferences.fontSize, preferences.wordWrap, activeQ, activeTab]);
 
   // Reapply both DOM editing and command-level locks after each file/question
@@ -856,12 +864,28 @@ export default function EditorPane({
     const view = viewRef.current;
     const request = diagnosticNavigation;
     if (!view || !request) return;
-    const current = { questionId: problemId ?? "", fileId: fileId ?? "", filename: activeTab, source: view.state.doc.toString(), language: toLanguageId(selectedLanguage) };
-    if (!canNavigateDiagnostic({ filename: request.filename, line: request.line, column: request.column, message: "" }, request, current)) return;
+    const current = {
+      questionId: problemId ?? "",
+      fileId: fileId ?? "",
+      filename: activeTab,
+      source: view.state.doc.toString(),
+      language: toLanguageId(selectedLanguage),
+    };
+    if (
+      !canNavigateDiagnostic(
+        { filename: request.filename, line: request.line, column: request.column, message: "" },
+        request,
+        current
+      )
+    )
+      return;
     const line = view.state.doc.line(request.line);
     // Compiler columns may count bytes or expanded tabs; the control promises a line.
     const position = line.from;
-    view.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: "center" }) });
+    view.dispatch({
+      selection: { anchor: position },
+      effects: EditorView.scrollIntoView(position, { y: "center" }),
+    });
     view.focus();
     // A new request is the only trigger; later edits/tab changes must not replay a jump.
     // eslint-disable-next-line react-hooks/exhaustive-deps

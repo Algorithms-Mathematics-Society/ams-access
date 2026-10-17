@@ -1,6 +1,12 @@
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "export",
+  experimental: {
+    // Our custom chunk splitting disables this memory-saving worker by default.
+    webpackBuildWorker: true,
+  },
   // Hide the Next.js dev-mode indicator (the bottom-left logomark button). Dev-only cosmetic —
   // it never ships in `output: "export"` production builds; this just keeps dev screenshots clean.
   devIndicators: false,
@@ -45,4 +51,8 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default (phase) => ({
+  ...nextConfig,
+  // Dev and production must not overwrite each other's page manifests.
+  distDir: phase === PHASE_DEVELOPMENT_SERVER ? ".next-dev" : ".next",
+});

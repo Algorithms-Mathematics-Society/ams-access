@@ -47,11 +47,10 @@ export function connectionLevel(state: HeartbeatState): ConnectionLevel {
   return "online";
 }
 
-/** Whether to stop accepting work. Only at `offline` — `degraded` is a
- * warning, and taking the editor away on a warning is the failure mode this
- * whole module exists to avoid. */
-export function shouldLockEditor(state: HeartbeatState): boolean {
-  return connectionLevel(state) === "offline";
+/** A known browser disconnection blocks immediately. Server silence blocks
+ * only at `offline`; `degraded` remains a nonblocking warning. */
+export function shouldLockEditor(state: HeartbeatState, browserOnline = true): boolean {
+  return !browserOnline || connectionLevel(state) === "offline";
 }
 
 /**

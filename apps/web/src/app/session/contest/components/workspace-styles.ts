@@ -1,6 +1,8 @@
 /** Scoped styles for responsive composition and the existing sanitized HTML renderer. */
 export const CONTEST_STYLES = `
 [data-contest-page] { font-family: var(--font-family-body); }
+/* Override Astryx's high-specificity backdrop only for connection loss. */
+.contest-network-dialog::backdrop { backdrop-filter:blur(var(--spacing-2)) !important; -webkit-backdrop-filter:blur(var(--spacing-2)) !important; }
 /* Astryx labels are inline, clipped text wrappers. Rail content is a layout,
    so give that wrapper a real box before positioning its status icons. */
 [data-contest-page] .contest-question-button > span:first-child > span { display:block; overflow:visible; }

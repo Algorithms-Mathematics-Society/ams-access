@@ -8,6 +8,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text, Heading } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
+import { Dialog } from "@astryxdesign/core/Dialog";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
@@ -2112,7 +2113,7 @@ export default function ContestPageClient() {
   }, [loading]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !browserOnline) return;
 
     let cancelled = false;
 
@@ -2173,7 +2174,8 @@ export default function ContestPageClient() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [sessionId, router]);
+    // Recheck immediately on reconnect; ignore the previous connection's replies.
+  }, [sessionId, router, browserOnline]);
 
   // Flush the moment the connection comes back, rather than waiting out the
   // autosave backoff. A candidate who reconnects with thirty seconds left
@@ -2656,8 +2658,9 @@ export default function ContestPageClient() {
   // The editor goes read-only on a *sustained* outage, not the first dropped
   // packet — see `heartbeat-policy`. Locking a whole exam hall on one lost
   // packet would be a self-inflicted incident.
+  const networkDisconnected = shouldLockEditor(heartbeatState, browserOnline);
   const editorLocked =
-    shouldLockEditor(heartbeatState) || bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
+    networkDisconnected || bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
 
   const judgingUnavailableReason = sessionEnded
     ? sessionEnded === "terminated"
@@ -2944,6 +2947,15 @@ export default function ContestPageClient() {
     : cameraError
       ? cameraError
       : "Waiting for a live camera frame. Check the camera preview before continuing.";
+  const criticalOverlayActive =
+    shouldShowFaceBlock || (lockGraceActive && lockGraceCountdown === 0);
+  const networkOverlayActive =
+    networkDisconnected &&
+    !criticalOverlayActive &&
+    !bellRung &&
+    !sessionEnded &&
+    timeUpState === "idle";
+  const networkDialogRef = useFocusTrap<HTMLDialogElement>(networkOverlayActive);
   const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
     lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle"
   );
@@ -2951,26 +2963,32 @@ export default function ContestPageClient() {
     shouldShowFaceBlock && timeUpState === "idle"
   );
   const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
-    showMediaToggleWarning && timeUpState === "idle",
+    showMediaToggleWarning && !networkOverlayActive && timeUpState === "idle",
     cancelMediaToggle
   );
-  const criticalOverlayActive =
-    shouldShowFaceBlock || (lockGraceActive && lockGraceCountdown === 0);
   const supportDialogRef = useFocusTrap<HTMLDivElement>(
-    showSupportModal && !criticalOverlayActive && timeUpState === "idle",
+    showSupportModal && !criticalOverlayActive && !networkOverlayActive && timeUpState === "idle",
     closeSupport
   );
   const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle");
   useEffect(() => {
     if (
       criticalOverlayActive ||
+      networkOverlayActive ||
       submitConfirm ||
       showSupportModal ||
       showMediaToggleWarning ||
       timeUpState !== "idle"
     )
       setThemeMenuOpen(false);
-  }, [criticalOverlayActive, submitConfirm, showSupportModal, showMediaToggleWarning, timeUpState]);
+  }, [
+    criticalOverlayActive,
+    networkOverlayActive,
+    submitConfirm,
+    showSupportModal,
+    showMediaToggleWarning,
+    timeUpState,
+  ]);
 
   if (pendingRedirect) {
     return loadError ? (
@@ -3045,6 +3063,7 @@ export default function ContestPageClient() {
             <WorkspaceControls
               suspended={
                 criticalOverlayActive ||
+                networkOverlayActive ||
                 submitConfirm ||
                 showSupportModal ||
                 showMediaToggleWarning ||
@@ -3089,6 +3108,7 @@ export default function ContestPageClient() {
           finishDraftNeedsAttention={unsavedOnDevice.length > 0}
           finishReviewSuspended={
             criticalOverlayActive ||
+            networkOverlayActive ||
             showSupportModal ||
             showMediaToggleWarning ||
             timeUpState !== "idle"
@@ -3171,7 +3191,7 @@ export default function ContestPageClient() {
                 </RecoveryBannerRegion>
               )}
             </AnimatePresence>
-            {(!browserOnline || connection !== "online") && (
+            {!networkOverlayActive && (!browserOnline || connection !== "online") && (
               <Banner
                 status="warning"
                 container="section"
@@ -3308,6 +3328,34 @@ export default function ContestPageClient() {
           remainingQuestionCount={remainingQuestionCount}
         />
       </VStack>
+
+      <Dialog
+        className="contest-network-dialog"
+        ref={networkDialogRef}
+        tabIndex={-1}
+        isOpen={networkOverlayActive}
+        onOpenChange={() => {}}
+        purpose="required"
+        padding={6}
+        width="calc(var(--spacing-10) * 12)"
+        maxHeight="calc(100dvh - var(--spacing-8))"
+        aria-labelledby="network-disconnection-title"
+        aria-describedby="network-disconnection-assurance"
+      >
+        <VStack gap={4}>
+          <Heading level={2} id="network-disconnection-title">
+            Reconnecting to the exam server
+          </Heading>
+          <Text id="network-disconnection-assurance" role="status">
+            {connectionDraftAssurance(unsavedOnDevice.length === 0)}
+          </Text>
+          <HStack gap={3} align="center">
+            <Spinner />
+            <Text color="secondary">Your workspace will resume when the connection returns.</Text>
+          </HStack>
+          <Text color="secondary">Keep this app open. The contest timer continues to run.</Text>
+        </VStack>
+      </Dialog>
 
       {shouldShowFaceBlock && (
         <ContestOverlay labelId="face-block-title" critical alert dialogRef={faceBlockDialogRef}>

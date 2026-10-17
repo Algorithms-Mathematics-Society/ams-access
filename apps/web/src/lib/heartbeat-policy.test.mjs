@@ -70,6 +70,18 @@ test("recovery after a lock unlocks", () => {
   assert.equal(shouldLockEditor(state), false);
 });
 
+test("a browser disconnection locks immediately, without waiting for heartbeats", () => {
+  assert.equal(shouldLockEditor(initialHeartbeatState(), false), true);
+  assert.equal(shouldLockEditor(afterFailures(1), false), true);
+});
+
+test("browser recovery still waits for a healthy server after sustained heartbeat loss", () => {
+  const state = afterFailures(LOCK_AFTER_FAILURES);
+  assert.equal(shouldLockEditor(state, true), true);
+  assert.equal(shouldLockEditor(onSuccess(state, AT), true), false);
+  assert.equal(shouldLockEditor(onSuccess(state, AT), false), true);
+});
+
 test("never having reached the server is distinct from just having done so", () => {
   // These must not render the same. "We have never reached the exam server"
   // is a different problem from "we reached it a second ago".
