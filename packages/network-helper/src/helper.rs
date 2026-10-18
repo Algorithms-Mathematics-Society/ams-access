@@ -310,6 +310,18 @@ struct Response<'a> {
 
 pub fn run() {
     let socket_path = bind_socket_path();
+
+    // Started by launchd on demand: it owns the socket, and the helper leaves
+    // once idle. An older plist (or a manual run) binds and stays up.
+    #[cfg(target_os = "macos")]
+    if let Some(listener) = launchd_listener() {
+        secure_socket(socket_path);
+        eprintln!("AMS network helper started on demand on {socket_path}");
+        serve(listener, true);
+        eprintln!("AMS network helper idle; exiting until the next request");
+        return;
+    }
+
     let _ = std::fs::remove_file(socket_path);
 
     // Close the mode TOCTOU: a socket node is created with `0777 & ~umask`, so
@@ -361,9 +373,18 @@ pub fn run() {
     }
 
     eprintln!("AMS network helper ready on {socket_path}");
+    serve(listener, false);
+}
 
+/// Accept clients until the listener fails or, with `exit_when_idle`, until
+/// no client has connected or been served for `IDLE_EXIT`.
+fn serve(listener: UnixListener, exit_when_idle: bool) {
     let connections = Arc::new(ConnectionLimiter::new(MAX_CONNECTIONS));
-    for stream in listener.incoming() {
+    loop {
+        if exit_when_idle && !client_waiting(&listener, &connections) {
+            return;
+        }
+        let stream = listener.accept().map(|(stream, _)| stream);
         match stream {
             // Authenticate without reading peer-controlled data, before taking
             // a worker slot. Unauthorized peers get no blocking response write.
@@ -385,6 +406,55 @@ pub fn run() {
             Err(e) => eprintln!("AMS helper accept error: {e}"),
         }
     }
+}
+
+const IDLE_EXIT: Duration = Duration::from_secs(30);
+
+/// Wait for the next client. False once nothing has connected and no client
+/// has been in progress for `IDLE_EXIT`. Exiting is safe at any point after
+/// that: launchd keeps the socket, holds any connection that arrives, and
+/// starts the helper again for it.
+fn client_waiting(listener: &UnixListener, connections: &ConnectionLimiter) -> bool {
+    let mut idle_since = Instant::now();
+    loop {
+        let mut poll = libc::pollfd {
+            fd: listener.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // A poll error is left for accept to report.
+        if unsafe { libc::poll(&mut poll, 1, 1000) } != 0 {
+            return true;
+        }
+        if connections.active.load(Ordering::Acquire) != 0 {
+            idle_since = Instant::now();
+        } else if idle_since.elapsed() >= IDLE_EXIT {
+            return false;
+        }
+    }
+}
+
+/// The listening socket launchd created from the plist's `Listeners` entry,
+/// when launchd started this process for it.
+#[cfg(target_os = "macos")]
+fn launchd_listener() -> Option<UnixListener> {
+    use std::os::fd::FromRawFd;
+    extern "C" {
+        fn launch_activate_socket(
+            name: *const libc::c_char,
+            fds: *mut *mut libc::c_int,
+            count: *mut libc::size_t,
+        ) -> libc::c_int;
+    }
+    let mut fds: *mut libc::c_int = std::ptr::null_mut();
+    let mut count: libc::size_t = 0;
+    let status = unsafe { launch_activate_socket(c"Listeners".as_ptr(), &mut fds, &mut count) };
+    if status != 0 || fds.is_null() {
+        return None;
+    }
+    let listener = (count > 0).then(|| unsafe { UnixListener::from_raw_fd(*fds) });
+    unsafe { libc::free(fds.cast()) };
+    listener
 }
 
 /// Pick the socket path to bind. On Linux prefer /run, fall back to /var/run if
