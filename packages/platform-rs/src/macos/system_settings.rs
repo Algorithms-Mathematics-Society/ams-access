@@ -21,6 +21,10 @@ use std::time::Duration;
 
 const DEFAULTS: &str = "/usr/bin/defaults";
 const KILLALL: &str = "/usr/bin/killall";
+// What System Settings runs to push trackpad and Dock preferences into the
+// live session. Without it the gesture recognizer keeps what it read at login.
+const ACTIVATE_SETTINGS: &str =
+    "/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings";
 
 const TRACKPADS: [&str; 2] = [
     "com.apple.AppleMultitouchTrackpad",
@@ -402,6 +406,9 @@ fn value_matches(domain: &str, key: &str, current_host: bool, expected: Option<&
 fn reload_services(reload: &Reload, applying: bool) {
     let _ = Command::new(KILLALL).arg("cfprefsd").bounded_output();
     if reload.dock {
+        // Restarting the Dock alone left three-finger swipes off after the
+        // exam: the values on disk were back, the running session was not.
+        let _ = Command::new(ACTIVATE_SETTINGS).arg("-u").bounded_output();
         let _ = Command::new(KILLALL).arg("Dock").bounded_output();
     }
     // Siri relaunches on demand, so only a running one needs to be stopped
