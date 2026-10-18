@@ -558,6 +558,35 @@ export async function reportEvents(
   });
 }
 
+/**
+ * One identity frame, at the start of the exam and at the end.
+ *
+ * Never throws. A failed upload must not interrupt a contest: the candidate
+ * has done nothing wrong, and the gap shows up on the invigilation roster
+ * where a human can act on it. Returns whether it landed, for the caller's
+ * own retry, not for anything the candidate sees.
+ */
+export async function uploadIdentityPhoto(
+  sessionUid: string,
+  kind: "entry" | "exit",
+  imageBase64: string
+): Promise<boolean> {
+  try {
+    await request(
+      "POST",
+      `/participant/sessions/${encodeURIComponent(sessionUid)}/identity-photo`,
+      { kind, image_base64: imageBase64, taken_at: new Date(serverNow()).toISOString() },
+      // Generous: this is tens of kilobytes on a contest-hall connection
+      // that a thousand people are sharing, and it is not on any path the
+      // candidate is waiting behind.
+      20_000
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** End the exam. Idempotent — a retry after a dropped response is safe. */
 export async function finishSession(sessionUid: string): Promise<ProctorSession> {
   return request<ProctorSession>(

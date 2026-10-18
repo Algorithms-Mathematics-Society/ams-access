@@ -500,6 +500,14 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
         if (fail === "storage") throw Error("blocked");
       },
     },
+    // The exit identity frame. Pushed to `calls` so the ordering assertion
+    // below can prove it is taken before the camera is released -- after
+    // that there is no stream left to photograph.
+    exitPhotoRef: {
+      current: async () => {
+        calls.push("identity-photo");
+      },
+    },
     cameraClosedRef: { current: false },
     cameraStreamRef: { current: {} },
     cameraSession: { release: () => calls.push("camera") },
@@ -558,6 +566,9 @@ test("auth redirect releases all native controls before navigation and retains r
   assert.deepEqual(fixture.calls, [
     "save",
     "configure_event_stream",
+    // Before "camera": the exit frame has to be taken while there is still
+    // a stream to take it from.
+    "identity-photo",
     "camera",
     "setFullscreen",
     "setAlwaysOnTop",

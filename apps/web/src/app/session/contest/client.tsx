@@ -43,6 +43,7 @@ import {
 } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
+import { captureFrame } from "@/lib/identity-photo";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -135,6 +136,7 @@ import {
   serverNow,
   startSession,
   submit as submitSolution,
+  uploadIdentityPhoto,
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
 import {
@@ -1737,6 +1739,13 @@ export default function ContestPageClient() {
     } catch {
       // ignore storage errors
     }
+    // The exit frame, taken while there is still a camera to take it from:
+    // everything below this releases the stream. Awaited rather than fired
+    // and forgotten, because the teardown that follows removes the only
+    // source it could come from -- but it cannot fail the exit, so the
+    // failure path is a shrug.
+    await exitPhotoRef.current();
+
     // The one place the camera is genuinely finished with: the exam is over
     // and the candidate is leaving the locked-down shell.
     cameraClosedRef.current = true;
@@ -2315,6 +2324,53 @@ export default function ContestPageClient() {
       detector = null;
     };
   }, [cameraStream, contestId]);
+
+  /**
+   * Take one identity frame and send it, swallowing every failure.
+   *
+   * The whole feature is evidence for a human, so a frame that does not
+   * arrive costs an invigilator a cross-check -- it must never cost a
+   * candidate their exam. Nothing here can throw into a caller, and nothing
+   * here is shown to the candidate.
+   */
+  async function captureAndUploadIdentityPhoto(
+    uid: string,
+    kind: "entry" | "exit"
+  ): Promise<void> {
+    try {
+      const frame = captureFrame(cameraVideoRef.current);
+      if (!frame) return;
+      await uploadIdentityPhoto(uid, kind, frame);
+    } catch {
+      // Deliberately silent. See above.
+    }
+  }
+
+  // The entry frame: once per session, as soon as there is a live picture to
+  // take it from. Keyed off the ref rather than a timer so it fires when the
+  // camera is genuinely delivering -- a frame grabbed before the first
+  // decode is a black rectangle, which `captureFrame` throws out anyway.
+  const entryPhotoDoneRef = useRef<string | null>(null);
+  // A ref rather than a captured `sessionId`, matching `redirectSaveRef`:
+  // `runExitTeardown` is lifted out of this component and run in isolation
+  // by candidate-auth.test.mjs, so anything it closes over has to be
+  // injectable. Defaults to a no-op, so a teardown that runs before a
+  // session exists does nothing rather than throwing on the way out.
+  const exitPhotoRef = useRef<() => Promise<void>>(async () => {});
+  exitPhotoRef.current = async () => {
+    if (!sessionId) return;
+    await captureAndUploadIdentityPhoto(sessionId, "exit");
+  };
+  useEffect(() => {
+    if (!sessionId || !cameraVideoReady || !cameraStream) return;
+    if (entryPhotoDoneRef.current === sessionId) return;
+    // Marked before the upload, not after: a retry loop on a flaky
+    // connection would otherwise photograph the candidate every few seconds
+    // for the length of the contest. One attempt, and the roster shows the
+    // gap if it missed.
+    entryPhotoDoneRef.current = sessionId;
+    void captureAndUploadIdentityPhoto(sessionId, "entry");
+  }, [cameraStream, cameraVideoReady, sessionId]);
 
   useEffect(() => {
     if (!cameraStream || !cameraVideoRef.current) return;
