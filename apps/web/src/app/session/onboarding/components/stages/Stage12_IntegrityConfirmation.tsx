@@ -49,6 +49,7 @@ export function Stage12_IntegrityConfirmation({
   blocked = false,
   blockReason,
   warningDetails = {},
+  platform,
 }: {
   results: Record<number, StageStatus>;
   warningDetails?: Record<number, string>;
@@ -57,6 +58,8 @@ export function Stage12_IntegrityConfirmation({
    * renders — it is the useful part — but nothing advances. */
   blocked?: boolean;
   blockReason?: string | null;
+  /** Device platform from `get_platform`; "macos" shows the stay-on-screen warning. */
+  platform?: string | null;
 }) {
   // Every stage before this one — this stage is the summary, and the one
   // after it is the secure start, so neither has a result to report.
@@ -149,6 +152,15 @@ export function Stage12_IntegrityConfirmation({
           </VStack>
         ))}
       </VStack>
+      {/* On macOS, switching apps, Spaces or desktops while the secure
+          workspace loads can leave AMS Access frozen. */}
+      {!blocked && platform?.toLowerCase() === "macos" && (
+        <Banner
+          status="error"
+          title="Do not leave this screen"
+          description="After clicking Continue, stay on this screen until your contest opens. Do not switch apps, press Cmd+Tab, or swipe to another desktop."
+        />
+      )}
       {!blocked && (
         <Button
           type="button"
