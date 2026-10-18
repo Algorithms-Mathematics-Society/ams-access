@@ -1626,7 +1626,8 @@ async fn network_helper_running() -> Result<bool, String> {
 }
 fn native_network_helper_running() -> bool {
     #[cfg(target_os = "macos")]
-    return platform_rs::macos::network_helper_running();
+    return platform_rs::macos::network_helper_running()
+        && !platform_rs::macos::network_helper_outdated();
     #[cfg(target_os = "linux")]
     return platform_rs::linux::network_helper_running();
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]

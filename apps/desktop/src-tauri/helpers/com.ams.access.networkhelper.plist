@@ -12,11 +12,23 @@
         <string>/Library/PrivilegedHelperTools/com.ams.access.networkhelper</string>
     </array>
 
-    <!-- Start immediately when bootstrapped; restart if it exits. -->
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
+    <!--
+        Started on demand: launchd owns the socket and launches the helper on
+        the first connection; the helper exits once idle. pf keeps its rules
+        without it, so nothing runs between exams.
+        SockPathMode 438 = 0666: the helper tightens it to root:staff 0660
+        once running, and every peer is checked against the pinned app path.
+    -->
+    <key>Sockets</key>
+    <dict>
+        <key>Listeners</key>
+        <dict>
+            <key>SockPathName</key>
+            <string>/private/var/run/ams-proctor.sock</string>
+            <key>SockPathMode</key>
+            <integer>438</integer>
+        </dict>
+    </dict>
 
     <!-- Helper must run as root so it can call pfctl. -->
     <key>UserName</key>
@@ -28,10 +40,7 @@
     <key>StandardErrorPath</key>
     <string>/var/log/ams-access-helper.log</string>
 
-    <!--
-        Restrict socket creation to /private/var/run — the daemon creates its
-        own socket file; this entry documents the expected filesystem path.
-    -->
+    <!-- The socket above lives in /private/var/run. -->
     <key>WorkingDirectory</key>
     <string>/private/var/run</string>
 </dict>

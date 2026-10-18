@@ -1632,6 +1632,13 @@ pub fn network_helper_running() -> bool {
     helper_send(r#"{"cmd":"ping"}"#).is_ok()
 }
 
+/// An installed helper from before on-demand start: launchd keeps it running
+/// all the time. Setup reinstalls it once so it runs only while needed.
+pub fn network_helper_outdated() -> bool {
+    std::fs::read_to_string(HELPER_PLIST_DEST)
+        .is_ok_and(|plist| !plist.contains("<key>Sockets</key>"))
+}
+
 /// Install the helper binary and LaunchDaemon plist, then bootstrap the daemon.
 ///
 /// `helper_binary` — path to the compiled `com.ams.access.networkhelper` binary
@@ -1659,7 +1666,8 @@ set helperDest to "{HELPER_BINARY_DEST}"
 set plistDest to "{HELPER_PLIST_DEST}"
 set configDir to "{HELPER_CONFIG_DIR}"
 set clientConfig to "{HELPER_CLIENT_CONFIG_DEST}"
-do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchctl bootout system " & quoted form of plistDest & " 2>/dev/null || true) && /usr/bin/install -o root -g wheel -m 755 " & quoted form of helperBinary & " " & quoted form of helperDest & " && /usr/bin/install -o root -g wheel -m 644 " & quoted form of plistSource & " " & quoted form of plistDest & " && /usr/bin/printf '%s\n' " & quoted form of clientBinary & " > " & quoted form of clientConfig & " && /usr/sbin/chown root:wheel " & quoted form of clientConfig & " && /bin/chmod 644 " & quoted form of clientConfig & " && /bin/launchctl bootstrap system " & quoted form of plistDest with administrator privileges with prompt "AMS Access needs to install a network component to restrict internet access during the exam. Enter your Mac password to continue.""#
+set helperSocket to "{HELPER_SOCKET}"
+do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchctl bootout system " & quoted form of plistDest & " 2>/dev/null || true) && /bin/rm -f " & quoted form of helperSocket & " && /usr/bin/install -o root -g wheel -m 755 " & quoted form of helperBinary & " " & quoted form of helperDest & " && /usr/bin/install -o root -g wheel -m 644 " & quoted form of plistSource & " " & quoted form of plistDest & " && /usr/bin/printf '%s\n' " & quoted form of clientBinary & " > " & quoted form of clientConfig & " && /usr/sbin/chown root:wheel " & quoted form of clientConfig & " && /bin/chmod 644 " & quoted form of clientConfig & " && /bin/launchctl bootstrap system " & quoted form of plistDest with administrator privileges with prompt "AMS Access needs to install a network component to restrict internet access during the exam. Enter your Mac password to continue.""#
     );
 
     let out = Command::new("osascript")
