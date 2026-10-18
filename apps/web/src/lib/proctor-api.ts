@@ -568,14 +568,20 @@ export async function reportEvents(
  */
 export async function uploadIdentityPhoto(
   sessionUid: string,
-  kind: "entry" | "exit",
-  imageBase64: string
+  kind: "entry" | "interval" | "exit",
+  imageBase64: string,
+  sequence: number
 ): Promise<boolean> {
   try {
     await request(
       "POST",
       `/participant/sessions/${encodeURIComponent(sessionUid)}/identity-photo`,
-      { kind, image_base64: imageBase64, taken_at: new Date(serverNow()).toISOString() },
+      {
+        kind,
+        sequence,
+        image_base64: imageBase64,
+        taken_at: new Date(serverNow()).toISOString(),
+      },
       // Generous: this is tens of kilobytes on a contest-hall connection
       // that a thousand people are sharing, and it is not on any path the
       // candidate is waiting behind.

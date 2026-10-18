@@ -43,7 +43,7 @@ import {
 } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
-import { captureFrame } from "@/lib/identity-photo";
+import { INTERVAL_MS, captureFrame } from "@/lib/identity-photo";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -2333,14 +2333,20 @@ export default function ContestPageClient() {
    * candidate their exam. Nothing here can throw into a caller, and nothing
    * here is shown to the candidate.
    */
+  // The client's own capture counter. It is the identity of a frame on the
+  // server, so a retry after a dropped connection replaces that frame
+  // rather than adding a near-identical one to the strip.
+  const photoSequenceRef = useRef(0);
+
   async function captureAndUploadIdentityPhoto(
     uid: string,
-    kind: "entry" | "exit"
+    kind: "entry" | "interval" | "exit",
+    sequence: number
   ): Promise<void> {
     try {
       const frame = captureFrame(cameraVideoRef.current);
       if (!frame) return;
-      await uploadIdentityPhoto(uid, kind, frame);
+      await uploadIdentityPhoto(uid, kind, frame, sequence);
     } catch {
       // Deliberately silent. See above.
     }
@@ -2359,7 +2365,10 @@ export default function ContestPageClient() {
   const exitPhotoRef = useRef<() => Promise<void>>(async () => {});
   exitPhotoRef.current = async () => {
     if (!sessionId) return;
-    await captureAndUploadIdentityPhoto(sessionId, "exit");
+    // The next number after whatever the timer reached, so the exit frame
+    // sorts last in the strip however long the paper ran.
+    photoSequenceRef.current += 1;
+    await captureAndUploadIdentityPhoto(sessionId, "exit", photoSequenceRef.current);
   };
   useEffect(() => {
     if (!sessionId || !cameraVideoReady || !cameraStream) return;
@@ -2369,8 +2378,29 @@ export default function ContestPageClient() {
     // for the length of the contest. One attempt, and the roster shows the
     // gap if it missed.
     entryPhotoDoneRef.current = sessionId;
-    void captureAndUploadIdentityPhoto(sessionId, "entry");
+    photoSequenceRef.current = 0;
+    void captureAndUploadIdentityPhoto(sessionId, "entry", 0);
   }, [cameraStream, cameraVideoReady, sessionId]);
+
+  // A frame every half hour for as long as the paper is open.
+  //
+  // Entry and exit alone cannot show that the same person sat the whole
+  // time -- a stand-in only has to be absent for the two moments that get
+  // photographed. The interval is what makes the strip evidence rather
+  // than two snapshots.
+  //
+  // Only while the paper is actually open: a candidate who has finished,
+  // or is sitting in the verification window before the start, is not
+  // under examination and should not be photographed.
+  useEffect(() => {
+    if (!sessionId || !cameraVideoReady || !cameraStream) return;
+    if (bellRung || !paperIsOpen({ endsAtMs: null, phase: contestPhase })) return;
+    const timer = setInterval(() => {
+      photoSequenceRef.current += 1;
+      void captureAndUploadIdentityPhoto(sessionId, "interval", photoSequenceRef.current);
+    }, INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [bellRung, cameraStream, cameraVideoReady, contestPhase, sessionId]);
 
   useEffect(() => {
     if (!cameraStream || !cameraVideoRef.current) return;

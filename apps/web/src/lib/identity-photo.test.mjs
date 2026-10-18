@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  INTERVAL_MS,
   MIN_PLAUSIBLE_BYTES,
   PHOTO_WIDTH,
   base64Bytes,
@@ -95,4 +96,12 @@ test("an empty frame is dropped even though encoding succeeded", () => {
     toDataURL: () => "data:image/jpeg;base64,AAECAw==",
   };
   assert.equal(captureFrame(video, () => blank), null);
+});
+
+test("the capture interval is short enough to catch a swap, long enough not to film", () => {
+  // Thirty minutes over a three-hour paper is seven frames: a strip a
+  // human reads in one glance, and a gap too short to swap seats inside.
+  assert.equal(INTERVAL_MS, 30 * 60 * 1000);
+  const threeHourPaper = Math.floor((3 * 60 * 60 * 1000) / INTERVAL_MS);
+  assert.equal(threeHourPaper, 6);
 });

@@ -34,7 +34,19 @@ export const PHOTO_QUALITY = 0.82;
  * black rectangle in front of an invigilator and call it evidence. */
 export const MIN_PLAUSIBLE_BYTES = 2_048;
 
-export type PhotoKind = "entry" | "exit";
+/**
+ * How often a frame is taken once the exam is running.
+ *
+ * Half an hour. Entry and exit alone cannot answer the question an
+ * invigilator actually has -- a stand-in only has to be absent for the two
+ * moments that get photographed -- so the gap has to be short enough that
+ * swapping seats is visible and long enough that nobody is filming the
+ * candidate. Thirty minutes over a three-hour paper is seven frames: a
+ * strip a human can read in one glance.
+ */
+export const INTERVAL_MS = 30 * 60 * 1000;
+
+export type PhotoKind = "entry" | "interval" | "exit";
 
 /** The JPEG payload, base64 without the data-URL prefix. */
 export function stripDataUrl(dataUrl: string): string {
