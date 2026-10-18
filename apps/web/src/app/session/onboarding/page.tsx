@@ -1350,6 +1350,7 @@ export default function OnboardingPage() {
                               onPass={advancePass}
                               blocked={Boolean(policyBlock) || Boolean(entryBlockedMessage)}
                               blockReason={policyBlock || entryBlockedMessage}
+                              platform={platform}
                             />
                           )}
                         </>
