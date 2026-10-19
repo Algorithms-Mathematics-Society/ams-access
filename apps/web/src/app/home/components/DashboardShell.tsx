@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode, type SVGProps } from "react";
+import { useState, type ReactNode } from "react";
 import { LogOut } from "lucide-react";
 import { AppShell, useAppShellMobile } from "@astryxdesign/core/AppShell";
 import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
@@ -11,20 +11,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { ThemeToggle } from "@/components/ThemeToggle";
-
-function AccessMark(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg {...props} viewBox="0 0 24 24" fill="none">
-      <path
-        d="M3 21 12 3 21 21"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+import { AccessLogo } from "@/components/AccessLogo";
 
 type Destination = "overview" | "settings" | "diagnostics";
 const destinations = [
@@ -70,9 +57,7 @@ export function DashboardShell({
       topNav={
         <TopNav
           label="Account"
-          heading={
-            <TopNavHeading heading="Access" logo={<Icon icon={AccessMark} color="accent" />} />
-          }
+          heading={<TopNavHeading logo={<AccessLogo />} />}
           endContent={
             <HStack gap={2} align="center">
               <ThemeToggle />

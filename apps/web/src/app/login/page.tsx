@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AccessLogo } from "@/components/AccessLogo";
 import { invoke } from "@ams/api-client";
 import { describeUnreachable } from "@/lib/network-error";
 import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
@@ -127,27 +128,7 @@ export default function LoginPage() {
         }}
       >
         <HStack as="header" gap={4} justify="between" align="center">
-          <HStack gap={3} align="center">
-            <svg
-              width="var(--spacing-6)"
-              height="var(--spacing-6)"
-              viewBox="0 0 172 162"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <path
-                d="M2.00043 162L87.0004 2L172 162"
-                stroke="var(--color-accent-base)"
-                strokeWidth="6"
-                strokeLinecap="square"
-                strokeLinejoin="miter"
-              />
-            </svg>
-            <Text type="large" weight="semibold">
-              Access
-            </Text>
-          </HStack>
+          <AccessLogo />
           <ThemeToggle />
         </HStack>
 
