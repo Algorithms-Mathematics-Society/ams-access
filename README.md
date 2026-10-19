@@ -3,9 +3,14 @@
 The contestant desktop app: Tauri/Rust native controls with a Next.js static frontend.
 
 - [Build and demonstrate the app](DEMO.md)
-- [Worktree reconciliation and review](reconciliation-review.md)
-- [Implementation and validation history](codex-review-2.md)
+- [Current design system](DESIGN.md)
+- [Candidate UI and verification guide](apps/web/UI.md)
+- [UI change history](UI_CHANGELOG.md)
+- [Release and packaging](RELEASE.md)
 
-The reconciled checkout is `ams-access-main`. Its reviewed source includes the Astryx UI, local recovery and event persistence fixes, and web performance improvements. The older `ams-access` worktree is an archived checkout, not a separate product version.
+The candidate UI uses Astryx and Geist with a shared monochrome spire brand.
+Current behavior and development commands are documented above. Historical
+reconciliation and native implementation reviews are records of earlier work,
+not instructions to use a particular machine's checkout or a current test pass.
 
 Run commands from the repository root. Use the committed `pnpm-lock.yaml` and `Cargo.lock`; dependency updates are separate work.

@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](../../../DESIGN.md) and
+> [the candidate UI guide](../../../apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # P1 — shared theme and primitives
 
 P1 installs the neutral Access theme, locally bundled Geist fonts, and shared Astryx controls. The native desktop development app uses `http://localhost:3000` with hot reload. Page-specific layout redesigns continue in P2–P8.

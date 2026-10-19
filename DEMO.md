@@ -1,6 +1,9 @@
 # Demo and build runbook
 
-Use the reconciled source described in [reconciliation-review.md](reconciliation-review.md). On this machine its checkout is `/home/user/AccessSoftware/ams-access-main`. Historical screenshot and task-verification documents describe earlier builds; this is the current runbook.
+Run from the current repository checkout. Use [DESIGN.md](DESIGN.md) and the
+[candidate UI guide](apps/web/UI.md) for the current UI, branding and verification
+boundaries. Old machine-specific checkout paths and review captures are not
+development prerequisites.
 
 ## Prepare once
 
@@ -42,13 +45,19 @@ python3 -m http.server 3010 --bind 127.0.0.1 --directory apps/web/out
 
 Open `http://127.0.0.1:3010/`. Port 3010 intentionally avoids the app's port-3000 development API routing. This preview uses the production API for real sign-in; it does not simulate successful authentication or native readiness.
 
-For repeatable UI regression evidence without a live backend, run in a second terminal:
+For an editable browser preview, use `pnpm --filter @ams/web dev:hosted` on port
+3001, or `pnpm dev:hosted` from `apps/web`. This does not start the native app.
+Development output uses `.next-dev`; production uses `.next` and `out`. Persistent
+Webpack caching is disabled in development to avoid large cache-pack buffer
+allocations; production caching is unchanged.
 
-```sh
-AMS_THEME_EVIDENCE_DIR=/tmp/ams-demo-evidence node scripts/performance-review-capture.mjs http://127.0.0.1:3010
-```
-
-The existing runner uses an isolated headless Chrome profile with browser fixtures and blocks external HTTP. It checks Home polling, editor draft recovery/style reuse, dialog focus, and resize behavior, and saves screenshots plus a manifest. It requires `/usr/bin/google-chrome`. These are fixture-based UI checks, not proof of native enforcement, real login, or judged submissions. The fixtures are not included in the packaged app. A `mock-contest-dev` URL alone is not a supported demo mode.
+Use the regular tests and focused checks in [apps/web/UI.md](apps/web/UI.md).
+Standalone browser capture/check runners remain in `scripts/`, with their fixture
+helpers and evidence documentation. They are optional tools, use Linux Chrome
+paths, and may encode assumptions from earlier UI snapshots; inspect them before
+using their results as a current gate. Browser
+presentation checks do not establish native enforcement, real login, or judged
+submission correctness. A `mock-contest-dev` URL is not a supported demo mode.
 
 ## Verify source before handoff
 

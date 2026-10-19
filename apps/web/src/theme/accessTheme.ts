@@ -39,7 +39,7 @@ export const accessTheme = defineTheme({
     "--color-track": ["#b8b8b8", "#606060"],
     "--color-skeleton": ["#dedede", "#303030"],
     "--color-shadow": ["#00000012", "#00000066"],
-    // Purple is reserved for focus, compact active markers, branding and Submit.
+    // Purple is reserved for focus, compact active markers and Submit; branding is monochrome.
     "--color-accent": ["#7c3aed", "#a78bfa"],
     "--color-text-accent": ["#6d28d9", "#c4b5fd"],
     "--color-icon-accent": ["#6d28d9", "#c4b5fd"],

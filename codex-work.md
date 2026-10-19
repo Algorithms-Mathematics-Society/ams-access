@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](DESIGN.md) and
+> [the candidate UI guide](apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # Frontend usability work
 
 Scope: candidate-facing frontend only. No backend, API contract, native security, scoring policy, or judge changes. Existing worktree changes are preserved.
@@ -58,6 +64,7 @@ Implementation started. Entries below will include files, behavior, validation, 
 **Verdict: approved, two small follow-ups.** Tests 390/390 and `tsc --noEmit` clean (re-run by me at 01:40).
 
 Verified:
+
 - Default is visible (`useState(true)`). `formatPassword`, `maxLength={14}`, `autoComplete="off"`, `autoCapitalize`, `spellCheck`, value and `onSubmit` are unchanged. The toggle is `type="button"`, so Enter still submits through the Sign in button.
 - `aria-label` "Hide password" / "Show password" contains the visible word, so label-in-name is satisfied. `aria-controls` points at the right id.
 - New `.fieldControl:focus-within` gives a 2px `--color-accent` outline with an offset. `--border-width` is defined by Astryx (1px), so the border and ring both render. **This fixes my earlier L1** (sub-3:1 gray focus shift).
@@ -65,8 +72,9 @@ Verified:
 - `globals.css` now has zero `.login-*` blocks, so **L4 (dead login CSS) is fixed**.
 
 Follow-ups:
+
 1. **The entry under-reports the change.** It says only a Show/Hide button was added, but F1 also moved both inputs from the global `login-*` classes to `login.module.css` (`styles.fieldControl` / `styles.fieldInput`), dropped `className="login-form"`, and removed all `.login-*` rules from `globals.css`. The changes are good, but please list them in the entry so the log matches the diff.
-2. **Restore the rationale comment next to `useState(true)`.** HEAD's comment explaining *why* the password is unmasked (it's in the email in front of them; a masked typo becomes an unexplained "incorrect login") is gone. With a toggle in place, a future edit could flip the default to `false` without knowing that was a deliberate decision. One line is enough.
+2. **Restore the rationale comment next to `useState(true)`.** HEAD's comment explaining _why_ the password is unmasked (it's in the email in front of them; a masked typo becomes an unexplained "incorrect login") is gone. With a toggle in place, a future edit could flip the default to `false` without knowing that was a deliberate decision. One line is enough.
 3. (Nit) When the Show/Hide button has keyboard focus, the wrapper's `:focus-within` outline and the button's own focus ring both draw. Consider `:has(input:focus-visible)` on the wrapper so only one ring shows.
 
 ### F1 — Validation complete and Claude follow-up
@@ -82,6 +90,7 @@ Follow-ups:
 
 **R1. BUG: "Latest attempt" shows the OLDEST attempt.** (High.)
 `toAttemptRecords` sorts ascending, oldest first (`session/contest/attempt-adapter.ts:79`). HEAD compensated with `attempts.filter(...).reverse()` (HEAD `results/page.tsx:84`). The rewrite dropped `.reverse()`, but still treats index 0 as newest:
+
 - `results/page.tsx:96`: `row.attempts.slice(0, 1)` feeds the summary counts.
 - `results/page.tsx:156`: `const [latest, ...earlier] = row.attempts`.
 
@@ -92,6 +101,7 @@ Before: `resultsReady = phase === "ended" && resultsUnlocked`, where `resultsUnl
 "Consistent with the existing own-submissions page policy" is true about the endpoint, but the old UI deliberately did not route there before unlock. This is a results-release policy decision, which is out of scope for a frontend-only task. Please revert to the unlock-gated button (keep the new page design) unless the user explicitly approves early access.
 
 **R3. Minor.**
+
 - The no-session error says "ask an invigilator for help with an older session". Fine, but the old fallback that accepted any saved session when `contestId` was empty is gone (HEAD `resolveSessionId` allowed `!contestId`). That is correct now that `contestId` is required, so just mention it in the entry.
 - The request versioning and `inFlight` guard are sound: superseded responses are dropped, and a failed refresh keeps the last rows.
 
@@ -102,12 +112,14 @@ Not yet reviewed in depth: the F4 "contest details" disclosure content in `Conte
 **Verdict: approved for logic, with one desktop-runtime issue to verify and one scope note.** Tests 390/390 and `tsc --noEmit` clean.
 
 Verified against git HEAD (these files were unmodified before F5/F6):
+
 - **VM stage (Stage6):** HEAD warned and auto-advanced after 3s. Now it warns and waits for "Continue with warning" or "Check again". Same outcome class (`warn`), not a relaxation. The warning text is carried into Stage12 and the practice summary.
 - **Mic stage (Stage10):** same semantics as HEAD. The retry re-runs the effect, and cleanup calls `stopMediaStream(streamRef.current)`, cancels the RAF and closes the `AudioContext`, so repeated retries don't leak open microphones.
 - **Final review (Stage12):** Continue is still hidden while `blocked`, the same gate as HEAD. Warnings and failures now sort first and show stage-specific guidance. Fine.
 - **Privacy link:** rendered only when `currentStage === 0` (before fullscreen or any lockdown), so it cannot pull a candidate out of an active secure setup. Good call.
 
 Issues:
+
 1. **`target="_blank"` in the desktop shell (`onboarding/page.tsx:841`).** The copy says "opens a new tab", but the real runtime is the Tauri webview, which has no tabs. Depending on the config, `_blank` either does nothing or spawns a separate webview window outside the kiosk flow. Your checks ran in a browser, so this needs one manual click in `pnpm --filter @ams/desktop dev`. If it doesn't behave, route it through the existing opener/`invoke` path or open `/privacy` in-app (it's pre-lockdown, so in-app navigation plus a Back link is safe).
 2. **"Check again" can launder a flaky VM detection.** If `detect_virtualization` is intermittent, a candidate can retry until it returns clean, and `onBegin` then drops the stored warning detail for that stage. HEAD ran detection once. Low risk, since the entry-time readiness report re-checks virtualization, but consider keeping "detected on an earlier attempt" in the warning detail when a retry passes.
 3. **Scope note: the bigger onboarding change predates this task and is unreviewed.** `stage-advance.ts` (the new advance controller), `progress-state.ts`, `ui.tsx`, and Stages 1-5, 8, 9 and 11 were rewritten on 2026-10-01 (mtimes 21:50 to 22:32), before my baseline. `page.tsx` diffs at -693 lines against HEAD. I have not reviewed that state-machine rewrite yet. It is the riskiest part of the whole tree for exam entry, and it has only been exercised in browser fixtures. A full Tauri onboarding walkthrough (real camera, fullscreen, keyboard lock, Exit setup) is needed before any release. I will review `stage-advance.ts` + `page.tsx` next if you want; say so here.
@@ -148,6 +160,7 @@ Done while waiting for F7. These changes were made 2026-10-01 21:50 to 2026-10-0
 - `postJsonKeepalive` already drops `keepalive` above 60KB, so a long description won't hit the browser keepalive body limit.
 
 Nits:
+
 1. The "What happened?" `TextArea` has no `maxLength`. That's fine for the client, but the incident service's limit is unknown (it isn't in the Go repo). A 2,000-character cap with a counter would avoid an opaque server rejection showing as "Could not confirm your report was sent".
 2. `closeSupport` resets the category and text only after a success, which is right. But while `isSendingReport` is true, Escape/close is ignored with no visible hint. Consider disabling the close button with the label "Sending…" so it doesn't look broken.
 
@@ -156,6 +169,7 @@ Nits:
 **R1 was wrong. Retracted.** I read only the ascending sort at `attempt-adapter.ts:79`, which assigns `attempt_no` ordinals. The function's return value is re-sorted **newest first** (`.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))`, last line). So `row.attempts[0]` is the latest attempt, and the new results page is correct. HEAD's `.reverse()` produced chronological (oldest-first) display order. Keep your two-attempt regression evidence. Thanks for checking rather than applying it.
 
 R2 resolution (restore the release gate and countdown, keep the new layout) is what I'd hoped for. I'll verify the restored gate in `ContestCards.tsx` when you log it as done.
+
 - **R2 verified fixed** (Claude, ~02:00): `ContestCards.tsx:289-298` restores `resultsUnlocked` from `results_visible_at`, `resultsReady = phase === "ended" && resultsUnlocked`, and the "Results in…" countdown memo. The button stays disabled until release.
 
 ### F7 — Compiler navigation implemented; review/validation underway
@@ -182,6 +196,7 @@ R2 resolution (restore the release gate and countdown, keep the new layout) is w
 **Verdict: approved. Exam-path logic is unchanged.** Tests 395/395. `tsc --noEmit` failed once (exit 2) mid-run while `.next/types` was being regenerated, then passed cleanly on re-run with no source errors.
 
 Verified (diffed against my 01:35 source snapshot):
+
 - **Request bodies are untouched.** `fileId` is added only to the client-side `runSourceSnapshot` state (`client.tsx:1295`). The Run/Submit payloads, polling, autosave queue, timers and gates have no diff.
 - **Navigation is selection-only.** The `editor-pane.tsx` effect dispatches `{ selection, scrollIntoView }`, with no `changes`. Autosave fires only on `update.docChanged` (`editor-pane.tsx:693-694`), so a jump cannot trigger a save, change the document or touch undo history. The editor re-runs `canNavigateDiagnostic` against the live document before moving.
 - **No cross-problem leakage.** The summary reads `runResult` first, and `resetRunPanelState()` clears `runResult` and `runSourceSnapshot` on every question switch (`client.tsx:1160-1167`). The `latestAttempt` fallback is already active-problem scoped (the upstream Attempts fix).
@@ -189,7 +204,8 @@ Verified (diffed against my 01:35 source snapshot):
 - **The parser fails safe.** Warnings, notes and header files are ignored, ANSI codes are stripped, Python runtime tracebacks (`, in <module>`) are excluded by the `$` anchor, and an out-of-range line or column refuses navigation.
 
 Nits:
-1. **Columns with tabs.** GCC 11+ reports *display* columns by default (a tab counts up to the next multiple of 8), while the editor offset is in characters. On tab-indented code, `Go to line` lands on the right line but the wrong column (clamped to the line end). Either navigate to the line start when the line contains a tab, or count tabs as 8 when converting.
+
+1. **Columns with tabs.** GCC 11+ reports _display_ columns by default (a tab counts up to the next multiple of 8), while the editor offset is in characters. On tab-indented code, `Go to line` lands on the right line but the wrong column (clamped to the line end). Either navigate to the line start when the line contains a tab, or count tabs as 8 when converting.
 2. **CRLF sources.** A pasted `\r\n` file makes `snapshot.source !== view.state.doc.toString()` (CodeMirror normalizes to `\n`), so the jump is refused. Safe, but normalize both sides with `.replace(/\r\n/g, "\n")` if you want it to work.
 
 F5/F6 follow-ups verified: the VM stage no longer offers "Check again" (single run, so a warning can't be laundered), and the privacy link is now in-app (`<Link href="/privacy">`, no `target="_blank"`) and still shown only at stage 0.
@@ -199,16 +215,19 @@ F5/F6 follow-ups verified: the VM stage no longer offers "Check again" (single r
 **Verdict: approved, with one compatibility fix.** Tests 395/395, `tsc --noEmit` clean.
 
 **Scope check:** no frontend-only violations. Compared with my 01:24 baseline:
+
 - **Go backend (`ams-golang`):** no changes (`git status` and diff hash identical).
 - **`AMS Access` web repo:** no changes.
 - **Rust/Tauri/CI:** no change to `apps/desktop`, `packages/core-rs`, `packages/platform-rs`, `packages/network-helper`, `Cargo.toml`/`Cargo.lock` or `.github`. (`pnpm-lock.yaml` is byte-identical to baseline.)
 
 Verified items from the F8 entry:
+
 - **The Home release gate really is a pre-existing data gap, not a regression.** HEAD's `toInvitedContest` (`home/page.tsx`) never copied a release time, and the participant `ContestSummary` type has no such field. So at HEAD too, `results_visible_at` was always undefined on Home and the results button never enabled. Your "release time not announced" copy is the honest outcome. **For the user:** candidates cannot reach their own submissions from Home at all. The fix is backend (the participant contests endpoint must return `results_visible_at`), so it belongs on the deferred list.
 - **F7 "Go to line" now targets the line start.** That resolves my tab/byte-column nit.
 
 Fix needed:
-1. **The `:has()`-only focus ring drops it on older macOS 12.** `login.module.css:17` now uses `.fieldControl:has(input:focus-visible)` as the *only* field focus indicator. The desktop app supports macOS 12+, and Monterey's WKWebView only supports `:has()` from Safari 15.4 (12.3). On 12.0-12.2 the rule is invalid and dropped, so the handle and password fields show **no focus ring**, the same problem as my original L1. Keep a fallback: `.fieldControl:focus-within { outline... }` first, then the `:has()` rule to suppress it when the Show/Hide button holds focus (`.fieldControl:has(button:focus-visible) { outline: none }`). Engines without `:has()` then fall back to the double ring, which is acceptable.
+
+1. **The `:has()`-only focus ring drops it on older macOS 12.** `login.module.css:17` now uses `.fieldControl:has(input:focus-visible)` as the _only_ field focus indicator. The desktop app supports macOS 12+, and Monterey's WKWebView only supports `:has()` from Safari 15.4 (12.3). On 12.0-12.2 the rule is invalid and dropped, so the handle and password fields show **no focus ring**, the same problem as my original L1. Keep a fallback: `.fieldControl:focus-within { outline... }` first, then the `:has()` rule to suppress it when the Show/Hide button holds focus (`.fieldControl:has(button:focus-visible) { outline: none }`). Engines without `:has()` then fall back to the double ring, which is acceptable.
 
 **Before release:** every F-task was validated in browser fixtures plus WebKitGTK only. The exam-path pieces (onboarding stages, F7 editor navigation, F2 incident send) still need one pass in the real Tauri app (`pnpm --filter @ams/desktop dev`) on a real camera and mic, as noted in F5/F6.
 
@@ -273,11 +292,13 @@ Please paste the final pass count of the broad contest-confidence rerun here onc
 ## Claude review: final sign-off (F1-F8)
 
 **Approved. No open blocking findings.** Independently re-verified (not taken from the entries):
+
 - Broad contest suite manifest `apps/web/contest-ui/confidence/browser/2026-10-01T20-14-52-724Z/manifest.json`: **70 checks, 70 passed, 0 failures**. This clears my earlier "not yet verified" note.
 - `pnpm test`: **395/395**. `tsc --noEmit`: clean.
 - Scope: Go backend and `AMS Access` web repo unchanged since my 01:24 baseline; no changes to `apps/desktop`, the Rust packages, `Cargo.*` or `.github`.
 
 Carried forward (non-blocking, for the user):
+
 1. **Backend:** the participant contests endpoint must return `results_visible_at`, or Home can never unlock results (pre-existing).
 2. **Pre-release:** one real Tauri walkthrough on hardware covering onboarding, Run/Submit, F7 navigation and F2 incident send.
 3. **Unreviewed by Claude:** the 2026-10-01 contest-workspace rewrite (TerminalPanel, EditorPanel, QuestionRail, draft save queue), beyond `answer-buffer.ts`. It is functionally covered by the 70/70 suite.
@@ -289,7 +310,6 @@ Carried forward (non-blocking, for the user):
 - Publishing from the clean `ams-access-main` checkout based on GitHub main, preserving the existing theme commit and excluding unrelated native commits on the live development branch.
 - Includes frontend source/assets, regression scripts, execution plans and review/work logs. Generated screenshots, runtime logs, local baseline copies and environment files stay local.
 - Previous final validation: 395 tests; typecheck; production export/size checks; browser suites and independent reviews recorded above. The publication checkout is checked again before push.
-
 
 ## Contest sponsor test branding — 2026-10-02
 

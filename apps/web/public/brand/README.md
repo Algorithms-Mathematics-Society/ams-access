@@ -1,0 +1,25 @@
+# Access spire assets
+
+Current UI usage and visual rules: [DESIGN.md](../../../../DESIGN.md) and
+[UI.md](../../UI.md).
+
+Sources: the supplied `Logo system/Brand guidelines.pdf` (October 2026),
+`1  PRIMARY HORIZONTAL.png`, and these Figma references:
+
+- [Logo system](https://www.figma.com/design/FEhbQ0cMnzcStGfBK1K2pb/Untitled?node-id=19-27)
+- [Sized assets](https://www.figma.com/design/FEhbQ0cMnzcStGfBK1K2pb/Untitled?node-id=20-294)
+
+The SVGs retain the PDF's original spire and Geist Semibold letter outlines.
+Their view boxes include the required clear space. The UI uses black in light
+mode and white in dark mode. Do not stretch, outline, recolor or add effects.
+The horizontal logo renders at a wordmark cap height above the 24px minimum;
+use the standalone mark for compact placements.
+
+`apps/desktop/app-icon.svg` uses the square black tile and white spire from
+Figma's `app-icon-1024` design. Regenerate native icons from the repository root:
+
+```sh
+pnpm --filter @ams/desktop exec tauri icon app-icon.svg
+```
+
+The browser icon and Apple touch icon use the same desktop artwork.
