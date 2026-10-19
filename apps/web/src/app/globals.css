@@ -251,6 +251,13 @@
     box-shadow var(--transition-standard);
 }
 
+html.theme-changing *,
+html.theme-changing *::before,
+html.theme-changing *::after,
+html.theme-changing {
+  transition: none !important;
+}
+
 .text-display-title {
   font-size: 24px !important;
   font-weight: 600 !important;
@@ -936,53 +943,6 @@ html.light:not(.theme-dark-locked) .contest-question-button {
 .welcome-center--in {
   opacity: 1;
   transform: translate(-50%, -50%);
-}
-
-.welcome-logo-svg {
-  width: 84px;
-  height: 71px;
-  margin-bottom: 24px;
-  /* §Technical-Terminal: crisp vector mark — no neon drop-shadow/blur */
-}
-
-/* §Technical-Terminal: the ACCESS wordmark as the brand vector (solid #EDF0F7),
-   extracted from public/ACCESS_WORDMARK.svg — replaces the CSS text title. */
-.welcome-wordmark-svg {
-  display: block;
-  height: 30px;
-  width: 176px; /* viewBox 492×84 → aspect 5.857 at 30px tall */
-  margin: 0 0 11px;
-  /* Mask (not <img>) so the wordmark takes the theme text colour and flips:
-     near-white #fff in dark, plum-ink #231b30 in light. The asset's baked
-     #EDF0F7 fill is irrelevant under a mask. */
-  background: var(--theme-text);
-  -webkit-mask: url(/ACCESS_WORDMARK.svg) no-repeat center / contain;
-  mask: url(/ACCESS_WORDMARK.svg) no-repeat center / contain;
-}
-
-.welcome-wordmark {
-  font-family: var(--font-family-body);
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  /* compensate so the word is truly centred despite trailing tracking */
-  padding-left: 0.14em;
-  color: var(--theme-text);
-  text-transform: uppercase;
-  margin: 0 0 7px;
-  line-height: 1;
-}
-
-.welcome-byline {
-  font-family: var(--font-family-code);
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.42em;
-  padding-left: 0.42em;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  margin: 0 0 30px;
-  line-height: 1;
 }
 
 /* ── Tagline ── */

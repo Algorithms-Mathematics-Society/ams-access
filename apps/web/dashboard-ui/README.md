@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](../../../DESIGN.md) and
+> [the candidate UI guide](../../../apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # Dashboard UI — accepted review
 
 Latest app-page follow-up: [Pre-contest onboarding](../onboarding-ui/README.md) — Astryx setup screens, reviewed scrolling/recovery states, and production hydration correction.
@@ -14,17 +20,17 @@ Completed 2026-09-30. The app is served at **http://localhost:3000** with hot re
 
 Latest validation is recorded in [Claude review resolutions](../../../claude-review-resolution.md). The figures below are retained from the first dashboard slice.
 
-| Check | Result |
-| --- | --- |
-| Existing regression suite | 339 passed |
-| TypeScript / production export | Passed |
-| Static export budget | 6.87 MB / 45 MB |
-| Largest JS chunk budget | 0.45 MB / 0.49 MB |
-| Browser interaction/layout assertions | 60 passed |
-| Screenshots | 29 across 1440×1000, 1280×800, 800×700, 390×844, and 900×500 |
-| Enabled text contrast samples | 392 passed; minimum measured 6.51:1 |
-| Protected source comparisons | 20 passed against the subagent's pre-edit snapshot |
-| Native WebKitGTK 2.52.6 | Exported dashboard rendered at 1280×800 and 800×700 without horizontal page overflow |
+| Check                                 | Result                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Existing regression suite             | 339 passed                                                                           |
+| TypeScript / production export        | Passed                                                                               |
+| Static export budget                  | 6.87 MB / 45 MB                                                                      |
+| Largest JS chunk budget               | 0.45 MB / 0.49 MB                                                                    |
+| Browser interaction/layout assertions | 60 passed                                                                            |
+| Screenshots                           | 29 across 1440×1000, 1280×800, 800×700, 390×844, and 900×500                         |
+| Enabled text contrast samples         | 392 passed; minimum measured 6.51:1                                                  |
+| Protected source comparisons          | 20 passed against the subagent's pre-edit snapshot                                   |
+| Native WebKitGTK 2.52.6               | Exported dashboard rendered at 1280×800 and 800×700 without horizontal page overflow |
 
 [Accepted browser manifest](evidence/2026-09-30T14-38-41-049Z/manifest.json) · [Source review](validation/source-review.json) · [Native results](native/results.json) · [Build log](validation/build.log) · [Tests](validation/tests.log)
 

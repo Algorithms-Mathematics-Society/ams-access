@@ -1,0 +1,26 @@
+.logo,
+.mark {
+  --access-brand-ink: #ffffff;
+  display: block;
+  flex-shrink: 0;
+  background: var(--access-brand-ink);
+}
+
+:global(html.light:not(.theme-dark-locked)) .logo,
+:global(html.light:not(.theme-dark-locked)) .mark {
+  --access-brand-ink: #000000;
+}
+
+.logo {
+  width: calc(var(--spacing-10) * 5);
+  aspect-ratio: 351 / 82;
+  mask: url(/brand/access-logo.svg) center / contain no-repeat;
+  -webkit-mask: url(/brand/access-logo.svg) center / contain no-repeat;
+}
+
+.mark {
+  width: calc(var(--spacing-6) * 2);
+  aspect-ratio: 152 / 136;
+  mask: url(/brand/access-mark.svg) center / contain no-repeat;
+  -webkit-mask: url(/brand/access-mark.svg) center / contain no-repeat;
+}

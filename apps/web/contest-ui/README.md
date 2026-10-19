@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](../../../DESIGN.md) and
+> [the candidate UI guide](../../../apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # In-contest workspace — Astryx UI
 
 Completed on 2026-10-01 with delegated implementation and independent source/visual review. The workspace now follows Home and onboarding: neutral surfaces, readable text, consistent controls, restrained purple accents and clear separation between editing, running a sample, submitting a solution and finishing the contest.
@@ -16,16 +22,16 @@ Completed on 2026-10-01 with delegated implementation and independent source/vis
 
 ## Verification
 
-| Check | Result |
-| --- | --- |
-| Existing regression suite | 362 passed |
-| TypeScript / isolated production build | Passed |
-| Export / largest JS chunk | 6.97 MB / 45 MB; 0.46 MB / 0.49 MB |
-| Independent source audit | 147 passed against 264 protected hashes |
-| Chrome UI checks | 49 passed across 35 captures |
-| Text contrast | 388 samples passed; minimum measured 6.51:1 in accepted workspace captures |
-| Chrome runtime / console errors | None in accepted run |
-| Production WebKitGTK 2.52.6 | 13 captures passed; no runtime, console or hydration errors |
+| Check                                  | Result                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Existing regression suite              | 362 passed                                                                 |
+| TypeScript / isolated production build | Passed                                                                     |
+| Export / largest JS chunk              | 6.97 MB / 45 MB; 0.46 MB / 0.49 MB                                         |
+| Independent source audit               | 147 passed against 264 protected hashes                                    |
+| Chrome UI checks                       | 49 passed across 35 captures                                               |
+| Text contrast                          | 388 samples passed; minimum measured 6.51:1 in accepted workspace captures |
+| Chrome runtime / console errors        | None in accepted run                                                       |
+| Production WebKitGTK 2.52.6            | 13 captures passed; no runtime, console or hydration errors                |
 
 Chrome coverage includes six window sizes, question switching, draft retention, scratch creation/cancellation/removal, saved splitter position, editor/camera identity during collapse, support typing and focus containment, camera recovery, required-block layering, sample execution/results, hidden-test masking, compiler errors and contest completion states. Actual mouse-wheel scrolling reaches the editor on compact layouts. WebKit verifies desktop/short/narrow layouts, dialogs, dark lock and below-fold editor access.
 

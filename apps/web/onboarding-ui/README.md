@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](../../../DESIGN.md) and
+> [the candidate UI guide](../../../apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # Pre-contest onboarding — Astryx UI
 
 Completed and independently reviewed on 2026-10-01. The onboarding route now follows Home's neutral Astryx styling, with a clearer preparation introduction, responsive progress, consistent check panels, camera guidance, recovery feedback and final review.
@@ -14,16 +20,16 @@ Sixteen existing onboarding source files changed. Backend, API-client, native co
 
 ## Verification
 
-| Check | Result |
-| --- | --- |
-| Regression tests | 344 passed |
-| TypeScript and isolated production export | Passed |
-| Export size / largest JS chunk | 6.98 MB / 45 MB; 0.46 MB / 0.49 MB |
-| Independent source audit | 137 passed; 16 changed files out of 266 baseline files, all within onboarding |
-| Browser layout, interaction and reachability | 572 passed across 97 screen states, including actual wheel scrolling |
-| Text contrast sampling | 701 passed; minimum measured 6.29:1 |
-| Browser runtime/hydration errors | None; an existing Next smooth-scroll configuration warning remains on return to Home |
-| Production WebKitGTK 2.52.6 | 13 captures passed; one main landmark, no horizontal overflow, dark lock preserved, usable vertical scroll regions, zero hydration/console errors |
+| Check                                        | Result                                                                                                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Regression tests                             | 344 passed                                                                                                                                        |
+| TypeScript and isolated production export    | Passed                                                                                                                                            |
+| Export size / largest JS chunk               | 6.98 MB / 45 MB; 0.46 MB / 0.49 MB                                                                                                                |
+| Independent source audit                     | 137 passed; 16 changed files out of 266 baseline files, all within onboarding                                                                     |
+| Browser layout, interaction and reachability | 572 passed across 97 screen states, including actual wheel scrolling                                                                              |
+| Text contrast sampling                       | 701 passed; minimum measured 6.29:1                                                                                                               |
+| Browser runtime/hydration errors             | None; an existing Next smooth-scroll configuration warning remains on return to Home                                                              |
+| Production WebKitGTK 2.52.6                  | 13 captures passed; one main landmark, no horizontal overflow, dark lock preserved, usable vertical scroll regions, zero hydration/console errors |
 
 Browser coverage includes the intro, all twelve check/review screens, final preparation/countdown, incomplete rehearsal results and permission/fallback states. Viewports: 1440×1000, 1280×800, 900×500, 390×844 and 320×640, plus focused 320px error screens. Independent review corrected a low-contrast meter label, duplicate heading spacing and inaccessible lower controls before acceptance.
 

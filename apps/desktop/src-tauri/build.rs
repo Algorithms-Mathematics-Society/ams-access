@@ -55,6 +55,8 @@ const WINDOWS_APP_MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" stand
 "#;
 
 fn main() {
+    // Icon-only updates must rebuild the executable's embedded Windows resource.
+    println!("cargo:rerun-if-changed=icons/icon.ico");
     // Loader-level DLL-hijack hardening: set the default search for the exe's
     // statically-imported DLLs to DEFAULT_DIRS (app dir + System32 + user dirs),
     // dropping the insecure CWD/%PATH%. 0x1000 = LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
@@ -106,7 +108,10 @@ fn main() {
     }
     let manifest = WINDOWS_APP_MANIFEST.replace(EXECUTION_LEVEL_PLACEHOLDER, execution_level);
 
-    let attributes = tauri_build::Attributes::new()
-        .windows_attributes(tauri_build::WindowsAttributes::new().app_manifest(&manifest));
+    let attributes = tauri_build::Attributes::new().windows_attributes(
+        tauri_build::WindowsAttributes::new()
+            .window_icon_path("icons/icon.ico")
+            .app_manifest(&manifest),
+    );
     tauri_build::try_build(attributes).expect("failed to run tauri build script");
 }

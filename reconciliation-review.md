@@ -1,5 +1,10 @@
 # Worktree reconciliation — 2026-10-02
 
+Historical reconciliation record. Its checkout paths, UI-review links and test
+results describe that snapshot, rather than current validation or design rules.
+For current development use [DEMO.md](DEMO.md), [DESIGN.md](DESIGN.md) and
+[apps/web/UI.md](apps/web/UI.md).
+
 ## Source decision
 
 Canonical checkout: `/home/user/AccessSoftware/ams-access-main`.

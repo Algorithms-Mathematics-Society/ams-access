@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 import { type Theme, isValidTheme, resolveThemeFrom } from "./theme-core";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 
-import { syncThemeAttributes } from "./theme-bridge-core";
+import { syncThemeAttributes, withoutThemeTransition } from "./theme-bridge-core";
 
 const KEY = STORAGE_KEYS.THEME; // "ams_theme"
 
@@ -30,10 +30,13 @@ export function resolveTheme(): Theme {
 
 /** THE ONLY writer of the html theme class. */
 function apply(t: Theme): void {
-  const c = document.documentElement.classList;
-  c.remove(t === "dark" ? "light" : "dark");
-  c.add(t);
-  syncThemeAttributes();
+  withoutThemeTransition(() => {
+    const c = document.documentElement.classList;
+    c.remove(t === "dark" ? "light" : "dark");
+    c.add(t);
+    syncThemeAttributes();
+    notify();
+  });
 }
 
 /** Reads the applied DOM truth (the class the FOUC script / apply() set). */
@@ -58,13 +61,11 @@ function wireOnce(): void {
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
       if (storedTheme() === null) {
         apply(systemPrefersLight() ? "light" : "dark");
-        notify();
       }
     });
     window.addEventListener("storage", (e) => {
       if (e.key === KEY) {
         apply(resolveTheme());
-        notify();
       }
     });
   } catch {
@@ -88,7 +89,6 @@ export function setTheme(t: Theme): void {
     /* storage blocked — still apply for this session */
   }
   apply(t);
-  notify();
 }
 
 export function toggleTheme(): void {

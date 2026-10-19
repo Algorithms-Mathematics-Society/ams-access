@@ -6,6 +6,7 @@ import { Divider } from "@astryxdesign/core/Divider";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AccessLogo } from "@/components/AccessLogo";
 
 interface WelcomeScreenProps {
   onEnter: () => void;
@@ -34,19 +35,7 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
         }}
       >
         <HStack as="header" gap={4} justify="between" align="center">
-          <HStack gap={3} align="center">
-            <svg
-              viewBox="0 0 176 166"
-              fill="none"
-              aria-hidden="true"
-              style={{ width: "var(--spacing-6)", height: "var(--spacing-6)", flexShrink: 0 }}
-            >
-              <path d="M4 162L88 4L172 162" stroke="var(--color-accent-base)" strokeWidth="6" />
-            </svg>
-            <Text type="large" weight="semibold">
-              Access
-            </Text>
-          </HStack>
+          <AccessLogo />
           <ThemeToggle />
         </HStack>
 

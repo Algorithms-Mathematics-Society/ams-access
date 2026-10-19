@@ -17,6 +17,15 @@ To cut a release: bump `[workspace.package] version`, run
 `node scripts/check-versions.mjs`, fix the manifests it names, commit, then
 push a `v<version>` tag.
 
+### 3.1.0 preparation
+
+PR #139 contains the branding, UI fixes and 3.1.0 version bump. `CHANGELOG.md`
+is the release body used by the tag workflow; prior notes remain available at
+their release tags. Merge only after the PR gates pass, then tag the merged
+commit `v3.1.0`. The tag workflow creates a draft with platform installers and
+checksum manifests. Check every platform job and its artifacts before publishing
+the draft. Existing local 3.0.0 installers must be rebuilt to carry 3.1.0 metadata.
+
 ## What ships
 
 | Platform | Artifacts                   | Signed                   |

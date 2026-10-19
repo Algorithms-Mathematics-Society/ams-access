@@ -15,7 +15,9 @@ const nextConfig = {
   },
   // Disable server features — Tauri loads static files
   trailingSlash: true,
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
+    // Large cache-pack buffers exhaust memory on constrained development machines.
+    if (dev) config.cache = false;
     // Carve big third-party libs into their own chunks instead of letting them
     // merge into the large contest-route chunk. This keeps every single chunk
     // under the size budget and improves caching, while leaving the synchronous

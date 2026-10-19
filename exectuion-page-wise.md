@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](DESIGN.md) and
+> [the candidate UI guide](apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # Page-by-page execution plan: neutral theme with minimal purple
 
 Status: P0 and P1 complete and reviewed; page-specific migration continues with P2.
@@ -24,14 +30,14 @@ This work covers presentation and the UI inconsistencies identified during revie
 
 Theme coverage for this pass:
 
-| Area | Theme coverage |
-| --- | --- |
-| Welcome and Login | Neutral dark and neutral light |
-| Home, Settings, Device | Neutral dark; retain existing route dark lock |
-| Onboarding and Contest | Neutral dark; retain existing route dark lock |
-| Results | Neutral dark and neutral light |
-| Legal pages | Follow the shared theme instead of fixed cream styling |
-| Shared dialogs/loading/errors | Follow their host page, including dark-locked routes |
+| Area                          | Theme coverage                                         |
+| ----------------------------- | ------------------------------------------------------ |
+| Welcome and Login             | Neutral dark and neutral light                         |
+| Home, Settings, Device        | Neutral dark; retain existing route dark lock          |
+| Onboarding and Contest        | Neutral dark; retain existing route dark lock          |
+| Results                       | Neutral dark and neutral light                         |
+| Legal pages                   | Follow the shared theme instead of fixed cream styling |
+| Shared dialogs/loading/errors | Follow their host page, including dark-locked routes   |
 
 Extending light mode to the complete exam workflow is a separate pass. Do not remove route locks as part of this theme migration.
 
@@ -58,17 +64,17 @@ Extending light mode to the complete exam workflow is a separate pass. Do not re
 
 ### Purple usage budget
 
-| Element | Treatment |
-| --- | --- |
-| Small Access brand detail | Restrained purple permitted |
-| Active sidebar item | Neutral selected surface plus a thin purple indicator |
-| Active content/settings tab | Thin purple underline; readable text |
-| Keyboard focus | Visible purple outline with sufficient contrast |
-| Contest Submit action | The main solid-purple action in the exam workspace |
-| General primary actions | White on dark; black on light |
-| Secondary actions | Neutral outlined or quiet text treatment |
-| Panel backgrounds, avatars, shadows, inactive icons | Neutral |
-| Headings and long body text | Neutral text hierarchy |
+| Element                                             | Treatment                                             |
+| --------------------------------------------------- | ----------------------------------------------------- |
+| Small Access brand detail                           | Restrained purple permitted                           |
+| Active sidebar item                                 | Neutral selected surface plus a thin purple indicator |
+| Active content/settings tab                         | Thin purple underline; readable text                  |
+| Keyboard focus                                      | Visible purple outline with sufficient contrast       |
+| Contest Submit action                               | The main solid-purple action in the exam workspace    |
+| General primary actions                             | White on dark; black on light                         |
+| Secondary actions                                   | Neutral outlined or quiet text treatment              |
+| Panel backgrounds, avatars, shadows, inactive icons | Neutral                                               |
+| Headings and long body text                         | Neutral text hierarchy                                |
 
 Use accessible purple variants for text and filled controls rather than forcing one shade into every role. Avoid purple washes on the editor's active line and across large selected panels.
 
@@ -84,17 +90,17 @@ Use accessible purple variants for text and filled controls rather than forcing 
 
 Complete and verify each slice before proceeding. A checked task means implemented and verified, not just edited.
 
-| Order | Slice | Dependency | Deliverable |
-| --- | --- | --- | --- |
-| 0 | Baselines and theme/component discovery | Post-pull source | Current screenshots, state inventory, token mapping |
-| 1 | Shared theme and primitives | 0 | Fonts, tokens, controls, status and dialog conventions |
-| 2 | Welcome and Login | 1 | Entry flow establishes the visual direction |
-| 3 | Home shell, contests, readiness, resume | 1–2 | Coherent dashboard and navigation |
-| 4 | Settings and Device | 3 | Complete diagnostic and configuration surfaces |
-| 5 | Onboarding | 1, shared dialogs | Consistent setup sequence and recovery states |
-| 6 | Contest workspace | 1, 5 | Neutral exam surface with preserved behavior |
-| 7 | Results and legal pages | 1, 6 | Consistent completion and document views |
-| 8 | Shared-state and responsive audit | All slices | Verified route/state/theme coverage |
+| Order | Slice                                   | Dependency        | Deliverable                                            |
+| ----- | --------------------------------------- | ----------------- | ------------------------------------------------------ |
+| 0     | Baselines and theme/component discovery | Post-pull source  | Current screenshots, state inventory, token mapping    |
+| 1     | Shared theme and primitives             | 0                 | Fonts, tokens, controls, status and dialog conventions |
+| 2     | Welcome and Login                       | 1                 | Entry flow establishes the visual direction            |
+| 3     | Home shell, contests, readiness, resume | 1–2               | Coherent dashboard and navigation                      |
+| 4     | Settings and Device                     | 3                 | Complete diagnostic and configuration surfaces         |
+| 5     | Onboarding                              | 1, shared dialogs | Consistent setup sequence and recovery states          |
+| 6     | Contest workspace                       | 1, 5              | Neutral exam surface with preserved behavior           |
+| 7     | Results and legal pages                 | 1, 6              | Consistent completion and document views               |
+| 8     | Shared-state and responsive audit       | All slices        | Verified route/state/theme coverage                    |
 
 ## 4. Phase 0 — preparation
 
@@ -264,23 +270,23 @@ Files: `apps/web/src/app/session/onboarding/page.tsx`, `components/ui.tsx`, `com
 - [x] Prevent the progress header plus stage card from overflowing short windows; allow deliberate vertical scrolling.
 - [x] Standardize progress and waiting states without changing automatic/manual advance rules.
 
-| Stage | UI work | Required verification |
-| --- | --- | --- |
-| Intro / Practice run | Clear checklist, duration hint, monochrome Begin setup | Real setup and rehearsal remain distinguishable |
-| 1. Secure Full-Screen | Neutral illustration and status rows | Unavailable/fullscreen/retry states |
-| 2. Display Check | Readable display count and issue details | Single/multiple/unknown displays and organizer override |
-| 3. Keyboard Setup | Compact progress and platform recovery actions | Native failure and macOS Accessibility guidance |
-| 4. Setup Verification | Consistent check rows | Checking/pass/fail remain distinct |
-| 5. Application Check | Divided process list and clear remediation | Unknown, clean, flagged, and close-app failure states |
-| 6. Device Compatibility | Neutral device status block | Physical, virtualized, unavailable checks |
-| 7. Camera Setup | Consistent preview and retry/settings controls | Permission denial, missing device, disconnection, success |
-| 8. Face Scan | Neutral guide/crosshair with semantic tracking feedback | Loading, tracking, validation, completion, blocked/fallback |
-| 9. Presence Check | Consistent preview and sampling feedback | Confirmed and recorded-for-review outcomes |
-| 10. Microphone Check | Clear level meter and feedback | Waiting, detected, signal, and warning states |
-| 11. Connection Check | Aligned latency/quality/helper feedback | Reachable, timeout, helper unavailable |
-| 12. Final Review | Readable check summary and explicit Continue | Failed prerequisites still block entry |
-| 13. Entering Contest | Neutral waiting/countdown/transition view | Verification window, ended contest, successful entry |
-| Rehearsal summary | Ready/check/failed rows and relevant next actions | Nothing submitted; teardown and return home preserved |
+| Stage                   | UI work                                                 | Required verification                                       |
+| ----------------------- | ------------------------------------------------------- | ----------------------------------------------------------- |
+| Intro / Practice run    | Clear checklist, duration hint, monochrome Begin setup  | Real setup and rehearsal remain distinguishable             |
+| 1. Secure Full-Screen   | Neutral illustration and status rows                    | Unavailable/fullscreen/retry states                         |
+| 2. Display Check        | Readable display count and issue details                | Single/multiple/unknown displays and organizer override     |
+| 3. Keyboard Setup       | Compact progress and platform recovery actions          | Native failure and macOS Accessibility guidance             |
+| 4. Setup Verification   | Consistent check rows                                   | Checking/pass/fail remain distinct                          |
+| 5. Application Check    | Divided process list and clear remediation              | Unknown, clean, flagged, and close-app failure states       |
+| 6. Device Compatibility | Neutral device status block                             | Physical, virtualized, unavailable checks                   |
+| 7. Camera Setup         | Consistent preview and retry/settings controls          | Permission denial, missing device, disconnection, success   |
+| 8. Face Scan            | Neutral guide/crosshair with semantic tracking feedback | Loading, tracking, validation, completion, blocked/fallback |
+| 9. Presence Check       | Consistent preview and sampling feedback                | Confirmed and recorded-for-review outcomes                  |
+| 10. Microphone Check    | Clear level meter and feedback                          | Waiting, detected, signal, and warning states               |
+| 11. Connection Check    | Aligned latency/quality/helper feedback                 | Reachable, timeout, helper unavailable                      |
+| 12. Final Review        | Readable check summary and explicit Continue            | Failed prerequisites still block entry                      |
+| 13. Entering Contest    | Neutral waiting/countdown/transition view               | Verification window, ended contest, successful entry        |
+| Rehearsal summary       | Ready/check/failed rows and relevant next actions       | Nothing submitted; teardown and return home preserved       |
 
 Acceptance: all stage UIs follow one hierarchy; timers/gates/camera ownership/teardown are preserved. Native behavior must be checked in Tauri before claiming end-to-end completion.
 
@@ -342,7 +348,6 @@ Files: `components/CameraTile.tsx`, `components/FooterTrustStrip.tsx`, `componen
 
 Acceptance: the full workspace is usable at 1280 × 800; panel resizing and collapse do not hide key actions; autosave, timing, submission, active-problem Attempts, and lockdown behavior pass regression checks.
 
-
 Completed UI evidence: [change log](apps/web/contest-ui/CHANGELOG.md), [verification](apps/web/contest-ui/README.md), and [independent review](apps/web/contest-ui/validation/manual-review.md). 362 tests, 147 source checks, 49 browser checks across 35 captures, 388 contrast samples and 13 production WebKit captures passed. Existing editor fonts, security behavior and 48-hour-results policy copy remain preserved. Full native exam/OS verification remains separate from this UI slice.
 
 ## 11. Phase 7 — Results and legal documents
@@ -383,15 +388,15 @@ Shared files: `apps/web/src/components/HelpRequestModal.tsx`, `apps/web/src/comp
 
 Verification matrix:
 
-| Dimension | Checks |
-| --- | --- |
-| Desktop | 1280 × 800 default; 1440 × 1000; a shorter window |
-| Narrow layout | Login/Welcome/Results/legal at approximately 390 px; dashboard compact navigation and reachable scroll regions |
-| Dense workspace | Resize split panes, collapse rail/output, long titles, long compiler logs, many attempts |
-| Themes | Both supported themes; system preference; saved preference; route changes into and out of dark locks |
-| Accessibility | Keyboard-only navigation, focus visibility, dialog focus, labels, contrast, reduced motion |
-| Data states | Empty/loaded/offline/error; practice/active/scheduled/ended; permission denial and missing native data |
-| Native runtime | Camera lifecycle, fullscreen, keyboard/security checks, blocked overlays, exit teardown and recovery in Tauri |
+| Dimension       | Checks                                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| Desktop         | 1280 × 800 default; 1440 × 1000; a shorter window                                                              |
+| Narrow layout   | Login/Welcome/Results/legal at approximately 390 px; dashboard compact navigation and reachable scroll regions |
+| Dense workspace | Resize split panes, collapse rail/output, long titles, long compiler logs, many attempts                       |
+| Themes          | Both supported themes; system preference; saved preference; route changes into and out of dark locks           |
+| Accessibility   | Keyboard-only navigation, focus visibility, dialog focus, labels, contrast, reduced motion                     |
+| Data states     | Empty/loaded/offline/error; practice/active/scheduled/ended; permission denial and missing native data         |
+| Native runtime  | Camera lifecycle, fullscreen, keyboard/security checks, blocked overlays, exit teardown and recovery in Tauri  |
 
 Use the repository-compatible runtime (`node >=22.6`; Node 24.4.1 is installed). The default shell currently resolves Node 18, which cannot run the strip-types test command; select the supported runtime before invoking pnpm scripts.
 

@@ -7,6 +7,7 @@ import { CountdownBadge } from "./CountdownBadge";
 import { ContestOverlay } from "./ContestOverlay";
 import type { ClockSnapshot } from "../session-clock";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
 
 export interface FinishQuestionReview {
@@ -162,22 +163,7 @@ export function TopBar({
       }}
     >
       <HStack gap={3} align="center" style={{ flex: 1, minWidth: 0 }}>
-        <svg
-          width="28"
-          height="24"
-          viewBox="0 0 172 164"
-          fill="none"
-          aria-hidden="true"
-          style={{ flexShrink: 0 }}
-        >
-          <path
-            d="M2 162L87 2L172 162"
-            stroke="var(--color-text-purple)"
-            strokeWidth="5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <AccessMark />
         <Text type="label" maxLines={1}>
           {contest?.title ?? "Contest"}
         </Text>

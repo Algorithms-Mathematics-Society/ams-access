@@ -1,3 +1,9 @@
+> Historical UI record, archived as guidance on 19 October 2026. Preserve its
+> findings and checks as evidence of that snapshot. For current visual rules
+> and development instructions use [DESIGN.md](../../DESIGN.md) and
+> [the candidate UI guide](../../apps/web/UI.md). Earlier test totals,
+> screenshots and proposed changes are not a current pass or an active task.
+
 # Task 6 Camera Decouple — Runtime Verification (run on your dev machine)
 
 The re-parent moved the **visible** camera tile out of the question rail to a fixed bottom-left
