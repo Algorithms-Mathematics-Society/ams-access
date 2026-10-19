@@ -309,45 +309,6 @@ jobs:
         with:
           draft: true
           name: "AMS Access ${{ github.ref_name }}"
-          body: |
-            AMS Access ${{ github.ref_name }} — Windows, Linux and macOS.
-
-            **macOS builds are signed and notarized**, so they open without a
-            Gatekeeper warning. Both Apple Silicon and Intel are included.
-
-            **Windows installers are not code-signed.** SmartScreen will show
-            "Windows protected your PC" and the installer asks for
-            administrator — both are expected, and both are exactly what
-            malware looks like, so verify the SHA-256 below before running it.
-            We are not buying a code-signing certificate, so this is how the
-            installer works rather than a temporary state — the Microsoft
-            Store build avoids the warning entirely, at the cost of the
-            network firewall.
-
-            Running a contest on Windows? **Read
-            [WINDOWS-INSTALL.md](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/main/WINDOWS-INSTALL.md)
-            first.** It has the checksum steps, the two clicks that get past
-            SmartScreen (`More info` then `Run anyway` — the second is
-            invisible until you click the first, which is where people get
-            stuck), and what to do on a managed machine that offers no
-            override at all.
-
-            This build requires the v2 exam backend and will not work against
-            an older one; the server refuses mismatched clients with a message
-            saying so.
-
-            Checksums are attached as `SHA256SUMS-<target>.txt`, one per
-            platform. Put it beside your download and run, in that directory:
-
-            ```
-            sha256sum -c SHA256SUMS-x86_64-pc-windows-msvc.txt
-            ```
-
-            (Windows: `certutil -hashfile <installer> SHA256`, then compare by
-            eye.) Get the sums file from a different channel than the
-            installer where you can — a checksum served next to the file it
-            checks only proves the download was not corrupted.
-
-            See CHANGELOG for details.
+          body_path: CHANGELOG.md
           fail_on_unmatched_files: false
           files: ${{ env.RELEASE_FILES }}
