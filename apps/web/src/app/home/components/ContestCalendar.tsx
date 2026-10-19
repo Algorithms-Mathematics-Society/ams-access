@@ -25,16 +25,35 @@ export type ContestCalendarProps = {
 };
 
 /** Presentation-only schedule browser. Selecting a date never changes entry eligibility. */
-export const ContestCalendar = memo(function ContestCalendar({ contests, loading, error, onSelectContest }: ContestCalendarProps) {
+export const ContestCalendar = memo(function ContestCalendar(props: ContestCalendarProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  // Device locale, timezone and today's date are only known after hydration.
+  return mounted ? (
+    <LocalContestCalendar {...props} />
+  ) : (
+    <Text type="supporting" role="status">
+      Loading calendar…
+    </Text>
+  );
+});
+
+function LocalContestCalendar({ contests, loading, error, onSelectContest }: ContestCalendarProps) {
   const [selectedDate, setSelectedDate] = useState<ISODateString>(() => localDateKey(new Date()));
   const [focusDate, setFocusDate] = useState<ISODateString>(selectedDate);
-  const schedule = useMemo(() => contests.flatMap((contest) => {
-    // Practice is untimed, even if an old assignment still contains date fields.
-    if (contest.is_practice || !contest.start_at) return [];
-    const startsAt = new Date(contest.start_at);
-    if (!Number.isFinite(startsAt.getTime())) return [];
-    return [{ contest, startsAt, day: localDateKey(startsAt) }];
-  }).sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()), [contests]);
+  const schedule = useMemo(
+    () =>
+      contests
+        .flatMap((contest) => {
+          // Practice is untimed, even if an old assignment still contains date fields.
+          if (contest.is_practice || !contest.start_at) return [];
+          const startsAt = new Date(contest.start_at);
+          if (!Number.isFinite(startsAt.getTime())) return [];
+          return [{ contest, startsAt, day: localDateKey(startsAt) }];
+        })
+        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
+    [contests]
+  );
   const selectedEvents = schedule.filter((event) => event.day === selectedDate);
   const practiceCount = contests.filter((contest) => contest.is_practice).length;
   const missingDates = contests.length - practiceCount - schedule.length;
@@ -43,16 +62,27 @@ export const ContestCalendar = memo(function ContestCalendar({ contests, loading
   // Memoization must not freeze "next contest" after a start time passes.
   useEffect(() => {
     const current = Date.now();
-    if (now < current && schedule.some((event) => event.startsAt.getTime() >= now && event.startsAt.getTime() < current)) {
+    if (
+      now < current &&
+      schedule.some(
+        (event) => event.startsAt.getTime() >= now && event.startsAt.getTime() < current
+      )
+    ) {
       setNow(current);
       return;
     }
     if (!nextEvent) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.min(2_147_483_647, Math.max(1, nextEvent.startsAt.getTime() - current + 1)));
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(2_147_483_647, Math.max(1, nextEvent.startsAt.getTime() - current + 1))
+    );
     return () => clearTimeout(timer);
   }, [schedule, nextEvent, now]);
-  const selectedLabel = dateTimeFormatter({ weekday: "short", month: "short", day: "numeric" })
-    .format(new Date(`${selectedDate}T12:00:00`));
+  const selectedLabel = dateTimeFormatter({
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${selectedDate}T12:00:00`));
   function selectDate(date: ISODateString) {
     setSelectedDate(date);
     setFocusDate(date);
@@ -69,7 +99,12 @@ export const ContestCalendar = memo(function ContestCalendar({ contests, loading
           <Heading level={4} accessibilityLevel={2} id="contest-calendar-heading">
             Contest calendar
           </Heading>
-          <Button label="Today" variant="ghost" size="sm" onClick={() => selectDate(localDateKey(new Date()))} />
+          <Button
+            label="Today"
+            variant="ghost"
+            size="sm"
+            onClick={() => selectDate(localDateKey(new Date()))}
+          />
         </HStack>
         <Calendar
           mode="single"
@@ -80,12 +115,22 @@ export const ContestCalendar = memo(function ContestCalendar({ contests, loading
           aria-label="Contest dates"
           style={{ width: "100%", minWidth: 0, padding: 0 }}
         />
-        <VStack as="section" gap={2} aria-label="Selected date schedule" aria-live="polite" aria-busy={loading}>
+        <VStack
+          as="section"
+          gap={2}
+          aria-label="Selected date schedule"
+          aria-live="polite"
+          aria-busy={loading}
+        >
           <Text weight="medium">Starting {selectedLabel}</Text>
           {loading ? (
-            <Text type="supporting" role="status">Loading your schedule…</Text>
+            <Text type="supporting" role="status">
+              Loading your schedule…
+            </Text>
           ) : error && schedule.length === 0 ? (
-            <Text type="supporting" role="status">Schedule unavailable. Use Refresh beside Assigned contests to try again.</Text>
+            <Text type="supporting" role="status">
+              Schedule unavailable. Use Refresh beside Assigned contests to try again.
+            </Text>
           ) : (
             <>
               {error && <Text type="supporting">Showing the last available schedule.</Text>}
@@ -97,13 +142,22 @@ export const ContestCalendar = memo(function ContestCalendar({ contests, loading
                       style={{ paddingInline: 0, minWidth: 0, minHeight: "var(--spacing-10)" }}
                       onClick={() => onSelectContest(contest.id)}
                       endContent={<Icon icon="chevronRight" size="sm" color="secondary" />}
-                      label={<Text maxLines={2} style={{ overflowWrap: "anywhere" }}><VisuallyHidden>Show contest: </VisuallyHidden>{contest.title}</Text>}
-                      description={dateTimeFormatter({ hour: "numeric", minute: "2-digit" }).format(startsAt)}
+                      label={
+                        <Text maxLines={2} style={{ overflowWrap: "anywhere" }}>
+                          <VisuallyHidden>Show contest: </VisuallyHidden>
+                          {contest.title}
+                        </Text>
+                      }
+                      description={dateTimeFormatter({ hour: "numeric", minute: "2-digit" }).format(
+                        startsAt
+                      )}
                     />
                   ))}
                 </List>
               ) : (
-                <Text type="supporting" role="status">No contests start on this day.</Text>
+                <Text type="supporting" role="status">
+                  No contests start on this day.
+                </Text>
               )}
               {nextEvent && nextEvent.day !== selectedDate && (
                 <Button
@@ -119,14 +173,17 @@ export const ContestCalendar = memo(function ContestCalendar({ contests, loading
         </VStack>
         <VStack gap={1}>
           <Text type="supporting">Dates and times are shown in your local time.</Text>
-          {!loading && practiceCount > 0 && <Text type="supporting">Practice contests are untimed.</Text>}
+          {!loading && practiceCount > 0 && (
+            <Text type="supporting">Practice contests are untimed.</Text>
+          )}
           {!loading && missingDates > 0 && (
             <Text type="supporting">
-              {missingDates} {missingDates === 1 ? "contest has" : "contests have"} no confirmed start date.
+              {missingDates} {missingDates === 1 ? "contest has" : "contests have"} no confirmed
+              start date.
             </Text>
           )}
         </VStack>
       </VStack>
     </Card>
   );
-});
+}
