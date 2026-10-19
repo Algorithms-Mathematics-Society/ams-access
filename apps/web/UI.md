@@ -172,5 +172,12 @@ The October 19 verification passed all 557 web tests with serial execution,
 TypeScript, version consistency, 74 local documentation links and all production
 export/size-budget checks. The build used process-local `CIRCLE_NODE_TOTAL=2`
 to limit worker concurrency. Desktop script tests passed 15 checks with one
-skipped. All 97 proposed cleanup paths remain present. Native installers were
-not rebuilt or executed, and live assessment behavior was not retested.
+skipped. All 97 proposed cleanup paths remain present.
+
+A later Windows icon check reproduced a stale embedded executable icon after
+the source artwork had changed. Cargo now tracks the ICO, and the executable,
+NSIS installer and uninstaller explicitly select it. Rebuilt release EXE and
+NSIS setup files contain all six current icon images; the MSI Icon table matches
+the ICO byte for byte. The updated desktop suite passed 17 tests with one skipped.
+Those installers were not installed, and MSIX, non-Windows packages and live
+assessment behavior were not retested by the agent.

@@ -9,6 +9,29 @@ const repoRoot = path.resolve(scriptDir, "../../../..");
 
 const read = (relative) => readFile(path.join(repoRoot, relative), "utf8");
 
+test("Windows executable rebuilds its embedded icon when the artwork changes", async () => {
+  const build = await read("apps/desktop/src-tauri/build.rs");
+  assert.match(build, /cargo:rerun-if-changed=icons\/icon\.ico/);
+  assert.match(build, /\.window_icon_path\("icons\/icon\.ico"\)/);
+});
+
+test("Windows installers and Store tiles use the shared icon assets", async () => {
+  const config = JSON.parse(await read("apps/desktop/src-tauri/tauri.conf.json"));
+  const icon = "icons/icon.ico";
+  assert.ok(config.bundle.icon.includes(icon));
+  assert.equal(config.bundle.windows.nsis.installerIcon, icon);
+  assert.equal(config.bundle.windows.nsis.uninstallerIcon, icon);
+  for (const file of config.bundle.icon) {
+    assert.ok((await readFile(path.join(repoRoot, "apps/desktop/src-tauri", file))).length);
+  }
+  const manifest = await read("apps/desktop/msix/AppxManifest.xml");
+  const staging = await read("apps/desktop/msix/build-msix.ps1");
+  for (const [, logo] of manifest.matchAll(/Assets\\([^"<]+\.png)/g)) {
+    assert.ok((await readFile(path.join(repoRoot, "apps/desktop/src-tauri/icons", logo))).length);
+    assert.ok(staging.includes(`"${logo}"`), `${logo} must be staged into the MSIX`);
+  }
+});
+
 test("Windows restricted-process handling is detection-only", async () => {
   const [windows, desktop, resolveModal] = await Promise.all([
     read("packages/platform-rs/src/windows/mod.rs"),

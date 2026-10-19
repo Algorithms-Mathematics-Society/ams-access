@@ -2,6 +2,13 @@
 
 ## 2026-10-19
 
+- Fixed incremental Windows builds retaining the old embedded executable icon:
+  Cargo now tracks the ICO and the Windows resource, NSIS installer and
+  uninstaller explicitly select it. MSI and MSIX retain the shared generated
+  icon sources. Previously built installers must be rebuilt.
+  Rebuilt the Windows release EXE, NSIS setup EXE and MSI; verified all six ICO
+  images in both executables and an exact ICO match in the MSI Icon table.
+  Updated desktop regression checks passed 17 tests with one skipped.
 - Consolidated current visual rules in `DESIGN.md` and route/development guidance
   in `apps/web/UI.md`; replaced superseded standalone UI guidance with pointers
   and marked historical reviews as archival. Browser runners, fixtures, evidence,

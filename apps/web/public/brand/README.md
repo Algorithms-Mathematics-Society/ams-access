@@ -23,3 +23,9 @@ pnpm --filter @ams/desktop exec tauri icon app-icon.svg
 ```
 
 The browser icon and Apple touch icon use the same desktop artwork.
+
+Windows embeds `src-tauri/icons/icon.ico` in the app executable. `build.rs`
+tracks that file so icon-only updates invalidate Cargo's cached resource.
+NSIS installer/uninstaller icons explicitly use the same ICO; MSI uses the
+bundle icon and MSIX copies the generated Store/Square PNGs. Rebuild installers
+after regenerating artwork: existing EXE/MSI/MSIX files retain their old icons.
