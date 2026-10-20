@@ -1,5 +1,16 @@
 # Astryx UI update
 
+## 2026-10-20
+
+- Added the supplied startup composition to Welcome with the spire growing
+  downward from its apex. Reused the original spire and Geist letter outlines;
+  kept white-on-black artwork and the reference tagline.
+- The intro plays once per app document, lasts about 1.8 seconds, supports
+  skipping and reduced motion, restores keyboard entry focus and has a timeout
+  fallback. Other routes and assessment behavior are unchanged.
+- Added startup lifecycle checks to the regular web suite. No video asset,
+  animation library, native build or release/version change is included.
+
 ## 2026-10-19
 
 - Fixed incremental Windows builds retaining the old embedded executable icon:

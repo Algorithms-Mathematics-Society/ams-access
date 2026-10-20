@@ -57,6 +57,12 @@ with fixed monochrome brand tokens. Never draw a substitute triangle, tint the
 mark purple, stretch it, outline it, rotate it or add gradients/glows/shadows.
 The native icon uses a black tile with the white spire.
 
+The startup intro is the one motion exception: the spire grows downward from
+its fixed apex, settles at its original proportions and appears above the
+outlined Access wordmark and supplied tagline. It uses white on black in both
+themes, then reveals the saved-theme Welcome screen. This sequence belongs only
+to startup, never routine route changes or the assessment workspace.
+
 ## Typography
 
 Geist Sans is the body and heading family, with Arial/sans-serif fallbacks.
