@@ -18,8 +18,12 @@ test("a setter's own sentence wins over anything generated", () => {
     "Copy the bytes yourself; memcpy is the exercise."
   );
   assert.equal(written.sentence, "Copy the bytes yourself; memcpy is the exercise.");
-  // The chip stays short either way -- a tab strip is not a paragraph.
-  assert.equal(written.chip, "Must not use memcpy");
+  // And the chip too. Deriving it from the pattern leaked the regex at a
+  // candidate -- `\\b(std::)?istringstream\\b` rendered as
+  // "Must use (std::)?istrings...", and an alternation the cleaner could not
+  // read fell back to a bare "Must not use", naming nothing. The sentence a
+  // person wrote is better than anything generated from the pattern.
+  assert.equal(written.chip, "Copy the bytes yourself; memcpy is the exercise.");
 });
 
 test("a generated sentence is a sentence", () => {
@@ -90,4 +94,30 @@ test("the setter's own sentence wins for the detail pane", () => {
 test("an unreadable label is passed through rather than blanked", () => {
   assert.equal(behaviourLanguage("").chip, "Behaviour check");
   assert.equal(behaviourLanguage("...").chip, "...");
+});
+
+test("a regex a contestant should never see does not reach the chip", () => {
+  // The rules this round actually ships, which accept both spellings so
+  // `using namespace std;` is not punished. Without a message the chip is
+  // derived from the pattern, and that is what used to leak.
+  const bare = ruleLanguage("must_include: \\b(std::)?istringstream\\b");
+  assert.ok(bare.chip.includes("istringstream"));
+
+  const written = ruleLanguage(
+    "must_include: \\b(std::)?istringstream\\b",
+    "Use std::istringstream to split each line"
+  );
+  assert.equal(written.chip, "Use std::istringstream to split each line");
+  assert.ok(!written.chip.includes("\\b"));
+  assert.ok(!written.chip.includes("(std::)?"));
+});
+
+test("an alternation no longer collapses to a chip that says nothing", () => {
+  // This one rendered as a bare "Must not use" before: readablePattern
+  // cannot clean an alternation, so the pattern contributed nothing.
+  const r = ruleLanguage(
+    "must_not_include: \\b(printf|sprintf|snprintf)\\s*\\(",
+    "Do not use printf. Format with streams"
+  );
+  assert.equal(r.chip, "Do not use printf. Format with streams");
 });

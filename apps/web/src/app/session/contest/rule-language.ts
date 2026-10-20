@@ -67,7 +67,14 @@ export function ruleLanguage(label: string, checkerMessage?: string): RuleLangua
   }
 
   const verb = kind === "must_include" ? "Must use" : "Must not use";
-  const chip = named ? `${verb} ${named}` : verb;
+
+  // The setter's own words win, for the tab as well as the detail pane.
+  // Deriving a chip from the pattern leaks the regex at a candidate --
+  // `\b(std::)?istringstream\b` became "Must use (std::)?istrings…", and an
+  // alternation that `readablePattern` could not clean fell back to a bare
+  // "Must not use", which names nothing at all. A rule is a sentence a
+  // person wrote; show that.
+  const chip = message || (named ? `${verb} ${named}` : verb);
   const generated = named
     ? kind === "must_include"
       ? `Your solution must use ${named}.`

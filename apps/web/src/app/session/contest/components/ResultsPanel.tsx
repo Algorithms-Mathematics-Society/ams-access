@@ -78,12 +78,16 @@ function verdictWord(code: string | null | undefined): string {
 /* Families, in the order the breakdown already uses. Named for candidates
    rather than for the judge: nobody outside this codebase calls a GTest case
    "behavior". */
+// What each kind of check is, in the candidate's terms. Deliberately no
+// weights, counts or scoring consequence: a candidate cannot see the
+// behaviour tests, so telling them those count treble is noise they cannot
+// act on. What they can act on is what the check looked at.
 const FAMILY = {
   io: { label: "Sample", hint: "Your output against the expected output." },
-  behavior: { label: "Behaviour", hint: "An automated check on what your code does." },
+  behavior: { label: "Behaviour", hint: "A check on what your code does." },
   [GATE_KIND]: {
     label: "Rule",
-    hint: "A constraint on the source itself. Breaking one zeroes this problem.",
+    hint: "A requirement about the code itself.",
   },
 } as const;
 
@@ -239,7 +243,7 @@ export function ResultsPanel({
             {brokenRules.length === 1 ? "A source rule was broken" : "Source rules were broken"}
           </Text>
           <Text type="supporting" color="secondary">
-            This zeroes the problem&apos;s partial credit, however the tests went.
+            Fix this before you submit again. Passing the tests is not enough on its own.
           </Text>
           {brokenRules.map((rule, index) => (
             <Text key={index} type="supporting">
