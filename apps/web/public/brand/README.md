@@ -24,6 +24,12 @@ pnpm --filter @ams/desktop exec tauri icon app-icon.svg
 
 The browser icon and Apple touch icon use the same desktop artwork.
 
+`access-wordmark.svg` isolates the unchanged Geist letter path from
+`access-logo.svg` for the stacked startup composition. `StartupAnimation.tsx`
+references the supplied `Logo system/Startup_animation.mp4` and keeps its
+monochrome mark/wordmark/tagline, with growth anchored at the top of the spire.
+The MP4 itself is not bundled in the app.
+
 Windows embeds `src-tauri/icons/icon.ico` in the app executable. `build.rs`
 tracks that file so icon-only updates invalidate Cargo's cached resource.
 NSIS installer/uninstaller icons explicitly use the same ICO; MSI uses the

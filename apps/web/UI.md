@@ -26,10 +26,36 @@ still own entry decisions.
 
 ## Brand assets
 
+### Startup intro
+
+`src/components/StartupAnimation.tsx` wraps Welcome on `/` only. Its CSS sequence
+uses the supplied `Logo system/Startup_animation.mp4` as a reference, reversing
+the spire's growth anchor from its base to its apex. The original SVG artwork
+stays sharp; no video decoder, external media or new runtime dependency is needed.
+The stacked wordmark retains the supplied Geist letter outlines, with the
+reference's “Let the work speak.” tagline.
+
+The monochrome intro lasts about 1.8 seconds, offers **Skip intro**, and plays
+once per document/app window. In-app navigation back to Welcome does not replay
+it; a full reload starts a new launch. Device reduced-motion preference bypasses
+the intro, including when enabled mid-animation. Welcome is inert during client
+playback; skipping with the keyboard restores focus to **Enter workspace**.
+A 2.1-second timer releases the screen if `animationend` is missed, and effect
+cleanup handles unmounts and React Strict Mode. Direct login, home and contest
+routes never mount the intro.
+
+Preview with `pnpm --filter @ams/web dev:hosted` and reload `/`. Use normal motion
+to inspect the top anchor, then reduced motion to verify immediate entry.
+The regular web suite includes `src/components/startup-animation.test.mjs` for
+skip/focus, repeat navigation, reduced motion, effect replay and timeout recovery.
+
+### Shared artwork
+
 `src/components/AccessLogo.tsx` exports the two supported UI placements:
 
 - `AccessLogo`: welcome, login, dashboard and device-setup headers.
 - `AccessMark`: compact contest header beside the contest title.
+- `AccessWordmark`: standalone outlined lettering for the stacked startup composition.
 
 Both use `public/brand/access-*.svg` with monochrome masks in
 `AccessLogo.module.css`. Their SVG view boxes preserve clear space, and the

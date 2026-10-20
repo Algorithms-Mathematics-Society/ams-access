@@ -1,31 +1,26 @@
-# AMS Access 3.1.0
+# AMS Access 3.1.1
 
-## Branding and UI
+## Startup animation
 
-- Updated Welcome, Login, Home, Device setup and the contest header to the
-  supplied monochrome Access spire and Geist wordmark.
-- Regenerated native app icons, Windows Store tiles, browser favicon and Apple
-  touch icon. Windows builds now refresh the executable's embedded icon when
-  artwork changes; installer and uninstaller icons use the same source.
-- Fixed theme switching briefly showing mismatched text and background colors.
-- Fixed dashboard calendar hydration when the build and device use different
-  locales or timezones.
-- Fixed the React font-style warning when switching contest result tabs.
-
-## Development and documentation
-
-- Disabled persistent Webpack caching in development to avoid the reproduced
-  cache-buffer allocation crash with `pnpm dev:hosted`. Production caching and
-  chunk splitting are unchanged.
-- Consolidated current design rules in `DESIGN.md` and route/development
-  guidance in `apps/web/UI.md`. Superseded plans point to these guides;
-  historical evidence, browser review tools, fixtures, tests and CI are retained.
+- Added a brief Welcome intro using the supplied Access animation as a reference,
+  with the spire growing downward from its fixed apex above the original Geist
+  wordmark and “Let the work speak.” tagline.
+- The intro lasts about 1.8 seconds and plays once per app document. Returning
+  to Welcome through in-app navigation does not replay it; a full reload does.
+- **Skip intro** ends playback and restores keyboard focus to **Enter workspace**.
+  Reduced-motion preferences bypass the intro, including changes made during
+  playback. A timeout prevents a missing animation event from blocking entry.
+- The animation uses local SVG/CSS artwork. No video, external media or new
+  animation dependency is bundled. Direct login, home and assessment routes
+  do not mount the intro.
+- Updated design, UI and artwork documentation, and added six startup lifecycle
+  regression tests to the web suite.
 
 ## Installation and compatibility
 
 - **Windows x64:** choose the `.msi` or `-setup.exe` installer. These are unsigned;
   SmartScreen may show "Windows protected your PC". See the
-  [Windows installation guide](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/v3.1.0/WINDOWS-INSTALL.md).
+  [Windows installation guide](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/v3.1.1/WINDOWS-INSTALL.md).
   MSI files may show the generic Windows Installer icon in Explorer; the
   installed app and shortcuts use Access branding.
 - **Linux x64:** choose `.deb`, `.rpm` or `.AppImage` and run the app as your
@@ -35,8 +30,8 @@
   platform builds and notarization.
 - This release uses the existing v2 exam backend at `https://api.amsaccess.com`.
   It does not introduce a new backend protocol or client data migration.
-- There is no automatic updater. Install the 3.1.0 package to upgrade. Older
-  installers retain their original icons; use a newly built 3.1.0 installer.
+- There is no automatic updater. Install the 3.1.1 package to upgrade. Older
+  installers retain their original icons; use a newly built 3.1.1 installer.
 - Microsoft Store/MSIX submission remains a separate workflow.
 
 ## Verify your download
@@ -56,5 +51,5 @@ On Windows, run `certutil -hashfile <installer> SHA256` and compare with
 `SHA256SUMS-x86_64-pc-windows-msvc.txt`. Obtain the expected checksum through
 a separate trusted channel when possible.
 
-[Changes since 3.0.0](https://github.com/Algorithms-Mathematics-Society/ams-access/compare/v3.0.0...v3.1.0)
-· [Previous release notes](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/v3.0.0/CHANGELOG.md)
+[Changes since 3.1.0](https://github.com/Algorithms-Mathematics-Society/ams-access/compare/v3.1.0...v3.1.1)
+· [Previous release notes](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/v3.1.0/CHANGELOG.md)

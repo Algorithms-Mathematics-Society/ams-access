@@ -1,5 +1,6 @@
 .logo,
-.mark {
+.mark,
+.wordmark {
   --access-brand-ink: #ffffff;
   display: block;
   flex-shrink: 0;
@@ -7,7 +8,8 @@
 }
 
 :global(html.light:not(.theme-dark-locked)) .logo,
-:global(html.light:not(.theme-dark-locked)) .mark {
+:global(html.light:not(.theme-dark-locked)) .mark,
+:global(html.light:not(.theme-dark-locked)) .wordmark {
   --access-brand-ink: #000000;
 }
 
@@ -23,4 +25,11 @@
   aspect-ratio: 152 / 136;
   mask: url(/brand/access-mark.svg) center / contain no-repeat;
   -webkit-mask: url(/brand/access-mark.svg) center / contain no-repeat;
+}
+
+.wordmark {
+  width: calc(var(--spacing-10) * 6);
+  aspect-ratio: 262 / 76;
+  mask: url(/brand/access-wordmark.svg) center / contain no-repeat;
+  -webkit-mask: url(/brand/access-wordmark.svg) center / contain no-repeat;
 }

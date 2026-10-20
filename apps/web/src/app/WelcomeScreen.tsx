@@ -83,6 +83,7 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
               <Button
                 type="button"
                 label="Enter workspace"
+                data-startup-focus
                 variant="primary"
                 size="lg"
                 onClick={onEnter}
