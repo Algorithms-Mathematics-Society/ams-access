@@ -17,20 +17,20 @@ To cut a release: bump `[workspace.package] version`, run
 `node scripts/check-versions.mjs`, fix the manifests it names, commit, then
 push a `v<version>` tag.
 
-### 3.1.0 preparation
+### 3.1.1 preparation
 
-PR #139 contains the branding, UI fixes and 3.1.0 version bump. `CHANGELOG.md`
+PR #141 contains the startup animation and 3.1.1 version bump. `CHANGELOG.md`
 is the release body used by the tag workflow; prior notes remain available at
 their release tags. Merge only after the PR gates pass, then tag the merged
-commit `v3.1.0`. The tag workflow creates a draft with platform installers and
+commit `v3.1.1`. The tag workflow creates a draft with platform installers and
 checksum manifests. Check every platform job and its artifacts before publishing
-the draft. Existing local 3.0.0 installers must be rebuilt to carry 3.1.0 metadata.
+the draft. Existing local 3.1.0 installers must be rebuilt to carry 3.1.1 metadata.
 
 ## What ships
 
 | Platform | Artifacts                   | Signed                   |
 | -------- | --------------------------- | ------------------------ |
-| Windows  | `.msi`, `-setup.exe`        | **No** — see below       |
+| Windows  | `.msi`, `-setup.exe`        | **No** â€” see below     |
 | Linux    | `.deb`, `.rpm`, `.AppImage` | n/a                      |
 | macOS    | `.dmg` (arm64 + Intel)      | signed **and notarized** |
 
@@ -50,7 +50,7 @@ malware. That is why the release body publishes SHA-256 sums for every
 artifact and tells people to check them. Candidates should be sent the hash
 through a channel other than the download link.
 
-No certificate is being bought — that is settled. The Microsoft Store build
+No certificate is being bought â€” that is settled. The Microsoft Store build
 avoids the warning entirely, because Microsoft signs it; see
 `apps/desktop/msix/README.md`. The signing scaffolding in `release.yml` stays
 inert unless secrets appear.
@@ -80,17 +80,17 @@ it because they run without the secret, and `tauri dev` missed it because
 
 macOS is in the release matrix: two `macos-latest` rows (Apple Silicon, and
 Intel cross-compiled on the same runner because GitHub retired the `macos-13`
-Intel runners — a job pinned to that label queues 24h and cancels the whole
+Intel runners â€” a job pinned to that label queues 24h and cancels the whole
 run, which killed v1.0.3 and v1.0.4).
 
-It was parked for a while because notarization returned `403 — A required
+It was parked for a while because notarization returned `403 â€” A required
 agreement is missing or has expired`, and an unnotarized `.dmg` is worse than
 none: Gatekeeper refuses to open it, so the candidate cannot run the app at
 all. **That 403 is an Apple-account state, not a code problem.** Apple
 publishes new Program License Agreement versions periodically and notarization
 stops until someone accepts the new one in App Store Connect.
 
-Before tagging a release that includes macOS, check the agreement is live —
+Before tagging a release that includes macOS, check the agreement is live â€”
 it takes one command on any Mac and costs nothing:
 
 ```
@@ -98,7 +98,7 @@ xcrun notarytool history --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --pas
 ```
 
 A 403 there means the agreement needs accepting at
-<https://developer.apple.com/account> and in App Store Connect → Business →
+<https://developer.apple.com/account> and in App Store Connect â†’ Business â†’
 Agreements. Anything else means notarization will work.
 
 `fail-fast: false` means a blocked Apple account costs a red macOS job rather
@@ -107,7 +107,7 @@ upload.
 
 **The six secrets this needs** are already set on the repository:
 `APPLE_CERTIFICATE` (base64 `.p12` holding a **Developer ID Application**
-certificate — not "Mac App Distribution", which cannot notarize),
+certificate â€” not "Mac App Distribution", which cannot notarize),
 `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
 `APPLE_PASSWORD` (an **app-specific** password from appleid.apple.com; the
 account password fails with an unhelpful 401) and `APPLE_TEAM_ID`.
@@ -118,7 +118,7 @@ account password fails with an unhelpful 401) and `APPLE_TEAM_ID`.
 ## There is no auto-updater
 
 Deliberate. A proctored client that can silently change itself between the
-readiness check and the contest is a liability — the binary that passed the
+readiness check and the contest is a liability â€” the binary that passed the
 checks would not be the one sitting the exam.
 
 `TAURI_SIGNING_PRIVATE_KEY` used to be set in CI. It did nothing: there is no
@@ -137,11 +137,11 @@ than a login screen that fails for no stated reason.
 CI already runs these on every non-draft PR, so a green PR is the real
 precondition:
 
-- `pnpm test` — guard tests across every package, including the Rust/TypeScript
+- `pnpm test` â€” guard tests across every package, including the Rust/TypeScript
   readiness-policy parity fixture.
 - `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`,
   `cargo fmt --check`.
-- **`bundle-smoke`** — a real `tauri build` on Linux, Windows and macOS that
+- **`bundle-smoke`** â€” a real `tauri build` on Linux, Windows and macOS that
   asserts an installer came out. macOS is included even though it is not
   released: it is the only job that compiles `platform-rs/src/macos/mod.rs`.
 
