@@ -6,6 +6,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,7 +71,7 @@ export function withStagedRuntime(runtime, staging, build) {
     // Never recurse through a junction or remove somebody else's replacement.
     if (!lstatSync(staging).isSymbolicLink() || realpathSync(staging) !== runtime)
       throw new Error(`Supervised runtime staging identity changed: ${staging}`);
-    rmSync(staging);
+    unlinkSync(staging);
   }
 }
 

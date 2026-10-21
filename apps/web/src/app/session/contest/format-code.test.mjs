@@ -65,3 +65,11 @@ test("empty and whitespace-only input come back untouched", () => {
   assert.equal(formatSource("", CPP), "");
   assert.equal(formatSource("   \n  ", CPP), "   \n  ");
 });
+
+test("formats a function beyond the initial parser viewport", () => {
+  const prefix = "// padding to exceed the initial parser viewport\n".repeat(500);
+  const input = prefix + "int main() {\nreturn 0;\n}";
+  const output = formatSource(input, CPP);
+  assert.equal(output.slice(0, prefix.length), prefix);
+  assert.equal(output.slice(prefix.length), "int main() {\n    return 0;\n}");
+});

@@ -10,6 +10,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   blockedMessage,
@@ -95,4 +96,11 @@ test("an unknown phase is treated as not-yet-open, never as live", () => {
   // someone to a contest that has not started.
   const decision = decideEntry(window("something_new"), START);
   assert.equal(shouldRunChecks(decision), false);
+});
+
+test("the start gate uses synchronized server time and has no client-side admission delay", () => {
+  const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
+  assert.match(source, /const now = serverNow\(\);\s*setWaitMs\(Math\.max\(0, startMs - now\)\)/);
+  assert.match(source, /if \(waitMs <= 0 && readyForStart\) \{\s*void finalizeSecureStart\(\)/);
+  assert.doesNotMatch(source, /START_JITTER_MS|startJitter|jitterElapsed/);
 });

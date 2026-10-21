@@ -137,7 +137,15 @@ export function EditorPanel({
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       // Higher-priority overlays own focus; never restore behind one.
-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      const blockingDialog = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')
+      ).some(
+        (dialog) =>
+          !dialog.closest("[hidden], [inert]") &&
+          dialog.getClientRects().length > 0 &&
+          getComputedStyle(dialog).visibility !== "hidden"
+      );
+      if (blockingDialog) return;
       event.preventDefault();
       setThemeMenuOpen(false);
       document.getElementById("contest-editor-settings-trigger")?.focus();

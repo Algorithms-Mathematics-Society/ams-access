@@ -86,7 +86,8 @@ Primary references: [Tauri AppImage](https://tauri.app/distribute/appimage/), [W
 ## Phase G — End-to-end rehearsal (in progress)
 
 - [x] Prepare a v4.0.0 release checkout including all team commits through `3288672`; reconcile camera picker/storage ownership and retain failed-cleanup recovery.
-- [ ] Agree admission delay and contest-clock fairness with backend/organizers, including late arrival and short contests.
+- [ ] Complete backend capacity/fairness acceptance, including late arrival and short contests. Source review confirmed that the former 150-second post-start delay loses working time against the fixed backend deadline; the v4 candidate removes this unfair wait. Client-only deadline extension is not valid. See `release-v4.0.0.md` for the isolated backend prerequisites and alternatives.
+- [x] Run local synthetic browser fault checks: contest 33 checks, login 36 checks, and onboarding scrolling at six viewport sizes. These do not establish real judge/native behavior.
 - [ ] Run a staging roster and fault rehearsal: login → checks → capture/review → entry → Run → Submit → Finish → verified restoration.
 - [ ] Validate real retry/backoff, 4xx/429/5xx behavior, stored-token restart and submission idempotency with backend evidence.
 - [ ] Exercise denied authorization, advisory warnings, required failures, cancellation/retry, crashes and network changes for each supported tuple.

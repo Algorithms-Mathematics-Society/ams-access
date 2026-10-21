@@ -20,6 +20,13 @@ Includes all nine commits by `aezyus` from `f94f02d` through `3288672`, preservi
 - Clearer update messaging and recovery exits from blocking overlays.
 - Windows-key release handling to prevent subsequent typing from becoming stuck.
 
+## Rehearsal fixes
+
+- Removed the random post-start admission wait so candidates do not lose additional time against the server deadline. Backend burst-capacity acceptance remains required.
+- Formatting now waits within a bounded parser budget before applying indentation, including code beyond the initial viewport.
+- Hidden dialogs no longer prevent Escape from closing editor preferences; visible priority dialogs retain keyboard ownership.
+- Supervised Windows runtime staging removes only its verified link and preserves unrelated replacement paths.
+
 ## Installation and validation
 
 - Windows x64: MSI or EXE; unsigned builds may show SmartScreen warnings. [Installation guide](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/v4.0.0/WINDOWS-INSTALL.md).

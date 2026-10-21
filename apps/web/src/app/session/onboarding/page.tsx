@@ -31,7 +31,7 @@ import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
-import { blockedMessage, decideEntry, shouldRunChecks, START_JITTER_MS } from "./entry-gate";
+import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { decideNetworkLockdown } from "./network-gate";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
@@ -948,45 +948,13 @@ export default function OnboardingPage() {
     contestIndex,
   ]);
 
-  // Every machine in the hall reaches zero in the same second, and each one
-  // then fires a chain of a dozen requests. That burst, not the server's
-  // steady capacity, is what refused entry on 21 Oct: once queueing passed
-  // the session timeout, candidates were turned away rather than made to
-  // wait, and their retries kept the queue full.
-  //
-  // So each client draws its own delay, once, and starts inside that window
-  // instead of on the tick. The contest clock is the server's and is already
-  // running; this spends a few seconds of a two-hour paper to convert a
-  // cliff into a slope.
-  const startJitterRef = useRef<number | null>(null);
-  if (startJitterRef.current === null) {
-    startJitterRef.current = Math.floor(Math.random() * START_JITTER_MS);
-  }
-  const [jitterElapsed, setJitterElapsed] = useState(false);
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== FINAL_STAGE) return;
-    if (waitMs > 0 || !readyForStart) return;
-    if (jitterElapsed) return;
-    const timer = setTimeout(() => setJitterElapsed(true), startJitterRef.current ?? 0);
-    return () => clearTimeout(timer);
-  }, [contestWindow, currentStage, waitMs, readyForStart, jitterElapsed]);
-
-  useEffect(() => {
-    if (!contestWindow) return;
-    if (currentStage !== FINAL_STAGE) return;
-    if (waitMs <= 0 && readyForStart && jitterElapsed) {
+    if (waitMs <= 0 && readyForStart) {
       void finalizeSecureStart();
     }
-  }, [
-    contestWindow,
-    currentStage,
-    waitMs,
-    contestId,
-    readyForStart,
-    jitterElapsed,
-    finalizeSecureStart,
-  ]);
+  }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
 
   // Keep completion callbacks stable throughout a visit. Presentation changes
   // must not restart child checks, and old checks must not advance a later visit.
@@ -1201,20 +1169,6 @@ export default function OnboardingPage() {
                   : undefined
               }
             />
-            {/* The jitter window. Up to 2.5 minutes of apparently nothing
-                happening, immediately after a countdown hit zero, is exactly
-                what a hang looks like -- and a candidate who concludes that
-                restarts the app, which is the one action that makes the
-                start worse. So it says what it is doing and that the clock
-                is not theirs to lose. */}
-            {currentStage === FINAL_STAGE && readyForStart && waitMs <= 0 && !jitterElapsed && (
-              <Banner
-                status="info"
-                role="status"
-                title="Opening your session"
-                description="Everyone starts within the first couple of minutes, a few at a time, so the exam server stays responsive. Your exam time is counted from the official start and is not affected by this wait. Keep this window open."
-              />
-            )}
             {policyBlock && (
               <Banner
                 status={macPermissionBlock ? "warning" : "error"}

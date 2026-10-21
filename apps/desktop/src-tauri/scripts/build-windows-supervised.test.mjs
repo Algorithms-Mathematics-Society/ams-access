@@ -5,6 +5,8 @@ import {
   mkdirSync,
   writeFileSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   existsSync,
   realpathSync,
   readFileSync,
@@ -87,6 +89,24 @@ test("runtime staging cleans only its junction after success or failure and pres
     assert.throws(
       () => withStagedRuntime(realpathSync(runtime), staging, () => assert.fail("must not build")),
       /stale/
+    );
+    assert.ok(existsSync(staging));
+    rmSync(staging, { recursive: true });
+
+    const replacement = path.join(temp, "unrelated-runtime");
+    mkdirSync(replacement);
+    writeFileSync(path.join(replacement, "marker"), "unrelated runtime stays intact");
+    assert.throws(
+      () =>
+        withStagedRuntime(realpathSync(runtime), staging, () => {
+          unlinkSync(staging);
+          symlinkSync(replacement, staging, "junction");
+        }),
+      /identity changed/
+    );
+    assert.equal(
+      readFileSync(path.join(replacement, "marker"), "utf8"),
+      "unrelated runtime stays intact"
     );
     assert.ok(existsSync(staging));
   } finally {

@@ -18,7 +18,7 @@
  * offline. This is already in the editor.
  */
 
-import { indentRange, indentUnit } from "@codemirror/language";
+import { ensureSyntaxTree, indentRange, indentUnit } from "@codemirror/language";
 import { ChangeSet, EditorState } from "@codemirror/state";
 import type { ChangeSpec } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
@@ -65,6 +65,11 @@ function outdentAccessSpecifiers(state: EditorState): ChangeSpec[] {
 /** Indentation changes for a whole document, grammar rules plus the one
  *  correction above, composed so they land as a single undo step. */
 function formatChanges(state: EditorState): ChangeSet {
+  // A standalone state has no background parser. Under load, or beyond the
+  // initial viewport, indentRange otherwise silently sees an incomplete tree.
+  // Bound foreground work; retain the original text if parsing cannot finish.
+  if (!ensureSyntaxTree(state, state.doc.length, 100)) return state.changes([]);
+  state = state.update({}).state; // publish the completed parser context to the state
   const indented = indentRange(state, 0, state.doc.length);
   const after = state.update({ changes: indented }).state;
   const fixes = outdentAccessSpecifiers(after);
