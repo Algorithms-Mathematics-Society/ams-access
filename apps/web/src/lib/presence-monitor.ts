@@ -138,10 +138,31 @@ export const loadPresenceDetector = createPresenceDetectorLoader({
  * while thinking. Telling them costs nothing and removes the false flag at
  * source.
  */
+/** How often the camera is sampled locally. */
+export const PRESENCE_SAMPLE_MS = 5_000;
+
+/**
+ * Consecutive bad samples before anything is recorded.
+ *
+ * One sample is not evidence. At a five-second cadence a candidate who
+ * glances at their keyboard, leans out of frame to pick up a pen, or is
+ * caught mid-blink by the detector produces a single `face_missing` that
+ * means nothing. Three in a row is fifteen seconds of it, which is a fact
+ * about the sitting rather than a fact about one frame.
+ *
+ * It also governs what reaches the server: the frame is uploaded when the
+ * streak confirms, never on the first sample, so a hall of candidates
+ * shifting in their seats does not become a hall of uploads.
+ */
+export const ANOMALY_STREAK = 3;
+
 export type Framing = "ok" | "off_centre" | "too_close" | "too_far";
 
+/** What the detector saw in one frame. */
+export type PresenceStatus = "presence_ok" | "face_missing" | "multiple_faces";
+
 export type PresenceSample = {
-  status: "presence_ok" | "face_missing" | "multiple_faces";
+  status: PresenceStatus;
   faces: number;
   /** Low-res JPEG data URL — only populated for anomaly samples. */
   thumbnail: string | null;
@@ -227,7 +248,7 @@ export async function samplePresence(
     count === 1
       ? framingOf(faces[0]?.topLeft as number[], faces[0]?.bottomRight as number[], W, H)
       : "ok";
-  const status: PresenceSample["status"] =
+  const status: PresenceStatus =
     count === 1 ? "presence_ok" : count === 0 ? "face_missing" : "multiple_faces";
 
   let thumbnail: string | null = null;

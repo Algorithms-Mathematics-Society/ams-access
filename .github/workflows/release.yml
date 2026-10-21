@@ -9,7 +9,42 @@ permissions:
   contents: write
 
 jobs:
+  release-gate:
+    runs-on: ubuntu-22.04
+    name: Release source gate
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A tag name is release metadata, not the bundle version source. Require
+      # it to describe the exact workspace version before any platform starts
+      # an expensive build or can upload an asset.
+      - name: Verify manifests and release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: pnpm check:versions
+
+      - name: Test JavaScript and TypeScript packages
+        run: |
+          pnpm test
+          pnpm typecheck
+
   build:
+    needs: release-gate
     strategy:
       fail-fast: false
       matrix:

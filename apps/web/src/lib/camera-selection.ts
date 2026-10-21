@@ -1,4 +1,5 @@
 export const CAMERA_PREFERENCE_KEY = "ams_camera_preference_v1";
+export const LEGACY_CAMERA_PREFERENCE_KEY = "ams_preferred_camera";
 
 export type CameraPreferenceStore = {
   read(): string | null;
@@ -35,7 +36,16 @@ export function browserCameraPreferenceStore(): CameraPreferenceStore {
       if (typeof window === "undefined") return null;
       try {
         const value = window.localStorage.getItem(CAMERA_PREFERENCE_KEY);
-        if (!value) return null;
+        if (!value) {
+          const legacy = window.localStorage.getItem(LEGACY_CAMERA_PREFERENCE_KEY);
+          if (!legacy) return null;
+          window.localStorage.setItem(
+            CAMERA_PREFERENCE_KEY,
+            JSON.stringify({ version: 1, deviceId: legacy })
+          );
+          window.localStorage.removeItem(LEGACY_CAMERA_PREFERENCE_KEY);
+          return legacy;
+        }
         const parsed = JSON.parse(value) as { version?: unknown; deviceId?: unknown };
         return parsed.version === 1 && typeof parsed.deviceId === "string" && parsed.deviceId
           ? parsed.deviceId
@@ -54,6 +64,7 @@ export function browserCameraPreferenceStore(): CameraPreferenceStore {
       } else {
         window.localStorage.removeItem(CAMERA_PREFERENCE_KEY);
       }
+      window.localStorage.removeItem(LEGACY_CAMERA_PREFERENCE_KEY);
     },
   };
 }

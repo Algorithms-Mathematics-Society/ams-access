@@ -31,6 +31,21 @@ pub use kiosk_window::{
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
 
+pub fn battery_status() -> Option<crate::BatteryStatus> {
+    let output = Command::new("pmset").args(["-g", "batt"]).output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let percentage = text
+        .split_whitespace()
+        .find_map(|part| part.strip_suffix("%;"))?
+        .parse::<u8>()
+        .ok()?
+        .min(100);
+    Some(crate::BatteryStatus {
+        percentage,
+        charging: text.contains("AC Power") || text.contains("charging"),
+    })
+}
+
 // ── Restricted process list ───────────────────────────────────────────────────
 
 const RESTRICTED: &[&str] = &[

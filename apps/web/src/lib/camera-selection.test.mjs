@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   browserCameraPreferenceStore,
   CAMERA_PREFERENCE_KEY,
+  LEGACY_CAMERA_PREFERENCE_KEY,
   isSavedCameraUnavailable,
   missingCameraGuidance,
 } from "./camera-selection.ts";
@@ -33,6 +34,19 @@ test("browser preference persists and reloads a versioned exact id", () => {
   withWindow(storage, () => {
     browserCameraPreferenceStore().write("camera-b");
     assert.equal(browserCameraPreferenceStore().read(), "camera-b");
+    assert.deepEqual(JSON.parse(storage.values.get(CAMERA_PREFERENCE_KEY)), {
+      version: 1,
+      deviceId: "camera-b",
+    });
+  });
+});
+
+test("legacy picker preference migrates to the versioned exact store", () => {
+  const storage = memoryStorage();
+  storage.values.set(LEGACY_CAMERA_PREFERENCE_KEY, "camera-b");
+  withWindow(storage, () => {
+    assert.equal(browserCameraPreferenceStore().read(), "camera-b");
+    assert.equal(storage.values.has(LEGACY_CAMERA_PREFERENCE_KEY), false);
     assert.deepEqual(JSON.parse(storage.values.get(CAMERA_PREFERENCE_KEY)), {
       version: 1,
       deviceId: "camera-b",

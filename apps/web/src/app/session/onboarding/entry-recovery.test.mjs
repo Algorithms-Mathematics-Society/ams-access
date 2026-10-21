@@ -286,3 +286,29 @@ for (const reason of ["timeout", "cancel"]) {
     assert.deepEqual(f.state.navigation, []);
   });
 }
+
+test("failed desktop cleanup blocks probes until an explicit retry restores it", async () => {
+  let restorationFails = true;
+  let verificationFails = true;
+  const f = desktopFixture({
+    verify: async () => {
+      if (verificationFails) throw new Error("verification failed");
+      return true;
+    },
+    cleanup: async () => {
+      if (restorationFails) throw new Error("restore failed");
+    },
+  });
+  await f.finalize();
+  await flush();
+  await f.finalize();
+  await flush();
+  assert.equal(f.desktop.scans, 1);
+  assert.equal(f.desktop.active, true);
+  assert.match(f.state.blocks.at(-1), /restore failed/);
+  restorationFails = false;
+  verificationFails = false;
+  await f.finalize();
+  assert.equal(f.desktop.scans, 2);
+  assert.deepEqual(f.state.navigation, ["/session/contest?contestId=contest"]);
+});

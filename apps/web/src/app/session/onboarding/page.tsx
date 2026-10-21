@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { BatteryStatus } from "../contest/components/BatteryStatus";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
@@ -502,7 +503,7 @@ export default function OnboardingPage() {
       }
       // A timed-out start may still acquire native controls. Its rollback must
       // settle before another setup probe or entry can share the desktop.
-      attempts.assertSettled("secure session start");
+      await attempts.recoverResource(attempt, "secure session start");
       let devices: MediaDeviceInfo[] | null = null;
       try {
         if (navigator.mediaDevices?.enumerateDevices) {
@@ -1159,6 +1160,11 @@ export default function OnboardingPage() {
             </Text>
           </HStack>
           <HStack gap={3} align="center" wrap="wrap">
+            {/* Setup runs for several minutes on a machine that is about to
+                be locked down for two hours. Knowing the charge now, while
+                there is still time to find a cable, is worth more than
+                knowing it mid-paper. */}
+            <BatteryStatus />
             <ThemeToggle />
             {wideLayout && <SetupExitShortcut />}
             <Button

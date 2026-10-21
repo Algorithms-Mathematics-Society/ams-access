@@ -1,6 +1,6 @@
 # Linux execution plan
 
-Status: A–F have local implementation and automated evidence. The pre-G review repairs are implemented locally on `linux/pre-phase-g-review-20261021`. **Do not treat previous 3.2.0 artifacts as validation of the newer review fixes.** Phase G has not started. Previous integrated checks passed: 684 web tests; 112 platform, 89 desktop, 43 core and 48 helper Rust tests; 47 packaging scenarios; web build/typecheck, formatting and Clippy.
+Status: A–F have local implementation and automated evidence. The pre-G review repairs are implemented locally on `linux/pre-phase-g-review-20261021`. **Do not treat previous 3.2.0 artifacts as validation of the newer review fixes.** Phase G local fault rehearsal is in progress for the v4.0.0 candidate; installed desktop and real backend acceptance remain open. Previous integrated checks passed: 684 web tests; 112 platform, 89 desktop, 43 core and 48 helper Rust tests; 47 packaging scenarios; web build/typecheck, formatting and Clippy.
 
 Follow-up recovery validation: **689 web tests passed**, including five new regression scenarios; web typecheck and diff whitespace checks passed. Native and packaging checks above are from the preceding integrated run.
 
@@ -83,8 +83,9 @@ Shared backend capacity, synchronized start, admission timing and submission ide
 
 Primary references: [Tauri AppImage](https://tauri.app/distribute/appimage/), [WebKitGTK multimedia](https://docs.webkit.org/Ports/WebKitGTK%20and%20WPE%20WebKit/Multimedia.html), [GStreamer V4L2](https://gstreamer.freedesktop.org/documentation/video4linux2/v4l2src.html). Distribution/package configuration establishes prerequisites, not runtime success.
 
-## Phase G — End-to-end rehearsal (not started)
+## Phase G — End-to-end rehearsal (in progress)
 
+- [x] Prepare a v4.0.0 release checkout including all team commits through `3288672`; reconcile camera picker/storage ownership and retain failed-cleanup recovery.
 - [ ] Agree admission delay and contest-clock fairness with backend/organizers, including late arrival and short contests.
 - [ ] Run a staging roster and fault rehearsal: login → checks → capture/review → entry → Run → Submit → Finish → verified restoration.
 - [ ] Validate real retry/backoff, 4xx/429/5xx behavior, stored-token restart and submission idempotency with backend evidence.

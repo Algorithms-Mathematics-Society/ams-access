@@ -13,6 +13,28 @@ mod kde_live;
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SHIELD_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+pub fn battery_status() -> Option<crate::BatteryStatus> {
+    let supplies = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in supplies.flatten() {
+        let path = entry.path();
+        if std::fs::read_to_string(path.join("type")).ok()?.trim() != "Battery" {
+            continue;
+        }
+        let percentage = std::fs::read_to_string(path.join("capacity"))
+            .ok()?
+            .trim()
+            .parse::<u8>()
+            .ok()?
+            .min(100);
+        let state = std::fs::read_to_string(path.join("status")).unwrap_or_default();
+        return Some(crate::BatteryStatus {
+            percentage,
+            charging: matches!(state.trim(), "Charging" | "Full"),
+        });
+    }
+    None
+}
+
 fn shield_generation_active(generation: u64) -> bool {
     SHIELD_ACTIVE.load(Ordering::SeqCst) && SHIELD_GENERATION.load(Ordering::SeqCst) == generation
 }

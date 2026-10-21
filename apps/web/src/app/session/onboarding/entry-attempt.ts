@@ -23,6 +23,7 @@ export function createEntryAttemptController(
   let generation = 0;
   let active: number | null = null;
   const pending = new Set<string>();
+  const failedCleanup = new Map<string, () => Promise<void>>();
   const cancellations = new Set<() => void>();
   const advisoryCancellations = new Map<number, Set<() => void>>();
   const committedAttempts = new Set<number>();
@@ -43,6 +44,19 @@ export function createEntryAttemptController(
           `The previous ${key} is still finishing or restoring controls. Wait a moment, then retry.`
         );
     },
+    async recoverResource(attempt: number, key: string) {
+      this.assertSettled(key);
+      const cleanup = failedCleanup.get(key);
+      if (cleanup) {
+        await this.run(
+          attempt,
+          key,
+          cleanup,
+          30000,
+          "System controls are still restoring. Wait a moment, then retry."
+        );
+      }
+    },
     /** Required acquisition with rollback ownership until the attempt commits.
      * Cleanup runs immediately on abandonment and again after late settlement.
      * Call assertSettled before any retry probes that share this resource. */
@@ -54,13 +68,24 @@ export function createEntryAttemptController(
       cleanup: () => Promise<void>
     ): Promise<T> {
       this.assertSettled(key);
+      if (failedCleanup.has(key))
+        throw new Error("System controls could not be restored. Retry recovery before entering.");
+      const restore = async () => {
+        try {
+          await cleanup();
+          failedCleanup.delete(key);
+        } catch (error) {
+          failedCleanup.set(key, restore);
+          throw error;
+        }
+      };
       const result = await this.runAdvisory(
         attempt,
         key,
         start,
         ms,
         `${key} timed out. Retry contest entry.`,
-        cleanup,
+        restore,
         true
       );
       if (result.status !== "completed") throw result.error;

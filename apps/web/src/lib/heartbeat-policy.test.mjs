@@ -44,10 +44,15 @@ test("two misses still do not lock", () => {
   assert.equal(shouldLockEditor(afterFailures(2)), false);
 });
 
-test("the third consecutive miss locks", () => {
+test("the third consecutive miss reads offline, and still does not lock", () => {
+  // The level is the signal; the lock is not. Taking the keyboard away
+  // because a heartbeat was slow is what left a candidate unable to type on
+  // 21 Oct -- he pressed keys at a dead editor, opened Game Bar by accident,
+  // and hit a blocking overlay he could not dismiss. The draft is on the
+  // device either way; only submitting needs the server.
   const state = afterFailures(LOCK_AFTER_FAILURES);
   assert.equal(connectionLevel(state), "offline");
-  assert.equal(shouldLockEditor(state), true);
+  assert.equal(shouldLockEditor(state), false);
 });
 
 test("a success clears the streak outright", () => {
@@ -63,23 +68,25 @@ test("a success clears the streak outright", () => {
   assert.equal(shouldLockEditor(state), false);
 });
 
-test("recovery after a lock unlocks", () => {
+test("recovery clears the offline level", () => {
   let state = afterFailures(5);
-  assert.equal(shouldLockEditor(state), true);
+  assert.equal(connectionLevel(state), "offline");
   state = onSuccess(state, AT + 300_000);
-  assert.equal(shouldLockEditor(state), false);
+  assert.equal(connectionLevel(state), "online");
 });
 
-test("a browser disconnection locks immediately, without waiting for heartbeats", () => {
-  assert.equal(shouldLockEditor(initialHeartbeatState(), false), true);
-  assert.equal(shouldLockEditor(afterFailures(1), false), true);
+test("not even a browser disconnection takes the editor away", () => {
+  // Offline is exactly when local drafting matters most.
+  assert.equal(shouldLockEditor(initialHeartbeatState(), false), false);
+  assert.equal(shouldLockEditor(afterFailures(1), false), false);
 });
 
-test("browser recovery still waits for a healthy server after sustained heartbeat loss", () => {
+test("connection level still tracks the server, for the status strip", () => {
+  // Reported, never enforced: the strip tells the candidate what is
+  // happening, and the editor keeps working while it does.
   const state = afterFailures(LOCK_AFTER_FAILURES);
-  assert.equal(shouldLockEditor(state, true), true);
-  assert.equal(shouldLockEditor(onSuccess(state, AT), true), false);
-  assert.equal(shouldLockEditor(onSuccess(state, AT), false), true);
+  assert.equal(connectionLevel(state), "offline");
+  assert.equal(connectionLevel(onSuccess(state, AT)), "online");
 });
 
 test("never having reached the server is distinct from just having done so", () => {

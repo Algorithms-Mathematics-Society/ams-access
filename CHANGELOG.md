@@ -1,3 +1,37 @@
+# AMS Access 4.0.0
+
+## Linux setup and recovery
+
+- Bounded camera listing, acquisition, preview and face-scan recovery, with a retry or explicit manual-review route when verification cannot complete.
+- Camera and display continuation follows organizer policy. Review requests and accepted camera/display warnings are recorded against the session.
+- Secure-entry failure releases desktop ownership; retries wait for pending startup and cleanup, including failed restoration. Successful entry transfers ownership to the contest.
+- Camera choices persist across Settings, onboarding and the contest. Existing saved choices migrate to one store; a missing selected camera requires reconnecting or choosing another device instead of silently selecting an infrared sensor. Preview recovery retains camera hotplug handling without reopening cameras after intentional exit.
+- KDE uses discovered live shortcut controls and separately restores modifier-only Meta. GNOME changes preserve prior overrides and retain unresolved restoration records. Cinnamon shortcut control remains unsupported.
+- Linux network recovery serializes apply/restore operations and uses the saved session token on startup. Single-instance ownership protects another running session.
+- Linux packages declare media and authorization prerequisites, validate bundled resources, and include tested installer lifecycle hooks.
+
+## Included team changes
+
+Includes all nine commits by `aezyus` from `f94f02d` through `3288672`, preserving their Git history:
+
+- Camera pickers in setup and the contest, with camera warnings shown without taking away the editor.
+- A single camera warning banner driven by the sample that actually detects the condition, and flagged-frame evidence.
+- OS-reported battery information; no invented browser battery readings.
+- Clearer update messaging and recovery exits from blocking overlays.
+- Windows-key release handling to prevent subsequent typing from becoming stuck.
+
+## Installation and validation
+
+- Windows x64: MSI or EXE; unsigned builds may show SmartScreen warnings. [Installation guide](https://github.com/Algorithms-Mathematics-Society/ams-access/blob/v4.0.0/WINDOWS-INSTALL.md).
+- Linux x64: DEB, RPM or AppImage; run as your ordinary desktop user. Package availability is not certification of every distro, compositor or camera.
+- macOS: Apple Silicon or Intel DMG, subject to successful signing/notarization and platform build checks; package minimum macOS 12.
+- The existing backend remains `https://api.amsaccess.com`; no new server protocol or data migration is introduced here.
+- Each build target attaches a SHA256SUMS manifest. Match the installer filename and hash before installation.
+
+This candidate remains a draft while Phase G acceptance is collected. Local browser fault fixtures do not certify actual backend delivery, desktop/firewall restoration, physical cameras, or unsupported Linux desktop configurations. See `linux-execution.md` and `release-v4.0.0.md` for evidence and outstanding acceptance.
+
+---
+
 # AMS Access 3.1.1
 
 ## Startup animation

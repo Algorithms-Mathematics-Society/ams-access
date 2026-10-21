@@ -1,4 +1,6 @@
 import { Button } from "@astryxdesign/core/Button";
+import { useCameraDevices } from "@/lib/use-camera-devices";
+import { Selector } from "@astryxdesign/core/Selector";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
@@ -169,6 +171,34 @@ function FaceCalibrationAttempt({
   const [scanState, setScanState] = useState<FaceScanState>("acquiring");
   // Count of rejected captures; after a few we surface the proctor-review fallback.
   const [captureRejections, setCaptureRejections] = useState(0);
+  // The camera list, for the picker below. This is the screen where the
+  // wrong camera actually bites: a laptop that opened its infrared sensor
+  // shows a grey rectangle and "Please come back into frame" forever, with
+  // nothing on screen to say the camera itself is the problem.
+  const { state: cameraDevices } = useCameraDevices();
+  const cameras = cameraDevices.devices.filter((device) => device.deviceId);
+  const [chosenCamera, setChosenCamera] = useState(
+    () => cameraSession.preferredVideoDevice() ?? ""
+  );
+  const [switchingCamera, setSwitchingCamera] = useState(false);
+
+  async function chooseCamera(deviceId: string) {
+    if (switchingCamera) return;
+    invalidateAttempt();
+    setSwitchingCamera(true);
+    setChosenCamera(deviceId);
+    try {
+      const replacement = await cameraSession.setPreferredVideoDevice(deviceId || null);
+      if (!activeRef.current) return;
+      onCameraReady?.(replacement);
+      onRetry();
+    } catch (error) {
+      if (!activeRef.current) return;
+      // Start a fresh bounded attempt; it exposes the normal retry/review route
+      // if the selected camera still cannot be opened.
+      onRetry();
+    }
+  }
   const FACE_FALLBACK_AFTER = 3;
 
   const PHASE_HOLD_MS = 700;
@@ -1003,6 +1033,42 @@ function FaceCalibrationAttempt({
           reference image.
         </Text>
       </VStack>
+
+      {/* Above the preview, not under it.
+          Below the video it needs a scroll to reach, and a candidate looking
+          at a grey rectangle and "Please come back into frame" has no reason
+          to think scrolling would help. By the time the equity fallback
+          appears they have already spent a minute being told to move, and
+          the answer was never their position -- it was that the app opened a
+          sensor that cannot see them. */}
+      {cameras.length > 1 && !done && (
+        <VStack gap={2} style={{ width: "100%", maxWidth: "22rem", alignSelf: "center" }}>
+          <Text
+            style={{
+              fontSize: "var(--font-size-sm)",
+              fontFamily: "var(--font-family-body)",
+              color: "var(--color-text-secondary)",
+              textAlign: "center",
+            }}
+          >
+            Camera
+          </Text>
+          <Selector
+            label="Choose a camera"
+            value={chosenCamera}
+            isDisabled={switchingCamera}
+            disabledMessage={switchingCamera ? "Switching cameras…" : undefined}
+            onChange={(deviceId) => void chooseCamera(deviceId)}
+            options={[
+              { value: "", label: "System default" },
+              ...cameras.map((camera, index) => ({
+                value: camera.deviceId,
+                label: camera.label || `Camera ${index + 1}`,
+              })),
+            ]}
+          />
+        </VStack>
+      )}
 
       <VStack
         width="100%"

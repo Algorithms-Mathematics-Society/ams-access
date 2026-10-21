@@ -50,7 +50,10 @@ import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
   samplePresence,
+  ANOMALY_STREAK,
+  PRESENCE_SAMPLE_MS,
   type Framing,
+  type PresenceStatus,
   type PresenceDetector,
 } from "@/lib/presence-monitor";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -128,7 +131,6 @@ import {
   initialHeartbeatState,
   onFailure as onHeartbeatFailure,
   onSuccess as onHeartbeatSuccess,
-  shouldLockEditor,
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
@@ -546,6 +548,31 @@ export default function ContestPageClient() {
   const cameraEnabledRef = useRef(true);
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
+  // What the detector last saw. Drives the tile border, nothing else.
+  const [presenceStatus, setPresenceStatus] = useState<PresenceStatus>("presence_ok");
+  // Bumped when the candidate picks a different camera, to re-run the
+  // acquisition effect below against the new preference.
+  const [cameraPickKey, setCameraPickKey] = useState(0);
+
+  /**
+   * Switch camera without leaving the exam.
+   *
+   * The wrong camera is not always obvious until the contest is running: a
+   * laptop that opened its infrared sensor shows a black tile, and until now
+   * the candidate's only options were to sit with it or abandon the sitting.
+   * The preference is shared with onboarding and Settings, so the choice
+   * sticks for the rest of the paper and the next one.
+   */
+  async function handlePickCamera(deviceId: string) {
+    try {
+      await cameraSession.setPreferredVideoDevice(deviceId || null);
+      if (cameraClosedRef.current) return;
+      setCameraPickKey((key) => key + 1);
+    } catch (error) {
+      if (cameraClosedRef.current) return;
+      setCameraError("The selected camera is unavailable. Reconnect it or choose another camera.");
+    }
+  }
   const micEnabledRef = useRef(false);
   const mediaInitialStateLoggedRef = useRef(false);
   const [hasToggledMedia, setHasToggledMedia] = useState(false);
@@ -799,6 +826,9 @@ export default function ContestPageClient() {
     if (type === "camera") {
       setCameraEnabled(value);
       cameraEnabledRef.current = value;
+      // The sampling loop stops while the camera is off, so the last status
+      // would otherwise stay on screen for the rest of the paper.
+      if (!value) setPresenceStatus("presence_ok");
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = value));
       }
@@ -2244,7 +2274,7 @@ export default function ContestPageClient() {
       cameraStreamRef.current = null;
       setCameraVideoReady(false);
     };
-  }, [loading]);
+  }, [loading, cameraPickKey]);
 
   useEffect(() => {
     if (!sessionId || !browserOnline) return;
@@ -2394,6 +2424,11 @@ export default function ContestPageClient() {
     let detector: PresenceDetector | null = null;
     let objectDetector: Awaited<ReturnType<typeof loadObjectDetector>> | null = null;
     let objectDetectorFailed = false;
+    // Consecutive bad samples, and whether this run of them has been sent.
+    // Reported once per run: a candidate who steps away for two minutes is
+    // one event, not twenty-four.
+    let anomalyStreak = 0;
+    let anomalyReported = false;
     const canvas = document.createElement("canvas");
 
     const video = document.createElement("video");
@@ -2457,11 +2492,38 @@ export default function ContestPageClient() {
           if (detector && !cancelled) {
             const sample = await samplePresence(video, detector, canvas);
             if (sample && !cancelled) {
-              logPresence(sample.status, `presence check: ${sample.faces} face(s) detected`, {
-                faces: sample.faces,
-                thumbnail: sample.thumbnail,
-                framing: sample.framing,
-              });
+              // Shown on the tile immediately, every sample. The border is
+              // feedback for the candidate -- "the camera cannot see you" is
+              // something they can act on in a second, and most of the time
+              // acting on it is all that was needed.
+              setPresenceStatus(sample.status);
+
+              // Recorded only once it persists. At a five-second cadence a
+              // glance at the keyboard or a blink caught mid-frame makes one
+              // bad sample, which is noise; ANOMALY_STREAK of them in a row
+              // is fifteen seconds, which is not.
+              if (sample.status === "presence_ok") {
+                anomalyStreak = 0;
+                anomalyReported = false;
+              } else {
+                anomalyStreak += 1;
+                if (anomalyStreak >= ANOMALY_STREAK && !anomalyReported) {
+                  anomalyReported = true;
+                  logPresence(
+                    sample.status,
+                    `presence check: ${sample.faces} face(s) over ${anomalyStreak} samples`,
+                    {
+                      faces: sample.faces,
+                      samples: anomalyStreak,
+                      // A readable frame, not the 96px indicator thumbnail:
+                      // this is the one an invigilator opens.
+                      thumbnail: thumbnailOf(video) ?? sample.thumbnail,
+                      framing: sample.framing,
+                    }
+                  );
+                }
+              }
+
               // Advice, not a flag. Most face_missing samples are someone who
               // has drifted out of shot while thinking, so saying so removes
               // the false reading at source. Cleared as soon as they are back.
@@ -2511,7 +2573,19 @@ export default function ContestPageClient() {
     }
 
     function schedule() {
-      timer = setTimeout(() => void tick(), 30_000 + Math.random() * 60_000);
+      // Five seconds, fixed.
+      //
+      // It was 30-90s jittered, which is a sampling rate for "was anyone
+      // here" and far too coarse for "is the right person here now": a
+      // substitution, or a second face leaning in, fits comfortably between
+      // two samples. BlazeFace runs at 128x128 in about 7ms, so this costs a
+      // fraction of a percent of one core.
+      //
+      // Unjittered on purpose. The jitter existed to spread uploads, and
+      // this loop no longer uploads on every sample -- only a *confirmed*
+      // anomaly sends anything, which is rare and already spread by being
+      // driven by the candidate's own behaviour.
+      timer = setTimeout(() => void tick(), PRESENCE_SAMPLE_MS);
     }
     schedule();
 
@@ -3004,9 +3078,12 @@ export default function ContestPageClient() {
   // The editor goes read-only on a *sustained* outage, not the first dropped
   // packet — see `heartbeat-policy`. Locking a whole exam hall on one lost
   // packet would be a self-inflicted incident.
-  const networkDisconnected = shouldLockEditor(heartbeatState, browserOnline);
-  const editorLocked =
-    networkDisconnected || bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
+  // Connectivity is reported, never enforced: see `shouldLockEditor`. The
+  // editor locks for reasons that are actually about the sitting -- the bell,
+  // a session an invigilator ended, a submission already made -- and not
+  // because a heartbeat was slow.
+  const networkDisconnected = connectionLevel(heartbeatState) === "offline" || !browserOnline;
+  const editorLocked = bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
 
   const judgingUnavailableReason = sessionEnded
     ? sessionEnded === "terminated"
@@ -3305,15 +3382,49 @@ export default function ContestPageClient() {
       }}
     />
   );
-  const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
-  const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
-  const faceBlockMessage = cameraHealthy
-    ? "Please face the camera to resume your exam."
-    : cameraError
-      ? cameraError
-      : "Waiting for a live camera frame. Check the camera preview before continuing.";
-  const criticalOverlayActive =
-    shouldShowFaceBlock || (lockGraceActive && lockGraceCountdown === 0);
+  // Driven by the five-second BlazeFace sample, not only by the older
+  // faceStatus path -- that one needs its own detector to report "away" and
+  // then a five-second grace on top, which is why an empty chair sat there
+  // with nothing on screen.
+  //
+  // Warned on the first bad sample, logged only after three. The warning is
+  // free and the candidate can act on it in a second; the record is a claim
+  // about their sitting and deserves fifteen seconds of evidence.
+  const presenceWarning = cameraEnabled && presenceStatus !== "presence_ok";
+  // Framing shares the same banner. It lived inside the camera tile, where
+  // it overlapped the buttons and truncated mid-word -- a thumbnail in the
+  // corner is not somewhere a sentence can be read. One place for anything
+  // the camera needs to say.
+  const framingWarning = cameraEnabled && !presenceWarning && framingHint !== "ok";
+  const shouldShowFaceBlock =
+    presenceWarning || framingWarning || (softBlockActive && faceStatus !== "ok");
+  // Says what to do, in the fewest words that still say it. Nothing about
+  // pausing or resuming: nothing is paused any more.
+  const FRAMING_TITLE: Record<string, string> = {
+    off_centre: "Move back into the centre of the frame",
+    too_close: "Move back a little",
+    too_far: "Move a bit closer",
+  };
+  const faceBlockTitle = !cameraHealthy
+    ? "Camera not responding"
+    : presenceStatus === "multiple_faces"
+      ? "More than one person in frame"
+      : presenceWarning
+        ? "Come back into frame"
+        : (FRAMING_TITLE[framingHint] ?? "Adjust your position");
+  const faceBlockMessage = !cameraHealthy
+    ? cameraError || "Waiting for a live camera frame."
+    : presenceStatus === "multiple_faces"
+      ? "Make sure nobody else is visible behind you."
+      : presenceWarning
+        ? "Face the camera so it can see you."
+        : "The camera can see you, but not clearly enough to check.";
+  // The camera warning is not critical and never was. It paused the
+  // workspace behind a modal for a candidate who had looked down at their
+  // keyboard, and the only button on it was Exit contest -- so a two-second
+  // inconvenience offered abandoning the paper as its remedy. It is a toast
+  // now: it says what to do and goes away when they do it.
+  const criticalOverlayActive = lockGraceActive && lockGraceCountdown === 0;
   const networkOverlayActive =
     networkDisconnected &&
     !criticalOverlayActive &&
@@ -3324,9 +3435,8 @@ export default function ContestPageClient() {
   const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
     lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle"
   );
-  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(
-    shouldShowFaceBlock && timeUpState === "idle"
-  );
+  // No focus trap: the candidate is still typing, and this must not take
+  // the keyboard away to tell them to look up.
   const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
     showMediaToggleWarning && !networkOverlayActive && timeUpState === "idle",
     cancelMediaToggle
@@ -3420,6 +3530,7 @@ export default function ContestPageClient() {
           <BlockedAppsOverlay
             lockViolationDialogRef={lockViolationDialogRef}
             blockedApps={blockedApps}
+            onExit={() => void redirectAfterRelease("/home")}
           />
         )}
         <TopBar
@@ -3668,7 +3779,8 @@ export default function ContestPageClient() {
             />
           </VStack>
           <CameraTile
-            framingHint={framingHint}
+            presenceStatus={presenceStatus}
+            onPickCamera={handlePickCamera}
             cameraVideoRef={cameraVideoRef}
             cameraStream={cameraStream}
             cameraError={cameraError}
@@ -3726,13 +3838,47 @@ export default function ContestPageClient() {
       </Dialog>
 
       {shouldShowFaceBlock && (
-        <ContestOverlay labelId="face-block-title" critical alert dialogRef={faceBlockDialogRef}>
-          <Heading level={2} id="face-block-title">
-            {faceBlockTitle}
-          </Heading>
-          <Banner status="warning" title="Camera attention needed" description={faceBlockMessage} />
-          <Text color="secondary">The workspace will resume when the camera check clears.</Text>
-        </ContestOverlay>
+        /* The same toast the kiosk banner uses when the window comes back:
+           same position, same width, same Banner. A candidate who has seen
+           "You left the exam window" recognises this instantly as the app
+           telling them something, not asking them for a decision.
+
+           It warns and nothing else -- no buttons, no focus trap, nothing
+           dimmed, the editor still typeable underneath. It was a modal whose
+           only control was Exit contest, which offered abandoning the paper
+           as the remedy for looking down at a keyboard. */
+        <VStack
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            top: "calc(var(--spacing-10) * 2)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            width: "min(calc(100% - var(--spacing-8)), calc(var(--spacing-10) * 12))",
+            pointerEvents: "none",
+            // An opaque surface under the Banner.
+            //
+            // Banner fills warning and error with a translucent colour, which
+            // is fine inline on a page background and looks washed out
+            // floating over an editor -- the code shows straight through the
+            // red. Info happens to be solid, which is why only that one
+            // looked right. This gives all three something to sit on.
+            borderRadius: "var(--radius-container)",
+            overflow: "hidden",
+            background: "var(--color-background-card)",
+            boxShadow: "var(--shadow-high)",
+          }}
+        >
+          <Banner
+            status={
+              framingWarning ? "info" : presenceStatus === "multiple_faces" ? "warning" : "error"
+            }
+            title={faceBlockTitle}
+            description={faceBlockMessage}
+          />
+        </VStack>
       )}
 
       {showMediaToggleWarning && (

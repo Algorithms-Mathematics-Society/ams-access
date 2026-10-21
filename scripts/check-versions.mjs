@@ -33,6 +33,19 @@ const manifests = [
 
 const problems = [];
 
+// Tag releases must carry the version they advertise. Keep this opt-in so
+// branch and pull-request CI can run the same manifest check without treating
+// a branch name as a release tag.
+const releaseTag = process.env.RELEASE_TAG;
+if (releaseTag !== undefined) {
+  const expectedTag = `v${expected}`;
+  if (releaseTag !== expectedTag) {
+    problems.push(
+      `release tag is ${JSON.stringify(releaseTag)}, expected ${expectedTag} ` + `(from Cargo.toml)`
+    );
+  }
+}
+
 for (const path of manifests) {
   const found = JSON.parse(read(path)).version;
   if (found !== expected) {
@@ -55,4 +68,8 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`OK all manifests agree on ${expected}`);
+console.log(
+  releaseTag === undefined
+    ? `OK all manifests agree on ${expected}`
+    : `OK all manifests agree on ${expected} and release tag is v${expected}`
+);
