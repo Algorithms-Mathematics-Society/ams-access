@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import importlib.util
-import os
 from pathlib import Path
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).with_name("validate-linux-artifact.py")
 spec = importlib.util.spec_from_file_location("artifact_validator", MODULE_PATH)
@@ -32,90 +33,76 @@ def squashfs_superblock(bytes_used: int = 96) -> bytes:
     return bytes(data)
 
 class ArtifactValidatorTests(unittest.TestCase):
-    def test_rpm_payload_is_fully_staged_before_unpacking(self):
+    @unittest.skipUnless(shutil.which("mksquashfs") and shutil.which("unsquashfs"), "SquashFS tools unavailable")
+    def test_real_appimage_validation_extracts_into_fresh_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            producer = base / "rpm2cpio"
-            padding = 8 * 1024 * 1024
-            producer.write_text(
-                f"#!{sys.executable}\nimport sys\n"
-                f"sys.stdout.buffer.write(b'A' + b'\\0' * {padding})\n"
+            source = base / "source"
+            source.mkdir()
+            (source / "fixture.txt").write_text("payload preserved")
+            squashfs = base / "payload.squashfs"
+            subprocess.run(
+                ["mksquashfs", str(source), str(squashfs), "-noappend", "-processors", "1", "-quiet"],
+                check=True, capture_output=True,
             )
-            producer.chmod(0o755)
-            previous_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = str(base) + os.pathsep + previous_path
-            try:
-                with tempfile.TemporaryFile() as payload:
-                    validator.stage_rpm_payload(base / "fixture.rpm", payload)
-                    self.assertEqual(b"A", payload.read(1))
-                    payload.seek(0, os.SEEK_END)
-                    self.assertEqual(padding + 1, payload.tell())
-            finally:
-                os.environ["PATH"] = previous_path
+            artifact = base / "fixture.AppImage"
+            artifact.write_bytes(b"fixture-stub" + squashfs.read_bytes())
+            def inspect(root, *args, **kwargs):
+                self.assertEqual("payload preserved", (root / "fixture.txt").read_text())
+                return {"valid": True, "checks": []}
+            real_run = validator.run
+            def run_with_ubuntu22_destination_contract(command, **kwargs):
+                if command[0] == "unsquashfs":
+                    # Newer tools accept an existing directory; Ubuntu 22.04
+                    # CI demonstrated that its version does not.
+                    self.assertFalse(Path(command[command.index("-d") + 1]).exists())
+                return real_run(command, **kwargs)
+            with patch.object(validator, "inspect_tree", side_effect=inspect), patch.object(
+                validator, "run", side_effect=run_with_ubuntu22_destination_contract
+            ):
+                result = validator.validate(artifact)
+            self.assertTrue(result["valid"])
+            self.assertEqual(str(len(b"fixture-stub")), result["metadata"]["squashfs_offset"])
 
-    def test_rpm_payload_reports_silent_producer_status(self):
+    def test_rpm_extract_verifies_digests_before_bsdtar(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            producer = base / "rpm2cpio"
-            producer.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(7)\n")
-            producer.chmod(0o755)
-            previous_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = str(base) + os.pathsep + previous_path
-            try:
-                with tempfile.TemporaryFile() as payload:
-                    with self.assertRaisesRegex(RuntimeError, "status 7"):
-                        validator.stage_rpm_payload(base / "fixture.rpm", payload)
-            finally:
-                os.environ["PATH"] = previous_path
+            artifact = base / "fixture.rpm"
+            root = base / "root"
+            control = base / "control"
+            root.mkdir()
+            control.mkdir()
+            calls = []
 
-    def test_rpm_payload_write_failure_reaps_producer(self):
-        class FailingPayload:
-            def write(self, _chunk):
-                raise OSError("destination failed")
+            def successful_run(command, **_kwargs):
+                calls.append(command)
+                output = b"dependency" if "--requires" in command else b""
+                return subprocess.CompletedProcess(command, 0, stdout=output, stderr=b"")
 
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            producer = base / "rpm2cpio"
-            pid_file = base / "pid"
-            producer.write_text(
-                f"#!{sys.executable}\nimport os, pathlib, sys, time\n"
-                f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
-                "sys.stdout.buffer.write(b'X' * (1024 * 1024))\n"
-                "sys.stdout.buffer.flush()\n"
-                "time.sleep(30)\n"
+            with patch.object(validator, "run", side_effect=successful_run):
+                validator.extract(artifact, "rpm", root, control)
+            self.assertEqual(["rpm", "-K", "--nosignature", str(artifact)], calls[0])
+            self.assertEqual(
+                ["bsdtar", "-xf", str(artifact), "-C", str(root), "--no-same-owner"],
+                calls[1],
             )
-            producer.chmod(0o755)
-            previous_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = str(base) + os.pathsep + previous_path
-            try:
-                with self.assertRaisesRegex(OSError, "destination failed"):
-                    validator.stage_rpm_payload(base / "fixture.rpm", FailingPayload())
-                pid = int(pid_file.read_text())
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(pid, 0)
-            finally:
-                os.environ["PATH"] = previous_path
 
-    def test_rpm_payload_limit_terminates_the_producer(self):
+    def test_rpm_digest_failure_prevents_extraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            producer = base / "rpm2cpio"
-            producer.write_text(
-                f"#!{sys.executable}\nimport sys\n"
-                "sys.stdout.buffer.write(b'X' * 4096)\n"
+            artifact = base / "fixture.rpm"
+            root = base / "root"
+            control = base / "control"
+            root.mkdir()
+            control.mkdir()
+            with patch.object(
+                validator, "run", side_effect=RuntimeError("digest verification failed")
+            ) as mocked_run:
+                with self.assertRaisesRegex(RuntimeError, "digest verification failed"):
+                    validator.extract(artifact, "rpm", root, control)
+            mocked_run.assert_called_once_with(
+                ["rpm", "-K", "--nosignature", str(artifact)]
             )
-            producer.chmod(0o755)
-            previous_path = os.environ.get("PATH", "")
-            previous_limit = validator.MAX_RPM_PAYLOAD_BYTES
-            os.environ["PATH"] = str(base) + os.pathsep + previous_path
-            validator.MAX_RPM_PAYLOAD_BYTES = 1024
-            try:
-                with tempfile.TemporaryFile() as payload:
-                    with self.assertRaisesRegex(RuntimeError, "exceeds 1024 byte"):
-                        validator.stage_rpm_payload(base / "fixture.rpm", payload)
-            finally:
-                validator.MAX_RPM_PAYLOAD_BYTES = previous_limit
-                os.environ["PATH"] = previous_path
 
     def make_tree(self, base: Path):
         root, control, expected_root = base / "root", base / "control", base / "expected"

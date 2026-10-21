@@ -16,7 +16,7 @@ Merge decisions: retain bounded device operations and exact camera selection, mi
 - [x] Final integrated `pnpm test` passed: 697 web tests, 18 desktop JavaScript tests and API-client tests; root typecheck and exact v4.0.0 tag/version check passed.
 - [x] Web production build and size budgets passed (22.01 MB static export).
 - [x] Local browser fault rehearsal: production-export contest audit 33 checks / 11 captures / zero failures or runtime exceptions; login fixtures 36 checks / four captures / zero failures; onboarding scroll six viewport sizes. These use synthetic API/native/media responses. Full onboarding production flow and real backend/native acceptance remain open.
-- [x] Native suites: 117 platform, 43 core, 48 helper, 89 desktop; formatting/Clippy passed. Installer mocks: 9 post-install and 24 pre-remove; 14 artifact validator tests passed.
+- [x] Native suites: 117 platform, 43 core, 48 helper, 89 desktop; formatting/Clippy passed. Installer mocks: 9 post-install and 24 pre-remove; 17 artifact validator tests passed.
 - [ ] Fresh CI-built installers tied to immutable commit, size and SHA-256; Linux payload and container install/remove validation.
 - [ ] Installed Linux desktop/camera/helper/packet acceptance across declared supported configurations.
 - [ ] Real nonproduction roster: login → checks → capture/review → entry → Run → Submit → Finish → verified restoration, with backend evidence for retry/idempotency/token restart.
@@ -61,6 +61,21 @@ Browser evidence at `3069657` has a clean worktree and empty diff hash: contest 
 
 ## Linux package validator follow-up
 
-Run `39661099061` passed Linux/Windows/macOS native gates, web checks, Windows/macOS bundle checks and MSIX certification. The Linux bundle was built, and its DEB payload passed validation, but RPM extraction failed without component exit statuses; AppImage validation and container installation checks were therefore not reached. The failing RPM was not uploaded, so a producer/consumer pipe race is a hypothesis, not a proven diagnosis.
+Run `39663690332` passed native Linux/Windows/macOS checks, web checks, Windows/macOS bundles and MSIX certification. Retaining its actual Linux packages isolated two validator defects:
 
-The validator now stages the complete `rpm2cpio` output in a temporary file capped at 512 MiB and requires successful producer exit before `cpio` consumes it. This prevents early-consumer pipe failures without accepting ignored extraction errors or removing payload checks. Failures identify the command and status. Both workflows now gather all three format reports before failing their aggregate validation gate. Fresh CI still has to confirm actual RPM/AppImage payloads and clean installation/removal.
+- Ubuntu 22.04 RPM 4.17's `rpm2cpio` exits 1 even after emitting the complete archive. The package passes header/payload SHA-256 verification, Fedora RPM 6.0.2 extracts it successfully, and Ubuntu 22.04 `bsdtar` extracts it successfully. Fully draining the producer disproved the earlier pipe-race hypothesis. The final implementation verifies digests with `rpm -K --nosignature`, then extracts with `bsdtar`, requiring both commands to succeed. This avoids ignoring extraction errors or maintaining a custom producer pipeline. CI/release install `libarchive-tools`.
+- Ubuntu 22.04 `unsquashfs` rejects the validator's pre-created destination. AppImage extraction now creates its own fresh directory. A real SquashFS regression checks that contract; no force-overwrite or recursive cleanup is needed.
+
+All 17 validator regressions pass, including digest rejection before extraction and the real SquashFS test. The retained RPM passes all 11 payload checks on Ubuntu 22.04. The retained AppImage passes all payload checks locally; its helper reference comes from the exact-hash DEB already validated against source in CI. This is cross-format diagnostic evidence, not final release-build acceptance.
+
+Retained package identities (source `bb38a88`, run `39663690332`):
+
+| Format   |     Bytes | SHA-256                                                            |
+| -------- | --------: | ------------------------------------------------------------------ |
+| DEB      |  14715848 | `8df86920d65f937be741b6c672db9fa73f1640244d69e0ab8b72e50db02fe9c1` |
+| RPM      |  14721441 | `49198ff85bf94f507cc6dce5b4ce9c61bdc8728956068d45d6d71c5eac7f7a34` |
+| AppImage | 103447032 | `ff17ab614292f64c7f0db9b419729f38727cc8617ec9ffc0f73ef00924e7d25a` |
+
+The exact DEB passed clean Ubuntu 22.04 container installation/removal, dependency and executable checks, complete shared-library resolution, camera-rule permissions/removal, and absence of an activated privileged helper. Reports are under `reports/v4-linux-artifacts/run-39663690332/`. Container results do not certify a graphical desktop, physical camera, or packet restoration.
+
+Both workflows collect all three payload reports before failing the aggregate gate; failure-only package retention lasts three days. Invalid packages still cannot proceed to installer smoke tests or release upload. Fresh CI and draft release builds must pass against the final source revision before these diagnostic artifacts can be superseded as release evidence.

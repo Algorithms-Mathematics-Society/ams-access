@@ -39,7 +39,6 @@ REQUIRED_DEPENDENCIES = {
 FORBIDDEN_DEPENDENCIES = {
     "rpm": ("xorg-x11-server-utils",),
 }
-MAX_RPM_PAYLOAD_BYTES = 512 * 1024 * 1024
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -63,43 +62,6 @@ def kind_for(path: Path) -> str:
     if lower.endswith(".rpm"): return "rpm"
     if lower.endswith(".appimage"): return "appimage"
     raise ValueError("artifact must end in .deb, .rpm, or .AppImage")
-
-def stage_rpm_payload(artifact: Path, payload: Any) -> None:
-    with tempfile.TemporaryFile() as rpm_stderr:
-        try:
-            rpm2cpio = subprocess.Popen(
-                ["rpm2cpio", str(artifact)], stdout=subprocess.PIPE, stderr=rpm_stderr
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError("required extraction tool is unavailable: rpm2cpio") from exc
-        total = 0
-        overflow = False
-        try:
-            assert rpm2cpio.stdout is not None
-            while chunk := rpm2cpio.stdout.read(1024 * 1024):
-                total += len(chunk)
-                if total > MAX_RPM_PAYLOAD_BYTES:
-                    overflow = True
-                    rpm2cpio.kill()
-                    break
-                payload.write(chunk)
-        except BaseException:
-            if rpm2cpio.poll() is None:
-                rpm2cpio.kill()
-            rpm2cpio.wait()
-            raise
-        finally:
-            if rpm2cpio.stdout is not None:
-                rpm2cpio.stdout.close()
-        rpm_status = rpm2cpio.wait()
-        rpm_stderr.seek(0)
-        stderr = rpm_stderr.read().decode(errors="replace").strip()
-    if overflow:
-        raise RuntimeError(f"RPM payload exceeds {MAX_RPM_PAYLOAD_BYTES} byte validation limit")
-    if rpm_status:
-        detail = f": {stderr}" if stderr else ""
-        raise RuntimeError(f"rpm2cpio failed with status {rpm_status}{detail}")
-    payload.seek(0)
 
 def appimage_offset(path: Path) -> int:
     # SquashFS magic can occur in the ELF stub by coincidence. Accept only a
@@ -143,19 +105,8 @@ def extract(artifact: Path, kind: str, root: Path, control: Path) -> dict[str, s
         run(["dpkg-deb", "-e", str(artifact), str(control)])
         metadata["dependencies"] = run(["dpkg-deb", "-f", str(artifact), "Depends"]).stdout.decode(errors="replace").strip()
     elif kind == "rpm":
-        with tempfile.TemporaryFile() as rpm_payload:
-            stage_rpm_payload(artifact, rpm_payload)
-            try:
-                unpack = subprocess.run(
-                    ["cpio", "-idm", "--quiet", "--no-absolute-filenames"],
-                    cwd=root, stdin=rpm_payload, capture_output=True,
-                )
-            except FileNotFoundError as exc:
-                raise RuntimeError("required extraction tool is unavailable: cpio") from exc
-        if unpack.returncode:
-            detail = unpack.stderr.decode(errors="replace").strip()
-            suffix = f": {detail}" if detail else ""
-            raise RuntimeError(f"cpio failed with status {unpack.returncode}{suffix}")
+        run(["rpm", "-K", "--nosignature", str(artifact)])
+        run(["bsdtar", "-xf", str(artifact), "-C", str(root), "--no-same-owner"])
         metadata["dependencies"] = run(["rpm", "-qp", "--requires", str(artifact)]).stdout.decode(errors="replace")
         metadata["scripts"] = run(["rpm", "-qp", "--scripts", str(artifact)]).stdout.decode(errors="replace")
     else:
@@ -306,7 +257,11 @@ def validate(artifact: Path, appimage_patchelf: Path | None = None) -> dict[str,
     with tempfile.TemporaryDirectory(prefix="ams-linux-artifact-") as tmp:
         base = Path(tmp)
         root, control = base / "root", base / "control"
-        root.mkdir(); control.mkdir()
+        # Ubuntu 22.04 unsquashfs requires a destination that does not exist.
+        # Let it create its own fresh directory; other extractors need ours.
+        if kind != "appimage":
+            root.mkdir()
+        control.mkdir()
         metadata = extract(artifact, kind, root, control)
         result.update(inspect_tree(root, kind, metadata, control, appimage_patchelf=appimage_patchelf))
         result["metadata"] = metadata
