@@ -50,3 +50,11 @@ The existing client adds up to 150 seconds after readiness, while the backend us
 - Formatter: a standalone CodeMirror state may have an incomplete syntax tree, leaving later code unformatted. Ensure parsing finishes within a 100 ms budget, publish the completed parser context, then indent in one undoable transaction. If parsing cannot finish, retain the original source. Regression covers code after a long comment prefix.
 - Editor preferences: hidden dialog markup incorrectly owned Escape. Only rendered, visible, non-hidden and non-inert dialogs now take priority; browser checks cover both hidden and visible-dialog cases and focus restoration.
 - Windows supervised runtime staging: Node 24 on Linux rejected directory-link cleanup with `ERR_FS_EISDIR`. Use `unlinkSync` only after the existing symlink/target identity guard. An adversarial replacement test verifies an unrelated runtime is preserved. No recursive directory cleanup is introduced.
+
+## CI compatibility follow-up
+
+The first cross-platform CI run exposed four compiler checks absent from the local Linux compiler: macOS saw an unused Linux helper; Windows saw an unused Linux keyboard wrapper and rejected an underscore lock binding; newer Linux Rust deprecated `fetch_update`. Commit `9ef8793` scopes production-only helpers correctly while retaining keyboard unit tests, uses a named lock guard through the native call, and replaces the atomic decrement with a checked compare-and-swap loop. Local exact Clippy, coordinator tests (7), keyboard ownership tests (5) and formatting pass. Windows/macOS CI remains the platform compilation authority.
+
+The initial installer run `39659653926` was cancelled before any draft release assets existed. Its `3069657` tag revision must not be used as installer acceptance. The unpublished v4.0.0 tag will be refreshed only after the corrected source gates pass; the old source commit remains in branch history.
+
+Browser evidence at `3069657` has a clean worktree and empty diff hash: contest 33 checks / 11 captures and login 36 checks / four captures. The subsequent compatibility patch changes Rust only. Six viewport scrolling checks cover the practice/review summary, not the full onboarding journey; their metadata explicitly records a generated Next development-type reference change, which was restored afterward.
