@@ -1542,12 +1542,26 @@ export default function ContestPageClient() {
       if (runVisit === runVisitRef.current) runInFlightRef.current = false;
     }
 
-    // Poll for the result with exponential back-off (max ~25 s total).
+    // Poll for the result with exponential back-off (max ~87 s total).
+    //
+    // The old ladder gave up after 23.1 s, which a custom run routinely
+    // outlives: it compiles the submission, compiles the IO checker when any
+    // case declares expected output, and starts up to MAX_CUSTOM_CASES (20)
+    // sandboxes -- all behind a queue poll, under contest load. The worker is
+    // allowed 300 s. So the judge finished and the answer was simply never
+    // collected, which read to a candidate as "no output".
+    //
+    // The tail is spaced at 6 s rather than extending the fast steps: a
+    // thousand candidates polling at once is load on the API, and past the
+    // first few seconds another request a second buys nothing.
     await pollRun(
       sessionId,
       attemptId,
       runVisit,
-      [600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500]
+      [
+        600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500, 4000, 4000, 5000, 5000, 5000,
+        5000, 6000, 6000, 6000, 6000, 6000, 6000,
+      ]
     );
   }
 

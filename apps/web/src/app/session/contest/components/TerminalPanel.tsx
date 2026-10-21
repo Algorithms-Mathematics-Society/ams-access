@@ -87,38 +87,6 @@ if __name__ == '__main__':
   },
 };
 
-// A test row is a "sample" test (expected/got may be shown) only when it is not
-// flagged hidden by any of the indicators the Attempts UI already recognizes.
-// Hidden/fallback tests show verdict only — never expected/got.
-const isSampleTestRow = isPublicSample;
-
-function SampleOutput({ label, value }: { label: string; value: unknown }) {
-  return (
-    <VStack gap={2} style={{ minWidth: 0 }}>
-      <Text type="supporting" weight="medium">
-        {label}
-      </Text>
-      <pre
-        style={{
-          margin: 0,
-          padding: "var(--spacing-3)",
-          borderRadius: "var(--radius-element)",
-          border: "var(--border-width) solid var(--color-border)",
-          background: "var(--color-background-body)",
-          color: "var(--color-text-primary)",
-          fontFamily: "var(--font-family-mono)",
-          fontSize: "var(--font-size-sm)",
-          whiteSpace: "pre",
-          overflowX: "auto",
-          tabSize: 4,
-        }}
-      >
-        {outputText(value)}
-      </pre>
-    </VStack>
-  );
-}
-
 type RunStatusView = {
   label: string;
   color: string;
@@ -257,6 +225,11 @@ export function TerminalPanel({
   }, [latestAttempt?.id, latestAttemptPending]);
 
   const viewingRun = resultSource === "run";
+  // The custom tab is always about the run that was started from it. A
+  // submission's results belong under "Test Result", not beneath the inputs
+  // that did not produce them -- and `resultSource` can still say
+  // "submission" when a candidate submits and then opens custom cases.
+  const showRunResults = activeTab === "custom" ? true : viewingRun;
   // Compiler messages follow the run when there is one, and otherwise fall back
   // to the last submission -- the precedence the Compiler output tab used before
   // the two output tabs were folded into this one pane.
@@ -415,29 +388,67 @@ export function TerminalPanel({
             description="These results belong to the earlier code. Run the active file again to check your changes."
           />
         )}
-        {activeTab === "all" && (
+        {/* The run's own status, distinct from a verdict: "Couldn't reach the
+            judge" and "Still running..." are not things ResultsPanel can say.
+            Computed since this pane was written and never rendered, so a
+            custom run that timed out stopped its spinner and showed nothing
+            at all. "Still running..." is also the truthful message -- the
+            worker is allowed far longer than the client waits. */}
+        {showRunPane && runStatus && (
+          <HStack
+            gap={2}
+            align="center"
+            paddingInline={4}
+            paddingBlock={2}
+            style={{
+              background: runStatus.bg,
+              borderBottom: `var(--border-width) solid ${runStatus.border}`,
+            }}
+          >
+            <Text type="supporting" weight="medium" style={{ color: runStatus.color }}>
+              {runStatus.label}
+            </Text>
+            {runTimedOut && (
+              // The run is still on the judge, so re-polling is the fix. This
+              // handler existed and had no control attached to it, which left
+              // a candidate who ran out of polling budget with no way back to
+              // their own result.
+              <Button size="sm" variant="secondary" label="Check again" onClick={onCheckRunAgain} />
+            )}
+          </HStack>
+        )}
+        {/* Rendered on the custom tab as well as "all". Starting a run
+            switches the pane to `runMode`, so a custom run landed on a tab
+            that mounted the inputs and nothing else: the output was fetched,
+            stored, and never shown. This is the only component that reads
+            `stdout_text`. */}
+        {(activeTab === "all" || activeTab === "custom") && (
           <ResultsPanel
-            tests={viewingRun ? runSampleTests : latestAttemptTests}
+            tests={showRunResults ? runSampleTests : latestAttemptTests}
             verdict={
-              viewingRun
+              showRunResults
                 ? (runResult?.status ?? null)
                 : ((latestAttempt?.final_verdict ?? latestAttempt?.status) as string | null)
             }
-            runtimeMs={viewingRun ? runResult?.runtime_ms : latestAttempt?.runtime_ms}
-            memoryKb={viewingRun ? runResult?.memory_kb : latestAttempt?.memory_kb}
-            isRunning={viewingRun ? isRunning : latestAttemptPending}
-            submitted={!viewingRun}
+            runtimeMs={showRunResults ? runResult?.runtime_ms : latestAttempt?.runtime_ms}
+            memoryKb={showRunResults ? runResult?.memory_kb : latestAttempt?.memory_kb}
+            isRunning={showRunResults ? isRunning : latestAttemptPending}
+            submitted={!showRunResults}
             progressLabel={runProgressSteps[runProgressPhase] ?? runMetrics}
-            error={runTimedOut ? "The judge did not answer in time." : runError}
+            error={
+              runTimedOut ? "Still running on the judge. Press Check again in a moment." : runError
+            }
             compilerText={compilerText}
             compilerIsError={compilerIsError}
             onJumpToCompilerError={onJumpToCompilerError}
             examples={sampleExamples}
-            stale={viewingRun && runSourceChanged}
+            stale={showRunResults && runSourceChanged}
             emptyHint={
-              viewingRun
-                ? "Run your code to check it against the sample cases."
-                : "Nothing submitted for this problem yet."
+              activeTab === "custom"
+                ? "Run your custom cases to see their output."
+                : showRunResults
+                  ? "Run your code to check it against the sample cases."
+                  : "Nothing submitted for this problem yet."
             }
             onRunAsCustom={onRunSampleAsCustom}
           />
