@@ -200,6 +200,7 @@ fn connect_with_timeout(path: &std::path::Path, timeout: Duration) -> std::io::R
 
 /// Read-only startup probe with one deadline across connect, write and reply.
 /// Unlike mutation requests this needs no busy retry: the caller owns polling.
+#[cfg(target_os = "linux")]
 pub fn ping_until(path: &std::path::Path, deadline: Instant) -> Result<(), String> {
     let remaining = deadline
         .checked_duration_since(Instant::now())

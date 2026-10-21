@@ -1,6 +1,7 @@
 mod blocking_probe;
 mod event_recorder;
 mod event_store;
+#[cfg(any(target_os = "linux", test))]
 mod keyboard_probe;
 #[cfg(target_os = "linux")]
 mod linux_network;
@@ -1545,7 +1546,7 @@ async fn enable_keyboard_intercept() -> Result<KeyboardInterceptResult, String> 
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = owner;
+            let _owner = owner;
             Ok(native_enable_keyboard_intercept())
         }
     })

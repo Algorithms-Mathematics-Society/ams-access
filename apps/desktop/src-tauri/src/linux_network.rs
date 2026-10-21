@@ -79,11 +79,20 @@ impl Coordinator {
         let result = operation();
         self.recovery_required
             .store(result.is_err(), Ordering::SeqCst);
-        let _ = self
-            .cleanups
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-                count.checked_sub(1)
-            });
+        // A CAS loop works with both the supported local compiler and newer CI
+        // compilers without relying on the renamed fetch_update/try_update API.
+        let mut count = self.cleanups.load(Ordering::SeqCst);
+        while let Some(next) = count.checked_sub(1) {
+            match self.cleanups.compare_exchange_weak(
+                count,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(current) => count = current,
+            }
+        }
         result
     }
 
