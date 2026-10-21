@@ -88,3 +88,12 @@ export function blockedMessage(decision: EntryDecision): string | null {
       return null;
   }
 }
+
+/**
+ * How wide the start is spread across a hall.
+ *
+ * Each client picks a delay in [0, this) once and starts inside the window
+ * rather than on the tick. Fifteen seconds of a two-hour paper, against a
+ * burst that refused entry outright when it did not fit.
+ */
+export const START_JITTER_MS = 15_000;

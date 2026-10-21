@@ -115,13 +115,24 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 }
 
+/** `HTTP 4xx` from the throw above, except 429 which means "later". */
+export function isClientError(error: Error): boolean {
+  const match = /^HTTP (\d{3})$/.exec(error.message);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status >= 400 && status < 500 && status !== 429;
+}
+
 export async function fetchJson<T>(
   input: RequestInfo | URL,
   init: RequestInit = {},
   options: FetchJsonOptions = {}
 ): Promise<T> {
   const {
-    timeoutMs = 8000,
+    // 20s, matching the proctor's own timeout. Eight seconds was shorter
+    // than a loaded server's queue, so entry was refused rather than slowed
+    // -- and the abandoned request kept running on the server anyway.
+    timeoutMs = 20000,
     retries = 2,
     retryDelayMs = 500,
     dedupeKey = serializeRequest(input, init),
@@ -152,8 +163,16 @@ export async function fetchJson<T>(
       } catch (error) {
         if (error instanceof SessionBindingError) throw error;
         lastError = error instanceof Error ? error : new Error(String(error));
+        // A 4xx is the server's considered answer. Retrying it cannot change
+        // the outcome and costs the server three times as much to say the
+        // same thing, at the moment it can least afford to.
+        if (isClientError(lastError)) throw lastError;
         if (attempt < retries) {
-          await delay(retryDelayMs * (attempt + 1));
+          // Full jitter. Fixed backoff keeps a hall of clients in lockstep,
+          // so the retries arrive as another synchronized burst -- which is
+          // what kept the queue full after the first one.
+          const ceiling = retryDelayMs * Math.pow(2, attempt);
+          await delay(Math.random() * ceiling);
         }
       }
     }

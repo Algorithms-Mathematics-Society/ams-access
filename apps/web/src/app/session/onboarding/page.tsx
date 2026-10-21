@@ -30,7 +30,7 @@ import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession } from "@/lib/camera-session";
-import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
+import { blockedMessage, decideEntry, shouldRunChecks, START_JITTER_MS } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { decideNetworkLockdown } from "./network-gate";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
@@ -747,13 +747,45 @@ export default function OnboardingPage() {
     contestIndex,
   ]);
 
+  // Every machine in the hall reaches zero in the same second, and each one
+  // then fires a chain of a dozen requests. That burst, not the server's
+  // steady capacity, is what refused entry on 21 Oct: once queueing passed
+  // the session timeout, candidates were turned away rather than made to
+  // wait, and their retries kept the queue full.
+  //
+  // So each client draws its own delay, once, and starts inside that window
+  // instead of on the tick. The contest clock is the server's and is already
+  // running; this spends a few seconds of a two-hour paper to convert a
+  // cliff into a slope.
+  const startJitterRef = useRef<number | null>(null);
+  if (startJitterRef.current === null) {
+    startJitterRef.current = Math.floor(Math.random() * START_JITTER_MS);
+  }
+  const [jitterElapsed, setJitterElapsed] = useState(false);
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== FINAL_STAGE) return;
-    if (waitMs <= 0 && readyForStart) {
+    if (waitMs > 0 || !readyForStart) return;
+    if (jitterElapsed) return;
+    const timer = setTimeout(() => setJitterElapsed(true), startJitterRef.current ?? 0);
+    return () => clearTimeout(timer);
+  }, [contestWindow, currentStage, waitMs, readyForStart, jitterElapsed]);
+
+  useEffect(() => {
+    if (!contestWindow) return;
+    if (currentStage !== FINAL_STAGE) return;
+    if (waitMs <= 0 && readyForStart && jitterElapsed) {
       void finalizeSecureStart();
     }
-  }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
+  }, [
+    contestWindow,
+    currentStage,
+    waitMs,
+    contestId,
+    readyForStart,
+    jitterElapsed,
+    finalizeSecureStart,
+  ]);
 
   // Keep completion callbacks stable throughout a visit. Presentation changes
   // must not restart child checks, and old checks must not advance a later visit.
