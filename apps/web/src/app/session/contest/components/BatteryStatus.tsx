@@ -10,28 +10,6 @@ interface BatterySnapshot {
 
 const REFRESH_INTERVAL_MS = 30_000;
 
-type WebBatteryManager = {
-  level: number;
-  charging: boolean;
-};
-
-/** `navigator.getBattery()`, where it exists. Null everywhere else --
- *  WebKitGTK does not implement it, and a missing battery is not an error. */
-async function readWebBattery(): Promise<BatterySnapshot | null> {
-  const getBattery = (
-    navigator as Navigator & { getBattery?: () => Promise<WebBatteryManager> }
-  ).getBattery;
-  if (typeof getBattery !== "function") return null;
-  try {
-    const manager = await getBattery.call(navigator);
-    const level = Math.round((manager.level ?? 0) * 100);
-    if (!Number.isFinite(level) || level < 0 || level > 100) return null;
-    return { percentage: level, charging: Boolean(manager.charging) };
-  } catch {
-    return null;
-  }
-}
-
 export function BatteryStatus() {
   const [battery, setBattery] = useState<BatterySnapshot | null>(null);
 
@@ -39,24 +17,22 @@ export function BatteryStatus() {
     let active = true;
     const refresh = async () => {
       try {
+        // Native only.
+        //
+        // `navigator.getBattery()` was tried as a fallback and had to come
+        // back out: browsers coarsen it deliberately to resist
+        // fingerprinting, and Brave farbles it outright -- it reported a
+        // flat 100% on a laptop sitting at 60%. A battery indicator that
+        // lies is worse than none, because a candidate reading 100% does not
+        // go and find a cable.
+        //
+        // So it shows nothing until the app is one that can ask the OS. That
+        // is a browser dev build, or an install older than the release that
+        // added the command.
         const native = await window.__TAURI__?.core.invoke<BatterySnapshot | null>(
           "get_battery_status"
         );
-        if (!active) return;
-        if (native) {
-          setBattery(native);
-          return;
-        }
-        // Fall back to the web API.
-        //
-        // The native command is absent in two real cases: a browser dev
-        // build, which has no Tauri at all, and an installed app older than
-        // the release that added the command. Chromium-based webviews
-        // (Windows WebView2) implement getBattery, so the indicator still
-        // appears there rather than silently rendering nothing -- which is
-        // what it did.
-        const web = await readWebBattery();
-        if (active) setBattery(web);
+        if (active) setBattery(native ?? null);
       } catch {
         if (active) setBattery(null);
       }
