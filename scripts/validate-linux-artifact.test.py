@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -31,6 +32,91 @@ def squashfs_superblock(bytes_used: int = 96) -> bytes:
     return bytes(data)
 
 class ArtifactValidatorTests(unittest.TestCase):
+    def test_rpm_payload_is_fully_staged_before_unpacking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            producer = base / "rpm2cpio"
+            padding = 8 * 1024 * 1024
+            producer.write_text(
+                f"#!{sys.executable}\nimport sys\n"
+                f"sys.stdout.buffer.write(b'A' + b'\\0' * {padding})\n"
+            )
+            producer.chmod(0o755)
+            previous_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = str(base) + os.pathsep + previous_path
+            try:
+                with tempfile.TemporaryFile() as payload:
+                    validator.stage_rpm_payload(base / "fixture.rpm", payload)
+                    self.assertEqual(b"A", payload.read(1))
+                    payload.seek(0, os.SEEK_END)
+                    self.assertEqual(padding + 1, payload.tell())
+            finally:
+                os.environ["PATH"] = previous_path
+
+    def test_rpm_payload_reports_silent_producer_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            producer = base / "rpm2cpio"
+            producer.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(7)\n")
+            producer.chmod(0o755)
+            previous_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = str(base) + os.pathsep + previous_path
+            try:
+                with tempfile.TemporaryFile() as payload:
+                    with self.assertRaisesRegex(RuntimeError, "status 7"):
+                        validator.stage_rpm_payload(base / "fixture.rpm", payload)
+            finally:
+                os.environ["PATH"] = previous_path
+
+    def test_rpm_payload_write_failure_reaps_producer(self):
+        class FailingPayload:
+            def write(self, _chunk):
+                raise OSError("destination failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            producer = base / "rpm2cpio"
+            pid_file = base / "pid"
+            producer.write_text(
+                f"#!{sys.executable}\nimport os, pathlib, sys, time\n"
+                f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+                "sys.stdout.buffer.write(b'X' * (1024 * 1024))\n"
+                "sys.stdout.buffer.flush()\n"
+                "time.sleep(30)\n"
+            )
+            producer.chmod(0o755)
+            previous_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = str(base) + os.pathsep + previous_path
+            try:
+                with self.assertRaisesRegex(OSError, "destination failed"):
+                    validator.stage_rpm_payload(base / "fixture.rpm", FailingPayload())
+                pid = int(pid_file.read_text())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            finally:
+                os.environ["PATH"] = previous_path
+
+    def test_rpm_payload_limit_terminates_the_producer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            producer = base / "rpm2cpio"
+            producer.write_text(
+                f"#!{sys.executable}\nimport sys\n"
+                "sys.stdout.buffer.write(b'X' * 4096)\n"
+            )
+            producer.chmod(0o755)
+            previous_path = os.environ.get("PATH", "")
+            previous_limit = validator.MAX_RPM_PAYLOAD_BYTES
+            os.environ["PATH"] = str(base) + os.pathsep + previous_path
+            validator.MAX_RPM_PAYLOAD_BYTES = 1024
+            try:
+                with tempfile.TemporaryFile() as payload:
+                    with self.assertRaisesRegex(RuntimeError, "exceeds 1024 byte"):
+                        validator.stage_rpm_payload(base / "fixture.rpm", payload)
+            finally:
+                validator.MAX_RPM_PAYLOAD_BYTES = previous_limit
+                os.environ["PATH"] = previous_path
+
     def make_tree(self, base: Path):
         root, control, expected_root = base / "root", base / "control", base / "expected"
         root.mkdir(); control.mkdir(); expected_root.mkdir()

@@ -58,3 +58,9 @@ The first cross-platform CI run exposed four compiler checks absent from the loc
 The initial installer run `39659653926` was cancelled before any draft release assets existed. Its `3069657` tag revision must not be used as installer acceptance. The unpublished v4.0.0 tag will be refreshed only after the corrected source gates pass; the old source commit remains in branch history.
 
 Browser evidence at `3069657` has a clean worktree and empty diff hash: contest 33 checks / 11 captures and login 36 checks / four captures. The subsequent compatibility patch changes Rust only. Six viewport scrolling checks cover the practice/review summary, not the full onboarding journey; their metadata explicitly records a generated Next development-type reference change, which was restored afterward.
+
+## Linux package validator follow-up
+
+Run `39661099061` passed Linux/Windows/macOS native gates, web checks, Windows/macOS bundle checks and MSIX certification. The Linux bundle was built, and its DEB payload passed validation, but RPM extraction failed without component exit statuses; AppImage validation and container installation checks were therefore not reached. The failing RPM was not uploaded, so a producer/consumer pipe race is a hypothesis, not a proven diagnosis.
+
+The validator now stages the complete `rpm2cpio` output in a temporary file capped at 512 MiB and requires successful producer exit before `cpio` consumes it. This prevents early-consumer pipe failures without accepting ignored extraction errors or removing payload checks. Failures identify the command and status. Both workflows now gather all three format reports before failing their aggregate validation gate. Fresh CI still has to confirm actual RPM/AppImage payloads and clean installation/removal.

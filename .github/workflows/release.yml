@@ -281,6 +281,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           mkdir -p artifact-validation
+          validation_status=0
           for format in deb rpm appimage; do
             extension="$format"
             [ "$format" != appimage ] || extension=AppImage
@@ -296,8 +297,11 @@ jobs:
               (cd "$rewriter_dir" && "$linuxdeploy" --appimage-extract >/dev/null)
               validation_args=(--appimage-patchelf "$rewriter_dir/squashfs-root/usr/bin/patchelf")
             fi
-            python3 scripts/validate-linux-artifact.py "${packages[0]}" "${validation_args[@]}" > "artifact-validation/$format.json"
+            if ! python3 scripts/validate-linux-artifact.py "${packages[0]}" "${validation_args[@]}" > "artifact-validation/$format.json"; then
+              validation_status=1
+            fi
           done
+          exit "$validation_status"
 
       - name: Retain Linux package validation evidence
         if: always() && runner.os == 'Linux'
