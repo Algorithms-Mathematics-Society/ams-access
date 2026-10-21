@@ -93,7 +93,11 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
         onSecurityEvent("RECOVERY: remaining system settings restored");
       }
     } catch {
-      // The status below stays as it was; the background retry continues.
+      setStatus("error");
+      setDetail(
+        "The restore retry did not complete. AMS Access has not verified that every setting was restored. Try again or ask an invigilator for help."
+      );
+      onSecurityEvent("RECOVERY: restore retry failed", "warn");
     } finally {
       setRetrying(false);
     }
@@ -128,6 +132,15 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
       setStatus("idle");
       setManualCommand(null);
       onSecurityEvent("RECOVERY: some system settings still pending restore", "warn");
+      return;
+    }
+    if (remaining === null && rejected.length === 0) {
+      setStatus("error");
+      setDetail(
+        "AMS Access ran the restore steps but could not verify their result. Try again inside the desktop app or ask an invigilator for help."
+      );
+      setManualCommand(null);
+      onSecurityEvent("RECOVERY: restore result could not be verified", "warn");
       return;
     }
     if (rejected.length > 0) {
@@ -182,7 +195,7 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
           <CodeBlock
             code={manualCommand}
             language="plaintext"
-            title="Manual recovery command"
+            title="Manual network recovery command"
             hasCopyButton={false}
             isWrapped
             size="sm"

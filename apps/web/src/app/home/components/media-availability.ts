@@ -7,7 +7,7 @@ export function getUserMediaWithTimeout(
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      reject(new Error("Camera request timed out"));
+      reject(new Error(`${constraints.video ? "Camera" : "Microphone"} request timed out`));
     }, ms);
     // Promise.resolve also catches a synchronous error (e.g. no mediaDevices).
     void Promise.resolve()

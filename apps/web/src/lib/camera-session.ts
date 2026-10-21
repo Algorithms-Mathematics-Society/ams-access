@@ -1,4 +1,5 @@
 import { withCameraTimeout } from "./camera-readiness.ts";
+import { browserCameraPreferenceStore, type CameraPreferenceStore } from "./camera-selection.ts";
 
 // One camera for the whole exam.
 //
@@ -46,6 +47,7 @@ export type CameraSessionDeps = {
   requestTimeoutMs?: number;
   /** Injectable so tests do not need a real MediaStream constructor. */
   createStream: (tracks: MediaStreamTrack[]) => MediaStream;
+  preferenceStore?: CameraPreferenceStore;
 };
 
 export type CameraSession = {
@@ -58,6 +60,10 @@ export type CameraSession = {
   /** The current stream, or null. Never triggers a permission prompt. */
   current(): MediaStream | null;
   status(): CameraStatus;
+  preferredVideoDevice(): string | null;
+  setPreferredVideoDevice(deviceId: string | null): Promise<MediaStream>;
+  /** Release only the owned video. A stale stream cannot release a replacement. */
+  releaseVideo(expectedStream?: MediaStream): void;
   /** Notified on loss and on recovery. Returns an unsubscribe function. */
   subscribe(listener: CameraListener): () => void;
   /**
@@ -106,6 +112,8 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   // Bumped by release(). An open still in flight when the exam ends must not
   // turn the camera back on afterwards: it stops what it got and fails.
   let generation = 0;
+  let videoGeneration = 0;
+  let preferredDeviceId: string | null | undefined;
   let pendingVideo: Promise<void> | null = null;
   // Whether a camera has ever been opened in this session. Guards the replug
   // recovery so it can never raise a permission prompt by itself.
@@ -152,7 +160,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
     }
   }
 
-  /** Try to reopen after a loss. Never prompts; failure changes nothing. */
+  /** Try to reopen the explicitly owned camera after a device-list change. */
   function recover(): Promise<void> {
     if (pendingVideo || !deps.mediaDevices) return Promise.resolve();
     const opened = generation;
@@ -201,11 +209,25 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
     }
   }
 
-  function openTrack(kind: "video" | "audio", opened: number): Promise<void> {
+  function preferred(): string | null {
+    if (preferredDeviceId === undefined) preferredDeviceId = deps.preferenceStore?.read() ?? null;
+    return preferredDeviceId;
+  }
+
+  function videoConstraints(): MediaTrackConstraints {
+    const deviceId = preferred();
+    return deviceId ? { ...VIDEO_CONSTRAINTS, deviceId: { exact: deviceId } } : VIDEO_CONSTRAINTS;
+  }
+
+  function openTrack(
+    kind: "video" | "audio",
+    opened: number,
+    openedVideo = videoGeneration
+  ): Promise<void> {
     const md = deps.mediaDevices!;
     const request =
       kind === "video"
-        ? md.getUserMedia({ video: VIDEO_CONSTRAINTS })
+        ? md.getUserMedia({ video: videoConstraints() })
         : md.getUserMedia({ audio: true });
     return withCameraTimeout(
       request,
@@ -218,7 +240,10 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       for (const granted of stream.getTracks()) {
         if (opened !== generation || granted !== track) granted.stop();
       }
-      if (opened !== generation) throw new Error("Camera released");
+      if (opened !== generation || (kind === "video" && openedVideo !== videoGeneration)) {
+        track?.stop();
+        throw new Error("Camera selection changed");
+      }
       if (!track || !isTrackUsable(track)) {
         track?.stop();
         if (kind === "video") throw new Error("Camera opened without a video track");
@@ -240,6 +265,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       const md = deps.mediaDevices;
       if (!md) throw new Error("Camera not available on this device");
       const opened = generation;
+      const openedVideo = videoGeneration;
       attachDeviceListener();
 
       if (!isTrackUsable(videoTrack ?? undefined)) {
@@ -264,6 +290,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
           throw error;
         }
         if (opened !== generation) throw new Error("Camera released");
+        if (openedVideo !== videoGeneration) throw new Error("Camera selection changed");
       }
 
       // Audio is a separate open on purpose: onboarding asks for the camera
@@ -287,8 +314,10 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
         try {
           await pendingAudio;
           if (opened !== generation) throw new Error("Camera released");
-        } catch {
+          if (openedVideo !== videoGeneration) throw new Error("Camera selection changed");
+        } catch (error) {
           if (opened !== generation) throw new Error("Camera released");
+          if (openedVideo !== videoGeneration) throw new Error("Camera selection changed");
           // The microphone is advisory (its own stage warns rather than
           // blocks), so a refusal here must not cost the candidate the camera.
         }
@@ -307,6 +336,50 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       return status;
     },
 
+    preferredVideoDevice() {
+      return preferred();
+    },
+
+    async setPreferredVideoDevice(deviceId) {
+      if (!deps.mediaDevices) throw new Error("Camera not available on this device");
+      attachDeviceListener();
+      const next = deviceId?.trim() || null;
+      // Persist first: a storage failure must not switch to a preference the
+      // next launch cannot reproduce.
+      deps.preferenceStore?.write(next);
+      preferredDeviceId = next;
+      videoGeneration += 1;
+      const opened = generation;
+      const openedVideo = videoGeneration;
+      pendingVideo = null;
+      videoTrack?.stop();
+      videoTrack = null;
+      announce("lost");
+      const pending = openTrack("video", opened, openedVideo);
+      pendingVideo = pending;
+      try {
+        await pending;
+      } finally {
+        if (pendingVideo === pending) pendingVideo = null;
+      }
+      if (opened !== generation || openedVideo !== videoGeneration) {
+        throw new Error("Camera selection changed");
+      }
+      announce(isTrackDelivering(videoTrack ?? undefined) ? "live" : "lost");
+      return assemble(isTrackUsable(audioTrack ?? undefined));
+    },
+
+    releaseVideo(expectedStream) {
+      const expectedTrack = expectedStream?.getVideoTracks()[0];
+      if (expectedStream && expectedTrack !== videoTrack) return;
+      videoGeneration += 1;
+      pendingVideo = null;
+      videoTrack?.stop();
+      videoTrack = null;
+      everOpened = false;
+      announce("lost");
+    },
+
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -314,12 +387,14 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
 
     release() {
       generation += 1;
+      videoGeneration += 1;
       pendingVideo = null;
       pendingAudio = null;
       videoTrack?.stop();
       audioTrack?.stop();
       videoTrack = null;
       audioTrack = null;
+      everOpened = false;
       const md = deps.mediaDevices;
       if (deviceListenerAttached && md?.removeEventListener) {
         md.removeEventListener("devicechange", reassess);
@@ -338,4 +413,5 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
 export const cameraSession: CameraSession = createCameraSession({
   mediaDevices: typeof navigator !== "undefined" ? (navigator.mediaDevices ?? null) : null,
   createStream: (tracks) => new MediaStream(tracks),
+  preferenceStore: browserCameraPreferenceStore(),
 });

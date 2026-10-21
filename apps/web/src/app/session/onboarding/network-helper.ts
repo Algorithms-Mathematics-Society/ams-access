@@ -18,6 +18,26 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error ?? "helper check failed");
 }
 
+export function networkHelperFailureMessage(error: unknown): string {
+  const message = errorMessage(error);
+  if (message === BUSY) return "Device checks are still busy. Retry the connection check.";
+  if (message.includes("admin_auth_cancelled"))
+    return "Administrator approval was cancelled. Retry when you are ready, or continue with warning.";
+  if (message.includes("admin_auth_failed"))
+    return "Administrator approval failed. Check the credentials or ask an organizer for help, then retry.";
+  if (message.includes("pkexec_not_available"))
+    return "Administrator authorization is unavailable. Ask an organizer to install the helper, or continue with warning.";
+  if (message.includes("systemd_not_available"))
+    return "The required system service manager is unavailable. Ask an organizer for a supported installation, or continue with warning.";
+  if (message.includes("helper_binary_missing") || message.includes("helper_unit_missing"))
+    return "This app package is missing network helper files. Ask an organizer for a complete supported package.";
+  if (message.includes("helper_startup_timeout") || message.includes("socket not ready"))
+    return "The network helper was installed but did not become ready. Retry, or ask an organizer to check the service.";
+  if (message.includes("installation is already running"))
+    return "Another network helper installation is still running. Wait for it to finish, then retry.";
+  return "Could not verify the network lockdown helper. Retry the connection check, or continue with warning.";
+}
+
 function waitForRetry(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
     if (signal.aborted) return resolve();
@@ -37,7 +57,11 @@ function waitForRetry(ms: number, signal: AbortSignal) {
  * Cancellation cannot stop an already launched native installer, but it stops
  * further probes, installation attempts and UI updates after leaving the stage.
  */
-export async function ensureNetworkHelper({ invoke, signal, onProgress }: HelperOptions): Promise<boolean> {
+export async function ensureNetworkHelper({
+  invoke,
+  signal,
+  onProgress,
+}: HelperOptions): Promise<boolean> {
   // AbortSignal.throwIfAborted is unavailable in the earliest supported macOS WebKit.
   const assertActive = () => {
     if (signal.aborted) throw new Error("Helper check cancelled");
@@ -64,7 +88,7 @@ export async function ensureNetworkHelper({ invoke, signal, onProgress }: Helper
 
   try {
     assertActive();
-    const platform = await invoke("get_platform") as { os?: unknown } | null;
+    const platform = (await invoke("get_platform")) as { os?: unknown } | null;
     assertActive();
     if (platform?.os === "windows") return true;
     if (platform?.os !== "macos" && platform?.os !== "linux") {
@@ -81,20 +105,16 @@ export async function ensureNetworkHelper({ invoke, signal, onProgress }: Helper
     await invoke("install_network_helper");
     assertActive();
     const ready = await checkRunning();
-    update({ phase: ready ? "pass" : "warn", message: ready ? READY : "Network lockdown helper unavailable" });
+    update({
+      phase: ready ? "pass" : "warn",
+      message: ready ? READY : "Network lockdown helper unavailable",
+    });
     return ready;
   } catch (error) {
     if (signal.aborted) return false;
-    const message = errorMessage(error);
     update({
       phase: "warn",
-      message: message === BUSY
-        ? "Device checks are still busy. Retry the connection check."
-        : message.includes("admin_auth_cancelled")
-          ? "Administrator approval was cancelled"
-          : message.includes("pkexec_not_available")
-            ? "Admin authorization tool (pkexec) is unavailable — ask your organizer to pre-install the helper"
-            : "Could not verify the network lockdown helper. Retry the connection check.",
+      message: networkHelperFailureMessage(error),
     });
     return false;
   }

@@ -614,3 +614,119 @@ test("original permission errors survive the deadline wrapper", async () => {
     (error) => error === denied
   );
 });
+
+test("preferred camera uses exact constraints and survives session recreation", async () => {
+  let saved = null;
+  const store = {
+    read: () => saved,
+    write: (value) => {
+      saved = value;
+    },
+  };
+  const deps = makeDeps();
+  deps.preferenceStore = store;
+  const first = createCameraSession(deps);
+  await first.setPreferredVideoDevice("camera-b");
+  assert.deepEqual(deps.opens[0].video.deviceId, { exact: "camera-b" });
+  assert.equal(first.preferredVideoDevice(), "camera-b");
+
+  const nextDeps = makeDeps();
+  nextDeps.preferenceStore = store;
+  const next = createCameraSession(nextDeps);
+  await next.ensure();
+  assert.deepEqual(nextDeps.opens[0].video.deviceId, { exact: "camera-b" });
+});
+
+test("switching video preserves audio and same-id selection forces recovery", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = { read: () => null, write() {} };
+  const session = createCameraSession(deps);
+  await session.ensure({ audio: true });
+  const originalVideo = deps.tracks.video[0];
+  const audio = deps.tracks.audio[0];
+
+  let stream = await session.setPreferredVideoDevice("camera-b");
+  assert.equal(originalVideo.stopped, true);
+  assert.equal(audio.stopped, false);
+  assert.deepEqual(stream.tracks, [deps.tracks.video[1], audio]);
+
+  const selected = deps.tracks.video[1];
+  stream = await session.setPreferredVideoDevice("camera-b");
+  assert.equal(selected.stopped, true, "same-id selection is an explicit recovery restart");
+  assert.deepEqual(stream.tracks, [deps.tracks.video[2], audio]);
+});
+
+test("failed exact selection stays lost and never falls back to default", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = { read: () => null, write() {} };
+  const session = createCameraSession(deps);
+  await session.ensure();
+  deps.failWith = Object.assign(new Error("selected camera missing"), { name: "NotFoundError" });
+
+  await assert.rejects(session.setPreferredVideoDevice("stale-id"), /selected camera missing/);
+  assert.equal(session.preferredVideoDevice(), "stale-id");
+  assert.equal(session.status(), "lost");
+  assert.deepEqual(deps.opens.at(-1).video.deviceId, { exact: "stale-id" });
+});
+
+test("conditional video release cannot stop a newer owner and preserves audio", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = { read: () => null, write() {} };
+  deps.createStream = (tracks) => ({
+    tracks,
+    getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
+  });
+  const session = createCameraSession(deps);
+  const old = await session.ensure({ audio: true });
+  const fresh = await session.setPreferredVideoDevice("camera-b");
+  session.releaseVideo(old);
+  assert.equal(session.status(), "live");
+  assert.equal(deps.tracks.video[1].stopped, false);
+
+  session.releaseVideo(fresh);
+  assert.equal(session.status(), "lost");
+  assert.equal(deps.tracks.video[1].stopped, true);
+  assert.equal(deps.tracks.audio[0].stopped, false);
+});
+
+test("releaseVideo disables devicechange recovery until an explicit ensure", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = { read: () => null, write() {} };
+  const session = createCameraSession(deps);
+  await session.ensure();
+  session.releaseVideo();
+  deps.fireDeviceChange();
+  await new Promise(setImmediate);
+  assert.equal(deps.opens.length, 1, "leaving Settings must not reopen the camera");
+
+  await session.ensure();
+  assert.equal(deps.opens.length, 2);
+});
+
+test("selection-only ownership attaches replug recovery for the exact device", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = { read: () => null, write() {} };
+  const session = createCameraSession(deps);
+  await session.setPreferredVideoDevice("camera-b");
+  deps.tracks.video[0].end();
+  deps.fireDeviceChange();
+  await new Promise(setImmediate);
+  assert.equal(deps.opens.length, 2);
+  assert.deepEqual(deps.opens[1].video.deviceId, { exact: "camera-b" });
+});
+
+test("ensure waiting on audio rejects when video selection changes", async () => {
+  const { deps, grants } = controlledDeps();
+  deps.preferenceStore = { read: () => null, write() {} };
+  const session = createCameraSession(deps);
+  const waiting = session.ensure({ audio: true });
+  const oldVideo = makeTrack("video");
+  grants[0].resolve(granted(oldVideo));
+  await new Promise(setImmediate);
+  const switched = session.setPreferredVideoDevice("camera-b");
+  const freshVideo = makeTrack("video");
+  grants[2].resolve(granted(freshVideo));
+  grants[1].resolve(granted(makeTrack("audio")));
+  await assert.rejects(waiting, /selection changed/);
+  assert.deepEqual((await switched).tracks[0], freshVideo);
+});

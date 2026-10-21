@@ -3,23 +3,61 @@ import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
+import type { FaceReviewContext } from "../../face-review";
 import { lumaStats, decideCapture, settlingMessage } from "../../face-frame";
 import { cameraSession } from "@/lib/camera-session";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { StageHeader } from "../ui";
 import { type TauriGlobals } from "../tauri-globals";
-import { invoke } from "../../support";
+import { invoke, invokeStrict } from "../../support";
 import { loadPresenceDetector, type PresenceDetector } from "@/lib/presence-monitor";
 import { CameraTimeoutError, startCameraPreview, withCameraTimeout } from "@/lib/camera-readiness";
+import {
+  createFaceScanAttempt,
+  startFaceScanning,
+  remainingFaceScanMs,
+  ownsFaceScanAttempt,
+  finishFaceScanAttempt,
+} from "../../face-scan-attempt";
 
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
 declare const window: Window & TauriGlobals;
 
-export function Stage8_FaceCalibration({
+type FaceCalibrationProps = {
+  stream: MediaStream | null;
+  onPass(): void;
+  dryRun?: boolean;
+  onFaceFallback?: (context?: FaceReviewContext) => void;
+  cameraUnavailable?: boolean;
+  onCameraReady?: (stream: MediaStream) => void;
+};
+
+export function Stage8_FaceCalibration(props: FaceCalibrationProps) {
+  const [attemptNumber, setAttemptNumber] = useState(0);
+  const [source, setSource] = useState({ stream: props.stream, generation: 0 });
+  if (source.stream !== props.stream) {
+    setSource({ stream: props.stream, generation: source.generation + 1 });
+  }
+  // A retry or replacement stream gets fresh refs/effects. Pending promises
+  // retain the old attempt and cannot write into the replacement's state.
+  return (
+    <FaceCalibrationAttempt
+      key={`${attemptNumber}:${source.generation}`}
+      {...props}
+      cameraUnavailable={props.cameraUnavailable && attemptNumber === 0}
+      onRetry={() => setAttemptNumber((attempt) => attempt + 1)}
+    />
+  );
+}
+
+function FaceCalibrationAttempt({
   stream,
   onPass,
   dryRun = false,
   onFaceFallback,
+  cameraUnavailable = false,
+  onCameraReady,
+  onRetry,
 }: {
   stream: MediaStream | null;
   onPass(): void;
@@ -29,7 +67,10 @@ export function Stage8_FaceCalibration({
   // Equity fallback: after repeated capture rejections (lighting/glasses/skin-tone
   // can defeat the model), let the candidate proceed for manual proctor review
   // rather than being hard-blocked. Never a silent skip — the parent records it.
-  onFaceFallback?: () => void;
+  onFaceFallback?: (context?: FaceReviewContext) => void;
+  onRetry(): void;
+  cameraUnavailable?: boolean;
+  onCameraReady?: (stream: MediaStream) => void;
 }) {
   type FaceKeypointLike = { x: number; y: number; label?: string };
   type FacePredictionLike = {
@@ -43,7 +84,15 @@ export function Stage8_FaceCalibration({
   const PHASES = [
     { key: "front" as const, label: "FRONT", instruction: "Look directly at the camera" },
   ];
-  type FaceScanState = "loading" | "ready" | "tracking" | "validating" | "complete" | "blocked";
+  type FaceScanState =
+    | "acquiring"
+    | "preview_pending"
+    | "detector_pending"
+    | "ready"
+    | "tracking"
+    | "validating"
+    | "complete"
+    | "blocked";
 
   // ── Hot-path refs (no re-render on change) ─────────────────────
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -72,10 +121,38 @@ export function Stage8_FaceCalibration({
   const fallbackStartedRef = useRef(false);
   const detectionBusyRef = useRef(false);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const attemptRef = useRef(createFaceScanAttempt(0));
+  const activeRef = useRef(false);
+  const outcomeRef = useRef<"verified" | "review" | null>(null);
+  const deadlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const passTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Disposal must wait for the actual inference, not its timeout wrapper.
+  const inferenceRef = useRef<Promise<unknown> | null>(null);
+  const startupStartedAtRef = useRef(0);
+  const reviewReasonRef = useRef("capture_rejections");
+  const STARTUP_WATCHDOG_MS = 65_000; // 8s acquisition + 2.5s preview + serial loader budgets.
+
+  function clearAttemptTimers() {
+    for (const timer of [deadlineTimerRef, startupTimerRef, passTimerRef]) {
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+    }
+  }
+
+  function owns(generation: number) {
+    return activeRef.current && ownsFaceScanAttempt(attemptRef.current, generation);
+  }
+
+  function invalidateAttempt() {
+    attemptRef.current = finishFaceScanAttempt(attemptRef.current, attemptRef.current.generation);
+    clearAttemptTimers();
+    fallbackStartedRef.current = true;
+  }
 
   // ── React state (display only) ─────────────────────────────────
   const [detectorReady, setDetectorReady] = useState(false);
-  const [detectorFailed, setDetectorFailed] = useState(false);
+  const [reviewAvailable, setReviewAvailable] = useState(false);
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [guidance, setGuidance] = useState("Setting up face scanner...");
   const [facePresent, setFacePresent] = useState(false);
@@ -89,7 +166,7 @@ export function Stage8_FaceCalibration({
   const [runtimeNote, setRuntimeNote] = useState<string | null>(null);
   const [lostTracking, setLostTracking] = useState(false);
   const [stageBlocked, setStageBlocked] = useState(false);
-  const [scanState, setScanState] = useState<FaceScanState>("loading");
+  const [scanState, setScanState] = useState<FaceScanState>("acquiring");
   // Count of rejected captures; after a few we surface the proctor-review fallback.
   const [captureRejections, setCaptureRejections] = useState(0);
   const FACE_FALLBACK_AFTER = 3;
@@ -130,7 +207,8 @@ export function Stage8_FaceCalibration({
   const capturePhaseRef = useRef<(idx: number) => Promise<void>>(async () => {});
   capturePhaseRef.current = async (_idx: number) => {
     // Hard guard: never capture after the stage has been hard-blocked.
-    if (fallbackStartedRef.current) return;
+    const generation = attemptRef.current.generation;
+    if (!owns(generation) || fallbackStartedRef.current) return;
 
     let captureAccepted = false;
     setScanState("validating");
@@ -186,6 +264,7 @@ export function Stage8_FaceCalibration({
           const blob = await new Promise<Blob | null>((resolve) =>
             cap.toBlob(resolve, "image/png")
           );
+          if (!owns(generation)) return;
           if (blob) {
             const dataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
@@ -193,6 +272,8 @@ export function Stage8_FaceCalibration({
               reader.onerror = () => reject(reader.error ?? new Error("Face capture read failed"));
               reader.readAsDataURL(blob);
             });
+
+            if (!owns(generation)) return;
 
             // ── SEC-3: validate backend result before advancing ────────────
             // When running inside Tauri the backend performs image validation
@@ -204,12 +285,13 @@ export function Stage8_FaceCalibration({
                 face_verified: boolean;
                 rejection_reason: string | null;
               };
-              const result = await invoke<FaceSaveResult>("save_face_image", {
+              const result = await invokeStrict<FaceSaveResult>("save_face_image", {
                 imageData: dataUrl,
                 index: 0,
                 dryRun,
               });
 
+              if (!owns(generation)) return;
               if (!result?.face_verified) {
                 const reason = result?.rejection_reason ?? "save_failed";
                 void invoke("log_violation", {
@@ -217,18 +299,26 @@ export function Stage8_FaceCalibration({
                   detail: `Backend rejected face image: ${reason}`,
                 });
                 setCaptureRejections((n) => n + 1);
-                resetCaptureAttempt(`Capture rejected: ${reason.replace(/_/g, " ")}`);
+                if (!fallbackStartedRef.current)
+                  resetCaptureAttempt(`Capture rejected: ${reason.replace(/_/g, " ")}`);
                 return; // do not advance stage
               }
               captureAccepted = true;
             } else {
               // Dev/browser mode — fire-and-forget, no validation.
               await invoke("save_face_image", { imageData: dataUrl, index: 0, dryRun });
+              if (!owns(generation)) return;
               captureAccepted = true;
             }
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : "capture_validation_failed";
+          if (!owns(generation) || fallbackStartedRef.current) return;
+          const message =
+            error instanceof Error
+              ? error.message
+              : typeof error === "string"
+                ? error
+                : "capture_validation_failed";
           setCaptureRejections((n) => n + 1);
           resetCaptureAttempt(
             `Capture validation failed: ${message}`,
@@ -239,34 +329,47 @@ export function Stage8_FaceCalibration({
       }
     }
 
+    if (!owns(generation)) return;
     if (!captureAccepted) {
+      if (fallbackStartedRef.current) return;
       setCaptureRejections((n) => n + 1);
       resetCaptureAttempt("Capture could not be validated.", "Capture failed — try again");
       return;
     }
 
-    // ── Reached only when face_verified is true (or dev mode) ─────────────
+    // Claim success synchronously; a timer/review click cannot race the flash
+    // animation. A save already sent to native cannot be cancelled, but its
+    // late completion cannot advance an invalidated attempt.
+    outcomeRef.current = "verified";
+    invalidateAttempt();
+    setReviewAvailable(false);
+    setStageBlocked(false);
     setFlash(true);
     setCaptured([true]);
-    setGuidance("Got it!");
-    speak("Got it!");
-    await new Promise<void>((r) => setTimeout(r, 180));
-    setFlash(false);
-
     capturedRef.current = [true];
-    holdMsRef.current = 0;
-    facePresentRef.current = false;
-    qualityOkRef.current = false;
-    smooth.current = { cx: 0.5, cy: 0.5, w: 0, h: 0 };
-    setFacePresent(false);
-    setQualityOk(false);
-    lockPctRef.current = 0;
-    setLockPct(0);
-
     setDone(true);
     setScanState("complete");
     setGuidance("Face scan complete");
-    setTimeout(() => onPassRef.current(), 1400);
+    speak("Got it!");
+    passTimerRef.current = setTimeout(() => {
+      if (
+        !activeRef.current ||
+        attemptRef.current.generation !== generation ||
+        outcomeRef.current !== "verified"
+      )
+        return;
+      setFlash(false);
+      passTimerRef.current = setTimeout(() => {
+        if (
+          !activeRef.current ||
+          attemptRef.current.generation !== generation ||
+          outcomeRef.current !== "verified"
+        )
+          return;
+        passTimerRef.current = null;
+        onPassRef.current();
+      }, 1400);
+    }, 180);
   };
 
   function keypointAt(keypoints: FaceKeypointLike[], index: number, label?: string) {
@@ -327,22 +430,63 @@ export function Stage8_FaceCalibration({
     return "LOOK STRAIGHT AT THE CAMERA";
   }
 
-  function beginTimedFallback() {
-    if (fallbackStartedRef.current) return;
+  function reviewContext(reason: string): FaceReviewContext {
+    const video = videoRef.current;
+    return {
+      reason,
+      elapsed_ms: Math.round(
+        performance.now() - (attemptRef.current.scanStartedAt ?? startupStartedAtRef.current)
+      ),
+      video_ready_state: video?.readyState ?? 0,
+      frame_width: video?.videoWidth ?? 0,
+      frame_height: video?.videoHeight ?? 0,
+    };
+  }
+
+  function makeReviewAvailable(generation: number, reason: string, note?: string) {
+    if (!owns(generation) || fallbackStartedRef.current) return;
     fallbackStartedRef.current = true;
-    setDetectorFailed(true);
+    clearAttemptTimers();
+    reviewReasonRef.current = reason;
+    setReviewAvailable(true);
     setScanState("blocked");
-
-    // Log this as a security event — stage is hard-blocked, not silently bypassed.
-    void invoke("log_violation", {
-      kind: "face_detection_fallback",
-      detail: `BlazeFace unavailable after ${detectionErrorsRef.current} consecutive errors. Stage 9 hard-blocked; proctor intervention required.`,
-    });
-
     setStageBlocked(true);
-    setGuidance("Face detection unavailable");
-    setRuntimeNote("Face detection unavailable. Contact your proctor to proceed.");
-    // Do NOT auto-capture or call onPass — the stage is blocked.
+    setGuidance("Face check needs review");
+    setRuntimeNote(
+      note ?? "No usable face capture was completed. Retry the scan or request a proctor review."
+    );
+    void invoke("log_proctoring_event", {
+      kind: "face_detection_fallback",
+      detail: reason,
+      payload: {
+        stage: 8,
+        stage_key: "face_calibration",
+        ...reviewContext(reason),
+      },
+    });
+    // Availability is not acceptance. An in-flight validated capture may still
+    // finish; clicking review/retry below invalidates it before notifying parent.
+  }
+
+  function checkDeadline(generation: number) {
+    if (!owns(generation) || fallbackStartedRef.current) return;
+    const remaining = remainingFaceScanMs(attemptRef.current, performance.now());
+    if (remaining === null) {
+      if (performance.now() - startupStartedAtRef.current >= STARTUP_WATCHDOG_MS) {
+        makeReviewAvailable(
+          generation,
+          "startup_timeout",
+          "Face scanner setup timed out. Retry or request a proctor review."
+        );
+      }
+      return;
+    }
+    if (deadlineTimerRef.current !== null) clearTimeout(deadlineTimerRef.current);
+    if (remaining <= 0) {
+      makeReviewAvailable(generation, "scan_deadline");
+    } else {
+      deadlineTimerRef.current = setTimeout(() => checkDeadline(generation), remaining);
+    }
   }
 
   function setTrackingLost(next: boolean) {
@@ -388,9 +532,28 @@ export function Stage8_FaceCalibration({
     if (isGatingRelaxed() && localStorage.getItem("ams_dev_skip_onboarding") === "1") return;
 
     let cancelled = false;
+    const generation = attemptRef.current.generation + 1;
+    attemptRef.current = createFaceScanAttempt(generation);
+    activeRef.current = true;
+    outcomeRef.current = null;
+    fallbackStartedRef.current = false;
+    startupStartedAtRef.current = performance.now();
+    startupTimerRef.current = setTimeout(() => checkDeadline(generation), STARTUP_WATCHDOG_MS);
+    const recheck = () => checkDeadline(generation);
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("pageshow", recheck);
 
     async function init() {
+      if (cameraUnavailable) {
+        makeReviewAvailable(
+          generation,
+          "camera_unavailable",
+          "Camera setup continued with a warning. Retry the camera or request a proctor review."
+        );
+        return;
+      }
       let activeStream: MediaStream | null = null;
+      let startupPhase = "camera_acquisition";
       try {
         if (!videoRef.current) throw new Error("Camera preview unavailable");
         activeStream = stream;
@@ -400,33 +563,51 @@ export function Stage8_FaceCalibration({
         // and if it did not, this is the same single open the whole flow
         // shares. Opening a second handle to a webcam that already has one is
         // how NotReadableError happens on Windows.
-        if (!activeStream) {
-          activeStream = await cameraSession.ensure().catch(() => null);
-          if (cancelled) return;
+        if (
+          !activeStream ||
+          !activeStream.getVideoTracks().some((track) => track.readyState === "live")
+        ) {
+          activeStream = await cameraSession.ensure();
+          if (cancelled || !owns(generation) || fallbackStartedRef.current) return;
           localStreamRef.current = activeStream;
         }
 
         if (activeStream) {
+          startupPhase = "preview";
+          setScanState("preview_pending");
+          setGuidance("Waiting for camera preview...");
           await startCameraPreview(videoRef.current, activeStream);
           // Not stopped on cancel: this is the shared session's track, and
           // "cancelled" here usually means React re-ran the effect, not that
           // the exam is over.
-          if (cancelled) return;
+          if (cancelled || !owns(generation) || fallbackStartedRef.current) return;
+          if (activeStream !== stream) onCameraReady?.(activeStream);
         } else {
-          beginTimedFallback();
+          makeReviewAvailable(
+            generation,
+            "camera_unavailable",
+            "Camera is unavailable. Retry or request a proctor review."
+          );
           return;
         }
-      } catch {
-        if (!cancelled) beginTimedFallback();
+      } catch (error) {
+        if (!cancelled)
+          makeReviewAvailable(
+            generation,
+            `${startupPhase}_failed`,
+            error instanceof Error ? error.message : "Camera preview failed."
+          );
         return;
       }
 
       try {
+        setScanState("detector_pending");
+        setGuidance("Preparing face detector...");
         const det = await loadPresenceDetector({
           maxFaces: 1,
           verifyAssets: window.__TAURI__
             ? async () => {
-                const verification = await invoke<{ ok: boolean; error: string | null }>(
+                const verification = await invokeStrict<{ ok: boolean; error: string | null }>(
                   "verify_face_model_assets"
                 );
                 if (!verification?.ok) {
@@ -435,11 +616,15 @@ export function Stage8_FaceCalibration({
               }
             : undefined,
         });
-        if (cancelled) {
+        if (cancelled || !owns(generation) || fallbackStartedRef.current) {
           det.dispose?.();
           return;
         }
         detectorRef.current = det;
+        if (startupTimerRef.current !== null) clearTimeout(startupTimerRef.current);
+        startupTimerRef.current = null;
+        attemptRef.current = startFaceScanning(attemptRef.current, performance.now());
+        checkDeadline(generation);
         detectCanvasRef.current = document.createElement("canvas");
         setDetectorReady(true);
         setScanState("ready");
@@ -448,21 +633,36 @@ export function Stage8_FaceCalibration({
         speak(PHASES[0].instruction);
       } catch (error) {
         if (cancelled) return;
-        setDetectorReady(true);
-        setRuntimeNote(
+        makeReviewAvailable(
+          generation,
+          "detector_unavailable",
           error instanceof Error
             ? `Detector init failed: ${error.message}`
             : "Detector init failed in this runtime."
         );
-        beginTimedFallback();
       }
     }
 
     void init();
     return () => {
       cancelled = true;
-      detectorRef.current?.dispose?.();
+      activeRef.current = false;
+      invalidateAttempt();
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("pageshow", recheck);
+      const det = detectorRef.current;
+      const inference = inferenceRef.current;
+      // Timeout doesn't cancel TensorFlow work. Dispose only after that work
+      // settles, even if its UI-facing timeout has already expired.
+      const dispose = () => {
+        try {
+          det?.dispose?.();
+        } catch {}
+      };
+      if (inference) void inference.then(dispose, dispose);
+      else dispose();
       detectorRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       // The detector is this stage's to dispose. The camera is not — it
       // belongs to `cameraSession` and the contest room is about to use it.
       localStreamRef.current = null;
@@ -473,6 +673,7 @@ export function Stage8_FaceCalibration({
   // ── Detection + canvas loop ────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
+    const generation = attemptRef.current.generation;
     const EMA = 0.28;
     const DETECT_INTERVAL = 250;
 
@@ -515,12 +716,20 @@ export function Stage8_FaceCalibration({
           const dctx = dc.getContext("2d", { willReadFrequently: true });
           if (!dctx) return;
           dctx.drawImage(video, 0, 0, sourceWidth, sourceHeight);
-          res = await withCameraTimeout(
-            det.estimateFaces(dc, false, false, true),
-            5000,
-            "Face detector inference timed out"
-          );
-          if (cancelled || detectorRef.current !== det || fallbackStartedRef.current) return;
+          const inference = det.estimateFaces(dc, false, false, true);
+          inferenceRef.current = inference;
+          const releaseInference = () => {
+            if (inferenceRef.current === inference) inferenceRef.current = null;
+          };
+          void inference.then(releaseInference, releaseInference);
+          res = await withCameraTimeout(inference, 5000, "Face detector inference timed out");
+          if (
+            cancelled ||
+            !ownsFaceScanAttempt(attemptRef.current, generation) ||
+            detectorRef.current !== det ||
+            fallbackStartedRef.current
+          )
+            return;
 
           detectionErrorsRef.current = 0;
           const detection = res[0];
@@ -617,15 +826,25 @@ export function Stage8_FaceCalibration({
             void capturePhaseRef.current(0);
           }
         } catch (error) {
+          if (
+            cancelled ||
+            !owns(generation) ||
+            detectorRef.current !== det ||
+            fallbackStartedRef.current
+          )
+            return;
           detectionErrorsRef.current += 1;
-          if (cancelled || detectorRef.current !== det) return;
           if (error instanceof CameraTimeoutError) {
             // The underlying inference cannot be cancelled. Block rather than
             // launching overlapping work on the same detector after a timeout.
             facePresentRef.current = false;
             qualityOkRef.current = false;
             holdMsRef.current = 0;
-            beginTimedFallback();
+            makeReviewAvailable(
+              generation,
+              "inference_failed",
+              error instanceof Error ? error.message : "Face detector inference failed."
+            );
             return;
           }
           if (detectionErrorsRef.current >= 4) {
@@ -636,7 +855,11 @@ export function Stage8_FaceCalibration({
             );
           }
           if (detectionErrorsRef.current >= 15) {
-            beginTimedFallback();
+            makeReviewAvailable(
+              generation,
+              "inference_failed",
+              error instanceof Error ? error.message : "Face detector inference failed."
+            );
           }
         } finally {
           detectionBusyRef.current = false;
@@ -645,6 +868,7 @@ export function Stage8_FaceCalibration({
     }
 
     function loop(ts: number) {
+      if (cancelled || !owns(generation) || fallbackStartedRef.current) return;
       rafRef.current = requestAnimationFrame(loop);
       if (ts - lastDrawMsRef.current < 66) return;
       lastDrawMsRef.current = ts;
@@ -759,7 +983,9 @@ export function Stage8_FaceCalibration({
 
   const phase = PHASES[phaseIdx];
   const scanStateLabel: Record<FaceScanState, string> = {
-    loading: "Loading model",
+    acquiring: "Opening camera",
+    preview_pending: "Waiting for preview",
+    detector_pending: "Loading model",
     ready: "Waiting for face",
     tracking: "Finding face",
     validating: "Checking capture",
@@ -866,7 +1092,7 @@ export function Stage8_FaceCalibration({
         />
 
         {/* Model loading overlay */}
-        {!detectorReady && !detectorFailed && (
+        {!detectorReady && !reviewAvailable && (
           <VStack
             style={{
               position: "absolute",
@@ -918,7 +1144,7 @@ export function Stage8_FaceCalibration({
                 letterSpacing: "0.08em",
               }}
             >
-              Face detection unavailable
+              Face check needs review
             </Text>
             <Text
               style={{
@@ -931,7 +1157,7 @@ export function Stage8_FaceCalibration({
                 lineHeight: 1.65,
               }}
             >
-              Use the option below to continue for a proctor review.
+              Retry the scan or use the option below to request a proctor review.
             </Text>
           </VStack>
         )}
@@ -1024,7 +1250,7 @@ export function Stage8_FaceCalibration({
 
       {/* Equity fallback: repeated rejections — or a detector that can't load at
           all — shouldn't trap a real candidate. */}
-      {onFaceFallback && !done && (captureRejections >= FACE_FALLBACK_AFTER || detectorFailed) && (
+      {!done && (captureRejections >= FACE_FALLBACK_AFTER || reviewAvailable) && (
         <VStack
           style={{
             maxWidth: "100%",
@@ -1043,21 +1269,38 @@ export function Stage8_FaceCalibration({
               fontFamily: "var(--font-family-body)",
             }}
           >
-            Still having trouble with the camera check? You can continue and have a proctor review
-            this manually — your contest won&rsquo;t be blocked.
+            Your face capture has not been verified. Retry the scan or request a manual proctor
+            review. The remaining contest entry checks still apply.
           </Text>
           <Button
             type="button"
             variant="secondary"
-            label="Continue — request a proctor review"
-            onClick={() => onFaceFallback()}
-            style={{
-              height: "auto",
-              whiteSpace: "normal",
-              minHeight: "var(--spacing-10)",
-              paddingBlock: "var(--spacing-2)",
+            label="Retry face scan"
+            onClick={() => {
+              if (!owns(attemptRef.current.generation)) return;
+              invalidateAttempt();
+              onRetry();
             }}
           />
+          {onFaceFallback && (
+            <Button
+              type="button"
+              variant="secondary"
+              label="Continue — request a proctor review"
+              onClick={() => {
+                if (!owns(attemptRef.current.generation)) return;
+                outcomeRef.current = "review";
+                invalidateAttempt();
+                onFaceFallback(reviewContext(reviewReasonRef.current));
+              }}
+              style={{
+                height: "auto",
+                whiteSpace: "normal",
+                minHeight: "var(--spacing-10)",
+                paddingBlock: "var(--spacing-2)",
+              }}
+            />
+          )}
         </VStack>
       )}
 

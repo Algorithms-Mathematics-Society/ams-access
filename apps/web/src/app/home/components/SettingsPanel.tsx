@@ -15,17 +15,14 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
-import {
-  describeMediaError,
-  getUserMediaWithTimeout,
-  isCameraReleaseRaceError,
-  sleep,
-  CAMERA_RETRY_DELAY_MS,
-  CAMERA_START_TIMEOUT_MS,
-} from "./utils";
+import { describeMediaError, getUserMediaWithTimeout, CAMERA_START_TIMEOUT_MS } from "./utils";
 import { SettingsAbout, SettingsPermissions, SettingsSecurity } from "./SettingsDetails";
 import type { ReadinessState, SecurityLogLevel, TelemetryQueryState } from "./types";
 import { createMediaRequestOwner } from "./media-availability";
+import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
+import { startCameraPreview } from "@/lib/camera-readiness";
+import { useCameraDevices } from "@/lib/use-camera-devices";
+import { watchCameraFrameProgress } from "@/lib/camera-frame-progress";
 
 const settingsTabs = [
   { value: "hardware", label: "Hardware" },
@@ -55,12 +52,16 @@ export const SettingsPanel = memo(function SettingsPanel({
     "hardware"
   );
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
-  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const { state: cameraListing, refresh: refreshCameras } = useCameraDevices();
+  const cameras = cameraListing.devices;
   const [selectedCam, setSelectedCam] = useState("");
   const [cameraBusy, setCameraBusy] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [framesStalled, setFramesStalled] = useState(false);
   const cameraRequestOwner = useRef(createMediaRequestOwner());
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraOpeningRef = useRef(false);
+  const cameraStartedAt = useRef(0);
 
   const [micLevel, setMicLevel] = useState(0);
   const [micActive, setMicActive] = useState(false);
@@ -91,134 +92,141 @@ export const SettingsPanel = memo(function SettingsPanel({
     return () => {
       cameraRequestOwner.current.cancel();
       micResources.current.cancel(cancelAnimationFrame);
-      camStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (cameraOpeningRef.current) cameraSession.releaseVideo();
+      else if (camStreamRef.current) cameraSession.releaseVideo(camStreamRef.current);
       camStreamRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (camStream && videoRef.current) {
-      videoRef.current.srcObject = camStream;
-      videoRef.current.play().catch(() => {});
-    }
-  }, [camStream]);
+    setSelectedCam(cameraSession.preferredVideoDevice() ?? "");
+  }, []);
 
   useEffect(() => {
-    if (!camStream) return;
-    const videoTrack = camStream.getVideoTracks()[0];
-    if (!videoTrack) return;
-
-    function handleTrackEnded() {
-      setCamStream(null);
-      setCameraError("Camera stream ended unexpectedly. Click to restart.");
+    if (!camStream || !videoRef.current) return;
+    let cancelled = false;
+    const stream = camStream;
+    const video = videoRef.current;
+    setFramesStalled(false);
+    const stopWatchingFrames = watchCameraFrameProgress(video, (stalled) => {
+      if (cancelled || camStreamRef.current !== stream) return;
+      setFramesStalled(stalled);
+      onSecurityEvent(
+        `HARDWARE: Camera frame progress ${stalled ? "stalled" : "resumed"}`,
+        stalled ? "warn" : "info"
+      );
+    });
+    void startCameraPreview(video, stream)
+      .then(() => {
+        if (cancelled || camStreamRef.current !== stream) return;
+        if (!stream.getVideoTracks().some(isTrackDelivering))
+          throw new Error("Camera is not delivering frames");
+        setCameraBusy(false);
+        setReadiness((r) => ({ ...r, camera: "ok" }));
+        onSecurityEvent(
+          `HARDWARE: Camera preview verified (${Math.round(performance.now() - cameraStartedAt.current)} ms)`
+        );
+      })
+      .catch((error) => {
+        if (cancelled || camStreamRef.current !== stream) return;
+        setCameraBusy(false);
+        setCameraError(
+          "Camera opened, but usable frames did not arrive. Check the shutter or choose another camera."
+        );
+        setReadiness((r) => ({ ...r, camera: "fail" }));
+        onSecurityEvent("HARDWARE: Camera preview unavailable", "error");
+      });
+    const lost = () => {
+      if (cancelled || camStreamRef.current !== stream) return;
+      setCameraError(
+        "The camera stopped delivering frames. Reconnect it or choose another camera."
+      );
+      setCameraBusy(false);
       setReadiness((r) => ({ ...r, camera: "fail" }));
-    }
-
-    videoTrack.addEventListener("ended", handleTrackEnded);
-    return () => {
-      videoTrack.removeEventListener("ended", handleTrackEnded);
     };
-  }, [camStream, setReadiness]);
+    const track = stream.getVideoTracks()[0];
+    track?.addEventListener("ended", lost);
+    track?.addEventListener("mute", lost);
+    return () => {
+      cancelled = true;
+      stopWatchingFrames();
+      track?.removeEventListener("ended", lost);
+      track?.removeEventListener("mute", lost);
+      if (video.srcObject === stream) video.srcObject = null;
+    };
+  }, [camStream, onSecurityEvent, setReadiness]);
 
   useEffect(() => {
     if (activeTab !== "hardware") {
       cameraRequestOwner.current.cancel();
       micResources.current.cancel(cancelAnimationFrame);
+      if (cameraOpeningRef.current) cameraSession.releaseVideo();
+      else if (camStreamRef.current) cameraSession.releaseVideo(camStreamRef.current);
+      cameraOpeningRef.current = false;
+      camStreamRef.current = null;
+      setCamStream(null);
       setMicStream(null);
       setMicActive(false);
       setMicPending(false);
       setMicLevel(0);
       setCameraBusy(false);
-      if (camStream) {
-        camStream.getTracks().forEach((track) => track.stop());
-        setCamStream(null);
-      }
     }
-  }, [activeTab, camStream]);
+  }, [activeTab]);
 
   useEffect(() => {
-    navigator.mediaDevices
-      ?.enumerateDevices()
-      .then((devices) => {
-        setCameras(devices.filter((d) => d.kind === "videoinput"));
-      })
-      .catch(() => {});
     void refreshTelemetry(false, "SETTINGS");
   }, [refreshTelemetry]);
+
+  useEffect(() => {
+    onSecurityEvent(
+      `HARDWARE: Camera listing ${cameraListing.status}`,
+      cameraListing.status === "unavailable" ? "warn" : "info"
+    );
+  }, [cameraListing.status, onSecurityEvent]);
 
   async function runSecurityScan(force = false) {
     await refreshTelemetry(force, "SETTINGS");
   }
 
-  async function startCameraTest() {
+  async function startCameraTest(deviceId = selectedCam) {
     const request = cameraRequestOwner.current.begin();
+    cameraStartedAt.current = performance.now();
+    cameraOpeningRef.current = true;
     setCameraBusy(true);
     setCameraError(null);
-
+    setFramesStalled(false);
+    const previousStream = camStreamRef.current;
+    setCamStream(null);
+    camStreamRef.current = null;
+    onSecurityEvent("HARDWARE: Camera acquisition started");
     try {
-      if (camStream) {
-        camStream.getTracks().forEach((track) => track.stop());
-        setCamStream(null);
-        await sleep(0);
-        if (!cameraRequestOwner.current.owns(request)) return;
-      }
-
-      const constraints: MediaStreamConstraints = {
-        video: selectedCam
-          ? { deviceId: { exact: selectedCam }, width: { ideal: 640 }, height: { ideal: 480 } }
-          : { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-      };
-
-      let stream: MediaStream | null = null;
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          stream = await getUserMediaWithTimeout(constraints, CAMERA_START_TIMEOUT_MS);
-          if (!cameraRequestOwner.current.owns(request)) {
-            stream.getTracks().forEach((track) => track.stop());
-            return;
-          }
-          break;
-        } catch (err) {
-          lastError = err;
-          if (!cameraRequestOwner.current.owns(request)) return;
-          if (attempt === 1 || !isCameraReleaseRaceError(err)) break;
-          await sleep(CAMERA_RETRY_DELAY_MS);
-          if (!cameraRequestOwner.current.owns(request)) return;
-        }
-      }
-
-      if (!stream) throw lastError ?? new Error("Camera unavailable");
-      if (!cameraRequestOwner.current.owns(request)) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-
+      const stream = await cameraSession.setPreferredVideoDevice(deviceId || null);
+      if (!cameraRequestOwner.current.owns(request)) return;
+      cameraOpeningRef.current = false;
       camStreamRef.current = stream;
       setCamStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        void videoRef.current.play().catch(() => {});
-      }
-
-      void navigator.mediaDevices
-        .enumerateDevices()
-        .then((devices) => {
-          if (cameraRequestOwner.current.owns(request)) {
-            setCameras(devices.filter((d) => d.kind === "videoinput"));
-          }
-        })
-        .catch(() => {});
-      setReadiness((r) => ({ ...r, camera: "ok" }));
-      onSecurityEvent("HARDWARE: Camera stream verified");
+      refreshCameras();
+      onSecurityEvent(
+        `HARDWARE: Camera acquired; checking preview (${Math.round(performance.now() - cameraStartedAt.current)} ms)`
+      );
     } catch (err) {
       if (!cameraRequestOwner.current.owns(request)) return;
-      console.error("Camera setup failed", err);
-      setCameraError(describeMediaError(err, "camera"));
+      cameraOpeningRef.current = false;
+      setCameraBusy(false);
+      if (previousStream?.getVideoTracks().some(isTrackDelivering)) {
+        camStreamRef.current = previousStream;
+        setCamStream(previousStream);
+      }
+      setSelectedCam(cameraSession.preferredVideoDevice() ?? "");
+      setCameraError(
+        err instanceof Error && /storage|quota/i.test(`${err.name} ${err.message}`)
+          ? "Camera choice could not be saved. Check app storage and try again."
+          : err instanceof Error && /timed out/i.test(err.message)
+            ? "Camera did not respond in time. Reconnect it or choose another camera."
+            : describeMediaError(err, "camera")
+      );
       setReadiness((r) => ({ ...r, camera: "fail" }));
-      onSecurityEvent("HARDWARE: Camera stream verification failed", "error");
-    } finally {
-      if (cameraRequestOwner.current.owns(request)) setCameraBusy(false);
+      onSecurityEvent("HARDWARE: Camera acquisition failed", "error");
     }
   }
 
@@ -241,7 +249,8 @@ export const SettingsPanel = memo(function SettingsPanel({
       setMicPending(true);
       try {
         setMicError(null);
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        onSecurityEvent("HARDWARE: Microphone acquisition started");
+        const stream = await getUserMediaWithTimeout({ audio: true }, CAMERA_START_TIMEOUT_MS);
         if (!micResources.current.owns(request)) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -292,7 +301,11 @@ export const SettingsPanel = memo(function SettingsPanel({
         setMicStream(null);
         setMicActive(false);
         console.error("Microphone capture failed", err);
-        setMicError(describeMediaError(err, "microphone"));
+        setMicError(
+          err instanceof Error && /timed out/i.test(err.message)
+            ? "Microphone did not respond in time. Check permission and try again."
+            : describeMediaError(err, "microphone")
+        );
         setReadiness((r) => ({ ...r, mic: "fail" }));
         onSecurityEvent("HARDWARE: Microphone stream verification failed", "error");
       }
@@ -405,13 +418,15 @@ export const SettingsPanel = memo(function SettingsPanel({
                       label={
                         cameraBusy
                           ? "Starting"
-                          : camStream
-                            ? "Preview live"
-                            : cameraError
-                              ? "Needs attention"
+                          : cameraError || framesStalled
+                            ? "Needs attention"
+                            : camStream
+                              ? "Preview live"
                               : "Preview off"
                       }
-                      color={camStream ? "green" : cameraError ? "red" : "gray"}
+                      color={
+                        cameraError ? "red" : cameraBusy ? "gray" : camStream ? "green" : "gray"
+                      }
                       size="sm"
                     />
                   </HStack>
@@ -467,7 +482,11 @@ export const SettingsPanel = memo(function SettingsPanel({
                       <Selector
                         label="Camera"
                         value={selectedCam}
-                        onChange={setSelectedCam}
+                        onChange={(deviceId) => {
+                          setSelectedCam(deviceId);
+                          void startCameraTest(deviceId);
+                        }}
+                        isDisabled={cameraBusy}
                         width="100%"
                         renderOption={(option) => (
                           <Text
@@ -485,6 +504,16 @@ export const SettingsPanel = memo(function SettingsPanel({
                         )}
                         options={[
                           { value: "", label: "System default" },
+                          ...(selectedCam &&
+                          !cameras.some((camera) => camera.deviceId === selectedCam)
+                            ? [
+                                {
+                                  value: selectedCam,
+                                  label: "Saved camera (not currently listed)",
+                                  disabled: true,
+                                },
+                              ]
+                            : []),
                           ...cameras
                             .filter((camera) => camera.deviceId)
                             .map((camera, index) => ({
@@ -505,18 +534,49 @@ export const SettingsPanel = memo(function SettingsPanel({
                         <Button
                           label="Refresh cameras"
                           variant="ghost"
-                          onClick={() =>
-                            void navigator.mediaDevices
-                              ?.enumerateDevices()
-                              .then((ds) => setCameras(ds.filter((d) => d.kind === "videoinput")))
-                              .catch(() => {})
-                          }
+                          onClick={refreshCameras}
+                          isDisabled={cameraListing.status === "loading"}
                         />
                       </HStack>
                       <Text type="supporting">
-                        Position your face in the frame with light in front of you. If you choose
-                        another camera, restart the preview to use it.
+                        Choosing a camera saves it for device setup and contests and starts its
+                        preview. Choose the camera that shows your face clearly; an infrared camera
+                        may not provide a usable image.
                       </Text>
+                      <Text type="supporting" role="status">
+                        {cameraListing.status === "loading"
+                          ? "Listing cameras…"
+                          : cameraListing.status === "empty"
+                            ? "No cameras were listed. Connect a camera or allow access, then refresh."
+                            : cameraListing.status === "unavailable"
+                              ? cameraListing.error
+                              : cameras.every((camera) => !camera.deviceId)
+                                ? "Camera identities are hidden. Start the camera to allow access, then refresh."
+                                : "Camera list refreshed. Unnamed cameras appear as Camera 1, Camera 2, and so on."}
+                      </Text>
+                      {selectedCam &&
+                        (cameraListing.status === "available" ||
+                          cameraListing.status === "empty") &&
+                        !cameras.some((camera) => camera.deviceId === selectedCam) && (
+                          <Banner
+                            status="warning"
+                            title="Saved camera is not listed"
+                            description="Reconnect the saved camera and refresh, or explicitly choose another camera. The app will not switch to a different camera automatically."
+                          />
+                        )}
+                      {framesStalled && (
+                        <Banner
+                          status="warning"
+                          title="Camera frames are not advancing"
+                          description="The preview has not advanced for five seconds. Check the privacy shutter and connection, then restart or choose another camera. This is a capture diagnostic, not a face-check result."
+                        />
+                      )}
+                      {camStream && (
+                        <Text type="supporting">
+                          If the image stays blank, check the privacy shutter and lighting, then
+                          restart or choose another camera.
+                        </Text>
+                      )}
                       {cameraError && (
                         <Banner
                           status="error"
@@ -565,7 +625,15 @@ export const SettingsPanel = memo(function SettingsPanel({
                         </Text>
                       </VStack>
                       <Token
-                        label={micActive ? "Listening" : "Off"}
+                        label={
+                          micActive
+                            ? "Listening"
+                            : micPending
+                              ? "Starting"
+                              : micError
+                                ? "Needs attention"
+                                : "Off"
+                        }
                         color={micActive ? "green" : "gray"}
                         size="sm"
                       />

@@ -1,5 +1,6 @@
 import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
+import { Selector } from "@astryxdesign/core/Selector";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/app/home/components/ui-primitives";
 import { useTheme } from "@/lib/theme";
@@ -8,13 +9,24 @@ import { SetupPermissionInfo } from "../SetupPermissionInfo";
 import { cameraSession } from "@/lib/camera-session";
 import { invoke } from "../../support";
 import { startCameraPreview } from "@/lib/camera-readiness";
+import type { SessionPolicy } from "@ams/api-client";
+import { classifyCameraFailure, type CameraFailure } from "../../camera-failure";
+import { readinessAction } from "../../readiness-action";
+import { useCameraDevices } from "@/lib/use-camera-devices";
+import { isSavedCameraUnavailable, missingCameraGuidance } from "@/lib/camera-selection";
 
 export function Stage7_CameraInit({
   onPass,
   onCameraReady,
+  onWarn,
+  policy,
+  overrideActive,
 }: {
   onPass(): void;
-  onCameraReady(stream: MediaStream): void;
+  onWarn(detail: string): void;
+  onCameraReady(stream: MediaStream | null): void;
+  policy: SessionPolicy | null;
+  overrideActive: boolean;
 }) {
   const { theme } = useTheme();
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
@@ -23,6 +35,21 @@ export function Stage7_CameraInit({
   const [isWindows, setIsWindows] = useState(false);
   const [isMac, setIsMac] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  const [errorCode, setErrorCode] = useState<CameraFailure>("not_ready");
+  const [preferredCamera, setPreferredCamera] = useState(
+    () => cameraSession.preferredVideoDevice() ?? ""
+  );
+  const [selectionPending, setSelectionPending] = useState(false);
+  const { state: cameraDevices, refresh: refreshCameras } = useCameraDevices();
+  const generationRef = useRef(0);
+  const completedRef = useRef(false);
+  const passTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const policyRef = useRef(policy);
+  policyRef.current = policy;
+  const cancelPass = () => {
+    if (passTimerRef.current !== null) clearTimeout(passTimerRef.current);
+    passTimerRef.current = null;
+  };
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -36,7 +63,9 @@ export function Stage7_CameraInit({
 
   useEffect(() => {
     let cancelled = false;
-    let passTimer: ReturnType<typeof setTimeout> | null = null;
+    const generation = ++generationRef.current;
+    completedRef.current = false;
+    const owns = () => !cancelled && generationRef.current === generation && !completedRef.current;
 
     // The camera is opened through the shared session, which keeps it open
     // across the navigation into the contest. Nothing here stops it — an
@@ -44,34 +73,31 @@ export function Stage7_CameraInit({
     async function init() {
       try {
         const stream = await cameraSession.ensure();
-        if (cancelled) return;
+        if (!owns()) return;
         if (!videoRef.current) throw new Error("Camera preview unavailable");
         await startCameraPreview(videoRef.current, stream);
         if (!stream.getVideoTracks().some((track) => track.readyState === "live" && !track.muted)) {
           throw new Error("Camera is not delivering frames");
         }
-        if (cancelled) return;
+        if (!owns()) return;
         onCameraReady(stream);
         setPhase("pass");
-        passTimer = setTimeout(() => {
-          if (!cancelled) onPass();
-        }, 1000);
+        refreshCameras();
       } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : "Camera access was denied";
-        const denied =
-          msg.includes("denied") ||
-          msg.includes("Permission") ||
-          msg.includes("NotAllowed") ||
-          msg.includes("not allowed");
-        const notFound = msg.includes("not available") || msg.includes("NotFound");
-        setPermissionIssue(!notFound);
+        if (!owns()) return;
+        const code = classifyCameraFailure(err);
+        setErrorCode(code);
+        setPermissionIssue(code === "denied");
         setError(
-          denied
+          code === "denied"
             ? "Camera access was denied. Allow camera access for AMS Access, then try again."
-            : notFound
-              ? "No camera found. Please connect a camera and try again."
-              : "Could not access your camera. Please check your settings."
+            : code === "missing"
+              ? missingCameraGuidance(Boolean(cameraSession.preferredVideoDevice()))
+              : code === "busy"
+                ? "The camera could not be read. Close other camera apps and check the connection, then try again."
+                : code === "timeout"
+                  ? "The camera did not respond in time. Reconnect it or try again."
+                  : "The camera preview could not start. Check the camera, then try again."
         );
         setPhase("fail");
       }
@@ -83,9 +109,11 @@ export function Stage7_CameraInit({
     // and no way forward. Now it surfaces as a failure with the retry button
     // the error path already renders.
     const unsubscribe = cameraSession.subscribe((status) => {
-      if (cancelled || status !== "lost") return;
-      if (passTimer) clearTimeout(passTimer);
+      if (!owns() || status !== "lost") return;
+      generationRef.current += 1;
+      cancelPass();
       setPermissionIssue(false);
+      setErrorCode("missing");
       setError("The camera was disconnected. Reconnect it and try again.");
       setPhase("fail");
     });
@@ -93,9 +121,77 @@ export function Stage7_CameraInit({
     return () => {
       cancelled = true;
       unsubscribe();
-      if (passTimer) clearTimeout(passTimer);
+      generationRef.current += 1;
+      cancelPass();
     };
-  }, [onPass, onCameraReady, retryKey]);
+  }, [onCameraReady, refreshCameras, retryKey]);
+
+  useEffect(() => {
+    cancelPass();
+    if (phase !== "pass" || readinessAction(policy, "camera", "pass").decision !== "pass") return;
+    const generation = generationRef.current;
+    passTimerRef.current = setTimeout(() => {
+      if (generationRef.current !== generation || completedRef.current) return;
+      if (readinessAction(policyRef.current, "camera", "pass").decision !== "pass") return;
+      completedRef.current = true;
+      onPass();
+    }, 1000);
+    return cancelPass;
+  }, [phase, policy, onPass]);
+
+  const selectCamera = async (deviceId: string) => {
+    const generation = ++generationRef.current;
+    completedRef.current = true;
+    cancelPass();
+    setSelectionPending(true);
+    setPhase("checking");
+    setError(null);
+    setPermissionIssue(false);
+    try {
+      await cameraSession.setPreferredVideoDevice(deviceId || null);
+      if (generationRef.current !== generation) return;
+      setPreferredCamera(deviceId);
+      completedRef.current = false;
+      setRetryKey((key) => key + 1);
+    } catch (err) {
+      if (generationRef.current !== generation) return;
+      setPreferredCamera(cameraSession.preferredVideoDevice() ?? "");
+      completedRef.current = false;
+      const preferenceUnavailable =
+        err instanceof Error && err.message.toLowerCase().includes("storage");
+      const code = classifyCameraFailure(err);
+      setErrorCode(code);
+      setPermissionIssue(code === "denied");
+      setError(
+        preferenceUnavailable
+          ? "Your camera choice could not be saved. Check app storage access, then choose it again."
+          : code === "missing"
+            ? "That camera is no longer available. Choose another camera or reconnect it."
+            : code === "denied"
+              ? "Camera access was denied. Allow camera access for AMS Access, then choose the camera again."
+              : code === "busy"
+                ? "That camera could not be read. Close other camera apps, then choose it again."
+                : code === "timeout"
+                  ? "That camera did not respond in time. Reconnect it or choose another camera."
+                  : "That camera preview could not start. Choose another camera or try again."
+      );
+      setPhase("fail");
+    } finally {
+      if (generationRef.current === generation) setSelectionPending(false);
+    }
+  };
+
+  const failureAction = readinessAction(policy, "camera", "failure");
+  const selectableCameraDevices = cameraDevices.devices.filter((device) => device.deviceId);
+  const cameraIdentitiesHidden =
+    cameraDevices.status === "available" &&
+    cameraDevices.devices.length > 0 &&
+    selectableCameraDevices.length === 0;
+  const savedCameraUnavailable = isSavedCameraUnavailable(
+    preferredCamera || null,
+    cameraDevices.status,
+    selectableCameraDevices.map((device) => device.deviceId)
+  );
 
   return (
     <VStack gap={5} width="100%">
@@ -107,6 +203,74 @@ export function Stage7_CameraInit({
       </VStack>
 
       <SetupPermissionInfo kind="camera" />
+      <Selector
+        label="Camera"
+        description="Choose the camera to use for setup and during the contest."
+        value={preferredCamera}
+        onChange={(deviceId) => void selectCamera(deviceId)}
+        isDisabled={selectionPending}
+        disabledMessage={selectionPending ? "Switching cameras…" : undefined}
+        isLoading={cameraDevices.status === "loading"}
+        width="100%"
+        status={
+          savedCameraUnavailable
+            ? { type: "warning", message: "Saved camera unavailable. Choose another camera." }
+            : undefined
+        }
+        options={[
+          { value: "", label: "System default" },
+          ...(preferredCamera &&
+          !selectableCameraDevices.some((device) => device.deviceId === preferredCamera)
+            ? [
+                {
+                  value: preferredCamera,
+                  label:
+                    cameraDevices.status === "unavailable" || cameraDevices.status === "loading"
+                      ? "Saved camera"
+                      : "Saved camera unavailable",
+                  disabled: savedCameraUnavailable,
+                },
+              ]
+            : []),
+          ...selectableCameraDevices.map((device, index) => ({
+            value: device.deviceId,
+            label: device.label || `Camera ${index + 1}`,
+          })),
+        ]}
+      />
+      {cameraDevices.status === "loading" && (
+        <Text color="secondary">Loading available cameras…</Text>
+      )}
+      {cameraIdentitiesHidden && (
+        <VStack gap={2} hAlign="start">
+          <Text color="secondary">
+            Camera identities are hidden. Start the camera to allow access, then refresh the list.
+          </Text>
+          <Button theme={theme} variant="secondary" size="small" onClick={refreshCameras}>
+            Refresh cameras
+          </Button>
+        </VStack>
+      )}
+      {cameraDevices.status === "empty" && (
+        <VStack gap={2} hAlign="start">
+          <Text color="secondary">
+            No cameras were found. Connect a camera, then refresh the list.
+          </Text>
+          <Button theme={theme} variant="secondary" size="small" onClick={refreshCameras}>
+            Refresh cameras
+          </Button>
+        </VStack>
+      )}
+      {cameraDevices.status === "unavailable" && (
+        <VStack gap={2} hAlign="start">
+          <Text color="secondary">
+            {cameraDevices.error ?? "The camera list is unavailable. Refresh to try again."}
+          </Text>
+          <Button theme={theme} variant="secondary" size="small" onClick={refreshCameras}>
+            Refresh cameras
+          </Button>
+        </VStack>
+      )}
       <VStack
         width="100%"
         maxWidth="calc(var(--spacing-10) * 12)"
@@ -232,11 +396,35 @@ export function Stage7_CameraInit({
               </Text>
             </>
           )}
+          {failureAction.decision === "warn" && (
+            <Button
+              theme={theme}
+              variant="secondary"
+              size="small"
+              onClick={() => {
+                if (
+                  completedRef.current ||
+                  readinessAction(policyRef.current, "camera", "failure").decision !== "warn"
+                )
+                  return;
+                completedRef.current = true;
+                generationRef.current += 1;
+                cancelPass();
+                onCameraReady(null);
+                onWarn("Camera unavailable (" + errorCode + "): " + error);
+              }}
+            >
+              {overrideActive ? "Continue with organizer approval" : "Continue with warning"}
+            </Button>
+          )}
           <Button
             theme={theme}
             variant="secondary"
             size="small"
             onClick={() => {
+              generationRef.current += 1;
+              completedRef.current = true;
+              cancelPass();
               setPhase("checking");
               setError(null);
               setPermissionIssue(false);

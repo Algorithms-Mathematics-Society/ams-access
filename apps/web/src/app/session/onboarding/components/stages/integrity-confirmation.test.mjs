@@ -138,6 +138,11 @@ function catchLaunchError(error) {
   const context = {
     error,
     SessionBindingError: class extends Error {},
+    EntryCancelledError: class extends Error {},
+    EntryTimeoutError: class extends Error {},
+    attempts: { current: () => true },
+    attempt: 1,
+    setEntryRetryAvailable() {},
     windowMeta: null,
     isTestAccount: false,
     readinessErrorText: labelsExports.readinessErrorText,

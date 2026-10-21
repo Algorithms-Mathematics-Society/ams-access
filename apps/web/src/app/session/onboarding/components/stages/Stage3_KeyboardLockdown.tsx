@@ -4,78 +4,130 @@ import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList"
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StageHeader, StatusBadge } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
+import {
+  classifyKeyboardOutcome,
+  type KeyboardInterceptResult,
+  type KeyboardOutcome,
+} from "../../keyboard-outcome";
 
-function missingPermissionFor(method: string | undefined) {
-  if (method === "accessibility_denied") return "accessibility" as const;
-  if (method === "input_monitoring_denied") return "input_monitoring" as const;
-  return null;
+const KEYBOARD_PROBE_ENVELOPE_MS = 40_000;
+const POLL_TIMEOUT_S = 60;
+
+function outcomeCopy(kind: KeyboardOutcome["kind"]) {
+  if (kind === "linux_control_checked")
+    return {
+      title: "Shortcut controls checked and restored",
+      description:
+        "AMS Access temporarily applied and restored the desktop controls it could verify. This check does not prove every system shortcut is blocked. Setup records a warning, and contest entry applies the available controls again.",
+      status: "Shortcut coverage checked — review required",
+    };
+  if (kind === "detection_only")
+    return {
+      title: "Shortcut detection only",
+      description:
+        "AMS Access can detect some activity on this desktop, but could not verify compositor-level shortcut control. Continue with the recorded warning.",
+      status: "Shortcut blocking not verified",
+    };
+  if (kind === "unsupported")
+    return {
+      title: "Shortcut control unsupported",
+      description:
+        "AMS Access does not have a verified shortcut-control adapter for this desktop environment. Continue with the recorded warning.",
+      status: "Shortcut control unsupported on this desktop",
+    };
+  return {
+    title: "Keyboard check unavailable",
+    description:
+      "The keyboard-control probe did not complete. Any partial probe cleanup remains owned by the desktop service. Continue with the recorded warning.",
+    status: "Keyboard controls could not be verified",
+  };
 }
 
 /**
- * Keyboard lockdown.
- *
- * A failure here does not block entry (decision 7 — lockdown violations are
- * recorded and warned about, never auto-ejected), but it must be *recorded* as
- * a warning rather than a pass: on a desktop environment where the intercept
- * cannot engage, the candidate keeps Alt+Tab for the whole exam, and the
- * proctor reviewing the session afterwards needs to know that.
+ * The native command owns the probe and restoration. The 40-second frontend
+ * envelope is a presentation safeguard around its 20-second admission guard;
+ * timing out here never starts another overlapping probe.
  */
 export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
   const [phase, setPhase] = useState(0);
-  const [lockFailed, setLockFailed] = useState(false);
+  const [outcome, setOutcome] = useState<KeyboardOutcome | null>(null);
   const [accessibilityDenied, setAccessibilityDenied] = useState(false);
-  // Which macOS permission is missing: Accessibility to create the tap, or
-  // Input Monitoring when the system refused the tap without it. Each lives
-  // on its own Settings pane.
   const [missingPermission, setMissingPermission] = useState<"accessibility" | "input_monitoring">(
     "accessibility"
   );
   const [pollElapsed, setPollElapsed] = useState(0);
-  // Bumped by Re-check so the poll below starts over; the denied flag alone
-  // is already true and would not re-run it.
   const [pollRound, setPollRound] = useState(0);
+  const pendingProbeRef = useRef<Promise<KeyboardInterceptResult | null> | null>(null);
+  const generationRef = useRef(0);
+  const permissionGenerationRef = useRef(0);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const POLL_TIMEOUT_S = 60;
+  const runProbe = useCallback(() => {
+    if (pendingProbeRef.current) return pendingProbeRef.current;
+    const pending = invoke<KeyboardInterceptResult>("enable_keyboard_intercept");
+    pendingProbeRef.current = pending;
+    void pending.finally(() => {
+      if (pendingProbeRef.current === pending) pendingProbeRef.current = null;
+    });
+    return pending;
+  }, []);
 
-  // Auto-poll every 2 s while waiting for the user to grant the permission.
-  // One call at a time: right after a grant the intercept can take longer
-  // than the interval, and two overlapping successes passed the stage twice.
+  const clearAdvance = () => {
+    if (advanceTimerRef.current !== null) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = null;
+  };
+
+  const scheduleAdvance = useCallback(
+    (shouldPass: boolean) => {
+      clearAdvance();
+      advanceTimerRef.current = setTimeout(shouldPass ? onPass : onWarn, 600);
+    },
+    [onPass, onWarn]
+  );
+
   useEffect(() => {
     if (!accessibilityDenied) return;
+    const generation = ++permissionGenerationRef.current;
     let elapsed = 0;
-    let inFlight = false;
     let stopped = false;
-    const id = setInterval(async () => {
+    let inFlight = false;
+    const id = setInterval(() => {
       elapsed += 2;
       setPollElapsed(elapsed);
       if (elapsed >= POLL_TIMEOUT_S) {
         clearInterval(id);
-        return; // show manual Re-check button instead
+        return;
       }
       if (inFlight) return;
       inFlight = true;
-      const result = await invoke<{ active: boolean; method: string }>("enable_keyboard_intercept");
-      inFlight = false;
-      if (stopped) return;
-      if (result?.active) {
-        stopped = true;
-        clearInterval(id);
-        setAccessibilityDenied(false);
-        setPhase(4);
-        setTimeout(onPass, 600);
-        return;
-      }
-      const permission = missingPermissionFor(result?.method);
-      if (permission) setMissingPermission(permission);
+      const ownedProbe = runProbe();
+      void withNullableTimeout(ownedProbe, KEYBOARD_PROBE_ENVELOPE_MS).then((result) => {
+        inFlight = false;
+        if (stopped || permissionGenerationRef.current !== generation) return;
+        const next = classifyKeyboardOutcome(result);
+        if (next.kind === "permission") {
+          setMissingPermission(next.permission);
+          return;
+        }
+        if (next.shouldPass) {
+          stopped = true;
+          clearInterval(id);
+          setAccessibilityDenied(false);
+          setOutcome(next);
+          setPhase(4);
+          scheduleAdvance(true);
+        }
+      });
     }, 2000);
     return () => {
       stopped = true;
+      permissionGenerationRef.current += 1;
       clearInterval(id);
     };
-  }, [accessibilityDenied, pollRound, onPass]);
+  }, [accessibilityDenied, pollRound, runProbe, scheduleAdvance]);
 
   const recheck = () => {
     setPollElapsed(0);
@@ -83,58 +135,41 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
   };
 
   useEffect(() => {
-    async function go() {
-      setPhase(1);
-      const result = await withNullableTimeout(
-        invoke<{ active: boolean; method: string }>("enable_keyboard_intercept"),
-        // macOS can wait up to 3.5 s for a stale tap thread and a fresh tap.
-        4000
-      );
-      // macOS: a permission is missing. Walk the candidate through granting
-      // it before entry rather than letting them in with shortcuts live.
-      const permission = missingPermissionFor(result?.method);
-      if (permission) {
-        setMissingPermission(permission);
+    const generation = ++generationRef.current;
+    setPhase(1);
+    const ownedProbe = runProbe();
+    void withNullableTimeout(ownedProbe, KEYBOARD_PROBE_ENVELOPE_MS).then((result) => {
+      if (generationRef.current !== generation) return;
+      const next = classifyKeyboardOutcome(result);
+      if (next.kind === "permission") {
+        setMissingPermission(next.permission);
         setAccessibilityDenied(true);
         return;
       }
-      const failed = result?.active !== true;
-      setLockFailed(failed);
+      setOutcome(next);
       setPhase(4);
-      // Warn, not pass. The badge already said "unavailable" here while the
-      // stage was recorded as a clean pass, so the final summary and the
-      // proctor's record both showed keyboard lockdown green on a machine
-      // where it never engaged.
-      setTimeout(failed ? onWarn : onPass, 600);
-    }
+      scheduleAdvance(next.shouldPass);
+    });
 
-    function handleKey(e: KeyboardEvent) {
+    function handleKey(event: KeyboardEvent) {
       const intercept = [
-        e.key === "PrintScreen",
-        e.altKey && e.key === "Tab",
-        e.altKey && e.key === "F4",
-        e.metaKey && e.key === "Tab",
-        e.metaKey && e.key === "q",
-        e.ctrlKey && e.altKey && e.key === "Delete",
+        event.key === "PrintScreen",
+        event.altKey && event.key === "Tab",
+        event.altKey && event.key === "F4",
+        event.metaKey && event.key === "Tab",
+        event.metaKey && event.key === "q",
+        event.ctrlKey && event.altKey && event.key === "Delete",
       ];
-      if (intercept.some(Boolean)) e.preventDefault();
+      if (intercept.some(Boolean)) event.preventDefault();
     }
     window.addEventListener("keydown", handleKey, true);
-    void go();
-    return () => window.removeEventListener("keydown", handleKey, true);
-  }, [onPass, onWarn]);
+    return () => {
+      generationRef.current += 1;
+      clearAdvance();
+      window.removeEventListener("keydown", handleKey, true);
+    };
+  }, [runProbe, scheduleAdvance]);
 
-  // One intercept covers all four, so they share one outcome. They used to be
-  // staggered on `phase >= 1..4` — but `phase` only ever goes 0 → 1 → 4, so
-  // the stagger was animation, and worse, all four rendered a green "Ready"
-  // even when the intercept had failed and the badge below said so.
-  const settled = phase >= 4;
-  const keys = ["Alt+Tab", "Super / Win", "Alt+F4 / Cmd+Q", "PrintScreen"].map((label) => ({
-    label,
-    locked: settled && !lockFailed,
-  }));
-
-  // ── Accessibility denied — hard-block UI ──────────────────────────────────
   if (accessibilityDenied) {
     const timedOut = pollElapsed >= POLL_TIMEOUT_S;
     const paneName =
@@ -177,27 +212,45 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
     );
   }
 
+  const settled = phase >= 4;
+  const isControlActive = outcome?.kind === "control_active";
+  const detail =
+    outcome && !outcome.shouldPass && outcome.kind !== "permission"
+      ? outcomeCopy(outcome.kind)
+      : null;
+  const itemValue = isControlActive
+    ? "Ready"
+    : outcome?.kind === "linux_control_checked"
+      ? "Not individually verified"
+      : outcome?.kind === "detection_only"
+        ? "Detection only"
+        : settled
+          ? "Not controlled"
+          : "Checking";
+
   return (
     <VStack gap={6} width="100%">
       <StageHeader label="Keyboard setup" />
       <Text color="secondary">
-        We’re preparing shortcut controls to keep your contest workspace in focus.
+        We’re checking shortcut controls for this desktop. The contest applies available controls
+        again when secure entry starts.
       </Text>
+      {detail && <Banner status="warning" title={detail.title} description={detail.description} />}
       <MetadataList>
-        {keys.map(({ label, locked }) => (
+        {["Alt+Tab", "Super / Win", "Alt+F4 / Cmd+Q", "PrintScreen"].map((label) => (
           <MetadataListItem key={label} label={label}>
-            {locked ? "Ready" : settled ? "Not locked" : "Checking"}
+            {itemValue}
           </MetadataListItem>
         ))}
       </MetadataList>
       <StatusBadge
-        status={phase >= 4 ? (lockFailed ? "warn" : "pass") : "checking"}
+        status={settled ? (isControlActive ? "pass" : "warn") : "checking"}
         label={
-          phase >= 4
-            ? lockFailed
-              ? "Keyboard lock unavailable on this desktop environment"
-              : "Keyboard controls active"
-            : "Setting up keyboard controls..."
+          settled
+            ? isControlActive
+              ? "Keyboard controls active"
+              : (detail?.status ?? "Keyboard controls could not be verified")
+            : "Checking keyboard-control coverage…"
         }
       />
     </VStack>

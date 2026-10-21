@@ -3,93 +3,102 @@ import { Text } from "@astryxdesign/core/Text";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
-import { useCallback, useEffect, useState } from "react";
-import { fetchOrganizerOverrides } from "@ams/api-client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  fetchOrganizerOverrides,
+  type OrganizerOverride,
+  type SessionPolicy,
+} from "@ams/api-client";
+import { displayObservation } from "../../display-check";
+import { readinessAction, type ReadinessObservation } from "../../readiness-action";
 import { CheckLine, StageHeader } from "../ui";
 import { API_URL, availableMonitors, getOrCreateDeviceId, type MonitorInfo } from "../../support";
 import { participantToken } from "@/lib/candidate-auth";
 
 export function Stage2_MonitorDetection({
   onPass,
-  platform,
-  externalDisplayOverride,
+  policy,
+  overrideActive,
+  onWarn,
+  onOverridesChanged,
 }: {
   onPass(): void;
-  /** Authoritative device platform ("windows" | "macos" | "linux" | null). */
-  platform: string | null;
-  /** True when an organizer has waived the `external_display` check for this device. */
-  externalDisplayOverride: boolean;
+  onWarn(detail: string): void;
+  policy: SessionPolicy | null;
+  overrideActive: boolean;
+  onOverridesChanged(grants: OrganizerOverride[]): void;
 }) {
-  const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
+  const [monitors, setMonitors] = useState<MonitorInfo[] | null>(null);
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanIndeterminate, setScanIndeterminate] = useState(false);
+  const [observation, setObservation] = useState<ReadinessObservation>("probe_unavailable");
 
-  // Windows-only hard-block: a second / wireless display is a contest-integrity
-  // violation we enforce at the gate (mirrors the `external_display` block in
-  // core-rs). On macOS/Linux — or when an organizer override is present — this
-  // stays an advisory warning so behavior off-Windows is unchanged.
-  const isWindows = platform?.toLowerCase().startsWith("windows") ?? false;
-  const multiDisplay = monitors.length > 1;
-  const hardBlock = isWindows && multiDisplay && !externalDisplayOverride;
+  const action = readinessAction(policy, "external_display", observation);
+  const multiDisplay = (monitors?.length ?? 0) > 1;
+  const generationRef = useRef(0);
+  const advancedRef = useRef(false);
+  const passTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const policyRef = useRef(policy);
+  policyRef.current = policy;
+  const cancelPass = () => {
+    if (passTimerRef.current !== null) clearTimeout(passTimerRef.current);
+    passTimerRef.current = null;
+  };
+  const hardBlock = done && action.decision === "block";
 
   const runDetection = useCallback(async () => {
+    const generation = ++generationRef.current;
+    advancedRef.current = false;
+    cancelPass();
     setScanning(true);
     setDone(false);
-
-    // `null` means we could not ask; `[]` means we asked and got nothing.
-    // Only the first is a failure to verify. They used to be the same value,
-    // which is how a broken API call became a candidate-facing hard block.
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const mons = await Promise.race([
       availableMonitors(),
-      new Promise<MonitorInfo[] | null>((resolve) => setTimeout(() => resolve(null), 2000)),
-    ]).catch(() => null);
-
-    // Windows fail-closed: an enumeration we could not perform is "could not
-    // verify", NOT a single screen. Off-Windows (or with an organizer
-    // override) keep the advisory synthetic-single fallback so macOS/Linux
-    // behavior is unchanged.
-    const enumFailed = mons === null;
-    const indeterminate = isWindows && !externalDisplayOverride && enumFailed;
-    setScanIndeterminate(indeterminate);
-
-    const list =
-      mons && mons.length
-        ? mons
-        : [
-            {
-              name: "Primary Display",
-              position: { x: 0, y: 0 },
-              size: { width: window.screen.width, height: window.screen.height },
-              scaleFactor: window.devicePixelRatio,
-            },
-          ];
-    setMonitors(list);
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), 2000);
+      }),
+    ])
+      .catch(() => null)
+      .finally(() => clearTimeout(timeout));
+    if (generationRef.current !== generation) return;
+    // Preserve null as unavailable. An empty successful Tauri enumeration keeps
+    // the established Windows primary-display contract; thrown/time-out probes
+    // arrive as null and remain fail-closed under strict Windows policy.
+    const nextObservation = displayObservation(mons);
+    setObservation(nextObservation);
+    setScanIndeterminate(mons === null);
+    setMonitors(mons);
     setScanning(false);
     setDone(true);
-
-    // Auto-advance only on a verified single screen. Indeterminate (Windows)
-    // and multi-display both hold the candidate at this stage.
-    if (!indeterminate && list.length === 1) {
-      setTimeout(() => {
+    if (
+      readinessAction(policyRef.current, "external_display", nextObservation).decision === "pass"
+    ) {
+      passTimerRef.current = setTimeout(() => {
+        if (generationRef.current !== generation || advancedRef.current) return;
+        if (
+          readinessAction(policyRef.current, "external_display", nextObservation).decision !==
+          "pass"
+        )
+          return;
+        advancedRef.current = true;
         onPass();
       }, 1200);
     }
-  }, [onPass, isWindows, externalDisplayOverride]);
+  }, [onPass, policy]);
 
   useEffect(() => {
     void runDetection();
+    return () => {
+      generationRef.current += 1;
+      cancelPass();
+    };
   }, [runDetection]);
 
-  // Load-bearing escape: while a Windows block (indeterminate or multi-display)
-  // is showing, poll organizer overrides every 10s. An `external_display` waiver
-  // means this device is allowed through, so advance via onPass() (the final-
-  // stage gate independently re-fetches and honors the same override at
-  // page.tsx:3937, so advancing here is consistent). No-op off-Windows / once
-  // unblocked. contestId is read from the URL — the same source the parent uses
-  // (page.tsx ~3400); this component has no contestId prop.
-  const blocked =
-    isWindows && !externalDisplayOverride && (scanIndeterminate || monitors.length > 1);
+  // Fetch only authoritative organizer grants; parent recomputes policy.
+  // A grant does not change what this scan observed or imply a verified pass.
+  const blocked = done && action.decision === "block";
   useEffect(() => {
     if (!blocked) return;
     const contestId =
@@ -108,7 +117,7 @@ export function Stage2_MonitorDetection({
         );
         if (!cancelled && grants.some((g) => g.check_kind === "external_display")) {
           clearInterval(id);
-          onPass(); // override is a waiver -> advance past Stage 3
+          onOverridesChanged(grants);
         }
       } catch {
         /* transient fetch error — keep polling */
@@ -118,7 +127,7 @@ export function Stage2_MonitorDetection({
       cancelled = true;
       clearInterval(id);
     };
-  }, [blocked, onPass]);
+  }, [blocked, onOverridesChanged]);
 
   return (
     <VStack gap={6} width="100%">
@@ -128,11 +137,12 @@ export function Stage2_MonitorDetection({
       </Text>
       <MetadataList>
         <MetadataListItem label="Primary display">
-          {monitors[0]?.name ?? "Checking display"}
+          {monitors?.[0]?.name ??
+            (done ? (monitors === null ? "Not verified" : "Primary Display") : "Checking display")}
         </MetadataListItem>
         <MetadataListItem label="Resolution">
-          {monitors[0]?.size.width ?? window.screen.width} ×{" "}
-          {monitors[0]?.size.height ?? window.screen.height}
+          {monitors?.[0]?.size.width ?? (monitors === null ? "—" : window.screen.width)} ×{" "}
+          {monitors?.[0]?.size.height ?? (monitors === null ? "—" : window.screen.height)}
         </MetadataListItem>
         <MetadataListItem label="Color depth">{window.screen.colorDepth}-bit</MetadataListItem>
       </MetadataList>
@@ -142,11 +152,19 @@ export function Stage2_MonitorDetection({
           <CheckLine
             label={
               scanIndeterminate
-                ? "Display count could not be verified"
-                : `${monitors.length || 1} screen${(monitors.length || 1) > 1 ? "s" : ""} detected`
+                ? monitors === null
+                  ? "Display count could not be verified"
+                  : "No displays returned by the scan"
+                : `${Math.max(monitors?.length ?? 0, 1)} screen${(monitors?.length ?? 0) > 1 ? "s" : ""} detected`
             }
             status={
-              multiDisplay ? (hardBlock ? "fail" : "warn") : scanIndeterminate ? "fail" : "pass"
+              action.decision === "pending"
+                ? "checking"
+                : action.decision === "block"
+                  ? "fail"
+                  : action.decision === "warn"
+                    ? "warn"
+                    : "pass"
             }
           />
           {multiDisplay ? (
@@ -166,7 +184,7 @@ export function Stage2_MonitorDetection({
                   description="Disconnect the extra display, then check again. Contact your proctor if you need help."
                 />
               )}
-              {externalDisplayOverride && (
+              {overrideActive && (
                 <CheckLine
                   label="Organizer override active — extra display permitted"
                   status="warn"
@@ -198,6 +216,29 @@ export function Stage2_MonitorDetection({
                 isDisabled={scanning}
               />
             </>
+          )}
+          {action.decision === "warn" && (
+            <Button
+              variant="secondary"
+              label={overrideActive ? "Continue with organizer approval" : "Continue with warning"}
+              onClick={() => {
+                if (
+                  advancedRef.current ||
+                  scanning ||
+                  readinessAction(policyRef.current, "external_display", observation).decision !==
+                    "warn"
+                )
+                  return;
+                advancedRef.current = true;
+                generationRef.current += 1;
+                cancelPass();
+                onWarn(
+                  scanIndeterminate
+                    ? "Display count could not be verified."
+                    : "Multiple displays were detected."
+                );
+              }}
+            />
           )}
         </VStack>
       )}

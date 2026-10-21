@@ -29,7 +29,7 @@ import {
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
-import { cameraSession } from "@/lib/camera-session";
+import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks, START_JITTER_MS } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { decideNetworkLockdown } from "./network-gate";
@@ -46,7 +46,19 @@ import { Stage9_PresenceVerification } from "./components/stages/Stage9_Presence
 import { Stage10_AudioVerification } from "./components/stages/Stage10_AudioVerification";
 import { Stage11_NetworkValidation } from "./components/stages/Stage11_NetworkValidation";
 import { Stage12_IntegrityConfirmation } from "./components/stages/Stage12_IntegrityConfirmation";
+import {
+  createEntryAttemptController,
+  EntryCancelledError,
+  EntryTimeoutError,
+  entryMediaFacts,
+  refreshEntryValue,
+} from "./entry-attempt";
 import { createStageAdvanceController } from "./components/stage-advance";
+import {
+  buildFaceReviewEvent,
+  createFaceReviewRequest,
+  type FaceReviewContext,
+} from "./face-review";
 import { ProgressBar } from "./components/ProgressBar";
 import { DryRunSummary } from "./components/DryRunSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -64,6 +76,7 @@ import {
   getOrCreateDeviceId,
   getVerificationOpenMs,
   invoke,
+  invokeStrict,
   normalizeVerificationWindowMinutes,
   tauriWindow,
   verificationWindowLabel,
@@ -152,15 +165,29 @@ export default function OnboardingPage() {
   const [results, setResults] = useState<Record<number, StageStatus>>({});
   const [warningDetails, setWarningDetails] = useState<Record<number, string>>({});
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraUnavailable, setCameraUnavailable] = useState(false);
+  const cameraAttemptedRef = useRef(false);
+  const [contextRetry, setContextRetry] = useState(0);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [entryRetryAvailable, setEntryRetryAvailable] = useState(false);
+  const entryAttemptsRef = useRef(createEntryAttemptController());
+  useEffect(() => {
+    entryAttemptsRef.current.activate();
+    return () => entryAttemptsRef.current.cancel();
+  }, []);
+  const warningRecordsRef = useRef(
+    new Map<number, { detail: string; record: ReturnType<typeof createFaceReviewRequest> }>()
+  );
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
+  const [faceReviewSaveFailed, setFaceReviewSaveFailed] = useState(false);
   const [contestWindow, setContestWindow] = useState<ContestWindowMeta | null>(null);
   // The server's own view of the window, including `phase`. The entry gate is
   // derived from this rather than from local clock arithmetic.
   const [contestIndex, setContestIndex] = useState<ContestIndex | null>(null);
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
-  const [sessionPrepared, setSessionPrepared] = useState(false);
+  const preparedSessionIdRef = useRef<string | null>(null);
   const [isTestAccount, setIsTestAccount] = useState(false);
   // Authoritative device platform ("windows" | "macos" | "linux"), resolved
   // once via the Tauri `get_platform` command. Drives the Windows-only entry
@@ -172,9 +199,9 @@ export default function OnboardingPage() {
   // also re-fetched and applied to the policy in finalizeSecureStart.
   const [overrides, setOverrides] = useState<OrganizerOverride[]>([]);
   const cameraStreamRef = useRef<MediaStream | null>(null);
-  // Set when the candidate proceeds past the face check via the equity fallback;
-  // recorded durably once the session exists so a proctor can review it.
-  const faceFallbackRef = useRef(false);
+  // Keep review pending until it is acknowledged by the session-bound native spool.
+  const faceReviewRef = useRef(createFaceReviewRequest());
+  const faceReviewContextRef = useRef<FaceReviewContext | undefined>(undefined);
   // Render a stable shell during hydration; query-dependent copy is client-only.
   // This does not change the contest query, gates, checks or native effects.
   const [presentationReady, setPresentationReady] = useState(false);
@@ -190,15 +217,21 @@ export default function OnboardingPage() {
   // (dev / browser preview) this stays null, so no Windows-only block engages.
   useEffect(() => {
     let cancelled = false;
-    invoke<{ os: string }>("get_platform")
+    withTimeout(invokeStrict<{ os: string }>("get_platform"), 5000, "Platform check timed out")
       .then((p) => {
-        if (!cancelled && typeof p?.os === "string") setPlatform(p.os);
+        if (cancelled) return;
+        if (typeof p?.os === "string") setPlatform(p.os);
+        else if (hasNativeBridge())
+          setContextError("Could not identify this device platform. Retry the policy check.");
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled)
+          setContextError("Could not identify this device platform. Retry the policy check.");
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [contextRetry]);
 
   // Fetch organizer overrides early so the Windows display hard-block can be
   // relaxed for a pre-approved candidate before they reach Stage 3. A fetch
@@ -225,7 +258,43 @@ export default function OnboardingPage() {
     }
   }, [currentStage, dryRunComplete, isTestAccount]);
 
-  const externalDisplayOverride = overrides.some((o) => o.check_kind === "external_display");
+  const externalDisplayOverride = overrides.some(
+    (o) => o.check_kind === "external_display" && o.expires_at_ms > Date.now()
+  );
+  const cameraOverride = overrides.some(
+    (o) => o.check_kind === "camera" && o.expires_at_ms > Date.now()
+  );
+  const effectivePolicy = useMemo(() => {
+    if (!contestIndex || (hasNativeBridge() && !platform)) return null;
+    return applyOrganizerOverrides(
+      applyLockdownConfig(strictContestPolicy(platform ?? undefined), contestIndex.lockdown),
+      overrides.filter((grant) => grant.expires_at_ms > Date.now())
+    );
+  }, [platform, contestIndex, overrides]);
+  const handleCameraReady = useCallback((stream: MediaStream | null) => {
+    cameraAttemptedRef.current = true;
+    cameraStreamRef.current = stream;
+    setCameraStream(stream);
+    setCameraUnavailable(stream === null);
+  }, []);
+
+  useEffect(() => {
+    // Stage 7 owns initial preview verification. Later stages must follow a
+    // recovered/reselected shared track instead of retaining an ended handle.
+    if (currentStage < 8) return;
+    return cameraSession.subscribe((status) => {
+      if (!cameraAttemptedRef.current) return;
+      if (status !== "live") {
+        handleCameraReady(null);
+        return;
+      }
+      const stream = cameraSession.current();
+      const track = stream?.getVideoTracks()[0];
+      if (track && track !== cameraStreamRef.current?.getVideoTracks()[0]) {
+        handleCameraReady(stream);
+      }
+    });
+  }, [currentStage, handleCameraReady]);
 
   useEffect(() => {
     // A fast-path that skips every onboarding gate, for working on the stages
@@ -271,7 +340,7 @@ export default function OnboardingPage() {
     // call went to `/contests/{id}`, a staff route, unauthenticated: it 403s
     // for a participant, so `contestWindow` stayed null and every client-side
     // time gate silently disabled itself.
-    getContest(contestId)
+    withTimeout(getContest(contestId), 10000, "Contest policy request timed out")
       .then((index) => {
         if (cancelled) return;
         setContestIndex(index);
@@ -281,11 +350,14 @@ export default function OnboardingPage() {
           verificationWindowMinutes: index.verification_window_minutes,
         });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled)
+          setContextError("Could not load the contest policy. Retry the policy check.");
+      });
     return () => {
       cancelled = true;
     };
-  }, [contestId]);
+  }, [contestId, contextRetry]);
 
   useEffect(() => {
     if (!contestWindow) return;
@@ -312,17 +384,18 @@ export default function OnboardingPage() {
    * `/participant/contests/{uid}` returns the server's own `phase`, which is
    * the answer, so the whole thing is one call and one decision.
    */
-  async function evaluateEntryGateFromServer() {
+  async function evaluateEntryGateFromServer(isCurrent: () => boolean) {
     if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
     if (isTestAccount) return { ok: true, reason: null as string | null, state: "LIVE" };
     try {
       const index = await getContest(contestId);
-      setContestIndex(index);
+      if (isCurrent()) setContestIndex(index);
       const decision = decideEntry(index, serverNow());
       return {
         ok: shouldRunChecks(decision),
         reason: blockedMessage(decision),
         state: decision.kind.toUpperCase(),
+        index,
       };
     } catch {
       // Fail closed. Not knowing whether the contest is open is not a reason
@@ -340,135 +413,169 @@ export default function OnboardingPage() {
   }
 
   const finalizeSecureStart = useCallback(async () => {
+    const attempts = entryAttemptsRef.current;
+    const attempt = attempts.begin();
+    if (attempt === null) return;
+    const wait = <T,>(key: string, start: () => Promise<T>, ms = 15000) =>
+      attempts.run(attempt, key, start, ms, `${key} timed out. Retry contest entry.`);
+    let windowMeta = contestWindow;
     setPolicyBlock(null);
-
-    // ── Dry-run rehearsal ────────────────────────────────────────────────────
-    // Exercise the network lockdown (so install/permission friction surfaces),
-    // then release ALL lockdown. Never create a session or enter a contest.
-    if (dryRun) {
-      const tauriBridge = window.__TAURI__;
-      if (tauriBridge) {
-        try {
-          const ok = await tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
-            allowedDomains: [getNetworkLockdownAllowlistHost()],
-          });
-          setDryRunNetwork(ok ? "ok" : "failed");
-        } catch {
-          setDryRunNetwork("failed");
+    setFaceReviewSaveFailed(false);
+    setEntryRetryAvailable(false);
+    setTransitioning(true);
+    try {
+      // ── Dry-run rehearsal ────────────────────────────────────────────────────
+      // Exercise the network lockdown (so install/permission friction surfaces),
+      // then release ALL lockdown. Never create a session or enter a contest.
+      if (dryRun) {
+        const tauriBridge = window.__TAURI__;
+        if (tauriBridge) {
+          try {
+            const ok = await tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
+              allowedDomains: [getNetworkLockdownAllowlistHost()],
+            });
+            setDryRunNetwork(ok ? "ok" : "failed");
+          } catch {
+            setDryRunNetwork("failed");
+          }
+          // Always release — a rehearsal must never leave the machine locked down.
+          await tauriBridge.core.invoke("disable_network_lockdown").catch(() => {});
         }
-        // Always release — a rehearsal must never leave the machine locked down.
-        await tauriBridge.core.invoke("disable_network_lockdown").catch(() => {});
-      }
 
-      const win = await tauriWindow();
-      if (win) {
-        await win.setFullscreen(false).catch(() => {});
-        await win.setSimpleFullscreen(false).catch(() => {});
-        await win.setAlwaysOnTop(false).catch(() => {});
-        await win.setDecorations(true).catch(() => {});
-      }
-      await window.__TAURI__?.core.invoke("unlock_desktop").catch(() => {});
-      await window.__TAURI__?.core.invoke("disable_keyboard_intercept").catch(() => {});
-      // A dry run ends here rather than entering a contest, so the camera has
-      // nothing left to serve.
-      cameraSession.release();
-      cameraStreamRef.current = null;
-      setCameraStream(null);
+        const win = await tauriWindow();
+        if (win) {
+          await win.setFullscreen(false).catch(() => {});
+          await win.setSimpleFullscreen(false).catch(() => {});
+          await win.setAlwaysOnTop(false).catch(() => {});
+          await win.setDecorations(true).catch(() => {});
+        }
+        await window.__TAURI__?.core.invoke("unlock_desktop").catch(() => {});
+        await window.__TAURI__?.core.invoke("disable_keyboard_intercept").catch(() => {});
+        // A dry run ends here rather than entering a contest, so the camera has
+        // nothing left to serve.
+        cameraSession.release();
+        cameraStreamRef.current = null;
+        setCameraStream(null);
 
-      setReadyForStart(false);
-      setTransitioning(false);
-      setDryRunComplete(true);
-      return;
-    }
-
-    // One authenticated call. `evaluateEntryGateFromServer` also refreshes
-    // `contestIndex`, so the window and the decision cannot disagree — the
-    // previous code fetched them separately and then reconciled two answers
-    // with a `state === "UNKNOWN"` fallback that opened the gate whenever
-    // both were unknown.
-    const gate = await evaluateEntryGateFromServer();
-    const windowMeta = contestWindow;
-
-    if (!gate.ok && !isTestAccount) {
-      setCurrentStage(REVIEW_STAGE);
-      setTransitioning(false);
-      setReadyForStart(false);
-      setPolicyBlock(gate.reason);
-      return;
-    }
-
-    if (windowMeta && !isTestAccount) {
-      const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
-      if (remaining > 0) {
-        setCurrentStage(FINAL_STAGE);
+        setReadyForStart(false);
         setTransitioning(false);
-        setReadyForStart(true);
-        setPolicyBlock(null);
+        setDryRunComplete(true);
         return;
       }
-    }
-    const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
-    // Outside the Tauri shell there is no native layer to ask, and
-    // `collectDeviceState` throws "Tauri bridge unavailable" — which left
-    // onboarding stuck for ever on "Checking contest entry…" with an uncaught
-    // error behind it. Every native-only field stays null, which the readiness
-    // evaluator reads as "not probed", so this cannot make an unsupervised
-    // machine look supervised. A packaged build always has the bridge and so
-    // always takes the real path below.
-    const nativeAvailable = hasNativeBridge();
-    const cameraLive =
-      cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live") ||
-      devices?.some((device) => device.kind === "videoinput") ||
-      false;
-    const microphoneLive = devices?.some((device) => device.kind === "audioinput") || false;
-    const deviceState = !nativeAvailable
-      ? browserDeviceState({
-          cameraAvailable: cameraLive,
-          microphoneAvailable: microphoneLive,
-          platform: platform ?? null,
-        })
-      : await collectDeviceState({
-          // Real connectivity probe (neutral canary host) feeds the readiness
-          // gate. Under the test flag we skip it and force a healthy network.
-          networkHost: isGatingRelaxed() ? undefined : getNetworkProbeHost(),
-          apiUrl: API_URL,
-          cameraAvailable: cameraLive,
-          microphoneAvailable: microphoneLive,
-          activateKeyboard: true,
-        });
-    if (isGatingRelaxed()) {
-      // TEST-ONLY (build-time flag): present a healthy network + installed helper
-      // so the readiness gate treats network as fine. Default builds use the real
-      // probe results collected above (and the core-rs network/clock-skew gate).
-      warnGatingRelaxed("launch device-state network forced healthy");
-      deviceState.network = { reachable: true, latency_ms: 1, jitter_ms: 0, quality: "excellent" };
-      deviceState.network_helper_ready = true;
-    }
 
-    try {
+      // One authenticated call. `evaluateEntryGateFromServer` also refreshes
+      // `contestIndex`, so the window and the decision cannot disagree — the
+      // previous code fetched them separately and then reconciled two answers
+      // with a `state === "UNKNOWN"` fallback that opened the gate whenever
+      // both were unknown.
+      const gate = await wait(
+        "contest eligibility check",
+        () => evaluateEntryGateFromServer(() => attempts.current(attempt)),
+        15000
+      );
+      const freshIndex = "index" in gate ? gate.index : contestIndex;
+      if (freshIndex)
+        windowMeta = {
+          startAt: freshIndex.starts_at,
+          endAt: freshIndex.ends_at,
+          verificationWindowMinutes: freshIndex.verification_window_minutes,
+        };
+
+      if (!gate.ok && !isTestAccount) {
+        setCurrentStage(REVIEW_STAGE);
+        setTransitioning(false);
+        setReadyForStart(false);
+        setPolicyBlock(gate.reason);
+        setEntryRetryAvailable(true);
+        return;
+      }
+
+      if (windowMeta && !isTestAccount) {
+        const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
+        if (remaining > 0) {
+          setCurrentStage(FINAL_STAGE);
+          setTransitioning(false);
+          setReadyForStart(true);
+          setPolicyBlock(null);
+          return;
+        }
+      }
+      let devices: MediaDeviceInfo[] | null = null;
+      try {
+        if (navigator.mediaDevices?.enumerateDevices) {
+          devices = await wait(
+            "media device listing",
+            () => navigator.mediaDevices.enumerateDevices(),
+            4000
+          );
+        }
+      } catch (error) {
+        if (error instanceof EntryCancelledError || error instanceof EntryTimeoutError) throw error;
+        // Permission/API failure means unprobed, not an empty successful list.
+        devices = null;
+      }
+      const nativeAvailable = hasNativeBridge();
+      const mediaFacts = entryMediaFacts({
+        cameraDelivering:
+          cameraStreamRef.current?.getVideoTracks().some(isTrackDelivering) ?? false,
+        cameraAttempted: cameraAttemptedRef.current,
+        devices,
+      });
+      const deviceState = !nativeAvailable
+        ? browserDeviceState({ ...mediaFacts, platform: platform ?? null })
+        : await wait(
+            "native device scan",
+            () =>
+              collectDeviceState({
+                networkHost: isGatingRelaxed() ? undefined : getNetworkProbeHost(),
+                apiUrl: API_URL,
+                ...mediaFacts,
+                activateKeyboard: true,
+              }),
+            45000
+          );
+      if (isGatingRelaxed()) {
+        // TEST-ONLY (build-time flag): present a healthy network + installed helper
+        // so the readiness gate treats network as fine. Default builds use the real
+        // probe results collected above (and the core-rs network/clock-skew gate).
+        warnGatingRelaxed("launch device-state network forced healthy");
+        deviceState.network = {
+          reachable: true,
+          latency_ms: 1,
+          jitter_ms: 0,
+          quality: "excellent",
+        };
+        deviceState.network_helper_ready = true;
+      }
+
       // The candidate's identity for this contest is the OTP login_email
       // (the generated_username) stored at sign-in. Never fall back to a shared
       // placeholder: that collapses every candidate onto one session. If it is
       // missing, the sign-in did not complete — abort the launch and send them back.
       // Lowercased to match the server, which stores and compares candidate_email
       // case-insensitively — keeps the client value byte-identical to the stored row.
-      if (!sessionPrepared) {
-        const body = await fetchJson<{ uid?: string }>(
-          `${API_URL}/participant/sessions`,
-          {
-            method: "POST",
-            headers: authHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-              // The contest uid, and the machine. Identity comes from the
-              // participant token — the old body sent a candidate email,
-              // which was both unverified and no longer a thing this system
-              // has.
-              contest_uid: contestId,
-              device_fingerprint: getOrCreateDeviceId(),
-              os_name: navigator.platform,
-            }),
-          },
-          { dedupeKey: `session:create:${contestId}`, retries: 2 }
+      if (!preparedSessionIdRef.current) {
+        const body = await wait(
+          "session creation",
+          () =>
+            fetchJson<{ uid?: string }>(
+              `${API_URL}/participant/sessions`,
+              {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({
+                  // The contest uid, and the machine. Identity comes from the
+                  // participant token — the old body sent a candidate email,
+                  // which was both unverified and no longer a thing this system
+                  // has.
+                  contest_uid: contestId,
+                  device_fingerprint: getOrCreateDeviceId(),
+                  os_name: navigator.platform,
+                }),
+              },
+              { dedupeKey: `session:create:${contestId}`, retries: 2 }
+            ),
+          60000
         );
         if (body?.uid) {
           localStorage.setItem(
@@ -483,24 +590,92 @@ export default function OnboardingPage() {
           // session exists, so onboarding-phase events — including a failed
           // network lockdown below — stream to the server promptly instead of
           // waiting for the contest screen to mount.
-          await invoke("configure_event_stream", {
-            apiUrl: API_URL,
-            sessionId: body.uid,
-            // Session endpoints are authenticated; without the token the
-            // uploader would 401 for ever and the spool would grow unbounded.
-            token: participantToken(),
-          }).catch(() => {});
-          // Now that the session exists and the event stream is armed, durably
-          // record a face-check fallback so the proctor sees it server-side.
-          if (faceFallbackRef.current) {
-            await invoke("log_proctoring_event", {
-              kind: "face_verification_fallback",
-              detail: "Candidate proceeded past the face check for manual proctor review.",
-              payload: { stage: 9 },
-            }).catch(() => {});
-          }
+          // Review requests use the bounded, acknowledged path below. Do not
+          // wait on an earlier unbounded configuration call before reaching it.
+          preparedSessionIdRef.current = body.uid;
+        } else {
+          throw new Error("Session creation did not return a session. Please try again.");
         }
-        setSessionPrepared(true);
+      }
+
+      if (nativeAvailable && !faceReviewRef.current.isRequested()) {
+        void attempts
+          .runAdvisory(
+            attempt,
+            "event recorder setup",
+            () =>
+              invokeStrict("configure_event_stream", {
+                apiUrl: API_URL,
+                sessionId: preparedSessionIdRef.current,
+                token: participantToken(),
+              }),
+            5000,
+            "event recorder setup timed out"
+          )
+          .catch(() => {});
+      }
+
+      if (faceReviewRef.current.isRequested() && nativeAvailable) {
+        // Do not use the forgiving invoke wrapper here: a lost write must stay
+        // pending and be visible at the existing final-review retry surface.
+        const bridge = window.__TAURI__;
+        const token = participantToken();
+        if (!bridge || !token) {
+          setFaceReviewSaveFailed(true);
+          throw new Error("Your review request is not saved yet. Sign in again and retry setup.");
+        }
+        try {
+          await wait(
+            "review recording",
+            () =>
+              faceReviewRef.current.persist(preparedSessionIdRef.current!, async () => {
+                await bridge.core.invoke("configure_event_stream", {
+                  apiUrl: API_URL,
+                  sessionId: preparedSessionIdRef.current,
+                  token,
+                });
+                await bridge.core.invoke(
+                  "log_proctoring_event",
+                  buildFaceReviewEvent(false, faceReviewContextRef.current)
+                );
+              }),
+            5000
+          );
+          setFaceReviewSaveFailed(false);
+        } catch (error) {
+          if (error instanceof EntryCancelledError) throw error;
+          setFaceReviewSaveFailed(true);
+          throw new Error(
+            "Your proctor review request has not been saved yet. Please retry before entering the contest."
+          );
+        }
+      }
+
+      if (nativeAvailable && warningRecordsRef.current.size) {
+        for (const [stage, warning] of warningRecordsRef.current) {
+          await wait(
+            `stage ${stage} warning recording`,
+            () =>
+              warning.record.persist(preparedSessionIdRef.current!, async () => {
+                await window.__TAURI__!.core.invoke("configure_event_stream", {
+                  apiUrl: API_URL,
+                  sessionId: preparedSessionIdRef.current,
+                  token: participantToken(),
+                });
+                await window.__TAURI__!.core.invoke("log_proctoring_event", {
+                  kind: "onboarding_policy_warning",
+                  detail: warning.detail,
+                  payload: {
+                    stage,
+                    check_kind: stage === 2 ? "external_display" : "camera",
+                    outcome: "warning",
+                    verified: false,
+                  },
+                });
+              }),
+            5000
+          );
+        }
       }
 
       // Platform-aware strict policy. Prefer the platform reported by
@@ -534,16 +709,28 @@ export default function OnboardingPage() {
         let lockdownError: string | null = null;
         try {
           // Bound the call: a hung/half-installed helper must not freeze the
-          // final stage. withTimeout rejects on timeout AND propagates the
-          // helper's real error, so the record carries a usable reason.
-          engaged = await withTimeout(
-            tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
-              allowedDomains: [getNetworkLockdownAllowlistHost()],
-            }),
+          // final stage. The advisory deadline records a timeout while the native operation retains
+          // ownership until it actually settles.
+          const lockdown = await attempts.runAdvisory(
+            attempt,
+            "network lockdown",
+            () =>
+              tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
+                allowedDomains: [getNetworkLockdownAllowlistHost()],
+              }),
             8000,
-            "network lockdown timed out after 8s (helper unresponsive?)"
+            "network lockdown timed out after 8s (helper unresponsive?)",
+            async () => {
+              await tauriBridge.core.invoke("disable_network_lockdown");
+            },
+            (devicePlatform ?? "").toLowerCase() !== "linux"
           );
+          if (lockdown.status === "completed") engaged = lockdown.value;
+          else
+            lockdownError =
+              lockdown.error instanceof Error ? lockdown.error.message : String(lockdown.error);
         } catch (err) {
+          if (err instanceof EntryCancelledError) throw err;
           lockdownError = err instanceof Error ? err.message : String(err);
         }
 
@@ -557,18 +744,29 @@ export default function OnboardingPage() {
         // Recorded before the block check, not after — the blocked case is the
         // one an invigilator actually needs to read.
         if (gate.violation) {
-          await invoke("log_violation", { kind: gate.eventKind, detail: gate.detail }).catch(
-            () => {}
+          await attempts.runAdvisory(
+            attempt,
+            "network violation recording",
+            () => invoke("log_violation", { kind: gate.eventKind, detail: gate.detail }),
+            5000,
+            "network violation recording timed out"
           );
         }
-        await invoke("log_proctoring_event", {
-          kind: gate.eventKind,
-          detail: gate.detail,
-          payload: {
-            allowed_domains: [getNetworkLockdownAllowlistHost()],
-            platform: devicePlatform ?? null,
-          },
-        }).catch(() => {});
+        await attempts.runAdvisory(
+          attempt,
+          "network event recording",
+          () =>
+            invoke("log_proctoring_event", {
+              kind: gate.eventKind,
+              detail: gate.detail,
+              payload: {
+                allowed_domains: [getNetworkLockdownAllowlistHost()],
+                platform: devicePlatform ?? null,
+              },
+            }),
+          5000,
+          "network event recording timed out"
+        );
 
         // No block. Egress lockdown needs privilege the shell does not hold and
         // the candidate can decline, so gating on it would fail open for anyone
@@ -586,24 +784,22 @@ export default function OnboardingPage() {
 
       const deviceId = getOrCreateDeviceId();
       // Re-fetch overrides at the gate so a freshly issued waiver is honored.
-      // A fetch failure yields the base policy — we never trap the candidate on
-      // a transient overrides-endpoint error.
-      let liveOverrides: OrganizerOverride[] = overrides;
-      try {
-        liveOverrides = await fetchOrganizerOverrides(
-          API_URL,
-          contestId,
-          deviceId,
-          participantToken() ?? ""
-        );
-        setOverrides(liveOverrides);
-      } catch {
-        liveOverrides = overrides;
-      }
+      // A fetch failure retains the overrides already loaded for this device, so a
+      // transient final refresh cannot discard an organizer waiver.
+      const liveOverrides = await refreshEntryValue(overrides, () =>
+        attempts.runAdvisory(
+          attempt,
+          "organizer overrides",
+          () => fetchOrganizerOverrides(API_URL, contestId, deviceId, participantToken() ?? ""),
+          12000,
+          "organizer overrides timed out"
+        )
+      );
+      if (liveOverrides !== overrides) setOverrides(liveOverrides);
       // The contest's own lockdown choices (whether an extra display or a
       // remote-access tool blocks entry) go on first, so an organizer's
       // waiver below still wins over them.
-      const lockdownConfig = contestIndex?.lockdown ?? null;
+      const lockdownConfig = freshIndex?.lockdown ?? null;
       const policy = applyOrganizerOverrides(
         applyLockdownConfig(strictContestPolicy(devicePlatform), lockdownConfig),
         liveOverrides
@@ -614,20 +810,25 @@ export default function OnboardingPage() {
       // rather than throwing: the session is already an unproctored dev one,
       // which the readiness modal states outright before letting anyone in.
       if (nativeAvailable)
-        await startSecureSession({
-          contestId,
-          deviceId,
-          policy,
-          deviceState,
-          lockdownConfig,
-          // Entry-gate attestation: the evaluated readiness report is
-          // delivered to the backend so the server has a durable record of
-          // what this device claimed — including when the gate blocked, which
-          // is the report an invigilator actually needs. Best-effort: the
-          // client, not the server, decides whether to proceed.
-          apiUrl: API_URL,
-          token: participantToken(),
-        });
+        await wait(
+          "secure session start",
+          () =>
+            startSecureSession({
+              contestId,
+              deviceId,
+              policy,
+              deviceState,
+              lockdownConfig,
+              // Entry-gate attestation: the evaluated readiness report is
+              // delivered to the backend so the server has a durable record of
+              // what this device claimed — including when the gate blocked, which
+              // is the report an invigilator actually needs. Best-effort: the
+              // client, not the server, decides whether to proceed.
+              apiUrl: API_URL,
+              token: participantToken(),
+            }),
+          45000
+        );
 
       if (windowMeta && !isTestAccount) {
         const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
@@ -640,66 +841,57 @@ export default function OnboardingPage() {
         }
       }
 
-      // Lockdown hard-stop (symmetric to the network-lockdown gate above):
-      // lock_desktop runs inside startSecureSession but can fail (e.g. the
-      // keyboard hook is denied) while reporting no error, leaving the desktop
-      // unlocked. Entering then would both defeat proctoring AND make the
-      // contest page's lock guard bounce the candidate straight back here — an
-      // infinite loop. So we probe the authoritative lock state and hard-stop
-      // instead of navigating. Outside the desktop shell there is nothing to
-      // lock, so this is skipped (browser/dev).
-      //
-      // macOS exception: the CGEventTap keyboard hook requires Accessibility
-      // permission which may not be granted; the readiness policy already marks
-      // macOS keyboard lockdown as advisory (warning, not block). Full-screen
-      // still engages on macOS, so an unlocked-keyboard state is expected and
-      // must NOT prevent contest entry. Hard-block only applies to Linux/Windows
-      // where keyboard lockdown is mandatory.
+      // This is the complete native lifecycle marker. start_secure_session
+      // already applies advisory/override keyboard policy; false here means
+      // the lifecycle itself did not engage, not an unsupported keyboard probe.
       if (tauriBridge) {
-        let lockEngaged = false;
-        try {
-          lockEngaged = await tauriBridge.core.invoke<boolean>("is_lockdown_engaged");
-        } catch {
-          lockEngaged = false;
-        }
+        const lockEngaged = await wait(
+          "desktop protection verification",
+          () => tauriBridge.core.invoke<boolean>("is_lockdown_engaged"),
+          5000
+        );
         if (!lockEngaged) {
-          await invoke("log_violation", {
-            kind: "lockdown_failed",
-            detail: "is_lockdown_engaged returned false after start_secure_session",
-          }).catch(() => {});
-          await invoke("log_proctoring_event", {
-            kind: "lockdown_failed",
-            detail: "Desktop lockdown (keyboard / full-screen) did not engage.",
-          }).catch(() => {});
-          // On macOS the keyboard CGEventTap is advisory — full-screen lockdown
-          // still engages. Proceed into the contest but surface a security event
-          // so the proctor is aware. On Linux/Windows keyboard lockdown is
-          // mandatory; hard-block if it didn't engage.
-          const isMacOS = (deviceState.platform ?? platform ?? "").toLowerCase() === "macos";
-          if (!isMacOS) {
-            setReadyForStart(false);
-            setTransitioning(false);
-            setPolicyBlock(
-              "We couldn't lock down your screen for the exam — keyboard/full-screen lockdown didn't engage. Re-run device setup and try again. A secured contest can't start without it."
-            );
-            return;
-          }
-          // macOS: log advisory warning and continue into contest.
-          await invoke("log_proctoring_event", {
-            kind: "keyboard_lockdown_advisory",
-            detail:
-              "macOS keyboard lockdown did not engage (Accessibility permission not granted); full-screen lockdown active. Advisory only — contest entry proceeding.",
-          }).catch(() => {});
+          await Promise.all([
+            attempts.runAdvisory(
+              attempt,
+              "lockdown failure violation",
+              () =>
+                invoke("log_violation", {
+                  kind: "lockdown_failed",
+                  detail: "is_lockdown_engaged returned false after start_secure_session",
+                }),
+              5000,
+              "lockdown failure violation recording timed out"
+            ),
+            attempts.runAdvisory(
+              attempt,
+              "lockdown failure event",
+              () =>
+                invoke("log_proctoring_event", {
+                  kind: "lockdown_failed",
+                  detail: "Desktop protections did not engage after secure session start.",
+                }),
+              5000,
+              "lockdown failure event recording timed out"
+            ),
+          ]);
+          throw new Error(
+            "Desktop protections did not engage. Retry setup; if this continues, restore system settings and ask your invigilator for help."
+          );
         }
       }
 
+      attempts.commit(attempt);
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
+      if (error instanceof EntryCancelledError || !attempts.current(attempt)) return;
+      setEntryRetryAvailable(true);
       // SESSION_DEVICE_MISMATCH / SESSION_IDLE_TIMEOUT: the backend rejected this
       // device binding.  Route the candidate to /home so they can use the existing
       // resume-request flow (submitResumeRequest) to rejoin from their device.
       if (error instanceof SessionBindingError) {
+        setEntryRetryAvailable(false);
         setTransitioning(false);
         setReadyForStart(false);
         setPolicyBlock(
@@ -707,11 +899,9 @@ export default function OnboardingPage() {
             ? "This session was started on a different device. Return to the home screen to request re-entry from your organizer."
             : "Your session timed out due to inactivity. Return to the home screen to request re-entry."
         );
-        // Give the candidate 3 s to read the message, then navigate home so they
-        // can use the organizer-approved resume flow.
-        setTimeout(() => {
-          router.push("/home");
-        }, 3000);
+        // Return to the organizer-approved resume flow without a delayed callback
+        // that could outlive this entry attempt.
+        router.push("/home");
         return;
       }
       const rawMsg = readinessErrorText(error);
@@ -734,6 +924,9 @@ export default function OnboardingPage() {
       setTransitioning(false);
       setReadyForStart(false);
       setPolicyBlock(msg);
+    } finally {
+      if (attempts.current(attempt)) setTransitioning(false);
+      attempts.finish(attempt);
     }
   }, [
     contestId,
@@ -836,24 +1029,35 @@ export default function OnboardingPage() {
   const advanceWarn = useCallback(
     (detail?: string) => {
       if (advanceController.advance(stageRun, "warn") && detail) {
+        if (stageRun.stage === 2 || stageRun.stage === 7) {
+          const record = createFaceReviewRequest();
+          record.request();
+          warningRecordsRef.current.set(stageRun.stage, { detail, record });
+        }
         setWarningDetails((previous) => ({ ...previous, [stageRun.stage]: detail }));
       }
     },
     [advanceController, stageRun]
   );
-  // Equity fallback from the face check: flag for proctor review, record it
-  // best-effort now (buffered until the session exists, then re-logged durably in
-  // finalizeSecureStart), and advance as a warning rather than a clean pass.
-  const handleFaceFallback = useCallback(() => {
-    faceFallbackRef.current = true;
-    void invoke("log_proctoring_event", {
-      kind: "face_verification_fallback",
-      detail: "Candidate proceeded past the face check for manual proctor review.",
-      payload: { stage: 9, dry_run: dryRun },
-    }).catch(() => {});
-    advanceWarn();
-  }, [advanceWarn, dryRun]);
+  // Advance and record the request under the same stage-visit guard. Pre-session
+  // native events are unbound and not uploaded, so enqueue only after binding.
+  const handleFaceFallback = useCallback(
+    (context?: FaceReviewContext) => {
+      if (!advanceController.advance(stageRun, "warn")) return;
+      faceReviewContextRef.current = context;
+      faceReviewRef.current.request();
+      setWarningDetails((previous) => ({
+        ...previous,
+        [stageRun.stage]: dryRun
+          ? "Face capture was not verified. A real contest would request proctor review."
+          : "Face capture was not verified. Proctor review requested; it will be queued when your session starts.",
+      }));
+    },
+    [advanceController, stageRun, dryRun]
+  );
+
   const emergencyExit = useCallback(async () => {
+    entryAttemptsRef.current.cancel();
     cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
@@ -1007,6 +1211,18 @@ export default function OnboardingPage() {
                     : "Setup needs your attention"
                 }
                 role="alert"
+                endContent={
+                  entryRetryAvailable ? (
+                    <Button
+                      label={
+                        faceReviewSaveFailed ? "Retry saving review request" : "Retry contest entry"
+                      }
+                      variant="secondary"
+                      isDisabled={transitioning}
+                      onClick={() => void finalizeSecureStart()}
+                    />
+                  ) : undefined
+                }
                 description={
                   macPermissionBlock ? (
                     <VStack gap={4}>
@@ -1334,11 +1550,32 @@ export default function OnboardingPage() {
                           {currentStage === 1 && (
                             <Stage1_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
                           )}
+                          {(currentStage === 2 || currentStage === 7) &&
+                            !effectivePolicy &&
+                            contextError && (
+                              <Banner
+                                status="error"
+                                title="Policy check unavailable"
+                                description={contextError}
+                                endContent={
+                                  <Button
+                                    label="Retry policy check"
+                                    variant="secondary"
+                                    onClick={() => {
+                                      setContextError(null);
+                                      setContextRetry((value) => value + 1);
+                                    }}
+                                  />
+                                }
+                              />
+                            )}
                           {currentStage === 2 && (
                             <Stage2_MonitorDetection
                               onPass={advancePass}
-                              platform={platform}
-                              externalDisplayOverride={externalDisplayOverride}
+                              policy={effectivePolicy}
+                              overrideActive={externalDisplayOverride}
+                              onWarn={advanceWarn}
+                              onOverridesChanged={setOverrides}
                             />
                           )}
                           {currentStage === 3 && (
@@ -1356,12 +1593,17 @@ export default function OnboardingPage() {
                           {currentStage === 7 && (
                             <Stage7_CameraInit
                               onPass={advancePass}
-                              onCameraReady={setCameraStream}
+                              onCameraReady={handleCameraReady}
+                              onWarn={advanceWarn}
+                              policy={effectivePolicy}
+                              overrideActive={cameraOverride}
                             />
                           )}
                           {currentStage === 8 && (
                             <Stage8_FaceCalibration
                               stream={cameraStream}
+                              cameraUnavailable={cameraUnavailable}
+                              onCameraReady={handleCameraReady}
                               onPass={advancePass}
                               dryRun={dryRun}
                               onFaceFallback={handleFaceFallback}

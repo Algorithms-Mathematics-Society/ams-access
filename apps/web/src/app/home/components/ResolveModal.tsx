@@ -163,20 +163,29 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
       };
     case "keyboard": {
       const isMac = platform?.os === "macos";
+      const isLinux = platform?.os?.toLowerCase() === "linux";
       return {
-        title: "Keyboard lockdown unavailable",
-        problem: "This device has not confirmed the keyboard controls required for the contest.",
+        title: isLinux ? "System shortcut control unavailable" : "Keyboard lockdown unavailable",
+        problem: isLinux
+          ? "AMS Access could not confirm control of operating-system or desktop shortcuts. Your physical keyboard may still type normally; this check is about preventing system shortcuts during the contest."
+          : "This device has not confirmed the keyboard controls required for the contest.",
         steps: isMac
           ? [
               "Open System Settings → Privacy & Security → Accessibility.",
               "Enable AMS Access in the Accessibility list.",
               "Run the device check again.",
             ]
-          : [
-              "Disable custom keyboard remappers or window-manager shortcuts temporarily.",
-              "Close tools like AutoHotkey or global hotkey managers.",
-              "Run the device check again.",
-            ],
+          : isLinux
+            ? [
+                "Temporarily disable custom desktop or window-manager shortcuts that conflict with contest controls.",
+                "Run the device check again. If the warning remains, copy the support details below for your organizer.",
+                "You do not need to replace a keyboard that can type normally; desktop shortcut support depends on the Linux session shown below.",
+              ]
+            : [
+                "Disable custom keyboard remappers or window-manager shortcuts temporarily.",
+                "Close tools like AutoHotkey or global hotkey managers.",
+                "Run the device check again.",
+              ],
         primaryLabel: "Run checks again",
         primaryAction: "retry",
         details: [

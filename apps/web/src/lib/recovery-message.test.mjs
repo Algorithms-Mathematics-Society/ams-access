@@ -29,6 +29,13 @@ test("Linux is not told that relaunching re-runs the recovery that matters", () 
   assert.doesNotMatch(message, /relaunch/i);
 });
 
+test("Linux aggregate failure does not claim desktop restoration succeeded", () => {
+  const message = recoveryFailureMessage("linux");
+  assert.doesNotMatch(message, /desktop settings were restored/i);
+  assert.match(message, /could not verify/i);
+  assert.match(message, /network rules/i);
+});
+
 test("Linux gets a command that actually clears the rules", () => {
   const command = manualRecoveryCommand("linux");
   assert.match(command, /iptables/);

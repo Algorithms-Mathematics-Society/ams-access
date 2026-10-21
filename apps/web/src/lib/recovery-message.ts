@@ -31,13 +31,12 @@ const RELAUNCH =
 
 export function recoveryFailureMessage(platform: string | null | undefined): string {
   if (isPlatform(platform, "linux")) {
-    // No "relaunch": on Linux that restores the desktop settings but not the
-    // firewall, and promising otherwise sends the candidate round a loop that
-    // cannot fix what they are actually stuck behind.
+    // No "relaunch": on Linux it does not reconcile the firewall, and an
+    // aggregate restore error does not prove that desktop recovery succeeded.
     return (
-      "Your desktop settings were restored, but the exam network rules could not be removed: " +
-      "the proctoring network component did not respond. Show an invigilator the command below, " +
-      "or restart the computer, which clears the rules."
+      "AMS Access could not verify that every desktop setting and exam network rule was restored. " +
+      "Ask an invigilator for help. If network access is still restricted, use the command below " +
+      "or restart the computer, which clears the network rules."
     );
   }
   if (isPlatform(platform, "macos") || isPlatform(platform, "windows")) {

@@ -95,6 +95,7 @@ import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay"
 import { KioskBanner } from "./components/KioskBanner";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
 import { footerCameraStatus } from "./camera-status";
+import { nextPresenceEvidenceDelay, presenceUnavailableEvent } from "./presence-evidence";
 import { TopBar } from "./components/TopBar";
 import { QuestionRail } from "./components/QuestionRail";
 import { ProblemPane } from "./components/ProblemPane";
@@ -2070,10 +2071,20 @@ export default function ContestPageClient() {
     }
 
     let cancelled = false;
+    let acquiring = false;
+    let bindingGeneration = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const scheduleRetry = (callback: () => void, delay: number) => {
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (!cancelled) callback();
+      }, delay);
+    };
+
     const stopStream = (stream: MediaStream | null) => {
-      stream?.getTracks().forEach((track) => track.stop());
+      if (stream) cameraSession.releaseVideo(stream);
     };
 
     const displayCameraError = (err: unknown) => {
@@ -2089,10 +2100,11 @@ export default function ContestPageClient() {
     };
 
     async function bindStream(stream: MediaStream, attempt: number) {
+      const binding = ++bindingGeneration;
       const video = cameraVideoRef.current;
       if (!video) {
         if (attempt < 3) {
-          retryTimer = setTimeout(() => {
+          scheduleRetry(() => {
             if (!cancelled) void bindStream(stream, attempt + 1);
           }, 150);
         }
@@ -2100,13 +2112,13 @@ export default function ContestPageClient() {
       }
 
       const ready = await attachVideoStream(video, stream);
-      if (cancelled || cameraStreamRef.current !== stream) return;
+      if (cancelled || binding !== bindingGeneration || cameraStreamRef.current !== stream) return;
 
       setCameraVideoReady(ready);
       if (!ready) setProctoringOk(false);
       if (!ready && attempt < 2) {
         stopStream(stream);
-        retryTimer = setTimeout(() => {
+        scheduleRetry(() => {
           if (!cancelled) void acquire(attempt + 1);
         }, 700);
       } else if (!ready) {
@@ -2117,7 +2129,10 @@ export default function ContestPageClient() {
     }
 
     async function acquire(attempt = 0) {
-      if (cameraClosedRef.current) return;
+      if (cameraClosedRef.current || cancelled || acquiring) return;
+      acquiring = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
       try {
         // Through the shared session, so the track onboarding already opened
         // is adopted rather than the device being closed and reopened across
@@ -2174,7 +2189,7 @@ export default function ContestPageClient() {
             msg.includes("timed out"));
 
         if (shouldRetry) {
-          retryTimer = setTimeout(() => {
+          scheduleRetry(() => {
             if (!cancelled) void acquire(attempt + 1);
           }, 900);
           return;
@@ -2184,6 +2199,8 @@ export default function ContestPageClient() {
         setProctoringOk(false);
         setFaceStatus("away");
         setCameraError(displayCameraError(err));
+      } finally {
+        acquiring = false;
       }
     }
 
@@ -2204,10 +2221,15 @@ export default function ContestPageClient() {
         return;
       }
       if (status !== "lost") return;
+      // Keep the audio handle reachable by the microphone toggle while the
+      // video is lost. Hide the camera stream and invalidate old preview work.
+      bindingGeneration += 1;
+      setCameraStream(null);
       setCameraVideoReady(false);
       setProctoringOk(false);
+      if (retryTimer) clearTimeout(retryTimer);
       setCameraError("The camera was disconnected. Reconnect it to resume monitoring.");
-      retryTimer = setTimeout(() => {
+      scheduleRetry(() => {
         if (!cancelled) void acquire();
       }, 1500);
     });
@@ -2326,6 +2348,33 @@ export default function ContestPageClient() {
       .catch(() => {});
   }, [sessionId]);
 
+  // A camera-less advisory entry must leave evidence rather than creating a
+  // silent hole in the invigilation timeline. This loop only records that a
+  // sample was unavailable; camera acquisition remains owned by the bounded
+  // acquisition effect above, and detector loading remains in the stream path.
+  useEffect(() => {
+    if (cameraStream || !sessionId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = () => {
+      if (cancelled) return;
+      const event = presenceUnavailableEvent(contestId);
+      void window.__TAURI__?.core
+        .invoke("log_proctoring_event", { ...event, timestamp: Date.now() })
+        .catch(() => {});
+      timer = setTimeout(tick, nextPresenceEvidenceDelay(Math.random()));
+    };
+
+    // Give the bounded acquisition owner a full sampling interval before
+    // recording absence; a transient null while it starts is not evidence.
+    timer = setTimeout(tick, nextPresenceEvidenceDelay(Math.random()));
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [cameraStream, contestId, sessionId]);
+
   // ── Periodic presence verification (jittered 30–90 s) ──────────────────────
   // Samples the live camera with BlazeFace and logs presence_ok /
   // face_missing / multiple_faces proctoring events (thumbnails only on
@@ -2440,15 +2489,11 @@ export default function ContestPageClient() {
                     // webcam resolution a dark rectangle is a phone, a wallet
                     // or a calculator case, so this decides nothing and is
                     // never shown to the candidate.
-                    logPresence(
-                      "object_suspected",
-                      `possible ${seen.label} in frame`,
-                      {
-                        label: seen.label,
-                        score: Number(seen.score.toFixed(3)),
-                        thumbnail: thumbnailOf(video),
-                      }
-                    );
+                    logPresence("object_suspected", `possible ${seen.label} in frame`, {
+                      label: seen.label,
+                      score: Number(seen.score.toFixed(3)),
+                      thumbnail: thumbnailOf(video),
+                    });
                   }
                 } catch {
                   // A detector that throws mid-exam is not the candidate's

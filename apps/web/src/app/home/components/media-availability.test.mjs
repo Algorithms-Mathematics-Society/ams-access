@@ -9,6 +9,11 @@ import {
 } from "./media-availability.ts";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
+const utilsSource = readFileSync(new URL("./utils.ts", import.meta.url), "utf8");
+const CAMERA_START_TIMEOUT_MS = Number(
+  /export const CAMERA_START_TIMEOUT_MS = ([0-9_]+);/.exec(utilsSource)?.[1].replaceAll("_", "")
+);
+assert.equal(CAMERA_START_TIMEOUT_MS, 6000, "test must follow the Settings media deadline");
 const componentPath = new URL("./SettingsPanel.tsx", import.meta.url);
 const componentSource = readFileSync(componentPath, "utf8");
 const componentAst = ts.createSourceFile(
@@ -234,6 +239,8 @@ function micHandlerHarness(t, getUserMedia, AudioCtx) {
     setReadiness() {},
     onSecurityEvent: (event) => state.security.push(event),
     describeMediaError: (error) => String(error),
+    getUserMediaWithTimeout,
+    CAMERA_START_TIMEOUT_MS,
     console,
     navigator: globalThis.navigator,
     window: globalThis.window,
@@ -285,6 +292,36 @@ test("actual microphone handler cancels pending acquisition and stops its late g
   await starting;
   assert.equal(stopped, 1);
   assert.equal(harness.state.contexts, 0);
+});
+
+test("actual microphone handler times out, stops a late grant, and leaves retry available", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let resolve;
+  let stopped = 0;
+  const harness = micHandlerHarness(
+    t,
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+    fakeAudioContext()
+  );
+  const starting = harness.handler();
+  await settle();
+  assert.equal(harness.state.pending, true);
+  t.mock.timers.tick(CAMERA_START_TIMEOUT_MS);
+  await starting;
+  assert.equal(harness.state.pending, false);
+  assert.equal(harness.state.active, false);
+  assert.equal(harness.state.contexts, 0);
+  resolve({ getTracks: () => [{ stop: () => stopped++ }] });
+  await settle();
+  assert.equal(stopped, 1);
+  void harness.handler();
+  await settle();
+  assert.equal(harness.state.pending, true, "a timed-out monitor can be retried");
+  await harness.handler();
+  assert.equal(harness.state.pending, false);
 });
 
 test("actual microphone handler cleanup closes successful setup and stale rAF cannot reschedule", async (t) => {
@@ -368,7 +405,9 @@ test("actual hardware-tab effect releases microphone resources", async (t) => {
     "setMicPending",
     "setMicLevel",
     "setCameraBusy",
-    "camStream",
+    "cameraOpeningRef",
+    "cameraSession",
+    "camStreamRef",
     "setCamStream",
     `${js}; return effect;`
   )(
@@ -381,7 +420,9 @@ test("actual hardware-tab effect releases microphone resources", async (t) => {
     () => {},
     () => {},
     () => {},
-    null,
+    { current: false },
+    { releaseVideo() {} },
+    { current: null },
     () => {}
   );
   assert.equal(typeof effect, "function");
@@ -397,4 +438,97 @@ test("missing mediaDevices produces an unavailable report rather than an unhandl
     cameraAvailable: false,
     microphoneAvailable: false,
   });
+});
+
+function cameraHandlerHarness(setPreferredVideoDevice) {
+  const owner = createMediaRequestOwner();
+  const state = {
+    stream: null,
+    busy: false,
+    error: null,
+    selected: null,
+    readiness: [],
+    events: [],
+    refreshes: 0,
+  };
+  const cameraSession = {
+    setPreferredVideoDevice,
+    preferredVideoDevice: () => "previous-camera",
+  };
+  const handler = componentFunction("startCameraTest", {
+    selectedCam: "",
+    cameraRequestOwner: { current: owner },
+    cameraStartedAt: { current: 0 },
+    cameraOpeningRef: { current: false },
+    setCameraBusy: (value) => {
+      state.busy = value;
+    },
+    setCameraError: (value) => {
+      state.error = value;
+    },
+    setFramesStalled() {},
+    isTrackDelivering: () => true,
+    setCamStream: (value) => {
+      state.stream = value;
+    },
+    camStreamRef: { current: null },
+    onSecurityEvent: (event) => state.events.push(event),
+    cameraSession,
+    refreshCameras: () => {
+      state.refreshes += 1;
+    },
+    setSelectedCam: (value) => {
+      state.selected = value;
+    },
+    describeMediaError: (error) => String(error),
+    setReadiness: (update) => {
+      state.readiness.push(update({ camera: "checking" }).camera);
+    },
+    performance: { now: () => 100 },
+  });
+  return { handler, owner, state };
+}
+
+test("actual Settings camera handler adopts shared selection but does not claim ready before preview", async () => {
+  const stream = { getTracks: () => [] };
+  const harness = cameraHandlerHarness(async (deviceId) => {
+    assert.equal(deviceId, "rgb-camera");
+    return stream;
+  });
+  await harness.handler("rgb-camera");
+  assert.equal(harness.state.stream, stream);
+  assert.equal(harness.state.busy, true, "preview effect owns the remaining busy state");
+  assert.deepEqual(harness.state.readiness, [], "acquisition alone must not mark camera ok");
+  assert.equal(harness.state.refreshes, 1);
+  assert.match(harness.state.events.at(-1), /checking preview/i);
+});
+
+test("actual Settings camera handler rejects a late selection result after cancellation", async () => {
+  let resolve;
+  const pending = new Promise((done) => {
+    resolve = done;
+  });
+  const harness = cameraHandlerHarness(() => pending);
+  const opening = harness.handler("ir-camera");
+  await settle();
+  harness.owner.cancel();
+  const stream = { getTracks: () => [] };
+  resolve(stream);
+  await opening;
+  assert.equal(harness.state.stream, null);
+  assert.equal(harness.state.refreshes, 0);
+  assert.deepEqual(harness.state.readiness, []);
+});
+
+test("actual Settings camera handler surfaces preference persistence failure and restores selection", async () => {
+  const error = new Error("Camera preference storage unavailable");
+  const harness = cameraHandlerHarness(async () => {
+    throw error;
+  });
+  await harness.handler("rgb-camera");
+  assert.equal(harness.state.stream, null);
+  assert.equal(harness.state.busy, false);
+  assert.equal(harness.state.selected, "previous-camera");
+  assert.match(harness.state.error, /could not be saved/i);
+  assert.deepEqual(harness.state.readiness, ["fail"]);
 });
