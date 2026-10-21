@@ -251,7 +251,10 @@ mod tests {
             EnforcementProfile::StrictContest,
             Some("linux"),
         );
-        // Linux is advisory even if native interception cannot engage.
+        // Linux is advisory now, like macOS: the intercept is gsettings and
+        // kwriteconfig against whichever desktop is installed, and the
+        // schemas are absent on anything that is not GNOME or KDE. It used
+        // to refuse entry over a capability the candidate could not produce.
         assert!(!keyboard_required(&linux, &device));
         device.keyboard.as_mut().unwrap().method = "unsupported".into();
         assert!(!keyboard_required(&linux, &device));
