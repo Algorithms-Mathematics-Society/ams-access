@@ -251,7 +251,8 @@ mod tests {
             EnforcementProfile::StrictContest,
             Some("linux"),
         );
-        assert!(keyboard_required(&linux, &device));
+        // Linux is advisory even if native interception cannot engage.
+        assert!(!keyboard_required(&linux, &device));
         device.keyboard.as_mut().unwrap().method = "unsupported".into();
         assert!(!keyboard_required(&linux, &device));
         let windows = SessionPolicy::for_profile_with_platform(
@@ -259,7 +260,9 @@ mod tests {
             Some("windows"),
         );
         assert!(keyboard_required(&windows, &device));
-        let mut waived = linux;
+        device.keyboard.as_mut().unwrap().method = "windows_hook".into();
+        assert!(keyboard_required(&windows, &device));
+        let mut waived = windows;
         waived
             .checks
             .iter_mut()
@@ -267,5 +270,49 @@ mod tests {
             .unwrap()
             .required = false;
         assert!(!keyboard_required(&waived, &device));
+    }
+
+    #[test]
+    fn keyboard_gate_honors_explicit_blocking_and_unsupported_severity() {
+        use core_rs::exam::*;
+        let mut policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("linux"),
+        );
+        let requirement = policy
+            .checks
+            .iter_mut()
+            .find(|check| check.kind == CheckKind::KeyboardLockdown)
+            .unwrap();
+        requirement.required = true;
+        requirement.severity = BlockingSeverity::Block;
+        requirement.unsupported_severity = BlockingSeverity::Warning;
+
+        let mut device = DeviceState {
+            platform: Some("linux".into()),
+            camera_available: None,
+            microphone_available: None,
+            network: None,
+            keyboard: Some(KeyboardInterceptResult {
+                active: false,
+                method: "gsettings".into(),
+                platform: "linux".into(),
+            }),
+            restricted_processes: None,
+            virtualization: None,
+            external_displays: None,
+            rdp_server: None,
+            network_helper_ready: None,
+        };
+        assert!(keyboard_required(&policy, &device));
+        device.keyboard.as_mut().unwrap().method = "unsupported".into();
+        assert!(!keyboard_required(&policy, &device));
+        policy
+            .checks
+            .iter_mut()
+            .find(|check| check.kind == CheckKind::KeyboardLockdown)
+            .unwrap()
+            .unsupported_severity = BlockingSeverity::Block;
+        assert!(keyboard_required(&policy, &device));
     }
 }
