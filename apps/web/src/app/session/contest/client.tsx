@@ -826,6 +826,9 @@ export default function ContestPageClient() {
     if (type === "camera") {
       setCameraEnabled(value);
       cameraEnabledRef.current = value;
+      // The sampling loop stops while the camera is off, so the last status
+      // would otherwise stay on screen for the rest of the paper.
+      if (!value) setPresenceStatus("presence_ok");
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = value));
       }
@@ -3335,7 +3338,16 @@ export default function ContestPageClient() {
       }}
     />
   );
-  const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
+  // Driven by the five-second BlazeFace sample, not only by the older
+  // faceStatus path -- that one needs its own detector to report "away" and
+  // then a five-second grace on top, which is why an empty chair sat there
+  // with nothing on screen.
+  //
+  // Warned on the first bad sample, logged only after three. The warning is
+  // free and the candidate can act on it in a second; the record is a claim
+  // about their sitting and deserves fifteen seconds of evidence.
+  const presenceWarning = cameraEnabled && presenceStatus !== "presence_ok";
+  const shouldShowFaceBlock = presenceWarning || (softBlockActive && faceStatus !== "ok");
   // Says what to do, in the fewest words that still say it. Nothing about
   // pausing or resuming: nothing is paused any more.
   const faceBlockTitle = !cameraHealthy
