@@ -57,6 +57,18 @@ function passed(row: TestRow): boolean {
   return PASSING.has(String(row.verdict ?? "").toUpperCase());
 }
 
+/**
+ * A case nobody asked a question about.
+ *
+ * A custom case run without expected output carries no verdict -- the judge
+ * executed it and was never told what right would look like. There is no
+ * third state in `passed`, so these rendered as failures: a red cross against
+ * a case the candidate had not got wrong, and a tooltip saying "failed".
+ */
+function unjudged(row: TestRow): boolean {
+  return String(row.verdict ?? "").trim() === "";
+}
+
 /** The headline, in the words a candidate expects to read. */
 const VERDICT_WORDS: Record<string, string> = {
   AC: "Accepted",
@@ -148,8 +160,11 @@ export function ResultsPanel({
   // Land on the first failure, which is the one being looked for. Re-run with
   // everything passing and it falls back to the first case rather than
   // keeping a stale index into a shorter list.
+  //
+  // An unjudged case is not a failure. Without that, a custom run with no
+  // expected output opened on "Case 1" as though it were the problem.
   useEffect(() => {
-    const firstFailure = rows.findIndex((row) => !passed(row));
+    const firstFailure = rows.findIndex((row) => !passed(row) && !unjudged(row));
     setSelected(firstFailure === -1 ? 0 : firstFailure);
   }, [rows]);
 
@@ -438,6 +453,7 @@ function CaseChip({
   onSelect: () => void;
 }) {
   const ok = passed(row);
+  const notChecked = unjudged(row);
   const family = familyOf(row);
   // A behaviour check is numbered like an I/O case rather than wearing its
   // GTest name: `PokemonRAII.ConstructionAcquiresAndDestructionReleases` is
@@ -454,7 +470,7 @@ function CaseChip({
   // Colour carries the outcome, so a candidate can read the strip at a
   // glance without opening anything. The previous version put a 0.5rem dot
   // beside grey text, which at a glance is just grey text.
-  const tint = ok ? "success" : "error";
+  const tint = notChecked ? "secondary" : ok ? "success" : "error";
 
   return (
     <button
@@ -465,7 +481,9 @@ function CaseChip({
       // between them. Fourteen stops for fourteen cases is not navigation.
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
-      title={`${described || full} — ${ok ? "passed" : "failed"}. ${FAMILY[family].hint}`}
+      title={`${described || full} — ${
+        notChecked ? "ran, not checked" : ok ? "passed" : "failed"
+      }. ${FAMILY[family].hint}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -494,7 +512,7 @@ function CaseChip({
       }}
     >
       <span aria-hidden style={{ fontSize: "0.85em" }}>
-        {ok ? "✓" : "✕"}
+        {notChecked ? "·" : ok ? "✓" : "✕"}
       </span>
       {shortChip(full)}
     </button>
@@ -589,7 +607,13 @@ function CaseDetail({
         <>
           {input != null && <Block label="Input" value={input} />}
           {got != null ? (
-            <Block label="Your output" value={got} tone={ok ? "success" : "error"} />
+            // No tone when nothing was checked: colouring this green or red
+            // asserts a correctness the judge was never asked to decide.
+            <Block
+              label="Your output"
+              value={got}
+              tone={unjudged(row) ? undefined : ok ? "success" : "error"}
+            />
           ) : (
             <VStack gap={2}>
               <Text type="supporting" weight="medium">

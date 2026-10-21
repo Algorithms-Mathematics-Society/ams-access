@@ -22,7 +22,10 @@
 export type WorkedExample = {
   label?: string;
   input: string;
-  output: string;
+  /** Absent when there is nothing to compare against -- a custom case the
+   * candidate ran without supplying expected output. A statement's own
+   * worked example always has one. */
+  output?: string;
 };
 
 export type JudgedCase = {

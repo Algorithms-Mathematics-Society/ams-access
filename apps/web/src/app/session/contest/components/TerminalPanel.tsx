@@ -1,5 +1,6 @@
 import type { CompilerDiagnostic } from "../compiler-diagnostics";
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { sendable } from "../custom-cases";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { TabList, Tab } from "@astryxdesign/core/TabList";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -144,6 +145,25 @@ export interface TerminalPanelProps {
   latestAttemptPassed: number;
   latestAttemptFirstFailed: any | null;
   runStatus: RunStatusView;
+  /** One view per kind of run. The two tabs are separate questions with
+   *  separate answers, so each reads its own rather than both reading
+   *  whichever ran last. */
+  runViews: {
+    all: {
+      result: any;
+      error: string | null;
+      timedOut: boolean;
+      tests: any[] | null;
+      status: RunStatusView;
+    };
+    custom: {
+      result: any;
+      error: string | null;
+      timedOut: boolean;
+      tests: any[] | null;
+      status: RunStatusView;
+    };
+  };
   runMetrics: string;
   runProgressSteps: string[];
   runProgressPhase: number;
@@ -188,6 +208,7 @@ export function TerminalPanel({
   latestAttemptPassed,
   latestAttemptFirstFailed,
   runStatus,
+  runViews,
   runMetrics,
   runProgressSteps,
   runProgressPhase,
@@ -200,9 +221,6 @@ export function TerminalPanel({
     // tab they cannot see.
     if (isRunning) setActiveTab(runMode);
   }, [isRunning, runMode]);
-  const runIsCustom = runMode === "custom";
-  const showRunOutput = activeTab === runMode;
-  const showRunPane = showRunOutput && Boolean(runResult || isRunning || runError || runTimedOut);
 
   // Which of the two the result pane is showing. `runMode` is not this: it is
   // "all cases or custom cases" and stays "all" whether the last thing the
@@ -229,7 +247,30 @@ export function TerminalPanel({
   // submission's results belong under "Test Result", not beneath the inputs
   // that did not produce them -- and `resultSource` can still say
   // "submission" when a candidate submits and then opens custom cases.
-  const showRunResults = activeTab === "custom" ? true : viewingRun;
+  // A custom run has no worked example to borrow. Its cases are `kind: "io"`
+  // like a sample, so `sampleOrdinals`/`exampleFor` paired "Case 1" with the
+  // statement's example 1 positionally, and ResultsPanel rendered that
+  // example's output as "Expected" -- for input the candidate typed
+  // themselves. It read as a verified answer when nothing had been checked,
+  // and with different input it would show an expectation belonging to an
+  // entirely different case. A candidate who does supply expected output
+  // still gets it: that arrives on the row itself.
+  const customExamples = useMemo(() => {
+    // Stand the candidate's own cases in for worked examples. `TestcaseOut`
+    // carries neither `input` nor `expected`, so without this the panel had
+    // nothing to show and fell through to the statement's example by
+    // position -- printing its answer as "Expected" for input the candidate
+    // typed. Labels mirror `toWire` exactly, including its `sendable`
+    // filter, so `exampleFor` joins by label rather than by position.
+    return sendable(customCases).map((c, index) => ({
+      label: `Case ${index + 1}`,
+      input: c.input,
+      // null means they never asked for a verdict, so there is nothing to
+      // expect. Left undefined rather than "", which would render an empty
+      // Expected block.
+      output: c.expected ?? undefined,
+    }));
+  }, [customCases]);
   // Compiler messages follow the run when there is one, and otherwise fall back
   // to the last submission -- the precedence the Compiler output tab used before
   // the two output tabs were folded into this one pane.
@@ -380,79 +421,103 @@ export function TerminalPanel({
             runDisabledReason={judgingUnavailableReason}
           />
         )}
-        {showRunOutput && runResult && runSourceChanged && (
-          <Banner
-            status="warning"
-            container="section"
-            title="Code changed since this run"
-            description="These results belong to the earlier code. Run the active file again to check your changes."
-          />
-        )}
-        {/* The run's own status, distinct from a verdict: "Couldn't reach the
-            judge" and "Still running..." are not things ResultsPanel can say.
-            Computed since this pane was written and never rendered, so a
-            custom run that timed out stopped its spinner and showed nothing
-            at all. "Still running..." is also the truthful message -- the
-            worker is allowed far longer than the client waits. */}
-        {showRunPane && runStatus && (
-          <HStack
-            gap={2}
-            align="center"
-            paddingInline={4}
-            paddingBlock={2}
-            style={{
-              background: runStatus.bg,
-              borderBottom: `var(--border-width) solid ${runStatus.border}`,
-            }}
-          >
-            <Text type="supporting" weight="medium" style={{ color: runStatus.color }}>
-              {runStatus.label}
-            </Text>
-            {runTimedOut && (
-              // The run is still on the judge, so re-polling is the fix. This
-              // handler existed and had no control attached to it, which left
-              // a candidate who ran out of polling budget with no way back to
-              // their own result.
-              <Button size="sm" variant="secondary" label="Check again" onClick={onCheckRunAgain} />
-            )}
-          </HStack>
-        )}
-        {/* Rendered on the custom tab as well as "all". Starting a run
-            switches the pane to `runMode`, so a custom run landed on a tab
-            that mounted the inputs and nothing else: the output was fetched,
-            stored, and never shown. This is the only component that reads
-            `stdout_text`. */}
-        {(activeTab === "all" || activeTab === "custom") && (
-          <ResultsPanel
-            tests={showRunResults ? runSampleTests : latestAttemptTests}
-            verdict={
-              showRunResults
-                ? (runResult?.status ?? null)
-                : ((latestAttempt?.final_verdict ?? latestAttempt?.status) as string | null)
-            }
-            runtimeMs={showRunResults ? runResult?.runtime_ms : latestAttempt?.runtime_ms}
-            memoryKb={showRunResults ? runResult?.memory_kb : latestAttempt?.memory_kb}
-            isRunning={showRunResults ? isRunning : latestAttemptPending}
-            submitted={!showRunResults}
-            progressLabel={runProgressSteps[runProgressPhase] ?? runMetrics}
-            error={
-              runTimedOut ? "Still running on the judge. Press Check again in a moment." : runError
-            }
-            compilerText={compilerText}
-            compilerIsError={compilerIsError}
-            onJumpToCompilerError={onJumpToCompilerError}
-            examples={sampleExamples}
-            stale={showRunResults && runSourceChanged}
-            emptyHint={
-              activeTab === "custom"
-                ? "Run your custom cases to see their output."
-                : showRunResults
-                  ? "Run your code to check it against the sample cases."
-                  : "Nothing submitted for this problem yet."
-            }
-            onRunAsCustom={onRunSampleAsCustom}
-          />
-        )}
+        {/* The active tab's own run. "Test Result" is the official one --
+            samples and submissions; "Testcase" is the candidate's own. Two
+            questions, two answers, so neither pane reads the other's. */}
+        {(() => {
+          const custom = activeTab === "custom";
+          const view = custom ? runViews.custom : runViews.all;
+          // The custom pane is always about its run. The official pane shows
+          // the submission once one supersedes the run.
+          const showRun = custom ? true : viewingRun;
+          const status = view.status;
+          const paneLive = activeTab === runMode && isRunning;
+
+          if (activeTab !== "all" && !custom) return null;
+
+          return (
+            <>
+              {view.result && runSourceChanged && (
+                <Banner
+                  status="warning"
+                  container="section"
+                  title="Code changed since this run"
+                  description="These results belong to the earlier code. Run the active file again to check your changes."
+                />
+              )}
+              {/* The run's own status, distinct from a verdict: "Couldn't
+                  reach the judge" and "Still running..." are not things
+                  ResultsPanel can say. Computed since this pane was written
+                  and never rendered, so a run that timed out stopped its
+                  spinner and showed nothing at all. "Still running..." is
+                  also the truthful message -- the worker is allowed far
+                  longer than the client waits. */}
+              {status && (view.result || paneLive || view.error || view.timedOut) && (
+                <HStack
+                  gap={2}
+                  align="center"
+                  paddingInline={4}
+                  paddingBlock={2}
+                  style={{
+                    background: status.bg,
+                    borderBottom: `var(--border-width) solid ${status.border}`,
+                  }}
+                >
+                  <Text type="supporting" weight="medium" style={{ color: status.color }}>
+                    {status.label}
+                  </Text>
+                  {view.timedOut && (
+                    // The run is still on the judge, so re-polling is the
+                    // fix. This handler existed with no control attached to
+                    // it, leaving a candidate who ran out of polling budget
+                    // no way back to their own result.
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      label="Check again"
+                      onClick={onCheckRunAgain}
+                    />
+                  )}
+                </HStack>
+              )}
+              <ResultsPanel
+                // Distinct instances: rendered at one position they shared a
+                // component, so the selected case carried from one tab to
+                // the other.
+                key={custom ? "results-custom" : "results-official"}
+                tests={showRun ? view.tests : latestAttemptTests}
+                verdict={
+                  showRun
+                    ? (view.result?.status ?? null)
+                    : ((latestAttempt?.final_verdict ?? latestAttempt?.status) as string | null)
+                }
+                runtimeMs={showRun ? view.result?.runtime_ms : latestAttempt?.runtime_ms}
+                memoryKb={showRun ? view.result?.memory_kb : latestAttempt?.memory_kb}
+                isRunning={showRun ? paneLive : latestAttemptPending}
+                submitted={!showRun}
+                progressLabel={runProgressSteps[runProgressPhase] ?? runMetrics}
+                error={
+                  view.timedOut
+                    ? "Still running on the judge. Press Check again in a moment."
+                    : view.error
+                }
+                compilerText={compilerText}
+                compilerIsError={compilerIsError}
+                onJumpToCompilerError={onJumpToCompilerError}
+                examples={custom ? customExamples : sampleExamples}
+                stale={showRun && runSourceChanged}
+                emptyHint={
+                  custom
+                    ? "Run your custom cases to see their output."
+                    : showRun
+                      ? "Run your code to check it against the sample cases."
+                      : "Nothing submitted for this problem yet."
+                }
+                onRunAsCustom={custom ? undefined : onRunSampleAsCustom}
+              />
+            </>
+          );
+        })()}
         {activeTab === "attempts" && (
           <VStack gap={4} padding={4}>
             <HStack gap={3} align="center" justify="between" wrap="wrap">

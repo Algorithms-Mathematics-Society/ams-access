@@ -51,3 +51,33 @@ test("ordinals count samples only, skipping rules and behaviour checks", () => {
 test("a missing kind counts as a sample, as it does everywhere else", () => {
   assert.deepEqual(sampleOrdinals([{}, {}]), [0, 1]);
 });
+
+// A custom case is `kind: "io"` like a sample, so before the contest room
+// stopped handing it the statement's examples it matched one by position and
+// rendered that example's answer as "Expected" -- for input the candidate had
+// typed themselves. These pin the join the custom path now relies on.
+test("a custom case joins its own stand-in example by label, not position", () => {
+  const own = [
+    { label: "Case 1", input: "7\n", output: undefined },
+    { label: "Case 2", input: "8\n", output: "8\n" },
+  ];
+  // "Case 2" is at position 1; passing position 0 proves the label wins.
+  assert.equal(exampleFor({ label: "Case 2" }, 0, own), own[1]);
+});
+
+test("a custom case with no expected output offers nothing to compare against", () => {
+  const own = [{ label: "Case 1", input: "7\n", output: undefined }];
+  const joined = exampleFor({ label: "Case 1" }, 0, own);
+  assert.equal(joined?.input, "7\n");
+  // ResultsPanel renders Expected only when it is non-null, so undefined here
+  // is what keeps the block off screen.
+  assert.equal(joined?.output, undefined);
+});
+
+test("a custom case never reaches the statement's examples", () => {
+  // What the contest room now passes for a custom run: the candidate's own
+  // cases, never EXAMPLES. A label that matches nothing and a position past
+  // the end must both come back empty rather than borrowing an answer.
+  assert.equal(exampleFor({ label: "Case 9" }, 9, []), null);
+  assert.equal(exampleFor({ label: "Case 9" }, 9, undefined), null);
+});

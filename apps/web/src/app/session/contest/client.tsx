@@ -368,13 +368,38 @@ export default function ContestPageClient() {
   >(null);
   const [problemTab, setProblemTab] = useState<ProblemSectionKey>("statement");
   const [copiedSampleKey, setCopiedSampleKey] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<RunAttempt | null>(null);
+  // A sample run and a custom run are two different questions, so they keep
+  // two different answers. They used to share one set of slots with `runMode`
+  // saying who wrote last, which meant running custom cases destroyed the
+  // sample results sitting in the other tab, and vice versa -- the two tabs
+  // were a single value drawn twice.
+  //
+  // `isRunning` stays shared on purpose: the API enforces
+  // RUN_COOLDOWN_SECONDS, so letting both start at once only earns a 429.
+  type RunSlice = {
+    result: RunAttempt | null;
+    attemptId: string | null;
+    error: string | null;
+    timedOut: boolean;
+  };
+  const EMPTY_RUN: RunSlice = { result: null, attemptId: null, error: null, timedOut: false };
+  const [runSlices, setRunSlices] = useState<Record<"all" | "custom", RunSlice>>({
+    all: EMPTY_RUN,
+    custom: EMPTY_RUN,
+  });
+  const patchRun = useCallback((mode: "all" | "custom", patch: Partial<RunSlice>) => {
+    setRunSlices((prev) => ({ ...prev, [mode]: { ...prev[mode], ...patch } }));
+  }, []);
   const [isRunning, setIsRunning] = useState(false);
   const [runMode, setRunMode] = useState<"all" | "custom">("all");
-  const [runError, setRunError] = useState<string | null>(null);
+  // What the lifecycle code means by "the run": whichever kind started last.
+  // Display picks its own slice by tab -- see TerminalPanel.
+  const runResult = runSlices[runMode].result;
+  const runResultAttemptId = runSlices[runMode].attemptId;
+  const runError = runSlices[runMode].error;
+  const runTimedOut = runSlices[runMode].timedOut;
   // Set when the judge hasn't returned a verdict within the polling window — the
   // submission is still queued (distinct from a hard connection error).
-  const [runTimedOut, setRunTimedOut] = useState(false);
   // The candidate's own cases, per question. Local only, exactly like the
   // code itself -- there is no server copy of a draft any more, and a test
   // case someone typed is no more worth persisting than the code it tests.
@@ -383,10 +408,11 @@ export default function ContestPageClient() {
   // its per-test results out of `testResults` and render them LeetCode-style in
   // the run pane. RUN attempts are excluded from the submissions endpoint, so the
   // run pane above the attempts list is the only place their results surface.
-  const [runResultAttemptId, setRunResultAttemptId] = useState<string | null>(null);
   // Kept synced via effect below so fetchSubmissions (a useCallback NOT keyed on
   // runResultAttemptId) can read the LIVE value instead of a stale closure.
   const runResultAttemptIdRef = useRef<string | null>(null);
+  // Same reason: recheckRun must re-poll the kind that actually timed out.
+  const runModeRef = useRef<"all" | "custom">("all");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Bumped to re-run the load effect: by the backoff timer, or by Retry.
@@ -548,6 +574,9 @@ export default function ContestPageClient() {
   useEffect(() => {
     runResultAttemptIdRef.current = runResultAttemptId;
   }, [runResultAttemptId]);
+  useEffect(() => {
+    runModeRef.current = runMode;
+  }, [runMode]);
   // Leaving the page cancels any run poll still waiting on the judge.
   useEffect(
     () => () => {
@@ -1400,13 +1429,21 @@ export default function ContestPageClient() {
   // start) each hand-maintained this list and one drifted — switchQuestion
   // missed runTimedOut, leaving a ghost "Still running…" notice on the next
   // question after a timed-out run.
-  function resetRunPanelState() {
+  /**
+   * Clear run results. One kind when starting a run of that kind, both when
+   * the results stop being about anything on screen.
+   *
+   * Starting a run used to clear both, which is what let a custom run wipe
+   * the sample results a candidate was still reading in the other tab.
+   * Changing question still clears both: those results belong to the problem
+   * being left.
+   */
+  function resetRunPanelState(mode?: "all" | "custom") {
     runVisitRef.current += 1;
     setRunSourceSnapshot(null);
-    setRunResult(null);
-    setRunResultAttemptId(null);
-    setRunError(null);
-    setRunTimedOut(false);
+    setRunSlices((prev) =>
+      mode ? { ...prev, [mode]: EMPTY_RUN } : { all: EMPTY_RUN, custom: EMPTY_RUN }
+    );
   }
 
   function switchQuestion(idx: number) {
@@ -1482,9 +1519,10 @@ export default function ContestPageClient() {
     if (runInFlightRef.current) return;
     runInFlightRef.current = true;
 
-    setRunMode(useCustomCases ? "custom" : "all");
+    const mode: "all" | "custom" = useCustomCases ? "custom" : "all";
+    setRunMode(mode);
     setIsRunning(true);
-    resetRunPanelState();
+    resetRunPanelState(mode);
     const runVisit = runVisitRef.current;
     setSubmitError(null);
 
@@ -1518,22 +1556,26 @@ export default function ContestPageClient() {
       if (runVisit !== runVisitRef.current) return;
       const resolvedId = created.uid;
       attemptId = resolvedId;
-      setRunResult({ id: resolvedId, attempt_no: 0, status: "QUEUED" });
-      setRunResultAttemptId(resolvedId);
+      patchRun(mode, {
+        result: { id: resolvedId, attempt_no: 0, status: "QUEUED" },
+        attemptId: resolvedId,
+      });
     } catch (caught) {
       if (runVisit !== runVisitRef.current) return;
       setIsRunning(false);
       if (caught instanceof ProctorApiError && caught.status === 429) {
         const wait = caught.retryAfterSeconds;
-        setRunError(
-          wait
+        patchRun(mode, {
+          error: wait
             ? `Please wait ~${wait}s before running again.`
-            : "Please wait a few seconds before running again."
-        );
+            : "Please wait a few seconds before running again.",
+        });
       } else if (caught instanceof ProctorApiError && caught.status === 409) {
-        setRunError(caught.message);
+        patchRun(mode, { error: caught.message });
       } else {
-        setRunError("Could not reach the judge. Check your connection and retry.");
+        patchRun(mode, {
+          error: "Could not reach the judge. Check your connection and retry.",
+        });
       }
       return;
     } finally {
@@ -1555,6 +1597,7 @@ export default function ContestPageClient() {
     // thousand candidates polling at once is load on the API, and past the
     // first few seconds another request a second buys nothing.
     await pollRun(
+      mode,
       sessionId,
       attemptId,
       runVisit,
@@ -1568,7 +1611,13 @@ export default function ContestPageClient() {
   // Polls one run by uid until it has a verdict or `delays` runs out. Out of
   // budget is not the end of the run: it stays identified by
   // runResultAttemptId, and "Check again" (recheckRun) resumes polling it.
-  async function pollRun(sessionId: string, attemptId: string, runVisit: number, delays: number[]) {
+  async function pollRun(
+    mode: "all" | "custom",
+    sessionId: string,
+    attemptId: string,
+    runVisit: number,
+    delays: number[]
+  ) {
     for (const ms of delays) {
       await new Promise<void>((r) => setTimeout(r, ms));
       if (runVisit !== runVisitRef.current) return;
@@ -1581,7 +1630,7 @@ export default function ContestPageClient() {
         const attempt = toAttemptRecords([polled])[0];
         if (attempt) {
           const normalized = normalizeAttemptForRunResult(attempt);
-          setRunResult(normalized);
+          patchRun(mode, { result: normalized });
           if (!isPendingSubmissionStatus(normalized.status)) {
             setIsRunning(false);
             // Verdict, sample results and any compiler messages all render in the
@@ -1600,8 +1649,7 @@ export default function ContestPageClient() {
     // Polling window elapsed without a terminal verdict: the submission is still
     // queued on the judge. Surface that clearly instead of leaving a silent spinner.
     setIsRunning(false);
-    setRunError(null);
-    setRunTimedOut(true);
+    patchRun(mode, { error: null, timedOut: true });
     // The timed-out state stays visible in the run pane — the run is never an
     // attempts row to navigate to.
   }
@@ -1612,9 +1660,11 @@ export default function ContestPageClient() {
   function recheckRun() {
     const attemptId = runResultAttemptIdRef.current;
     if (!sessionId || !attemptId || isRunning) return;
-    setRunTimedOut(false);
+    // Re-poll the kind that timed out, which is whichever ran last.
+    const mode = runModeRef.current;
+    patchRun(mode, { timedOut: false });
     setIsRunning(true);
-    void pollRun(sessionId, attemptId, runVisitRef.current, [0, 2000, 4000]);
+    void pollRun(mode, sessionId, attemptId, runVisitRef.current, [0, 2000, 4000]);
   }
 
   // Persist the current editor content locally. Storage failures (quota,
@@ -1941,7 +1991,10 @@ export default function ContestPageClient() {
     if (bellRung) return;
     setBellRung(true);
     setSubmitConfirm(false);
-    setRunError(null);
+    setRunSlices((prev) => ({
+      all: { ...prev.all, error: null },
+      custom: { ...prev.custom, error: null },
+    }));
     setSubmissionError(null);
     // One last draft write. If the server has already closed the window it
     // answers 409, which `doSave` renders as "the contest ended" rather than
@@ -2847,40 +2900,62 @@ export default function ContestPageClient() {
     SE: "Judging failed",
     IE: "Judge error — please retry",
   };
-  const runStatus = runError
-    ? {
-        // Client-side failure reaching the judge — distinct from a judge verdict.
-        label: "Couldn’t reach the judge",
-        color: "var(--color-text-red)",
-        bg: "var(--color-error-muted)",
-        border: "color-mix(in srgb, var(--color-error) 28%, transparent)",
-        icon: "error" as const,
-      }
-    : runTimedOut
+  // The same derivation, per kind of run, so each tab reads its own results
+  // instead of both reading whichever ran last.
+  const testsFor = (slice: RunSlice): any[] | null =>
+    slice.attemptId && slice.result && !isPendingSubmissionStatus(slice.result.status)
+      ? (testResults[slice.attemptId] ?? null)
+      : null;
+  const runStatusFor = (slice: RunSlice) =>
+    slice.error
       ? {
-          // Verdict not back yet — the submission is still queued on the judge.
-          label: "Still running…",
-          color: "var(--color-text-yellow)",
-          bg: "color-mix(in srgb, var(--color-text-yellow) 10%, transparent)",
-          border: "color-mix(in srgb, var(--color-text-yellow) 28%, transparent)",
-          icon: "pending" as const,
+          // Client-side failure reaching the judge — distinct from a judge verdict.
+          label: "Couldn’t reach the judge",
+          color: "var(--color-text-red)",
+          bg: "var(--color-error-muted)",
+          border: "color-mix(in srgb, var(--color-error) 28%, transparent)",
+          icon: "error" as const,
         }
-      : runResult
+      : slice.timedOut
         ? {
-            label: runStatusLabelMap[runResult.status] ?? runResult.status,
-            color: VERDICT_COLORS[runResult.status] ?? "var(--color-text-secondary)",
-            bg:
-              VERDICT_BG[runResult.status] ??
-              "color-mix(in srgb, var(--color-text-secondary) 12%, transparent)",
-            border:
-              VERDICT_BORDER[runResult.status] ??
-              "color-mix(in srgb, var(--color-text-secondary) 30%, transparent)",
-            icon:
-              runResult.status === "QUEUED" || runResult.status === "RUNNING"
-                ? ("loading" as const)
-                : ("dot" as const),
+            // Verdict not back yet — the submission is still queued on the judge.
+            label: "Still running…",
+            color: "var(--color-text-yellow)",
+            bg: "color-mix(in srgb, var(--color-text-yellow) 10%, transparent)",
+            border: "color-mix(in srgb, var(--color-text-yellow) 28%, transparent)",
+            icon: "pending" as const,
           }
-        : null;
+        : slice.result
+          ? {
+              label: runStatusLabelMap[slice.result.status] ?? slice.result.status,
+              color: VERDICT_COLORS[slice.result.status] ?? "var(--color-text-secondary)",
+              bg:
+                VERDICT_BG[slice.result.status] ??
+                "color-mix(in srgb, var(--color-text-secondary) 12%, transparent)",
+              border:
+                VERDICT_BORDER[slice.result.status] ??
+                "color-mix(in srgb, var(--color-text-secondary) 30%, transparent)",
+              icon:
+                slice.result.status === "QUEUED" || slice.result.status === "RUNNING"
+                  ? ("loading" as const)
+                  : ("dot" as const),
+            }
+          : null;
+  const runStatus = runStatusFor(runSlices[runMode]);
+  // One view per kind of run. The terminal picks by tab, so the two panes
+  // never read each other's results.
+  const runViews = {
+    all: {
+      ...runSlices.all,
+      tests: testsFor(runSlices.all),
+      status: runStatusFor(runSlices.all),
+    },
+    custom: {
+      ...runSlices.custom,
+      tests: testsFor(runSlices.custom),
+      status: runStatusFor(runSlices.custom),
+    },
+  };
   const runProgressPhase = runError
     ? 2
     : !runResult
@@ -2906,10 +2981,7 @@ export default function ContestPageClient() {
   // Per-sample results for the most recent "Run on Judge". Pulled from the same
   // `testResults` cache the Attempts expansion uses, keyed by the run's attempt
   // id. Only populated once the run reaches a terminal (non-CE) verdict.
-  const runSampleTests: any[] | null =
-    runResultAttemptId && runResult && !isPendingSubmissionStatus(runResult.status)
-      ? (testResults[runResultAttemptId] ?? null)
-      : null;
+  const runSampleTests: any[] | null = testsFor(runSlices[runMode]);
   const latestAttempt = submissionsList[0] ?? null;
   const activeDraftStatus = draftStatus(!activeUnsavedOnDevice);
   const submissionSource = latestAttempt ? submittedSources[latestAttempt.id] : undefined;
@@ -3406,6 +3478,7 @@ export default function ContestPageClient() {
               setTerminalCollapsed={setTerminalCollapsed}
               shouldShowRunProgress={shouldShowRunProgress}
               runResult={runResult}
+              runViews={runViews}
               isRunning={isRunning}
               runTimedOut={runTimedOut}
               onCheckRunAgain={recheckRun}
