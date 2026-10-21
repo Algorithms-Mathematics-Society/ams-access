@@ -248,6 +248,13 @@ pub(crate) async fn check(host: String, api_url: Option<String>) -> NetworkCheck
 mod tests {
     use super::*;
 
+    fn non_listening_address() -> (tokio::net::TcpSocket, SocketAddr) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = socket.local_addr().unwrap();
+        (socket, address)
+    }
+
     #[test]
     fn api_url_is_authoritative_and_keeps_explicit_development_port() {
         assert_eq!(
@@ -464,7 +471,10 @@ mod tests {
             assert!(sample(&addresses).await.is_some());
             assert_eq!(sample(&[]).await, None);
             drop(listener);
-            assert_eq!(sample(&addresses).await, None);
+            // Keep the unreachable port reserved so concurrent tests cannot
+            // bind it after the listener closes (or a probe self-connect).
+            let (_closed_socket, closed_address) = non_listening_address();
+            assert_eq!(sample(&[closed_address]).await, None);
         });
     }
 
@@ -486,7 +496,8 @@ mod tests {
             assert!(live.jitter_ms.is_some());
             assert_eq!(live.clock_skew_ms, None);
             drop(listener);
-            let closed = check(address.to_string(), None).await;
+            let (_closed_socket, closed_address) = non_listening_address();
+            let closed = check(closed_address.to_string(), None).await;
             assert!(!closed.reachable);
             assert_eq!(closed.latency_ms, None);
             assert_eq!(closed.jitter_ms, None);
