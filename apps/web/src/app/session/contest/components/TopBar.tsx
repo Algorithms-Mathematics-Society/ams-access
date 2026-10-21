@@ -9,6 +9,7 @@ import type { ClockSnapshot } from "../session-clock";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
+import { BatteryStatus } from "./BatteryStatus";
 
 export interface FinishQuestionReview {
   id: string;
@@ -169,6 +170,7 @@ export function TopBar({
         </Text>
       </HStack>
       <CountdownBadge clock={clock} onExpiry={handleContestExpiry} />
+      <BatteryStatus />
       <HStack
         gap={2}
         align="center"

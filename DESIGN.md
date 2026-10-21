@@ -133,7 +133,7 @@ belong in lists/tables, not additional nested cards.
 | Forms               | Retain field labels, password visibility, validation messages, keyboard focus and organizer-issued credential instructions.                                                                       |
 | Readiness           | Keep pass, advisory, unavailable, blocked and in-progress states separate. Display actual scan ownership and freshness.                                                                           |
 | Setup               | Keep contest context, twelve checks, phase progress, permission recovery and exit/restoration behavior.                                                                                           |
-| Contest             | Preserve draft recovery, sample/custom test cases, attempt history, countdown, camera status, Help and finish-review behavior.                                                                    |
+| Contest             | Preserve draft recovery, sample/custom test cases, attempt history, countdown, battery/charging status, camera status, Help and finish-review behavior.                                          |
 | Overlays            | Preserve dialog labels, focus handling, Escape behavior and security-overlay priority. Ordinary dialogs must not steal focus from mandatory security overlays.                                    |
 | Icons               | Use the existing Lucide/Astryx action icons; product branding always comes from the shared brand assets.                                                                                          |
 

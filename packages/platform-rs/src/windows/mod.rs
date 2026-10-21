@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 mod hook_delivery;
 mod hook_lifecycle;
 pub mod instance;
+mod keyboard_policy;
 mod registry_recovery;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
 pub use registry_recovery::RegistryLockdownStatus;
@@ -508,6 +509,19 @@ fn set_sleep_prevention(enable: bool) {
             SetThreadExecutionState(ES_CONTINUOUS);
         }
     }
+}
+
+pub fn battery_status() -> Option<crate::BatteryStatus> {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+
+    let mut status = SYSTEM_POWER_STATUS::default();
+    unsafe { GetSystemPowerStatus(&mut status) }.ok()?;
+    // 255 means that Windows cannot determine the percentage. ACLineStatus 1
+    // means connected to AC power; it is the stable signal exposed by Win32.
+    (status.BatteryLifePercent <= 100).then_some(crate::BatteryStatus {
+        percentage: status.BatteryLifePercent,
+        charging: status.ACLineStatus == 1,
+    })
 }
 
 // ── Registry lockdown ─────────────────────────────────────────────────────────
@@ -1156,7 +1170,7 @@ unsafe extern "system" fn kbproc(
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_INJECTED,
+        CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_INJECTED, WM_KEYUP, WM_SYSKEYUP,
     };
 
     let active = HOOK_CALLBACK_SESSION.with(|slot| {
@@ -1190,22 +1204,16 @@ unsafe extern "system" fn kbproc(
         let shift_down = (GetAsyncKeyState(0x10) as u16 & 0x8000) != 0;
         let win_down = (GetAsyncKeyState(0x5B) as u16 & 0x8000) != 0
             || (GetAsyncKeyState(0x5C) as u16 & 0x8000) != 0;
-
-        let blocked = vk == 0x5B   // LWin
-            || vk == 0x5C // RWin
-            || vk == 0x2C // VK_SNAPSHOT (PrintScreen — all methods incl. Win+Shift+S snipping)
-            || (alt_down && vk == 0x09)  // Alt+Tab
-            || (alt_down && vk == 0x73)  // Alt+F4
-            || (ctrl_down && vk == 0x1B) // Ctrl+Esc (Start menu)
-            || (ctrl_down && shift_down && vk == 0x1B) // Ctrl+Shift+Esc (Task Manager direct)
-            || (ctrl_down && shift_down && vk == 0x09) // Ctrl+Shift+Tab
-            || (vk == 0x1B && ESCAPE_BLOCKED.load(Ordering::Relaxed)) // Esc — context-aware
-            || (alt_down && vk == 0x0D)  // Alt+Enter (window size menu)
-            || (alt_down && vk == 0x20)  // Alt+Space (system menu)
-            || (alt_down && vk == 0x5A)  // Alt+Z (NVIDIA ShadowPlay overlay)
-            || (alt_down && vk == 0x52)  // Alt+R (AMD ReLive recording)
-            || (alt_down && vk == 0x78)  // Alt+F9 (Fraps record toggle)
-            || win_down; // Any Win+ combo: Win+G (Game Bar), Win+Tab, Win+D, Win+Shift+S, etc.
+        let key_up = wparam.0 as u32 == WM_KEYUP || wparam.0 as u32 == WM_SYSKEYUP;
+        let blocked = keyboard_policy::should_block(
+            vk,
+            key_up,
+            alt_down,
+            ctrl_down,
+            shift_down,
+            win_down,
+            ESCAPE_BLOCKED.load(Ordering::Relaxed),
+        );
 
         if blocked {
             return LRESULT(1);

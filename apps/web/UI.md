@@ -104,7 +104,7 @@ server locale or hiding hydration warnings does not solve device-date mismatch.
 
 Reuse the existing contest components rather than duplicating their state:
 
-- `TopBar`: compact brand, title, countdown, support and finish review.
+- `TopBar`: compact brand, title, countdown, native battery/charging status, support and finish review. Devices without a reported battery omit the indicator.
 - `TerminalPanel`: separate Test Result, Testcase and Attempts views.
 - `ResultsPanel`: sample/rule/behavior check tabs and selected result detail.
 - Existing editor, statement, custom-case and workspace-preference modules:

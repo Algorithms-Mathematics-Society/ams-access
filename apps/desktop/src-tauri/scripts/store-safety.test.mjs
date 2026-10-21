@@ -47,11 +47,12 @@ test("Windows restricted-process handling is detection-only", async () => {
 });
 
 test("MSIX keeps proctor lockdown but does not write virtualized Windows policies", async () => {
-  const [windows, desktop, manifest, hookLifecycle] = await Promise.all([
+  const [windows, desktop, manifest, hookLifecycle, keyboardPolicy] = await Promise.all([
     read("packages/platform-rs/src/windows/mod.rs"),
     read("apps/desktop/src-tauri/src/lib.rs"),
     read("apps/desktop/msix/AppxManifest.xml"),
     read("packages/platform-rs/src/windows/hook_lifecycle.rs"),
+    read("packages/platform-rs/src/windows/keyboard_policy.rs"),
   ]);
 
   assert.match(
@@ -74,8 +75,9 @@ test("MSIX keeps proctor lockdown but does not write virtualized Windows policie
     hookLifecycle,
     /pub fn ready\(&self\) -> bool \{\s*self\.active\.load\(Ordering::SeqCst\)\s*&& self\.alive\.load\(Ordering::SeqCst\)\s*&& self\.installed\.load\(Ordering::SeqCst\)/
   );
-  assert.match(windows, /Alt\+Tab/);
-  assert.match(windows, /Any Win\+ combo/);
+  assert.match(keyboardPolicy, /Alt\+Tab/);
+  assert.match(keyboardPolicy, /Win\+D chord/);
+  assert.match(keyboardPolicy, /if key_up && \(vk == VK_LWIN \|\| vk == VK_RWIN\)/);
   assert.match(desktop, /set_always_on_top\(true\)/);
   assert.match(desktop, /set_fullscreen\(true\)/);
   assert.match(desktop, /apply_capture_protection/);

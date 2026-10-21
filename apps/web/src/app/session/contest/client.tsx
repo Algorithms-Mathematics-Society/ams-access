@@ -46,6 +46,7 @@ import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { INTERVAL_MS, captureFrame, jitterOffset } from "@/lib/identity-photo";
 import { loadObjectDetector, sampleObjects } from "@/lib/object-watch";
+import { setPreferredCamera } from "@/lib/preferred-camera";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -544,6 +545,29 @@ export default function ContestPageClient() {
   const cameraEnabledRef = useRef(true);
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
+  // Bumped when the candidate picks a different camera, to re-run the
+  // acquisition effect below against the new preference.
+  const [cameraPickKey, setCameraPickKey] = useState(0);
+
+  /**
+   * Switch camera without leaving the exam.
+   *
+   * The wrong camera is not always obvious until the contest is running: a
+   * laptop that opened its infrared sensor shows a black tile, and until now
+   * the candidate's only options were to sit with it or abandon the sitting.
+   * The preference is shared with onboarding and Settings, so the choice
+   * sticks for the rest of the paper and the next one.
+   */
+  function handlePickCamera(deviceId: string) {
+    setPreferredCamera(deviceId);
+    // Release first: the device has to be handed back before it can be
+    // reopened, and `ensure` adopts whatever is already open otherwise.
+    cameraSession.release();
+    cameraStreamRef.current = null;
+    setCameraStream(null);
+    setCameraVideoReady(false);
+    setCameraPickKey((key) => key + 1);
+  }
   const micEnabledRef = useRef(false);
   const mediaInitialStateLoggedRef = useRef(false);
   const [hasToggledMedia, setHasToggledMedia] = useState(false);
@@ -2221,7 +2245,7 @@ export default function ContestPageClient() {
       cameraStreamRef.current = null;
       setCameraVideoReady(false);
     };
-  }, [loading]);
+  }, [loading, cameraPickKey]);
 
   useEffect(() => {
     if (!sessionId || !browserOnline) return;
@@ -3627,6 +3651,7 @@ export default function ContestPageClient() {
           </VStack>
           <CameraTile
             framingHint={framingHint}
+            onPickCamera={handlePickCamera}
             cameraVideoRef={cameraVideoRef}
             cameraStream={cameraStream}
             cameraError={cameraError}

@@ -1013,6 +1013,11 @@ macro_rules! platform_dispatch {
     }};
 }
 
+#[tauri::command]
+fn get_battery_status() -> Option<platform_rs::BatteryStatus> {
+    platform_dispatch!(battery_status(), else None)
+}
+
 /// What the last macOS scan found, kept so the readiness report can name the
 /// displays and remote-access tools. `DeviceState` only carries a count and a
 /// bool, and it makes a round trip through the webview between the scan and
@@ -3533,6 +3538,7 @@ pub fn run() {
             get_windows_hook_diagnostics,
             set_escape_blocked,
             get_top_safe_inset,
+            get_battery_status,
             configure_event_stream,
             get_lockdown_restore_status,
             retry_lockdown_restore,

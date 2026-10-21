@@ -1,5 +1,5 @@
-import { type RefObject } from "react";
-import { Video, VideoOff, Mic, MicOff } from "lucide-react";
+import { useEffect, useState, type RefObject } from "react";
+import { Video, VideoOff, Mic, MicOff, SwitchCamera } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
@@ -16,6 +16,8 @@ export interface CameraTileProps {
   cameraEnabled: boolean;
   micEnabled: boolean;
   handleToggleMedia: (type: "camera" | "mic", value: boolean) => void;
+  /** Switch to another camera, mid-exam. See the picker below. */
+  onPickCamera?: (deviceId: string) => void;
   /** How the candidate is sitting in frame. Advice to them, nothing more. */
   framingHint?: "ok" | "off_centre" | "too_close" | "too_far";
 }
@@ -30,6 +32,7 @@ const FRAMING_COPY: Record<string, string> = {
 };
 
 export function CameraTile({
+  onPickCamera,
   framingHint = "ok",
   cameraVideoRef,
   cameraStream,
@@ -42,6 +45,27 @@ export function CameraTile({
   micEnabled,
   handleToggleMedia,
 }: CameraTileProps) {
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Re-read when the menu is opened or the camera is toggled, not once on
+  // mount: labels stay empty until permission is granted, and a webcam
+  // plugged in mid-exam should appear without a reload.
+  useEffect(() => {
+    let cancelled = false;
+    void navigator.mediaDevices
+      ?.enumerateDevices?.()
+      .then((devices) => {
+        if (!cancelled) setCameras(devices.filter((d) => d.kind === "videoinput" && d.deviceId));
+      })
+      .catch(() => {
+        // No enumerate, no picker. Nothing else changes.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pickerOpen, cameraEnabled]);
+
   return (
     <VStack
       id="contest-camera-preview"
@@ -90,6 +114,61 @@ export function CameraTile({
           icon={cameraEnabled ? <Video size={16} /> : <VideoOff size={16} />}
           onClick={() => handleToggleMedia("camera", !cameraEnabled)}
         />
+        {/* Changing camera without leaving the exam.
+         *
+         * Onboarding has a picker now, but the wrong camera is not always
+         * obvious until the contest is running -- a laptop that opened its
+         * infrared sensor shows a black tile, and the candidate's only
+         * options were to sit with it or abandon the sitting. Lots of people
+         * hit this. The list is read when it is opened, so a webcam plugged
+         * in mid-exam appears without a reload. */}
+        {onPickCamera && cameras.length > 1 && (
+          <Button
+            type="button"
+            label="Change camera"
+            tooltip="Change camera"
+            variant="ghost"
+            size="sm"
+            isIconOnly
+            icon={<SwitchCamera size={16} />}
+            onClick={() => setPickerOpen((open) => !open)}
+          />
+        )}
+      </HStack>
+      {onPickCamera && pickerOpen && cameras.length > 0 && (
+        <VStack
+          role="group"
+          aria-label="Choose a camera"
+          gap={0}
+          style={{
+            position: "absolute",
+            top: "calc(var(--spacing-10) + var(--spacing-2))",
+            right: "var(--spacing-2)",
+            zIndex: 3,
+            maxWidth: "min(18rem, calc(100% - var(--spacing-4)))",
+            padding: "var(--spacing-1)",
+            background: "var(--color-background-card)",
+            border: "var(--border-width) solid var(--color-border)",
+            borderRadius: "var(--radius-element)",
+            boxShadow: "var(--shadow-high)",
+          }}
+        >
+          {cameras.map((camera, index) => (
+            <Button
+              key={camera.deviceId}
+              type="button"
+              label={camera.label || `Camera ${index + 1}`}
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                onPickCamera(camera.deviceId);
+                setPickerOpen(false);
+              }}
+              style={{ justifyContent: "flex-start", width: "100%" }}
+            />
+          ))}
+        </VStack>
+      )}
         <Button
           type="button"
           label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
@@ -102,7 +181,7 @@ export function CameraTile({
           icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
           onClick={() => handleToggleMedia("mic", !micEnabled)}
         />
-      </HStack>
+      
       <VStack style={{ width: "100%", height: "100%", position: "relative" }}>
         <video
           ref={cameraVideoRef}

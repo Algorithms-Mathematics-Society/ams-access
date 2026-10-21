@@ -3,6 +3,12 @@ mod helper_client;
 pub mod kiosk;
 pub mod process_runner;
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct BatteryStatus {
+    pub percentage: u8,
+    pub charging: bool,
+}
+
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         pub mod linux;
@@ -32,3 +38,8 @@ mod windows_hook_delivery_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 #[path = "windows/hook_lifecycle.rs"]
 mod windows_hook_lifecycle_tests;
+
+// Exercise the Windows shortcut policy without installing a native hook.
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/keyboard_policy.rs"]
+mod windows_keyboard_policy_tests;
