@@ -7,6 +7,7 @@ The contestant desktop app: Tauri/Rust native controls with a Next.js static fro
 - [Candidate UI and verification guide](apps/web/UI.md)
 - [UI change history](UI_CHANGELOG.md)
 - [Release and packaging](RELEASE.md)
+- [Known Linux camera issue and verification](LINUX-CAMERA.md)
 
 The candidate UI uses Astryx and Geist with a shared monochrome spire brand.
 Current behavior and development commands are documented above. Historical

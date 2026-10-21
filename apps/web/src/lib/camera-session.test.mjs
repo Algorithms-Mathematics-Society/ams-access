@@ -461,3 +461,156 @@ test("a device change while the camera is still absent leaves it lost", async ()
 
   assert.equal(session.status(), "lost", "a failed reopen changes nothing");
 });
+
+test(
+  "a hung camera open expires, can be retried, and stops a late grant",
+  { timeout: 500 },
+  async () => {
+    const { deps, grants } = controlledDeps();
+    deps.requestTimeoutMs = 10;
+    const session = createCameraSession(deps);
+    const first = session.ensure();
+    const shared = session.ensure();
+    await Promise.all([
+      assert.rejects(first, /Camera request timed out/),
+      assert.rejects(shared, /Camera request timed out/),
+    ]);
+    const retry = session.ensure();
+    assert.equal(deps.opens.length, 2);
+    const fresh = makeTrack("video");
+    grants[1].resolve(granted(fresh));
+    assert.deepEqual((await retry).tracks, [fresh]);
+    const stale = makeTrack("video");
+    const extra = makeTrack("audio");
+    grants[0].resolve(granted(stale, extra));
+    await new Promise(setImmediate);
+    assert.equal(stale.stopped, true);
+    assert.equal(extra.stopped, true);
+    assert.equal(fresh.stopped, false);
+    assert.deepEqual(session.current().tracks, [fresh]);
+  }
+);
+
+test("a hung advisory microphone expires without losing video; late audio is stopped", async () => {
+  const { deps, grants } = controlledDeps();
+  deps.requestTimeoutMs = 10;
+  const session = createCameraSession(deps);
+  const open = session.ensure({ audio: true });
+  const video = makeTrack("video");
+  grants[0].resolve(granted(video));
+  assert.deepEqual((await open).tracks, [video]);
+  const audio = makeTrack("audio");
+  grants[1].resolve(granted(audio));
+  await new Promise(setImmediate);
+  assert.equal(audio.stopped, true);
+  assert.equal(video.stopped, false);
+  assert.equal(session.status(), "live");
+});
+
+import {
+  startCameraPreview,
+  waitForVideoReady,
+  withCameraTimeout,
+  CameraTimeoutError,
+} from "./camera-readiness.ts";
+
+function fakeVideo() {
+  const handlers = new Map();
+  return {
+    readyState: 0,
+    videoWidth: 0,
+    videoHeight: 0,
+    srcObject: null,
+    play: () => new Promise(() => {}),
+    addEventListener(event, callback) {
+      const listeners = handlers.get(event) ?? new Set();
+      listeners.add(callback);
+      handlers.set(event, listeners);
+    },
+    removeEventListener(event, callback) {
+      handlers.get(event)?.delete(callback);
+    },
+    fire(event) {
+      for (const callback of handlers.get(event) ?? []) callback();
+    },
+    listenerCount() {
+      return [...handlers.values()].reduce((count, listeners) => count + listeners.size, 0);
+    },
+  };
+}
+
+test("preview deadline runs even when WebKit play never settles", async () => {
+  const video = fakeVideo();
+  const stream = granted(makeTrack("video"));
+  await assert.rejects(startCameraPreview(video, stream, 10), /Camera preview timed out/);
+  assert.equal(video.srcObject, stream);
+  assert.equal(video.muted, true);
+  assert.equal(video.playsInline, true);
+  assert.equal(video.listenerCount(), 0, "timeout removes all readiness listeners");
+});
+
+test("readiness events alone cannot pass a zero-dimension or undecodable preview", async () => {
+  const video = fakeVideo();
+  const ready = waitForVideoReady(video, 10);
+  video.readyState = 2;
+  video.videoWidth = 640;
+  video.fire("canplay");
+  video.fire("loadeddata");
+  await assert.rejects(ready, /preview timed out/);
+  assert.equal(video.listenerCount(), 0);
+});
+
+test("a real frame completes preview despite a pending play promise", async () => {
+  const video = fakeVideo();
+  const ready = startCameraPreview(video, granted(makeTrack("video")), 100);
+  video.readyState = 2;
+  video.videoWidth = 640;
+  video.videoHeight = 480;
+  video.fire("playing");
+  await ready;
+  assert.equal(video.listenerCount(), 0);
+});
+
+test("dimensions updated without an event are still observed at the deadline", async () => {
+  const video = fakeVideo();
+  video.play = () => Promise.reject(new Error("play rejected before metadata"));
+  const ready = startCameraPreview(video, granted(makeTrack("video")), 10);
+  video.readyState = 2;
+  video.videoWidth = 640;
+  video.videoHeight = 480;
+  await ready;
+  assert.equal(video.listenerCount(), 0);
+});
+
+test("a timed-out detector load disposes its eventual model exactly once", async () => {
+  const load = deferred();
+  let disposed = 0;
+  await assert.rejects(
+    withCameraTimeout(load.promise, 10, "Face detector startup timed out", (late) =>
+      late.dispose()
+    ),
+    CameraTimeoutError
+  );
+  load.resolve({
+    dispose: () => {
+      disposed++;
+    },
+  });
+  await new Promise(setImmediate);
+  assert.equal(disposed, 1);
+});
+
+test("inference that never settles fails within its deadline", async () => {
+  await assert.rejects(
+    withCameraTimeout(new Promise(() => {}), 10, "Face detector inference timed out"),
+    /inference timed out/
+  );
+});
+
+test("original permission errors survive the deadline wrapper", async () => {
+  const denied = new Error("NotAllowedError");
+  await assert.rejects(
+    withCameraTimeout(Promise.reject(denied), 10, "timeout"),
+    (error) => error === denied
+  );
+});

@@ -348,12 +348,7 @@ pub fn run() {
         let _deadline = FirewallDeadline::begin();
         match startup_action(read_marker()) {
             StartupAction::ReApply(ips, resolvers) => {
-                let full: Vec<String> = ips
-                    .iter()
-                    .filter(|ip| !resolvers.contains(ip))
-                    .cloned()
-                    .collect();
-                if let Err(e) = iptables_enable(&full, &resolvers) {
+                if let Err(e) = iptables_enable(&ips, &resolvers) {
                     eprintln!("AMS helper: startup re-apply failed (rules left as-is): {e}");
                 }
             }
@@ -886,17 +881,7 @@ fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<
     };
     write_marker(&marker).map_err(|e| format!("write marker: {e}"))?;
 
-    // A resolver named in BOTH lists must not also get a full-access rule, or
-    // the wide rule wins and the scoping is decorative. The client sends
-    // resolvers in both so an older helper still resolves DNS; here they are
-    // removed from the unrestricted set and re-added port-scoped below.
-    let full: Vec<String> = ips
-        .iter()
-        .filter(|ip| !resolvers.contains(ip))
-        .cloned()
-        .collect();
-
-    if let Err(e) = iptables_enable(&full, resolvers) {
+    if let Err(e) = iptables_enable(ips, resolvers) {
         // The deadline may have stopped rollback midway. Preserve the token
         // and cleanup intent; never hide potentially surviving kernel rules.
         let mut cleanup = marker;
@@ -1287,9 +1272,36 @@ fn should_build_v6_chain(ipv6_present: bool) -> bool {
 }
 
 #[cfg(target_os = "linux")]
+fn unrestricted_ips(ips: &[String], resolvers: &[String]) -> Result<Vec<String>, String> {
+    use std::net::IpAddr;
+
+    let resolvers: Vec<IpAddr> = resolvers
+        .iter()
+        .map(|raw| {
+            raw.parse()
+                .map_err(|_| format!("invalid resolver IP: {raw}"))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut full = Vec::new();
+    for raw in ips {
+        let ip: IpAddr = raw
+            .parse()
+            .map_err(|_| format!("invalid allowed IP: {raw}"))?;
+        if !resolvers.contains(&ip) {
+            full.push(raw.clone());
+        }
+    }
+    Ok(full)
+}
+
+#[cfg(target_os = "linux")]
 fn iptables_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
+    // Clients include resolvers in both lists for older helpers. Scope them
+    // by parsed address, so equivalent IPv6 spellings cannot retain a full
+    // access rule. Apply the same check during enable and restart recovery.
+    let full = unrestricted_ips(ips, resolvers)?;
     // Family-split first so a v6 literal can never reach the v4 binary (LX-4).
-    let (v4, v6) = split_ip_families(ips)?;
+    let (v4, v6) = split_ip_families(&full)?;
     let (r4, r6) = split_ip_families(resolvers)?;
     let v4: Vec<&str> = v4.iter().map(String::as_str).collect();
     let v6: Vec<&str> = v6.iter().map(String::as_str).collect();
@@ -1403,6 +1415,44 @@ mod tests {
         let (v4, v6) = split_ip_families(&ips).expect("valid IP");
         assert!(v4.is_empty());
         assert_eq!(v6, vec!["::1".to_string()]);
+    }
+
+    #[test]
+    fn resolver_aliases_never_receive_unrestricted_access() {
+        // Both literals identify the same host. String equality must not let
+        // an expanded IPv6 spelling bypass the DNS-only resolver rules.
+        let ips = vec!["2606:4700:0:0:0:0:0:1111".into(), "192.0.2.10".into()];
+        let resolvers = vec!["2606:4700::1111".into()];
+        assert_eq!(
+            super::unrestricted_ips(&ips, &resolvers).unwrap(),
+            vec!["192.0.2.10".to_string()]
+        );
+        let marker = Marker {
+            disabling: false,
+            token: "t".into(),
+            ips,
+            resolvers,
+        };
+        let StartupAction::ReApply(ips, resolvers) = startup_action(MarkerState::Present(marker))
+        else {
+            panic!("expected restart reapply");
+        };
+        assert_eq!(
+            super::unrestricted_ips(&ips, &resolvers).unwrap(),
+            vec!["192.0.2.10".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolver_scoping_validates_both_lists_and_preserves_other_destinations() {
+        let ips = vec!["192.0.2.10".into(), "::1".into()];
+        assert_eq!(super::unrestricted_ips(&ips, &[]).unwrap(), ips);
+        assert_eq!(
+            super::unrestricted_ips(&ips, &["192.0.2.10".into()]).unwrap(),
+            vec!["::1".to_string()]
+        );
+        assert!(super::unrestricted_ips(&["bad-ip".into()], &[]).is_err());
+        assert!(super::unrestricted_ips(&ips, &["bad-resolver".into()]).is_err());
     }
 
     #[test]
