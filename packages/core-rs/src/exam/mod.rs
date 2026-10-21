@@ -241,6 +241,7 @@ impl SessionPolicy {
         let is_windows =
             matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("windows"));
         let is_macos = matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("macos"));
+        let is_linux = matches!(platform, Some(p) if p.to_ascii_lowercase().starts_with("linux"));
         // Unelevated Windows: auto-elevation + the Relaunch-as-Administrator
         // recovery still run, but if a candidate genuinely cannot elevate (a
         // locked-down machine where UAC needs credentials they lack), the
@@ -328,12 +329,25 @@ impl SessionPolicy {
                         (false, BlockingSeverity::Warning)
                     }
                 }
-                // KeyboardLockdown is advisory (warning, not required) on macOS:
-                // CGEventTap requires Accessibility permission which is often not
-                // granted on day-of and cannot be obtained without leaving the exam
-                // shell. Linux and Windows retain required+Block so their
-                // lockdown invariants are unchanged.
-                CheckKind::KeyboardLockdown if is_macos => (false, BlockingSeverity::Warning),
+                // KeyboardLockdown is advisory (warning, not required) on macOS
+                // and Linux. On macOS, CGEventTap needs Accessibility permission
+                // which is often not granted on day-of and cannot be obtained
+                // without leaving the exam shell.
+                //
+                // Linux is the same shape of problem for a different reason:
+                // the intercept is a pile of gsettings and kwriteconfig calls
+                // against whichever desktop happens to be installed, and the
+                // schemas simply are not there on a distro that is not GNOME
+                // or KDE. `lock_desktop` then returns false and the candidate
+                // was refused entry over a capability no amount of clicking
+                // inside the exam shell can produce. A candidate on Fedora
+                // with sway is not a cheat; they are a candidate.
+                //
+                // Windows retains required+Block: its intercept is a single
+                // documented API that works the same on every installation.
+                CheckKind::KeyboardLockdown if is_macos || is_linux => {
+                    (false, BlockingSeverity::Warning)
+                }
                 // Unelevated Windows → advisory Platform check (see is_windows_no_admin).
                 CheckKind::Platform if is_windows_no_admin => (false, BlockingSeverity::Warning),
                 _ => (required, severity.clone()),
@@ -1878,11 +1892,16 @@ mod tests {
     }
 
     #[test]
-    fn a_lockdown_that_exists_and_failed_still_blocks_on_linux() {
-        // The carve-out above must not swallow a real failure. A mechanism
-        // that is present and did not engage has a remedy, so it stays
-        // blocking on Linux — otherwise the relaxation would disarm the check
-        // on precisely the machines it works on.
+    fn a_failed_lockdown_is_flagged_not_blocked_on_linux() {
+        // This used to block, on the reasoning that a mechanism which is
+        // present and did not engage has a remedy. In a real contest it had
+        // none: the "remedy" is Restore system settings and run setup again,
+        // which does not install a GNOME schema that was never there, and
+        // candidates were turned away at the door on contest day.
+        //
+        // It is still recorded and still shown to an invigilator -- a Linux
+        // session that failed to lock down is a fact about that sitting. It
+        // just no longer decides whether someone may sit the exam.
         let policy = SessionPolicy::for_profile_with_platform(
             EnforcementProfile::StrictContest,
             Some("linux"),
@@ -1897,11 +1916,19 @@ mod tests {
 
         let report = evaluate_readiness(&policy, Some("c1".into()), Some("d1".into()), &state);
 
-        assert_eq!(
+        assert_ne!(
             report.decision,
             EnforcementDecision::Blocked,
-            "a failed-but-present keyboard lockdown must still block on Linux"
+            "a failed keyboard lockdown must not block entry on Linux"
         );
+        let kbd = report
+            .checks
+            .iter()
+            .find(|c| c.kind == CheckKind::KeyboardLockdown)
+            .expect("keyboard_lockdown check present");
+        assert!(!kbd.blocking);
+        // Flagged, not silent: the invigilator still sees it.
+        assert_eq!(kbd.outcome, CheckOutcome::Warn);
     }
 
     #[test]
@@ -1957,7 +1984,10 @@ mod tests {
         assert!(!kbd_check.blocking);
         assert_eq!(kbd_check.outcome, CheckOutcome::Warn);
 
-        // Linux: keyboard lockdown must remain required+Block.
+        // Linux is advisory too, for the same shape of reason: the intercept
+        // is gsettings and kwriteconfig against whatever desktop happens to
+        // be installed, and the schemas are not there on a distro that is
+        // neither GNOME nor KDE.
         let linux_policy = SessionPolicy::for_profile_with_platform(
             EnforcementProfile::StrictContest,
             Some("linux"),
@@ -1968,12 +1998,13 @@ mod tests {
             .find(|r| r.kind == CheckKind::KeyboardLockdown)
             .expect("keyboard_lockdown present on linux policy");
         assert!(
-            linux_kbd.required,
-            "keyboard_lockdown must be required on Linux"
+            !linux_kbd.required,
+            "keyboard_lockdown must be non-required on Linux"
         );
         assert!(
-            matches!(linux_kbd.severity, BlockingSeverity::Block),
-            "keyboard_lockdown must be Block on Linux"
+            matches!(linux_kbd.severity, BlockingSeverity::Warning),
+            "keyboard_lockdown severity must be Warning on Linux, got {:?}",
+            linux_kbd.severity
         );
 
         // Windows: keyboard lockdown must remain required+Block.

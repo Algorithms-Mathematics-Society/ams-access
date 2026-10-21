@@ -475,6 +475,20 @@ const GNOME_DOCK_SETTINGS: &[(&str, &str, &str)] = &[
 /// (schema, key, disable_value)
 /// String keys: disable with ''. Array keys: disable with @as [].
 const GNOME_SHORTCUTS: &[(&str, &str, &str)] = &[
+    // One workspace, so a three-finger swipe has nowhere to go.
+    //
+    // This replaces disabling the touchpad outright. Gestures are not bound
+    // to a keybinding, so emptying `switch-to-workspace-*` below does not
+    // reach them, and the workspace watchdog is X11-only -- on the Wayland
+    // session that modern GNOME defaults to it logs and returns. Killing the
+    // touchpad was the only thing left, and it took the pointer with it: a
+    // laptop candidate with no mouse could not click Run, change question or
+    // submit, which is not a lockdown, it is an exclusion.
+    //
+    // Restored from the saved value by the same machinery as every other key
+    // here, including after a crash.
+    ("org.gnome.mutter", "dynamic-workspaces", "false"),
+    ("org.gnome.desktop.wm.preferences", "num-workspaces", "1"),
     // Super key overlay — NOTE: schema is org.gnome.mutter, NOT org.gnome.mutter.keybindings
     ("org.gnome.mutter", "overlay-key", "''"),
     // Activities / app grid
@@ -1219,7 +1233,9 @@ pub fn lock_desktop() -> bool {
     if !active {
         return false;
     }
-    set_touchpad_enabled(false);
+    // The touchpad is deliberately left alone. See the workspace keys in
+    // GNOME_SHORTCUTS: gestures are neutralised by having one workspace to
+    // gesture between, not by taking the pointer away from the candidate.
     if !SHIELD_ACTIVE.swap(true, Ordering::SeqCst) {
         let generation = SHIELD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         spawn_kill_shield(generation);
@@ -1232,6 +1248,9 @@ pub fn lock_desktop() -> bool {
 pub fn unlock_desktop() {
     SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     SHIELD_GENERATION.fetch_add(1, Ordering::SeqCst);
+    // Still re-enabled on the way out: a build that disabled the touchpad
+    // may have left `send-events` disabled on this machine, and teardown is
+    // the one chance to undo it.
     set_touchpad_enabled(true);
     disable_keyboard_intercept();
 }

@@ -253,6 +253,7 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   // Windows — mirrors core-rs; otherwise enforcement disarms on non-admin machines.
   const isWindows = typeof platform === "string" && platform.toLowerCase().startsWith("windows");
   const isMacos = typeof platform === "string" && platform.toLowerCase().startsWith("macos");
+  const isLinux = typeof platform === "string" && platform.toLowerCase().startsWith("linux");
   // Every unelevated Windows shape, mirroring core-rs. `windows_no_firewall`
   // is the default build (only netsh needs elevation, so nothing asks for it),
   // `windows_msix` is a Store build that can never elevate, and
@@ -327,11 +328,15 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
           unsupported_severity: unsupportedSeverity,
         };
       }
-      // KeyboardLockdown is advisory (warning, not required) on macOS only.
-      // CGEventTap requires Accessibility permission which is often unavailable
-      // at contest time on macOS. Linux and Windows retain required+block so
-      // their lockdown invariants are unchanged.
-      if (kind === "keyboard_lockdown" && isMacos) {
+      // KeyboardLockdown is advisory (warning, not required) on macOS and
+      // Linux. On macOS, CGEventTap needs Accessibility permission, often
+      // unavailable at contest time. On Linux the intercept is gsettings and
+      // kwriteconfig against whichever desktop is installed, and the schemas
+      // are absent on anything that is not GNOME or KDE -- which turned
+      // candidates away at the door rather than flagging them.
+      //
+      // Windows keeps required+block: one documented API, same everywhere.
+      if (kind === "keyboard_lockdown" && (isMacos || isLinux)) {
         return {
           kind,
           required: false,
