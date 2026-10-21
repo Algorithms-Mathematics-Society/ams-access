@@ -44,10 +44,12 @@ const PRESENCE_BORDER: Record<string, string> = {
   multiple_faces: "var(--color-border-warning)",
 };
 
-const PRESENCE_COPY: Record<string, string> = {
-  face_missing: "Camera cannot see you",
-  multiple_faces: "More than one face in view",
-};
+// The words live on the main screen, not in here.
+//
+// This tile is a thumbnail in the corner of a two-hour exam; a sentence
+// printed inside it is too small to read and in the last place anyone is
+// looking. The border tints so the tile matches what the screen says, and
+// the screen does the talking.
 
 export function CameraTile({
   presenceStatus = "presence_ok",
@@ -155,6 +157,18 @@ export function CameraTile({
             onClick={() => setPickerOpen((open) => !open)}
           />
         )}
+        <Button
+          type="button"
+          label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
+          tooltip={
+            micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
+          }
+          variant="ghost"
+          size="sm"
+          isIconOnly
+          icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
+          onClick={() => handleToggleMedia("mic", !micEnabled)}
+        />
       </HStack>
       {onPickCamera && pickerOpen && cameras.length > 0 && (
         <VStack
@@ -190,18 +204,7 @@ export function CameraTile({
           ))}
         </VStack>
       )}
-        <Button
-          type="button"
-          label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
-          tooltip={
-            micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
-          }
-          variant="ghost"
-          size="sm"
-          isIconOnly
-          icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
-          onClick={() => handleToggleMedia("mic", !micEnabled)}
-        />
+
       
       <VStack style={{ width: "100%", height: "100%", position: "relative" }}>
         <video
@@ -225,31 +228,6 @@ export function CameraTile({
         {/* Shown over the candidate's own picture, where they are already
             looking, and only while they are out of shot. It clears itself:
             there is nothing to dismiss and nothing to get wrong. */}
-        {cameraEnabled && PRESENCE_COPY[presenceStatus] && (
-          // Colour alone is not a message: it fails for anyone who cannot
-          // distinguish these two, and says nothing about which problem it is.
-          <Text
-            role="status"
-            aria-live="polite"
-            type="supporting"
-            style={{
-              position: "absolute",
-              left: "var(--spacing-2)",
-              right: "var(--spacing-2)",
-              bottom: "var(--spacing-2)",
-              padding: "var(--spacing-1) var(--spacing-2)",
-              borderRadius: "var(--radius-element)",
-              background: "color-mix(in srgb, var(--color-background-body) 82%, transparent)",
-              color:
-                presenceStatus === "face_missing"
-                  ? "var(--color-text-error)"
-                  : "var(--color-text-yellow)",
-              textAlign: "center",
-            }}
-          >
-            {PRESENCE_COPY[presenceStatus]}
-          </Text>
-        )}
         {cameraEnabled && presenceStatus === "presence_ok" && framingHint !== "ok" && FRAMING_COPY[framingHint] && (
           <Text
             role="status"

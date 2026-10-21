@@ -3336,14 +3336,24 @@ export default function ContestPageClient() {
     />
   );
   const shouldShowFaceBlock = softBlockActive && faceStatus !== "ok";
-  const faceBlockTitle = cameraHealthy ? "Integrity Check Paused" : "Camera Check Required";
-  const faceBlockMessage = cameraHealthy
-    ? "Please face the camera to resume your exam."
-    : cameraError
-      ? cameraError
-      : "Waiting for a live camera frame. Check the camera preview before continuing.";
-  const criticalOverlayActive =
-    shouldShowFaceBlock || (lockGraceActive && lockGraceCountdown === 0);
+  // Says what to do, in the fewest words that still say it. Nothing about
+  // pausing or resuming: nothing is paused any more.
+  const faceBlockTitle = !cameraHealthy
+    ? "Camera not responding"
+    : presenceStatus === "multiple_faces"
+      ? "More than one person in frame"
+      : "Come back into frame";
+  const faceBlockMessage = !cameraHealthy
+    ? cameraError || "Waiting for a live camera frame."
+    : presenceStatus === "multiple_faces"
+      ? "Make sure nobody else is visible behind you."
+      : "Face the camera so it can see you.";
+  // The camera warning is not critical and never was. It paused the
+  // workspace behind a modal for a candidate who had looked down at their
+  // keyboard, and the only button on it was Exit contest -- so a two-second
+  // inconvenience offered abandoning the paper as its remedy. It is a toast
+  // now: it says what to do and goes away when they do it.
+  const criticalOverlayActive = lockGraceActive && lockGraceCountdown === 0;
   const networkOverlayActive =
     networkDisconnected &&
     !criticalOverlayActive &&
@@ -3354,9 +3364,8 @@ export default function ContestPageClient() {
   const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
     lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle"
   );
-  const faceBlockDialogRef = useFocusTrap<HTMLDivElement>(
-    shouldShowFaceBlock && timeUpState === "idle"
-  );
+  // No focus trap: the candidate is still typing, and this must not take
+  // the keyboard away to tell them to look up.
   const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
     showMediaToggleWarning && !networkOverlayActive && timeUpState === "idle",
     cancelMediaToggle
@@ -3759,27 +3768,34 @@ export default function ContestPageClient() {
       </Dialog>
 
       {shouldShowFaceBlock && (
-        <ContestOverlay labelId="face-block-title" critical alert dialogRef={faceBlockDialogRef}>
-          <Heading level={2} id="face-block-title">
-            {faceBlockTitle}
-          </Heading>
-          <Banner status="warning" title="Camera attention needed" description={faceBlockMessage} />
-          <Text color="secondary">The workspace will resume when the camera check clears.</Text>
-          {/* Same reason as the restricted-app overlay: a full-screen block
-              with no control, in an app that cannot be quit, leaves a
-              candidate whose camera will not clear with nothing but the
-              power button. One of them used it. */}
-          <Button
-            variant="secondary"
-            label="Exit contest"
-            onClick={() => void redirectAfterRelease("/home")}
-            style={{ alignSelf: "flex-start" }}
+        /* The same toast the kiosk banner uses when the window comes back:
+           same position, same width, same Banner. A candidate who has seen
+           "You left the exam window" recognises this instantly as the app
+           telling them something, not asking them for a decision.
+
+           It warns and nothing else -- no buttons, no focus trap, nothing
+           dimmed, the editor still typeable underneath. It was a modal whose
+           only control was Exit contest, which offered abandoning the paper
+           as the remedy for looking down at a keyboard. */
+        <VStack
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            top: "calc(var(--spacing-10) * 2)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            width: "min(calc(100% - var(--spacing-8)), calc(var(--spacing-10) * 12))",
+            pointerEvents: "none",
+          }}
+        >
+          <Banner
+            status={presenceStatus === "multiple_faces" ? "warning" : "error"}
+            title={faceBlockTitle}
+            description={faceBlockMessage}
           />
-          <Text type="supporting" color="secondary">
-            Exiting ends your sitting and releases this computer. Fix the camera instead if you
-            can, or call an invigilator.
-          </Text>
-        </ContestOverlay>
+        </VStack>
       )}
 
       {showMediaToggleWarning && (
