@@ -684,16 +684,43 @@ export async function getRun(sessionUid: string, runUid: string): Promise<Submis
   );
 }
 
-/** The scored attempt. */
+/** The scored attempt.
+ *
+ * `idempotencyKey` identifies one submit *click*. A submit that times out
+ * after the server accepted it leaves the candidate no way to know, so they
+ * press it again -- a second attempt against the same problem, and on a
+ * wrong answer a second penalty. A retry carrying the same key gets the
+ * original submission back instead.
+ *
+ * The caller owns the key, not this function: it has to survive the retry,
+ * so generating one here would defeat the point. */
 export async function submit(
   sessionUid: string,
-  input: { problemLabel: string; language: string; source: string }
+  input: {
+    problemLabel: string;
+    language: string;
+    source: string;
+    idempotencyKey?: string;
+  }
 ): Promise<SubmissionResult> {
   return request<SubmissionResult>(
     "POST",
     `/participant/sessions/${encodeURIComponent(sessionUid)}/submissions`,
-    { problem_label: input.problemLabel, language: input.language, source: input.source }
+    {
+      problem_label: input.problemLabel,
+      language: input.language,
+      source: input.source,
+      ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
+    }
   );
+}
+
+/** A fresh key for one submit click. */
+export function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return (crypto as { randomUUID(): string }).randomUUID();
+  }
+  return `sub-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /** This candidate's own attempts. There is no leaderboard endpoint, by

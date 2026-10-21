@@ -139,6 +139,7 @@ import {
   run as runAgainstSamples,
   serverNow,
   startSession,
+  newIdempotencyKey,
   submit as submitSolution,
   uploadIdentityPhoto,
 } from "@/lib/proctor-api";
@@ -452,6 +453,8 @@ export default function ContestPageClient() {
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
   const submitInFlightRef = useRef(false);
+  // Survives a failed attempt so the retry is recognised as the same click.
+  const submitKeyRef = useRef<string | null>(null);
   // Guards the exit/teardown path so a manual "Submit & Exit" and the timer-driven
   // expiry can't both run (double unlock / double /submit). Never reset: once exit
   // begins the candidate is leaving.
@@ -1773,12 +1776,18 @@ export default function ContestPageClient() {
         source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
         language: toLanguageId(selectedLanguage),
       };
+      // One key per click, held across retries of that click. The in-flight
+      // guard above stops a double-click; this stops the other duplicate --
+      // a submit the server accepted and then could not acknowledge before
+      // the client gave up, which the candidate reasonably sends again.
+      if (!submitKeyRef.current) submitKeyRef.current = newIdempotencyKey();
       let created;
       try {
         created = await submitSolution(sessionId, {
           problemLabel: qId,
           language: toLanguageId(selectedLanguage),
           source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+          idempotencyKey: submitKeyRef.current,
         });
       } catch (caught) {
         if (caught instanceof ProctorApiError) {
@@ -1791,6 +1800,9 @@ export default function ContestPageClient() {
         throw caught;
       }
 
+      // Accepted, so this click is finished with. The next one is a new
+      // attempt and must not be deduplicated against this.
+      submitKeyRef.current = null;
       setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
       await fetchSubmissions();
     } catch (err: any) {
