@@ -90,12 +90,19 @@ state.write_text(" ".join(values))
     assert calls.index("systemctl stop") < calls.index("iptables -w 5 -S") < calls.index("systemctl disable")
     assert (root / "iptables.state").read_text() == ""
     assert (root / "ip6tables.state").read_text() == ""
+    prepare()
+    result = run("0")
+    assert result.returncode == 0, result.stderr
+    assert all(not p.exists() for p in (helper, config, unit, marker))
+    assert unrelated.read_text() == "fixture"
+    assert (root / "iptables.state").read_text() == ""
+    assert (root / "ip6tables.state").read_text() == ""
     for mode in ("stop", "inspect", "detach", "delete", "ipv6", "hang-stop", "hang-inspect", "stuck-jump"):
         prepare()
         result = run("remove", mode)
         assert result.returncode != 0, (mode, result.stdout, result.stderr)
         assert all(p.exists() for p in (helper, config, unit, marker)), mode
-    for action in ("upgrade", "failed-upgrade", "deconfigure"):
+    for action in ("upgrade", "failed-upgrade", "deconfigure", "1", "2", "37"):
         prepare()
         assert run(action).returncode == 0
         assert all(p.exists() for p in (helper, config, unit, marker))
@@ -104,7 +111,8 @@ state.write_text(" ".join(values))
     for p in (helper, config, unit, marker): p.unlink()
     assert run("remove").returncode == 0
     assert "iptables" not in (root / "calls").read_text()
-    assert run("unknown").returncode != 0
+    for action in ("unknown", "-1", "1x"):
+        assert run(action).returncode != 0, action
     for orphan in ("marker", "socket"):
         prepare()
         for p in (helper, config, unit, marker): p.unlink()
@@ -127,5 +135,5 @@ state.write_text(" ".join(values))
         assert result.returncode != 0, (mode, result.stderr)
         assert all(p.exists() for p in (helper, config, marker))
         assert "iptables" not in (root / "calls").read_text()
-    print("prerm: 18 mocked scenarios passed; no host service/firewall commands executed")
+    print("prerm: 24 mocked scenarios passed; no host service/firewall commands executed")
 PY

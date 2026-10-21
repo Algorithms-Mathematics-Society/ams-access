@@ -1,6 +1,14 @@
 #!/bin/sh
 set -e
 
+# RPM invokes scriptlets with an installed-package count; Debian supplies an
+# action name. Keep one implementation so upgrade/removal cannot drift.
+case "${1:-}" in
+    ''|*[!0-9]*) ;;
+    0) set -- remove ;;
+    *) set -- upgrade ;;
+esac
+
 UDEV_RULE_PATH="/etc/udev/rules.d/70-ams-access-camera.rules"
 HELPER_UNIT="ams-proctor-helper.service"
 HELPER_UNIT_PATH="/etc/systemd/system/${HELPER_UNIT}"

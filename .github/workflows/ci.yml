@@ -94,6 +94,10 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-tools \
+            rpm cpio squashfs-tools \
             patchelf \
             libxdo-dev \
             libssl-dev \
@@ -105,6 +109,13 @@ jobs:
       - name: Create placeholder frontend dist
         shell: bash
         run: mkdir -p apps/web/out
+
+      - name: Linux packaging regression tests
+        if: runner.os == 'Linux'
+        run: |
+          sh apps/desktop/src-tauri/debian/postinst.test.sh
+          sh apps/desktop/src-tauri/debian/prerm.test.sh
+          python3 scripts/validate-linux-artifact.test.py
 
       - name: Build & stage network helper (required Tauri bundle resource)
         shell: bash
@@ -249,6 +260,10 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-tools \
+            rpm cpio squashfs-tools \
             patchelf \
             libxdo-dev \
             libssl-dev \
@@ -278,9 +293,46 @@ jobs:
           [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
           cp "$bin" apps/desktop/src-tauri/helpers/ams-access-networkhelper
 
+      - name: Check Linux media packaging prerequisites
+        if: runner.os == 'Linux'
+        run: sh scripts/check-linux-packaging-tools.sh
+
       - name: Build Tauri bundle
         working-directory: apps/desktop
         run: pnpm tauri build
+
+      - name: Validate Linux package payloads
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p artifact-validation
+          for format in deb rpm appimage; do
+            extension="$format"
+            [ "$format" != appimage ] || extension=AppImage
+            packages=("target/release/bundle"/"$format"/*."$extension")
+            [ "${#packages[@]}" -eq 1 ] || { echo "Expected one $format artifact"; exit 1; }
+            validation_args=()
+            if [ "$format" = appimage ]; then
+              # Reproduce linuxdeploy's exact helper RUNPATH rewrite, rather
+              # than accepting a different executable by build-ID alone.
+              rewriter_dir=$(mktemp -d)
+              trap 'rm -rf "$rewriter_dir"' EXIT
+              linuxdeploy="${XDG_CACHE_HOME:-$HOME/.cache}/tauri/linuxdeploy-x86_64.AppImage"
+              (cd "$rewriter_dir" && "$linuxdeploy" --appimage-extract >/dev/null)
+              validation_args=(--appimage-patchelf "$rewriter_dir/squashfs-root/usr/bin/patchelf")
+            fi
+            python3 scripts/validate-linux-artifact.py "${packages[0]}" "${validation_args[@]}" > "artifact-validation/$format.json"
+          done
+
+      - name: Retain Linux package validation evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-validation
+          path: artifact-validation/*.json
+          if-no-files-found: warn
 
       - name: An installer actually came out
         shell: bash
@@ -302,6 +354,14 @@ jobs:
         with:
           name: deb-for-smoke
           path: target/release/bundle/deb/*.deb
+          retention-days: 1
+
+      - name: Upload the RPM for the install smoke
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-for-smoke
+          path: target/release/bundle/rpm/*.rpm
           retention-days: 1
 
   deb-install-smoke:
@@ -334,27 +394,66 @@ jobs:
       - name: Install, verify, remove — on a clean image
         run: |
           set -eux
-          docker run --rm -v "$PWD/deb:/deb" ubuntu:22.04 bash -eux -c '
+          docker run --rm -v "$PWD/deb:/deb:ro" ubuntu:22.04 bash -eux -c '
             apt-get update
             # The clean-image install. Recommends off, so the depends array is
             # proven rather than accidentally satisfied.
+            # A pre-existing daemon must not satisfy the pkexec requirement.
+            apt-get install -y --no-install-recommends polkitd
+            ! command -v pkexec
             apt-get install -y --no-install-recommends /deb/*.deb
 
             dpkg -l | grep -q ams-access
             test -x /usr/bin/ams-access
             test -f /etc/udev/rules.d/70-ams-access-camera.rules
 
-            # Every binary the Linux lockdown shells out to. Each call site is
-            # `let _ = ...`, so a missing one degrades silently into a lockdown
-            # that reports success and does nothing.
-            for bin in gsettings xdotool wmctrl xinput pgrep iptables; do
+            # Required command-line tools must come from declared dependencies.
+            for bin in gsettings gdbus xdotool wmctrl xinput pgrep iptables pkexec timeout; do
               command -v "$bin" >/dev/null || { echo "::error::$bin missing after install"; exit 1; }
             done
 
-            # prerm must leave nothing behind.
+            test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
+            dpkg-query -W gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+            ldd /usr/bin/ams-access > /tmp/ams-ldd
+            cat /tmp/ams-ldd
+            ! grep "not found" /tmp/ams-ldd
+            test ! -e /usr/local/lib/ams-access/ams-access-networkhelper
+            # No helper was activated; removal must clean up the camera rule.
             apt-get remove -y ams-access
             test ! -f /etc/udev/rules.d/70-ams-access-camera.rules
           '
+
+  rpm-install-smoke:
+    needs: bundle-smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    name: RPM install smoke (Fedora 43)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpm-for-smoke
+          path: rpm
+      - name: Install, verify, remove on Fedora
+        run: |
+          set -eux
+          docker run --rm -v "$PWD/rpm:/packages:ro" fedora:43 bash -eux -c '
+            dnf install -y /packages/*.rpm
+            test -x /usr/bin/ams-access
+            test -f /etc/udev/rules.d/70-ams-access-camera.rules
+            for bin in gsettings gdbus pkexec timeout iptables; do
+              command -v "$bin" >/dev/null
+            done
+            test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
+            rpm -q gstreamer1-plugins-base gstreamer1-plugins-good
+            ldd /usr/bin/ams-access > /tmp/ams-ldd
+            cat /tmp/ams-ldd
+            ! grep "not found" /tmp/ams-ldd
+            test ! -e /usr/local/lib/ams-access/ams-access-networkhelper
+            dnf remove -y ams-access
+            test ! -f /etc/udev/rules.d/70-ams-access-camera.rules
+          '
+    # Container package lifecycle only: no camera, compositor, polkit agent,
+    # SELinux desktop session or privileged helper enforcement is certified.
 
   msix:
     # The Store build, packaged for real.

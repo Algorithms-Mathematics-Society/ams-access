@@ -52,9 +52,11 @@
           "wmctrl",
           "xinput",
           "procps",
-          "policykit-1 | polkitd",
+          "pkexec | policykit-1",
           "iptables",
-          "kmod"
+          "kmod",
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good"
         ],
         "postInstallScript": "debian/postinst",
         "preRemoveScript": "debian/prerm"
@@ -68,12 +70,19 @@
           "glib2",
           "xdotool",
           "wmctrl",
-          "xorg-x11-server-utils",
           "procps-ng",
           "polkit",
           "iptables",
-          "kmod"
-        ]
+          "kmod",
+          "gstreamer1-plugins-base",
+          "gstreamer1-plugins-good",
+          "coreutils"
+        ],
+        "postInstallScript": "debian/postinst",
+        "preRemoveScript": "debian/prerm"
+      },
+      "appimage": {
+        "bundleMediaFramework": true
       }
     },
     "macOS": {

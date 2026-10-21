@@ -1,6 +1,14 @@
 #!/bin/sh
 set -e
 
+# RPM invokes scriptlets with an installed-package count; Debian supplies an
+# action name. Keep one implementation so upgrade/removal cannot drift.
+case "${1:-}" in
+    ''|*[!0-9]*) ;;
+    0) echo "postinst: invalid RPM install count" >&2; exit 1 ;;
+    *) set -- configure ;;
+esac
+
 # Grant the currently logged-in console user access to webcam devices.
 # TAG+="uaccess" is the modern systemd-logind mechanism — it gives access to
 # the session owner automatically without requiring group membership or logout.
