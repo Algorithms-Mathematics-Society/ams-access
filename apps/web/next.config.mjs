@@ -1,8 +1,24 @@
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
+import { readFileSync } from "node:fs";
+
+// The build's own version, baked in.
+//
+// `NEXT_PUBLIC_APP_VERSION` was read in two places and set in none, so every
+// build ever shipped reported the "2.0.0" fallback. The server's
+// minimum-version gate could therefore not tell v1 from v3, and the update
+// prompt could not tell whether it was out of date. Both read a constant.
+//
+// Taken from this package's version, which check-versions.mjs already holds
+// equal to the workspace Cargo.toml -- the number the installer is labelled
+// with.
+const APP_VERSION = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8")
+).version;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "export",
+  env: { NEXT_PUBLIC_APP_VERSION: APP_VERSION },
   experimental: {
     // Our custom chunk splitting disables this memory-saving worker by default.
     webpackBuildWorker: true,
