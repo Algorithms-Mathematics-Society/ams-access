@@ -207,3 +207,17 @@ NSIS setup files contain all six current icon images; the MSI Icon table matches
 the ICO byte for byte. The updated desktop suite passed 17 tests with one skipped.
 Those installers were not installed, and MSIX, non-Windows packages and live
 assessment behavior were not retested by the agent.
+
+## Camera settings and recovery
+
+Settings camera listing has explicit loading, empty and unavailable states with Refresh. Choosing a camera saves it for setup and contest use; a missing saved camera requires reconnection or explicit reselection. Blank device labels use Camera N, while hidden device IDs remain unverified. Stage 7 exposes the same choice without relaxing required camera policy.
+
+Camera capture and decoded preview readiness have separate deadlines; a live handle alone is not a verified preview. Settings microphone timeout/cancel restores retry and stops late grants. Video switching preserves shared audio, and Settings exit releases its owned preview. Sustained frame-stall guidance is diagnostic only and does not inspect pixels or determine presence. Verify these behaviors with synthetic tests and separately on packaged Linux builds; the reported Arch/Wayland renderer freeze remains a hardware acceptance item.
+
+Linux keyboard setup checks are temporary native probes with restoration before completion. Show aggregate capability separately from individual shortcut enforcement: individual rows remain “Not individually verified.” Keep one pending probe, discard late results after navigation, and provide warning/continuation according to contest policy after the presentation deadline. A successful settings check must not imply gesture prevention, complete shortcut coverage, or Cinnamon support.
+
+## Helper setup and verified recovery
+
+A failed network-helper setup stays on the connection stage with Retry connection check and Continue with warning. Preserve the actual warning and let final contest policy decide entry; never convert a dismissed or failed admin prompt into a pass. Give distinct guidance for unavailable authorization, missing packaged files, absent systemd, startup timeout and an installer already running. Navigation does not cancel an elevated native installation.
+
+Restore success requires a successful status query confirming no pending restoration. A rejected restore or unavailable status must remain actionable, and Linux network recovery instructions must not imply desktop settings were successfully restored. Manual network instructions concern only the application's named firewall rules.

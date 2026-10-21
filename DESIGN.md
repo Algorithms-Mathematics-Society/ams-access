@@ -151,3 +151,9 @@ do not animate individual text and backgrounds through unreadable combinations.
 - Do not suppress hydration warnings to conceal mismatched calendar or account content.
 - Do not treat historical screenshots, fixture runs or old test totals as current validation.
 - Do not introduce new settings, dependencies or broad visual changes to fix a local UI defect.
+
+Camera settings retain observed device-list states independently of permission/capture state. Explicit camera choice is shared across setup and contest; unavailable or hidden devices must not be shown as verified. Preview readiness and sustained frame-progress guidance describe capture behavior without making a face verdict. Keep device operations independently bounded and preserve audio when switching video. See the candidate UI guide for recovery behavior and remaining installed-build validation.
+
+Linux keyboard setup checks are temporary native probes with restoration before completion. Show aggregate capability separately from individual shortcut enforcement: individual rows remain “Not individually verified.” Keep one pending probe, discard late results after navigation, and provide warning/continuation according to contest policy after the presentation deadline. A successful settings check must not imply gesture prevention, complete shortcut coverage, or Cinnamon support.
+
+Network-helper warnings use explicit retry or policy-aware warning continuation. Recovery feedback reports verified state: fulfilled commands without a successful pending-state query are insufficient to declare everything restored. Keep desktop and network recovery claims separate when their outcomes differ.

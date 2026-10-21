@@ -67,3 +67,6 @@ image/product-screens/
 # Python review-script caches
 __pycache__/
 *.pyc
+
+# Local investigation logs, captures and historical snapshots (not product source)
+/reports/
