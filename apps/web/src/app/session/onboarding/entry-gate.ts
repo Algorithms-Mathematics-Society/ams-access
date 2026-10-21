@@ -93,7 +93,16 @@ export function blockedMessage(decision: EntryDecision): string | null {
  * How wide the start is spread across a hall.
  *
  * Each client picks a delay in [0, this) once and starts inside the window
- * rather than on the tick. Fifteen seconds of a two-hour paper, against a
- * burst that refused entry outright when it did not fit.
+ * rather than on the tick.
+ *
+ * Sized to the roster, not to a round number. Entry costs about fifteen
+ * requests per candidate, so 1,236 candidates are ~18,500 requests: over
+ * fifteen seconds that is 1,236/s, and the server does perhaps 150. Over two
+ * and a half minutes it is ~120/s, which it can serve.
+ *
+ * The cost is that a candidate can wait up to 2.5 minutes after the start
+ * before their session opens. The contest clock is the server's and already
+ * running, so nobody loses exam time -- but the screen has to say so, or it
+ * reads as the hang this exists to prevent.
  */
-export const START_JITTER_MS = 15_000;
+export const START_JITTER_MS = 150_000;

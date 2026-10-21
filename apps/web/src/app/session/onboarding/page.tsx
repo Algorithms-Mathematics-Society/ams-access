@@ -984,6 +984,20 @@ export default function OnboardingPage() {
                   : undefined
               }
             />
+            {/* The jitter window. Up to 2.5 minutes of apparently nothing
+                happening, immediately after a countdown hit zero, is exactly
+                what a hang looks like -- and a candidate who concludes that
+                restarts the app, which is the one action that makes the
+                start worse. So it says what it is doing and that the clock
+                is not theirs to lose. */}
+            {currentStage === FINAL_STAGE && readyForStart && waitMs <= 0 && !jitterElapsed && (
+              <Banner
+                status="info"
+                role="status"
+                title="Opening your session"
+                description="Everyone starts within the first couple of minutes, a few at a time, so the exam server stays responsive. Your exam time is counted from the official start and is not affected by this wait. Keep this window open."
+              />
+            )}
             {policyBlock && (
               <Banner
                 status={macPermissionBlock ? "warning" : "error"}
