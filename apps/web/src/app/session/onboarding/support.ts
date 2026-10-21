@@ -171,24 +171,7 @@ export function getUserMediaWithTimeout(
   });
 }
 
-export async function waitForVideoReady(video: HTMLVideoElement, ms = 2500) {
-  if (video.readyState >= 2 && video.videoWidth > 0) return;
-
-  await withTimeout(
-    new Promise<void>((resolve) => {
-      const onReady = () => {
-        video.removeEventListener("loadeddata", onReady);
-        video.removeEventListener("canplay", onReady);
-        resolve();
-      };
-
-      video.addEventListener("loadeddata", onReady, { once: true });
-      video.addEventListener("canplay", onReady, { once: true });
-    }),
-    ms,
-    "Camera preview timed out"
-  );
-}
+export { waitForVideoReady } from "@/lib/camera-readiness";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type StageStatus = "pending" | "checking" | "pass" | "warn" | "fail";

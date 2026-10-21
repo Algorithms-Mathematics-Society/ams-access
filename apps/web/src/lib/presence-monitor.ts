@@ -1,3 +1,5 @@
+import { CameraTimeoutError, withCameraTimeout } from "./camera-readiness.ts";
+
 // Periodic presence verification for the contest surface.
 //
 // Reuses the BlazeFace pipeline that onboarding calibration ships: WASM
@@ -16,6 +18,7 @@
 type FacePredictionLike = {
   topLeft?: [number, number] | number[];
   bottomRight?: [number, number] | number[];
+  landmarks?: number[][];
 };
 
 export type PresenceDetector = {
@@ -38,35 +41,92 @@ type BlazeFaceModuleLike = {
   }) => Promise<unknown>;
 };
 
-export async function loadPresenceDetector(): Promise<PresenceDetector> {
-  const tf = await import("@tensorflow/tfjs-core");
+type TensorFlowLike = {
+  setBackend(name: string): Promise<boolean>;
+  ready(): Promise<void>;
+  removeBackend(name: string): void;
+};
 
-  let backendReady = false;
-  try {
-    const wasmBackend = await import("@tensorflow/tfjs-backend-wasm");
-    wasmBackend.setWasmPaths("/tfjs-wasm/");
-    await tf.setBackend("wasm");
-    await tf.ready();
-    backendReady = true;
-  } catch {
-    // WASM unavailable in this environment — fall through to CPU.
-  }
-  if (!backendReady) {
-    await import("@tensorflow/tfjs-backend-cpu");
-    await tf.setBackend("cpu");
-    await tf.ready();
+type DetectorOptions = {
+  maxFaces?: number;
+  /** Onboarding's native integrity check must succeed before loading weights. */
+  verifyAssets?: () => Promise<void>;
+};
+
+type DetectorLoaderDeps = {
+  importCore: () => Promise<TensorFlowLike>;
+  importWasm: () => Promise<{ setWasmPaths(path: string): void }>;
+  importCpu: () => Promise<unknown>;
+  importModel: () => Promise<BlazeFaceModuleLike>;
+  timeoutMs?: number;
+};
+
+/** Shared backend initialization prevents calibration/presence from racing TF's global engine. */
+export function createPresenceDetectorLoader(deps: DetectorLoaderDeps) {
+  const ms = deps.timeoutMs ?? 5000;
+  let backend: Promise<void> | null = null;
+  const bounded = <T>(request: Promise<T>, phase: string) =>
+    withCameraTimeout(request, ms, `Face detector ${phase} timed out`);
+
+  async function prepareBackend() {
+    const tf = await bounded(deps.importCore(), "runtime import");
+    try {
+      const wasm = await bounded(deps.importWasm(), "WASM import");
+      wasm.setWasmPaths("/tfjs-wasm/");
+      if (!(await bounded(tf.setBackend("wasm"), "WASM startup"))) {
+        throw new Error("Face detector WASM backend unavailable");
+      }
+      await bounded(tf.ready(), "WASM readiness");
+      return;
+    } catch {
+      // TF's CPU backend initializes synchronously, so simply selecting it does
+      // not invalidate a pending asynchronous WASM initialization. Remove WASM
+      // first: engine.removeBackend invalidates that pending init, preventing a
+      // late completion from replacing the CPU backend used by a live model.
+      try {
+        tf.removeBackend("wasm");
+      } catch {
+        /* import may have failed */
+      }
+    }
+    await bounded(deps.importCpu(), "CPU import");
+    if (!(await bounded(tf.setBackend("cpu"), "CPU startup"))) {
+      throw new Error("Face detector CPU backend unavailable");
+    }
+    await bounded(tf.ready(), "CPU readiness");
   }
 
-  const blazeface = (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike;
-  const detector = await blazeface.load({
-    maxFaces: 3,
-    inputWidth: 128,
-    inputHeight: 128,
-    scoreThreshold: 0.75,
-    modelUrl: "/models/blazeface/model.json",
-  });
-  return detector as PresenceDetector;
+  return async function load(options: DetectorOptions = {}): Promise<PresenceDetector> {
+    if (!backend) {
+      backend = prepareBackend().catch((error) => {
+        backend = null;
+        throw error;
+      });
+    }
+    await backend;
+    if (options.verifyAssets) await bounded(options.verifyAssets(), "asset verification");
+    const blazeface = await bounded(deps.importModel(), "model import");
+    return withCameraTimeout(
+      blazeface.load({
+        maxFaces: options.maxFaces ?? 3,
+        inputWidth: 128,
+        inputHeight: 128,
+        scoreThreshold: 0.75,
+        modelUrl: "/models/blazeface/model.json",
+      }) as Promise<PresenceDetector>,
+      ms,
+      "Face detector model load timed out",
+      (late) => late.dispose?.()
+    );
+  };
 }
+
+export const loadPresenceDetector = createPresenceDetectorLoader({
+  importCore: () => import("@tensorflow/tfjs-core"),
+  importWasm: () => import("@tensorflow/tfjs-backend-wasm"),
+  importCpu: () => import("@tensorflow/tfjs-backend-cpu"),
+  importModel: async () => (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike,
+});
 
 /**
  * How the candidate is sitting in frame.
@@ -126,15 +186,23 @@ export function framingOf(
   return inside ? "ok" : "off_centre";
 }
 
+// A deadline stops waiting; it cannot cancel TF inference. Keep the detector
+// busy until its actual work settles, including across periodic contest ticks.
+const pendingInferences = new WeakSet<PresenceDetector>();
+
 /// One presence sample from the live camera video element.
 export async function samplePresence(
   video: HTMLVideoElement,
   detector: PresenceDetector,
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement,
+  timeoutMs = 5000
 ): Promise<PresenceSample | null> {
   // readyState < 2 (HAVE_CURRENT_DATA) means no decodable frame yet.
   if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
     return null;
+  }
+  if (pendingInferences.has(detector)) {
+    throw new CameraTimeoutError("Face detector inference is still pending");
   }
 
   const W = 128;
@@ -149,10 +217,16 @@ export async function samplePresence(
 
   // annotateBoxes so the face box comes back: it is what the framing hint
   // is computed from.
-  const faces = await detector.estimateFaces(canvas, false, false, true);
+  pendingInferences.add(detector);
+  const inference = Promise.resolve()
+    .then(() => detector.estimateFaces(canvas, false, false, true))
+    .finally(() => pendingInferences.delete(detector));
+  const faces = await withCameraTimeout(inference, timeoutMs, "Face detector inference timed out");
   const count = faces.length;
   const framing =
-    count === 1 ? framingOf(faces[0]?.topLeft as number[], faces[0]?.bottomRight as number[], W, H) : "ok";
+    count === 1
+      ? framingOf(faces[0]?.topLeft as number[], faces[0]?.bottomRight as number[], W, H)
+      : "ok";
   const status: PresenceSample["status"] =
     count === 1 ? "presence_ok" : count === 0 ? "face_missing" : "multiple_faces";
 

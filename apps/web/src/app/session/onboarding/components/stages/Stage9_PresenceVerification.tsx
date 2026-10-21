@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { loadPresenceDetector, samplePresence, type PresenceSample } from "@/lib/presence-monitor";
+import { CameraTimeoutError } from "@/lib/camera-readiness";
+import {
+  loadPresenceDetector,
+  samplePresence,
+  type PresenceDetector,
+  type PresenceSample,
+} from "@/lib/presence-monitor";
 import {
   SAMPLE_COUNT,
   SAMPLE_INTERVAL_MS,
@@ -47,6 +53,8 @@ export function Stage9_PresenceVerification({
 
   useEffect(() => {
     let cancelled = false;
+    let detector: PresenceDetector | null = null;
+    let advanceTimer: ReturnType<typeof setTimeout> | null = null;
     // The advance callbacks are read through a ref-free closure captured once;
     // `settle` is called exactly once and the effect is keyed on `stream`
     // alone, so a re-render cannot double-advance the stage.
@@ -55,7 +63,7 @@ export function Stage9_PresenceVerification({
       if (cancelled || settled) return;
       settled = true;
       setVerdict(result);
-      setTimeout(() => {
+      advanceTimer = setTimeout(() => {
         if (!cancelled) (isPresencePass(result) ? onPass : onWarn)();
       }, 900);
     };
@@ -67,7 +75,6 @@ export function Stage9_PresenceVerification({
         return;
       }
 
-      let detector;
       try {
         detector = await loadPresenceDetector();
       } catch {
@@ -75,7 +82,11 @@ export function Stage9_PresenceVerification({
         settle("unknown");
         return;
       }
-      if (cancelled) return;
+      if (cancelled) {
+        detector.dispose?.();
+        detector = null;
+        return;
+      }
 
       const canvas = (canvasRef.current ??= document.createElement("canvas"));
       const samples: (PresenceSample | null)[] = [];
@@ -87,7 +98,12 @@ export function Stage9_PresenceVerification({
         if (video) {
           try {
             sample = await samplePresence(video, detector, canvas);
-          } catch {
+          } catch (error) {
+            if (error instanceof CameraTimeoutError) {
+              // Do not overlap a second inference with an uncancellable one.
+              settle("unknown");
+              return;
+            }
             sample = null;
           }
         }
@@ -101,9 +117,13 @@ export function Stage9_PresenceVerification({
       settle(decidePresence(samples));
     }
 
-    void run();
+    void run().finally(() => {
+      detector?.dispose?.();
+      detector = null;
+    });
     return () => {
       cancelled = true;
+      if (advanceTimer) clearTimeout(advanceTimer);
     };
   }, [stream, onPass, onWarn]);
 

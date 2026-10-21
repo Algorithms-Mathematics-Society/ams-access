@@ -6,7 +6,8 @@ import { useTheme } from "@/lib/theme";
 import { Spinner, StageHeader, StatusBadge } from "../ui";
 import { SetupPermissionInfo } from "../SetupPermissionInfo";
 import { cameraSession } from "@/lib/camera-session";
-import { invoke, waitForVideoReady, withTimeout } from "../../support";
+import { invoke } from "../../support";
+import { startCameraPreview } from "@/lib/camera-readiness";
 
 export function Stage7_CameraInit({
   onPass,
@@ -42,12 +43,12 @@ export function Stage7_CameraInit({
     // unmount is the route change, not the end of the exam.
     async function init() {
       try {
-        const stream = await withTimeout(cameraSession.ensure(), 8000, "Camera request timed out");
+        const stream = await cameraSession.ensure();
         if (cancelled) return;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-          await waitForVideoReady(videoRef.current);
+        if (!videoRef.current) throw new Error("Camera preview unavailable");
+        await startCameraPreview(videoRef.current, stream);
+        if (!stream.getVideoTracks().some((track) => track.readyState === "live" && !track.muted)) {
+          throw new Error("Camera is not delivering frames");
         }
         if (cancelled) return;
         onCameraReady(stream);

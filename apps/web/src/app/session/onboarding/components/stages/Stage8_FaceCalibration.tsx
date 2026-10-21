@@ -8,7 +8,9 @@ import { cameraSession } from "@/lib/camera-session";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { StageHeader } from "../ui";
 import { type TauriGlobals } from "../tauri-globals";
-import { BLAZEFACE_MODEL_URL, invoke, waitForVideoReady, withTimeout } from "../../support";
+import { invoke } from "../../support";
+import { loadPresenceDetector, type PresenceDetector } from "@/lib/presence-monitor";
+import { CameraTimeoutError, startCameraPreview, withCameraTimeout } from "@/lib/camera-readiness";
 
 // Tauri global typing for the direct window.__TAURI__ uses in this file.
 declare const window: Window & TauriGlobals;
@@ -31,30 +33,12 @@ export function Stage8_FaceCalibration({
 }) {
   type FaceKeypointLike = { x: number; y: number; label?: string };
   type FacePredictionLike = {
-    topLeft: [number, number];
-    bottomRight: [number, number];
+    topLeft?: number[];
+    bottomRight?: number[];
     landmarks?: number[][];
     probability?: number | number[];
   };
-  type DetectorLike = {
-    estimateFaces(
-      input: HTMLCanvasElement,
-      returnTensors?: boolean,
-      flipHorizontal?: boolean,
-      annotateBoxes?: boolean
-    ): Promise<FacePredictionLike[]>;
-    dispose(): void;
-  };
-  type BlazeFaceModuleLike = {
-    load(config?: {
-      maxFaces?: number;
-      inputWidth?: number;
-      inputHeight?: number;
-      iouThreshold?: number;
-      scoreThreshold?: number;
-      modelUrl?: string;
-    }): Promise<DetectorLike>;
-  };
+  type DetectorLike = PresenceDetector;
 
   const PHASES = [
     { key: "front" as const, label: "FRONT", instruction: "Look directly at the camera" },
@@ -407,7 +391,8 @@ export function Stage8_FaceCalibration({
 
     async function init() {
       let activeStream: MediaStream | null = null;
-      if (videoRef.current) {
+      try {
+        if (!videoRef.current) throw new Error("Camera preview unavailable");
         activeStream = stream;
 
         // Falls back to the shared session rather than a fresh getUserMedia:
@@ -422,9 +407,7 @@ export function Stage8_FaceCalibration({
         }
 
         if (activeStream) {
-          videoRef.current.srcObject = activeStream;
-          await videoRef.current.play().catch(() => {});
-          await waitForVideoReady(videoRef.current, 2500).catch(() => {});
+          await startCameraPreview(videoRef.current, activeStream);
           // Not stopped on cancel: this is the shared session's track, and
           // "cancelled" here usually means React re-ran the effect, not that
           // the exam is over.
@@ -433,63 +416,27 @@ export function Stage8_FaceCalibration({
           beginTimedFallback();
           return;
         }
+      } catch {
+        if (!cancelled) beginTimedFallback();
+        return;
       }
 
       try {
-        const det = await withTimeout(
-          (async () => {
-            const tf = await import("@tensorflow/tfjs-core");
-
-            // Prefer WASM backend (25–50 ms/frame with SIMD) over pure-JS CPU
-            // (200–900 ms/frame).  WASM files are bundled under /tfjs-wasm/ by
-            // scripts/setup-tfjs-wasm.mjs so no CDN fetch is needed at runtime.
-            // TF.js auto-selects the fastest WASM variant the CPU supports:
-            //   threaded-simd (needs SharedArrayBuffer) → simd → plain wasm.
-            // If WASM init fails for any reason, we fall back to CPU so the
-            // stage can still function (albeit slower) rather than hard-failing.
-            let backendReady = false;
-            try {
-              const wasmBackend = await import("@tensorflow/tfjs-backend-wasm");
-              wasmBackend.setWasmPaths("/tfjs-wasm/");
-              await tf.setBackend("wasm");
-              await tf.ready();
-              backendReady = true;
-            } catch {
-              // WASM unavailable in this environment — fall through to CPU.
-            }
-
-            if (!backendReady) {
-              await import("@tensorflow/tfjs-backend-cpu");
-              await tf.setBackend("cpu");
-              await tf.ready();
-            }
-
-            if (window.__TAURI__) {
-              type ModelAssetVerification = {
-                ok: boolean;
-                checked_files: number;
-                error: string | null;
-              };
-              const verification = await invoke<ModelAssetVerification>("verify_face_model_assets");
-              if (!verification?.ok) {
-                throw new Error(verification?.error ?? "face_model_integrity_failed");
+        const det = await loadPresenceDetector({
+          maxFaces: 1,
+          verifyAssets: window.__TAURI__
+            ? async () => {
+                const verification = await invoke<{ ok: boolean; error: string | null }>(
+                  "verify_face_model_assets"
+                );
+                if (!verification?.ok) {
+                  throw new Error(verification?.error ?? "face_model_integrity_failed");
+                }
               }
-            }
-
-            const blazeface = (await import("@tensorflow-models/blazeface")) as BlazeFaceModuleLike;
-            return blazeface.load({
-              maxFaces: 1,
-              inputWidth: 128,
-              inputHeight: 128,
-              scoreThreshold: 0.75,
-              modelUrl: BLAZEFACE_MODEL_URL,
-            });
-          })(),
-          7000,
-          "Face detector startup timed out"
-        );
+            : undefined,
+        });
         if (cancelled) {
-          det.dispose();
+          det.dispose?.();
           return;
         }
         detectorRef.current = det;
@@ -514,7 +461,7 @@ export function Stage8_FaceCalibration({
     void init();
     return () => {
       cancelled = true;
-      detectorRef.current?.dispose();
+      detectorRef.current?.dispose?.();
       detectorRef.current = null;
       // The detector is this stage's to dispose. The camera is not — it
       // belongs to `cameraSession` and the contest room is about to use it.
@@ -553,7 +500,7 @@ export function Stage8_FaceCalibration({
     function processDetection(video: HTMLVideoElement) {
       const det = detectorRef.current;
       const dc = detectCanvasRef.current;
-      if (!det || !dc || detectionBusyRef.current) return;
+      if (!det || !dc || detectionBusyRef.current || fallbackStartedRef.current) return;
       detectionBusyRef.current = true;
 
       void (async () => {
@@ -568,7 +515,12 @@ export function Stage8_FaceCalibration({
           const dctx = dc.getContext("2d", { willReadFrequently: true });
           if (!dctx) return;
           dctx.drawImage(video, 0, 0, sourceWidth, sourceHeight);
-          res = await det.estimateFaces(dc, false, false, true);
+          res = await withCameraTimeout(
+            det.estimateFaces(dc, false, false, true),
+            5000,
+            "Face detector inference timed out"
+          );
+          if (cancelled || detectorRef.current !== det || fallbackStartedRef.current) return;
 
           detectionErrorsRef.current = 0;
           const detection = res[0];
@@ -666,7 +618,16 @@ export function Stage8_FaceCalibration({
           }
         } catch (error) {
           detectionErrorsRef.current += 1;
-          if (cancelled) return;
+          if (cancelled || detectorRef.current !== det) return;
+          if (error instanceof CameraTimeoutError) {
+            // The underlying inference cannot be cancelled. Block rather than
+            // launching overlapping work on the same detector after a timeout.
+            facePresentRef.current = false;
+            qualityOkRef.current = false;
+            holdMsRef.current = 0;
+            beginTimedFallback();
+            return;
+          }
           if (detectionErrorsRef.current >= 4) {
             setRuntimeNote(
               error instanceof Error

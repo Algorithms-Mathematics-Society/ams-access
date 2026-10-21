@@ -1,3 +1,5 @@
+import { withCameraTimeout } from "./camera-readiness.ts";
+
 // One camera for the whole exam.
 //
 // The camera was opened in onboarding stage 8, stopped when the orchestrator
@@ -40,6 +42,8 @@ type MediaDevicesLike = Pick<MediaDevices, "getUserMedia"> & {
 
 export type CameraSessionDeps = {
   mediaDevices: MediaDevicesLike | null;
+  /** Bounds permission/device opens; injectable for regression tests. */
+  requestTimeoutMs?: number;
   /** Injectable so tests do not need a real MediaStream constructor. */
   createStream: (tracks: MediaStreamTrack[]) => MediaStream;
 };
@@ -203,7 +207,12 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       kind === "video"
         ? md.getUserMedia({ video: VIDEO_CONSTRAINTS })
         : md.getUserMedia({ audio: true });
-    return request.then((stream) => {
+    return withCameraTimeout(
+      request,
+      deps.requestTimeoutMs ?? 8000,
+      kind === "video" ? "Camera request timed out" : "Microphone request timed out",
+      (late) => late.getTracks().forEach((track) => track.stop())
+    ).then((stream) => {
       const track = kind === "video" ? stream.getVideoTracks()[0] : stream.getAudioTracks()[0];
       // A grant can arrive after release, or contain tracks we did not ask for.
       for (const granted of stream.getTracks()) {
