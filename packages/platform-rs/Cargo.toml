@@ -13,6 +13,8 @@ cfg-if = "1"
 core-rs = { path = "../core-rs" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+glib = "0.18"
+gio = "0.18"
 x11 = { version = "2", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

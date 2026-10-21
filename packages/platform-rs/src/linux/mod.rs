@@ -1,8 +1,14 @@
+pub mod instance;
+mod settings;
+
 use crate::process_runner::{Budget, CommandDeadlineExt};
 use core_rs::exam::{
     CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+mod kde;
+mod kde_live;
 
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SHIELD_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -373,7 +379,9 @@ fn backup_file() -> std::path::PathBuf {
 
 fn write_backup(map: &HashMap<String, String>) -> bool {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-    let content: String = map.iter().map(|(k, v)| format!("{k}\t{v}\n")).collect();
+    let Ok(content) = serde_json::to_string(map) else {
+        return false;
+    };
     let dir = backup_path();
     let result = (|| -> std::io::Result<()> {
         if let Some(parent) = dir.parent() {
@@ -403,30 +411,94 @@ fn write_backup(map: &HashMap<String, String>) -> bool {
     }
 }
 
-fn read_backup() -> Option<HashMap<String, String>> {
-    // Current location first, then the legacy one, so a build that upgrades
-    // while a crashed lockdown is outstanding still restores it.
-    let content = std::fs::read_to_string(backup_file())
-        .or_else(|_| std::fs::read_to_string(LEGACY_BACKUP_PATH))
-        .ok()?;
+fn decode_backup(content: &str) -> Result<HashMap<String, String>, String> {
+    if content.trim_start().starts_with('{') {
+        return serde_json::from_str(content).map_err(|error| error.to_string());
+    }
     let mut map = HashMap::new();
     for line in content.lines() {
-        if let Some((k, v)) = line.split_once('\t') {
-            map.insert(k.to_string(), v.to_string());
+        if line.is_empty() {
+            continue;
         }
+        let (key, value) = line.split_once('\t').ok_or("Malformed recovery journal")?;
+        if key.is_empty() {
+            return Err("Empty recovery key".into());
+        }
+        map.insert(key.to_owned(), value.to_owned());
     }
-    if map.is_empty() {
-        None
-    } else {
-        Some(map)
+    Ok(map)
+}
+
+fn read_backup_file(path: &std::path::Path) -> Result<Option<HashMap<String, String>>, String> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(TOKEN_OPEN_FLAGS)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file()
+        || metadata.uid() != own_uid().map_err(|e| e.to_string())?
+        || metadata.len() > 1_048_576
+    {
+        return Err("Invalid recovery journal ownership, type or size".into());
     }
+    let mut content = String::new();
+    file.take(1_048_577)
+        .read_to_string(&mut content)
+        .map_err(|e| e.to_string())?;
+    if content.len() > 1_048_576 {
+        return Err("Recovery journal too large".into());
+    }
+    decode_backup(&content).map(Some)
+}
+
+fn owned_regular_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    path.symlink_metadata().ok().is_some_and(|metadata| {
+        metadata.file_type().is_file() && own_uid().ok() == Some(metadata.uid())
+    })
+}
+
+fn read_legacy_backup_file(
+    path: &std::path::Path,
+) -> Result<Option<HashMap<String, String>>, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) if owned_regular_file(path) => read_backup_file(path),
+        Ok(_) => Ok(None),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn read_backup() -> Result<Option<HashMap<String, String>>, String> {
+    let mut combined =
+        read_legacy_backup_file(std::path::Path::new(LEGACY_BACKUP_PATH))?.unwrap_or_default();
+    if let Some(current) = read_backup_file(&backup_file())? {
+        combined.extend(current);
+    }
+    Ok((!combined.is_empty()).then_some(combined))
 }
 
 fn delete_backup() {
     let _ = std::fs::remove_file(backup_file());
     // The legacy copy too, or a stale /tmp file would be restored on a later
-    // run and silently undo settings the candidate has since changed.
-    let _ = std::fs::remove_file(LEGACY_BACKUP_PATH);
+    // run and silently undo settings the candidate has since changed. Never
+    // touch another user's file in the shared directory.
+    let legacy = std::path::Path::new(LEGACY_BACKUP_PATH);
+    if owned_regular_file(legacy) {
+        let _ = std::fs::remove_file(legacy);
+    }
 }
 
 /// Retry saved restoration on startup. Failed keys remain recoverable.
@@ -572,6 +644,295 @@ const GNOME_SHORTCUTS: &[(&str, &str, &str)] = &[
     // (a desktop-switch surface) and is NOT a keybinding, so it must be turned
     // off separately. Boolean key — disable value is `false`.
     ("org.gnome.desktop.interface", "enable-hot-corners", "false"),
+    // Version-dependent families: discover schema/key and writability first.
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-applications-backward",
+        "@as []",
+    ),
+    ("org.gnome.desktop.wm.keybindings", "switch-group", "@as []"),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-group-backward",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-panels",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-panels-backward",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "cycle-windows",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "cycle-windows-backward",
+        "@as []",
+    ),
+    ("org.gnome.desktop.wm.keybindings", "cycle-group", "@as []"),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "cycle-group-backward",
+        "@as []",
+    ),
+    ("org.gnome.desktop.wm.keybindings", "cycle-panels", "@as []"),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "cycle-panels-backward",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-up",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-down",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-last",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-5",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-6",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-7",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-8",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-9",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-10",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-11",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "switch-to-workspace-12",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-left",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-right",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-up",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-down",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-last",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-1",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-2",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-3",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-4",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-5",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-6",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-7",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-8",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-9",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-10",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-11",
+        "@as []",
+    ),
+    (
+        "org.gnome.desktop.wm.keybindings",
+        "move-to-workspace-12",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "show-screenshot-ui",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "toggle-message-tray",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "toggle-quick-settings",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-1",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-2",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-3",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-4",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-5",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-6",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-7",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-8",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "switch-to-application-9",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-1",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-2",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-3",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-4",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-5",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-6",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-7",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-8",
+        "@as []",
+    ),
+    (
+        "org.gnome.shell.keybindings",
+        "open-new-window-application-9",
+        "@as []",
+    ),
 ];
 
 const KDE_SHORTCUTS: &[(&str, &str, &str)] = &[
@@ -597,16 +958,57 @@ const KDE_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("org.kde.plasmashell", "next activity", "none"),
 ];
 
-fn gsettings_get(schema: &str, key: &str) -> Option<String> {
-    let out = std::process::Command::new("gsettings")
-        .args(["get", schema, key])
-        .bounded_output()
-        .ok()?;
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KdeControlFamily {
+    WindowSwitch,
+    Overview,
+    DesktopSwitch,
+    Activity,
+}
+
+fn kde_control_family(component: &str, action: &str) -> KdeControlFamily {
+    if component == "org.kde.plasmashell" {
+        KdeControlFamily::Activity
+    } else if action.starts_with("Walk Through Windows") {
+        KdeControlFamily::WindowSwitch
+    } else if action.starts_with("Switch ") {
+        KdeControlFamily::DesktopSwitch
     } else {
-        None
+        KdeControlFamily::Overview
     }
+}
+
+fn settings_command(program: &str, args: &[&str]) -> Option<String> {
+    if program == "ams-gsettings-user-value" {
+        use gio::prelude::SettingsExt;
+        let [schema_id, key] = args else {
+            return None;
+        };
+        let source = gio::SettingsSchemaSource::default()?;
+        let schema = source.lookup(schema_id, true)?;
+        if !schema.has_key(key) || schema.path().is_none() {
+            return None;
+        }
+        let settings = gio::Settings::new_full(&schema, None::<&gio::SettingsBackend>, None);
+        // Unlike `dconf read`, this excludes system/default database values.
+        // Local backend reads are not subprocesses and cannot be hard-cancelled.
+        return Some(
+            settings
+                .user_value(key)
+                .map(|v| v.print(true).to_string())
+                .unwrap_or_default(),
+        );
+    }
+    crate::process_runner::optional(|| {
+        let output = std::process::Command::new(program)
+            .args(args)
+            .bounded_output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    })
 }
 
 /// GSettings prints an explicit array type for an empty string array; avoid
@@ -618,18 +1020,6 @@ fn normalize_gvariant(value: &str) -> &str {
     } else {
         value
     }
-}
-
-fn gsettings_set(schema: &str, key: &str, value: &str) -> bool {
-    let wrote = std::process::Command::new("gsettings")
-        .args(["set", schema, key, value])
-        .stderr(std::process::Stdio::null())
-        .bounded_status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    wrote
-        && gsettings_get(schema, key)
-            .is_some_and(|actual| normalize_gvariant(&actual) == normalize_gvariant(value))
 }
 
 fn intercept_outcome(applied: usize, total: usize, method: &str) -> KeyboardInterceptResult {
@@ -646,93 +1036,8 @@ fn intercept_outcome(applied: usize, total: usize, method: &str) -> KeyboardInte
     }
 }
 
-fn kde_tool(stem: &str) -> Option<&'static str> {
-    let tools = match stem {
-        "kreadconfig" => ["kreadconfig6", "kreadconfig5"],
-        "kwriteconfig" => ["kwriteconfig6", "kwriteconfig5"],
-        _ => return None,
-    };
-    tools.into_iter().find(|tool| {
-        crate::process_runner::optional(|| {
-            std::process::Command::new(tool)
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .bounded_status()
-                .is_ok_and(|s| s.success())
-        })
-    })
-}
-
-// Missing KDE keys inherit defaults. Persist their absence so restoration can
-// delete the temporary override instead of permanently replacing a default.
-const KDE_UNSET: &str = "__AMS_ACCESS_UNSET_CONFIG_KEY__";
-
-fn kconfig_get(file: &str, group: &str, key: &str) -> Option<String> {
-    let out = std::process::Command::new(kde_tool("kreadconfig")?)
-        .args([
-            "--file",
-            file,
-            "--group",
-            group,
-            "--key",
-            key,
-            "--default",
-            KDE_UNSET,
-        ])
-        .bounded_output()
-        .ok()?;
-    out.status.success().then(|| {
-        String::from_utf8_lossy(&out.stdout)
-            .trim_end_matches(['\r', '\n'])
-            .to_string()
-    })
-}
-
 fn kconfig_set(file: &str, group: &str, key: &str, value: &str) -> bool {
-    let Some(tool) = kde_tool("kwriteconfig") else {
-        return false;
-    };
-    let mut command = std::process::Command::new(tool);
-    command.args(["--file", file, "--group", group, "--key", key]);
-    if value == KDE_UNSET {
-        command.arg("--delete");
-    } else {
-        command.arg(value);
-    }
-    command.bounded_status().is_ok_and(|s| s.success())
-        && kconfig_get(file, group, key).is_some_and(|actual| actual == value)
-}
-
-fn kde_reconfigure() -> bool {
-    let mut accel = false;
-    let mut kwin = false;
-    for bin in ["qdbus6", "qdbus-qt6", "qdbus"] {
-        if !accel {
-            accel = crate::process_runner::optional(|| {
-                std::process::Command::new(bin)
-                    .args([
-                        "org.kde.kglobalaccel",
-                        "/kglobalaccel",
-                        "org.kde.KGlobalAccel.reconfigure",
-                    ])
-                    .bounded_status()
-                    .is_ok_and(|s| s.success())
-            });
-        }
-        if !kwin {
-            kwin = crate::process_runner::optional(|| {
-                std::process::Command::new(bin)
-                    .args(["org.kde.KWin", "/KWin", "reconfigure"])
-                    .bounded_status()
-                    .is_ok_and(|s| s.success())
-            });
-        }
-        if accel && kwin {
-            return true;
-        }
-    }
-    false
+    kde::config_set(file, group, key, value)
 }
 
 /// Capture AND persist each original value before applying a change. Existing
@@ -741,7 +1046,7 @@ fn backup_before_apply(
     saved: &mut HashMap<String, String>,
     key: &str,
     read: impl FnOnce() -> Option<String>,
-    apply: impl FnOnce() -> bool,
+    apply: impl FnOnce(&str) -> bool,
     persist: impl FnOnce(&HashMap<String, String>) -> bool,
 ) -> bool {
     if !saved.contains_key(key) {
@@ -750,12 +1055,43 @@ fn backup_before_apply(
         };
         saved.insert(key.to_string(), original);
     }
-    persist(saved) && apply()
+    persist(saved) && apply(&saved[key])
+}
+
+/// Whether a successful setting change contributes to keyboard interception.
+fn is_gnome_keyboard_control(schema: &str, key: &str) -> bool {
+    // Workspace count, dock layout and hot corners can change without any
+    // shortcut being intercepted. Only binding schemas and Mutter's overlay
+    // key establish keyboard coverage.
+    matches!(
+        schema,
+        "org.gnome.desktop.wm.keybindings"
+            | "org.gnome.shell.keybindings"
+            | "org.gnome.mutter.wayland.keybindings"
+    ) || (schema == "org.gnome.mutter" && key == "overlay-key")
+}
+
+fn apply_kde_meta_with(
+    original: &str,
+    mut read: impl FnMut() -> Option<String>,
+    mut write: impl FnMut(&str) -> bool,
+) -> bool {
+    let Some(current) = read() else { return false };
+    current.is_empty() || (current == original && write(""))
+}
+
+fn restore_kde_meta_with(
+    original: &str,
+    mut read: impl FnMut() -> Option<String>,
+    mut write: impl FnMut(&str) -> bool,
+) -> bool {
+    let Some(current) = read() else { return false };
+    current == original || (current.is_empty() && write(original))
 }
 
 /// Disable supported compositor shortcuts and report observed coverage.
-pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
-    let _budget = Budget::new(std::time::Duration::from_secs(8));
+fn enable_keyboard_intercept_inner() -> KeyboardInterceptResult {
+    let budget = Budget::new(std::time::Duration::from_secs(8));
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
     let desktop = std::env::var("XDG_CURRENT_DESKTOP")
         .or_else(|_| std::env::var("XDG_SESSION_DESKTOP"))
@@ -764,28 +1100,44 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
         .to_lowercase();
     let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
     // Retain failed startup recovery values before recording anything new.
-    if let Some(backup) = read_backup() {
-        for (key, value) in backup {
-            saved.entry(key).or_insert(value);
+    match read_backup() {
+        Ok(Some(backup)) => {
+            for (key, value) in backup {
+                saved.entry(key).or_insert(value);
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("[ams][kb] recovery journal cannot be read: {error}");
+            return intercept_outcome(0, 0, "recovery-required");
         }
     }
     let mut applied = 0;
+    if desktop.contains("cinnamon") {
+        return intercept_outcome(0, 0, "cinnamon/unsupported-unverified-adapter");
+    }
     if desktop.contains("gnome") || desktop.contains("ubuntu") {
         let mut shortcuts_applied = 0;
-        for (index, &(schema, key, value)) in GNOME_SHORTCUTS
-            .iter()
-            .chain(GNOME_DOCK_SETTINGS.iter())
-            .enumerate()
-        {
+        let mut settings = settings::Settings::new(settings_command);
+        for &(schema, key, value) in GNOME_SHORTCUTS.iter().chain(GNOME_DOCK_SETTINGS.iter()) {
+            if budget.expired() {
+                break;
+            }
+            let entry = format!("gnome/{schema}/{key}");
+            let original = if saved.contains_key(&entry) {
+                None
+            } else {
+                settings.snapshot(schema, key, value)
+            };
             if backup_before_apply(
                 &mut saved,
-                &format!("gnome/{schema}/{key}"),
-                || gsettings_get(schema, key),
-                || gsettings_set(schema, key, value),
+                &entry,
+                || original,
+                |snapshot| settings.apply(schema, key, snapshot),
                 write_backup,
             ) {
                 applied += 1;
-                if index < GNOME_SHORTCUTS.len() && key != "enable-hot-corners" {
+                if is_gnome_keyboard_control(schema, key) {
                     shortcuts_applied += 1;
                 }
             }
@@ -799,149 +1151,101 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
                 "gsettings/x11"
             },
         );
-        // Dock layout or hot-corner changes alone are not a keyboard intercept.
+        // Workspace, dock or hot-corner changes alone are not a keyboard intercept.
         result.active = shortcuts_applied > 0;
         return result;
     }
     if desktop.contains("kde") || desktop.contains("plasma") {
-        for &(group, key, value) in KDE_SHORTCUTS {
+        let Some(mut adapter) = kde_live::Adapter::discover() else {
+            return intercept_outcome(0, KDE_SHORTCUTS.len(), "kde/unsupported-gdbus-unavailable");
+        };
+        let mut available = 0;
+        let mut family_available = [false; 4];
+        let mut family_applied = [false; 4];
+        for &(component, action, _) in KDE_SHORTCUTS {
+            if budget.expired() {
+                break;
+            }
+            let key = format!("kde_live/{component}/{action}");
+            let plan = if saved.contains_key(&key) {
+                saved
+                    .get(&key)
+                    .and_then(|value| serde_json::from_str(value).ok())
+            } else {
+                adapter.plan(component, action)
+            };
+            let Some(plan) = plan else { continue };
+            available += 1;
+            let family = kde_control_family(component, action) as usize;
+            family_available[family] = true;
+            let original = (!saved.contains_key(&key))
+                .then(|| serde_json::to_string(&plan).ok())
+                .flatten();
             if backup_before_apply(
                 &mut saved,
-                &format!("kde/{group}/{key}"),
-                || kconfig_get("kglobalshortcutsrc", group, key),
-                || kconfig_set("kglobalshortcutsrc", group, key, value),
+                &key,
+                || original,
+                |snapshot| {
+                    serde_json::from_str::<kde_live::Plan>(snapshot)
+                        .ok()
+                        .is_some_and(|plan| adapter.apply(&plan))
+                },
                 write_backup,
             ) {
                 applied += 1;
+                family_applied[family] = true;
             }
         }
-        if backup_before_apply(
+
+        let meta_original = (!saved.contains_key("kde_meta"))
+            .then(|| kde::config_get("kwinrc", "ModifierOnlyShortcuts", "Meta"))
+            .flatten();
+        let meta_applied = backup_before_apply(
             &mut saved,
             "kde_meta",
-            || kconfig_get("kwinrc", "ModifierOnlyShortcuts", "Meta"),
-            || kconfig_set("kwinrc", "ModifierOnlyShortcuts", "Meta", "none"),
+            || meta_original,
+            |original| {
+                apply_kde_meta_with(
+                    original,
+                    || kde::config_get("kwinrc", "ModifierOnlyShortcuts", "Meta"),
+                    |value| kconfig_set("kwinrc", "ModifierOnlyShortcuts", "Meta", value),
+                )
+            },
             write_backup,
-        ) {
-            applied += 1;
-        }
-        if !kde_reconfigure() {
-            applied = 0;
-        }
-        return intercept_outcome(applied, KDE_SHORTCUTS.len() + 1, "kwriteconfig/kde");
+        ) && kde::reconfigure_kwin();
+        let required_covered = kde_required_coverage(&family_available, &family_applied);
+        return KeyboardInterceptResult {
+            active: meta_applied && applied == available && required_covered,
+            method: format!(
+                "kde/kglobalaccel-live ({applied}/{available} discovered applied; meta {})",
+                if meta_applied {
+                    "applied"
+                } else {
+                    "unverified"
+                }
+            ),
+            platform: "linux".into(),
+        };
     }
+
     intercept_outcome(0, 0, "unsupported")
 }
 
-// ── Touchpad control ──────────────────────────────────────────────────────────
-
-/// Disable or re-enable the touchpad.
-///
-/// GNOME (X11 + Wayland): flips `org.gnome.desktop.peripherals.touchpad send-events`.
-/// X11 non-GNOME fallback: disables every device whose name contains "touchpad"
-/// via `xinput`. Silently no-ops on Wayland when neither path applies.
-// `#[allow(clippy::map_entry)]` mirrors enable_keyboard_intercept: the
-// contains_key/insert split is kept intentionally so the backup is only written
-// when a value is actually captured (and the borrow of `saved` is released
-// before write_backup), matching the existing `gnome/` backup idiom.
-#[allow(clippy::map_entry)]
-fn set_touchpad_enabled(enabled: bool) {
-    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
-        .unwrap_or_default()
-        .to_lowercase();
-    let is_gnome = desktop.contains("gnome") || desktop.contains("ubuntu");
-
-    if is_gnome {
-        // LX-2a: when DISABLING, back up the current send-events value under the
-        // same `gnome/<schema>/<key>` map-key convention used by the keyboard
-        // intercept. recover_keyboard_if_crashed()/disable_keyboard_intercept()
-        // already iterate every `gnome/`-prefixed key and restore it via
-        // gsettings_set, so this value is restored automatically on crash recovery
-        // and normal teardown with NO change to those functions. Only back up on
-        // the disable path (enable is the restore direction) and only if not
-        // already captured, mirroring enable_keyboard_intercept().
-        if !enabled {
-            let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
-            backup_before_apply(
-                &mut saved,
-                "gnome/org.gnome.desktop.peripherals.touchpad/send-events",
-                || gsettings_get("org.gnome.desktop.peripherals.touchpad", "send-events"),
-                || {
-                    gsettings_set(
-                        "org.gnome.desktop.peripherals.touchpad",
-                        "send-events",
-                        "'disabled'",
-                    )
-                },
-                write_backup,
-            );
-        }
-        // GNOME restoration is performed from its original saved value by
-        // disable_keyboard_intercept, never forced to an assumed enabled state.
-        return;
-    }
-
-    let is_kde = desktop.contains("kde") || desktop.contains("plasma");
-    set_optional_touchpad_enabled_with(enabled, is_kde, |program, args| {
-        std::process::Command::new(program)
-            .args(args)
-            .bounded_output()
-    });
+fn kde_required_coverage(available: &[bool; 4], applied: &[bool; 4]) -> bool {
+    [
+        KdeControlFamily::WindowSwitch,
+        KdeControlFamily::Overview,
+        KdeControlFamily::DesktopSwitch,
+    ]
+    .iter()
+    .all(|family| {
+        let i = *family as usize;
+        available[i] && applied[i]
+    })
 }
 
-// Only runtime, best-effort KDE/X11 touchpad controls are optional. Keep the
-// journaled GNOME branch above and required keyboard setup outside this scope.
-fn set_optional_touchpad_enabled_with(
-    enabled: bool,
-    is_kde: bool,
-    mut run: impl FnMut(&str, &[&str]) -> std::io::Result<std::process::Output>,
-) {
-    crate::process_runner::optional(|| {
-        // KDE: the xinput fallback below covers KDE on X11, but does nothing on
-        // Wayland. On KDE Wayland the touchpad is driven by the KDED `touchpad`
-        // module — ask it to disable/enable over DBus. BEST-EFFORT: the method lives
-        // under `org.kde.kded6` (Plasma 6) or `org.kde.kded5` (Plasma 5); a missing
-        // service / wrong version simply no-ops (no regression vs today). This path
-        // is unverified on a live KDE Wayland session and should be smoke-tested
-        // there. Runtime-only (not persisted) — `unlock` re-enables; matches xinput.
-        if is_kde {
-            let method = if enabled {
-                "org.kde.touchpad.enable"
-            } else {
-                "org.kde.touchpad.disable"
-            };
-            // Try both the `qdbus`/`qdbus6` binary names and the Plasma 6/5 KDED
-            // service names; the wrong combinations just no-op.
-            for bin in ["qdbus", "qdbus6"] {
-                for kded in ["org.kde.kded6", "org.kde.kded5"] {
-                    let _ = run(bin, &[kded, "/modules/touchpad", method]);
-                }
-            }
-            // fall through to xinput as well (covers KDE on X11).
-        }
-
-        // X11 fallback — xinput does nothing on Wayland but won't panic.
-        let Ok(out) = run("xinput", &["list"]) else {
-            return;
-        };
-        let ids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|line| line.to_lowercase().contains("touchpad"))
-            .filter_map(|line| {
-                // line format: "  ↳ Synaptics TouchPad   id=14   [slave  pointer  (2)]"
-                line.split("id=")
-                    .nth(1)?
-                    .split_whitespace()
-                    .next()?
-                    .parse::<u32>()
-                    .ok()
-            })
-            .collect();
-
-        let action = if enabled { "enable" } else { "disable" };
-        for id in ids {
-            let _ = run("xinput", &[action, &id.to_string()]);
-        }
-    });
+pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
+    crate::process_runner::optional(enable_keyboard_intercept_inner)
 }
 
 // ── Process kill shield ───────────────────────────────────────────────────────
@@ -992,9 +1296,9 @@ fn spawn_kill_shield(generation: u64) {
 
 // ── Workspace watchdog (X11 only) ─────────────────────────────────────────────
 //
-// On Wayland the touchpad is fully disabled above and GSettings already blocks
-// all workspace-switch keyboard shortcuts, so no watchdog is needed there.
-// On X11 a touchpad swipe can still slip through on non-WPT drivers — the watchdog
+// Pointer input is preserved. Wayland does not expose global window state to
+// these X11 tools; compositor gestures remain a separate verification gap.
+// On X11 a touchpad swipe can still slip through — the watchdog
 // detects the drift and moves the exam window to whichever workspace became active.
 
 fn desktop_pair(output: &std::process::Output) -> Option<(u32, u32)> {
@@ -1227,31 +1531,28 @@ fn spawn_focus_watchdog(generation: u64) {
 
 // ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
-/// Restore all DE keybindings to their pre-exam values.
+/// Apply supported desktop controls and start applicable detection.
 pub fn lock_desktop() -> bool {
     let active = enable_keyboard_intercept().active;
-    if !active {
-        return false;
-    }
-    // The touchpad is deliberately left alone. See the workspace keys in
-    // GNOME_SHORTCUTS: gestures are neutralised by having one workspace to
-    // gesture between, not by taking the pointer away from the candidate.
+    // Detection runs independently of shortcut-setting support. These
+    // watchdogs still explicitly decline Wayland-wide window claims.
+    // Preserve pointer input. A single GNOME workspace mitigates workspace
+    // switching; overview and other compositor gestures still need verification.
     if !SHIELD_ACTIVE.swap(true, Ordering::SeqCst) {
         let generation = SHIELD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         spawn_kill_shield(generation);
         spawn_workspace_watchdog(generation);
         spawn_focus_watchdog(generation);
     }
-    true
+    active
 }
 
 pub fn unlock_desktop() {
     SHIELD_ACTIVE.store(false, Ordering::SeqCst);
     SHIELD_GENERATION.fetch_add(1, Ordering::SeqCst);
-    // Still re-enabled on the way out: a build that disabled the touchpad
-    // may have left `send-events` disabled on this machine, and teardown is
-    // the one chance to undo it.
-    set_touchpad_enabled(true);
+    // Restore only journaled changes, including legacy GNOME touchpad values.
+    // Entry does not disable pointer input, so blindly enabling a touchpad
+    // would overwrite a candidate's intentionally disabled setting.
     disable_keyboard_intercept();
 }
 
@@ -1282,33 +1583,69 @@ fn restore_saved_settings(
 pub fn keyboard_recovery_pending() -> bool {
     !saved().lock().unwrap_or_else(|e| e.into_inner()).is_empty()
         || backup_file().exists()
-        || std::path::Path::new(LEGACY_BACKUP_PATH).exists()
+        || owned_regular_file(std::path::Path::new(LEGACY_BACKUP_PATH))
 }
 
 pub fn disable_keyboard_intercept() {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
     let mut saved = saved().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(backup) = read_backup() {
-        for (key, value) in backup {
-            saved.entry(key).or_insert(value);
+    match read_backup() {
+        Ok(Some(backup)) => {
+            for (key, value) in backup {
+                saved.entry(key).or_insert(value);
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("[ams][kb] recovery journal retained: {error}");
+            return;
         }
     }
+    if saved.is_empty() {
+        delete_backup();
+        return;
+    }
+    let mut kde_live = saved
+        .keys()
+        .any(|key| key.starts_with("kde_live/"))
+        .then(kde_live::Adapter::discover)
+        .flatten();
+    let mut settings = settings::Settings::new(settings_command);
+    // Config readback proves persistence, not that KGlobalAccel accepted the
+    // restored shortcut live. Retain those recovery records until a supported
+    // live API can verify them. A kwinrc-only Meta restoration can be reloaded.
+    let has_kglobalaccel = saved.keys().any(|key| key.starts_with("kde/"));
     restore_saved_settings(
         &mut saved,
         |key, value| {
+            if key.starts_with("kde_live/") {
+                return serde_json::from_str::<kde_live::Plan>(value)
+                    .ok()
+                    .is_some_and(|plan| {
+                        kde_live
+                            .as_mut()
+                            .is_some_and(|adapter| adapter.restore(&plan))
+                    });
+            }
+
             if let Some(path) = key.strip_prefix("gnome/") {
                 return path
                     .split_once('/')
-                    .is_some_and(|(schema, key)| gsettings_set(schema, key, value));
+                    .is_some_and(|(schema, key)| settings.restore(schema, key, value));
             }
             if let Some(path) = key.strip_prefix("kde/") {
                 return path.split_once('/').is_some_and(|(group, key)| {
                     kconfig_set("kglobalshortcutsrc", group, key, value)
                 });
             }
-            key == "kde_meta" && kconfig_set("kwinrc", "ModifierOnlyShortcuts", "Meta", value)
+            key == "kde_meta"
+                && restore_kde_meta_with(
+                    value,
+                    || kde::config_get("kwinrc", "ModifierOnlyShortcuts", "Meta"),
+                    |desired| kconfig_set("kwinrc", "ModifierOnlyShortcuts", "Meta", desired),
+                )
         },
-        kde_reconfigure,
+        || !has_kglobalaccel && kde::reconfigure_kwin(),
     );
     if saved.is_empty() {
         delete_backup();
@@ -1538,7 +1875,7 @@ fn helper_send(json: &str) -> Result<(), String> {
 /// discards this detail down to a bool for the readiness policy; callers that need
 /// to diagnose *why* the helper looks down should use this and log the message.
 pub fn network_helper_status() -> Result<(), String> {
-    helper_send(r#"{"cmd":"ping"}"#)
+    helper_send(r#"{"cmd":"ping_v2"}"#)
 }
 
 /// True when the helper daemon socket is reachable and answers a ping.
@@ -1559,25 +1896,51 @@ pub fn network_helper_running() -> bool {
 /// can be sent port-scoped rather than wide open. Reading it here rather than
 /// changing `enable_network_lockdown`'s signature keeps the cross-platform
 /// dispatch identical on macOS and Windows.
-fn configured_nameservers() -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for path in ["/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"] {
-        let Ok(contents) = std::fs::read_to_string(path) else {
+/// Parse resolver directives strictly, including inline comments, and normalize
+/// IP spelling so equivalent IPv6 addresses cannot bypass DNS-only scoping.
+pub fn parse_resolv_nameservers(contents: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    for line in contents.lines() {
+        let content = line.split(['#', ';']).next().unwrap_or("");
+        let mut fields = content.split_whitespace();
+        if fields.next() != Some("nameserver") {
+            continue;
+        }
+        let Some(address) = fields
+            .next()
+            .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+        else {
             continue;
         };
-        for line in contents.lines() {
-            if let Some(rest) = line.trim().strip_prefix("nameserver") {
-                let candidate = rest.trim().to_string();
-                if candidate.parse::<std::net::IpAddr>().is_ok() && !out.contains(&candidate) {
-                    out.push(candidate);
+        if fields.next().is_some() {
+            continue;
+        }
+        let address = address.to_string();
+        if !result.contains(&address) {
+            result.push(address);
+        }
+    }
+    result
+}
+
+fn configured_nameservers() -> Vec<String> {
+    let mut result = Vec::new();
+    for path in ["/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"] {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            for address in parse_resolv_nameservers(&contents) {
+                if !result.contains(&address) {
+                    result.push(address);
                 }
             }
         }
     }
-    out
+    result
 }
 
 pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+    // Old helpers cannot promise resolver scoping/recovery validation. Updating
+    // is required for new enforcement; legacy disable remains usable.
+    network_helper_status().map_err(|error| format!("network_helper_update_required: {error}"))?;
     let mut slot = SESSION_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
     let path =
         session_token_path().map_err(|e| format!("cannot store network recovery token: {e}"))?;
@@ -1598,7 +1961,10 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     let nameservers = configured_nameservers();
     let resolvers: Vec<&String> = allowed_ips
         .iter()
-        .filter(|ip| nameservers.contains(ip))
+        .filter(|ip| {
+            ip.parse::<std::net::IpAddr>()
+                .is_ok_and(|address| nameservers.contains(&address.to_string()))
+        })
         .collect();
 
     let request = serde_json::json!({
@@ -1705,6 +2071,10 @@ HELPER_DEST="$3"
 UNIT_DEST="$4"
 CLIENT_PIN="$5"
 CONFIG_DEST="$6"
+if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+  echo systemd_not_available >&2
+  exit 69
+fi
 install -d "$(dirname "$HELPER_DEST")"
 install -o root -g root -m 755 "$HELPER_SRC" "$HELPER_DEST"
 install -o root -g root -m 644 "$UNIT_SRC" "$UNIT_DEST"
@@ -1735,17 +2105,27 @@ systemctl restart ams-proctor-helper.service
             CLIENT_CONFIG_DEST,
         ])
         .bounded_output_with_timeout(std::time::Duration::from_secs(120))
-        .map_err(|e| format!("pkexec: {e}"))?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "pkexec_not_available".to_string()
+            } else {
+                format!("pkexec: {e}")
+            }
+        })?;
 
     if !out.status.success() {
-        // pkexec exit 126 = user dismissed/failed auth; 127 = pkexec missing.
+        // pkexec 126 means dismissed auth; 127 means authorization failed.
+        // A missing executable is a spawn NotFound error, handled above.
         let code = out.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&out.stderr);
         if code == 126 {
             return Err("admin_auth_cancelled".to_string());
         }
         if code == 127 {
-            return Err("pkexec_not_available".to_string());
+            return Err("admin_auth_failed".to_string());
+        }
+        if code == 69 {
+            return Err("systemd_not_available".to_string());
         }
         return Err(format!(
             "helper install failed (exit {code}): {}",
@@ -1753,14 +2133,18 @@ systemctl restart ams-proctor-helper.service
         ));
     }
 
-    // Give the daemon up to 3 s to create its socket before returning.
-    for _ in 0..30 {
-        if network_helper_running() {
+    // One end-to-end deadline, not thirty potentially ten-second ping reads.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        if crate::helper_client::ping_until(std::path::Path::new(HELPER_SOCKET), deadline).is_ok() {
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(
+            std::time::Duration::from_millis(100)
+                .min(deadline.saturating_duration_since(std::time::Instant::now())),
+        );
     }
-    Err("helper installed but socket not ready within 3 s".to_string())
+    Err("helper_startup_timeout".to_string())
 }
 
 /// Returns true if `name` is in the Linux RESTRICTED process list.
@@ -1966,7 +2350,7 @@ mod tests {
             &mut saved,
             "key",
             || None,
-            || {
+            |_| {
                 applied.set(true);
                 true
             },
@@ -1977,7 +2361,7 @@ mod tests {
             &mut saved,
             "key",
             || Some("original".into()),
-            || {
+            |_| {
                 applied.set(true);
                 true
             },
@@ -1988,7 +2372,7 @@ mod tests {
             &mut saved,
             "key",
             || panic!("must retain original"),
-            || {
+            |_| {
                 applied.set(true);
                 true
             },
@@ -2003,7 +2387,7 @@ mod tests {
             ("gnome/schema/first".into(), "first-original".into()),
             ("gnome/schema/second".into(), "second-original".into()),
             ("kde/group/key".into(), "kde-original".into()),
-            ("kde_meta".into(), super::KDE_UNSET.into()),
+            ("kde_meta".into(), super::kde::UNSET.into()),
         ]);
         super::restore_saved_settings(&mut saved, |key, _| key != "gnome/schema/second", || false);
         assert!(!saved.contains_key("gnome/schema/first"));
@@ -2014,6 +2398,35 @@ mod tests {
         );
         super::restore_saved_settings(&mut saved, |_, _| true, || true);
         assert!(saved.is_empty());
+    }
+
+    #[test]
+    fn workspace_and_desktop_changes_alone_are_not_keyboard_interception() {
+        let successful_writes = [
+            ("org.gnome.mutter", "dynamic-workspaces"),
+            ("org.gnome.desktop.wm.preferences", "num-workspaces"),
+            ("org.gnome.desktop.interface", "enable-hot-corners"),
+            ("org.gnome.shell.extensions.dash-to-dock", "dock-fixed"),
+        ];
+        assert!(successful_writes
+            .iter()
+            .all(|&(schema, key)| !super::is_gnome_keyboard_control(schema, key)));
+    }
+
+    #[test]
+    fn actual_shortcut_controls_still_count_when_other_settings_fail() {
+        for (schema, key) in [
+            ("org.gnome.mutter", "overlay-key"),
+            ("org.gnome.desktop.wm.keybindings", "switch-applications"),
+            ("org.gnome.shell.keybindings", "toggle-overview"),
+            ("org.gnome.mutter.wayland.keybindings", "restore-shortcuts"),
+        ] {
+            assert!(
+                super::is_gnome_keyboard_control(schema, key),
+                "{schema}/{key}"
+            );
+        }
+        assert!(!super::is_gnome_keyboard_control("unknown", "overlay-key"));
     }
 
     #[test]
@@ -2117,88 +2530,6 @@ mod required_probe_review_tests {
 }
 
 #[cfg(test)]
-mod optional_touchpad_tests {
-    use super::set_optional_touchpad_enabled_with;
-    use crate::process_runner::{record_failure, Budget};
-    use std::os::unix::process::ExitStatusExt;
-    use std::time::Duration;
-
-    fn output(stdout: &[u8]) -> std::process::Output {
-        std::process::Output {
-            status: std::process::ExitStatus::from_raw(0),
-            stdout: stdout.to_vec(),
-            stderr: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn missing_alternatives_do_not_poison_successful_kde_entry_or_restore() {
-        for enabled in [false, true] {
-            let budget = Budget::new(Duration::from_secs(2));
-            let mut usable_calls = 0;
-            set_optional_touchpad_enabled_with(enabled, true, |program, _| {
-                if program == "qdbus6" {
-                    usable_calls += 1;
-                    Ok(output(b""))
-                } else {
-                    // Mirrors the runner recording a failed spawn. No native
-                    // desktop commands are invoked by this regression.
-                    record_failure(format!("{program}: executable not found"));
-                    Err(std::io::ErrorKind::NotFound.into())
-                }
-            });
-            assert_eq!(usable_calls, 2);
-            assert!(budget.failure().is_none());
-        }
-    }
-
-    #[test]
-    fn optional_controls_preserve_required_failures_before_and_after_them() {
-        let budget = Budget::new(Duration::from_secs(2));
-        record_failure("required keyboard snapshot failed");
-        set_optional_touchpad_enabled_with(false, true, |_, _| {
-            record_failure("optional tool timed out");
-            Err(std::io::ErrorKind::TimedOut.into())
-        });
-        assert_eq!(
-            budget.failure().as_deref(),
-            Some("required keyboard snapshot failed")
-        );
-        drop(budget);
-
-        let budget = Budget::new(Duration::from_secs(2));
-        set_optional_touchpad_enabled_with(false, false, |_, _| Ok(output(b"")));
-        record_failure("required restoration failed");
-        assert_eq!(
-            budget.failure().as_deref(),
-            Some("required restoration failed")
-        );
-    }
-
-    #[test]
-    fn xinput_fallback_still_applies_the_requested_action() {
-        for (enabled, action) in [(false, "disable"), (true, "enable")] {
-            let budget = Budget::new(Duration::from_secs(2));
-            let mut calls = Vec::new();
-            set_optional_touchpad_enabled_with(enabled, false, |program, args| {
-                assert_eq!(program, "xinput");
-                calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
-                Ok(output(if args == ["list"] {
-                    b"Synaptics TouchPad id=14 [slave pointer (2)]\n"
-                } else {
-                    b""
-                }))
-            });
-            assert_eq!(
-                calls,
-                vec![vec!["list".to_string()], vec![action.into(), "14".into()]]
-            );
-            assert!(budget.failure().is_none());
-        }
-    }
-}
-
-#[cfg(test)]
 mod watchdog_batch_tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
@@ -2235,5 +2566,211 @@ mod watchdog_batch_tests {
         ] {
             assert!(focus_snapshot(&out).is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod phase_e_journal_tests {
+    use super::decode_backup;
+
+    #[test]
+    fn json_journal_preserves_tabs_and_newlines_in_values() {
+        let content = r#"{"gnome/schema/key":"line one\nline two\twith tab"}"#;
+        let decoded = decode_backup(content).unwrap();
+        assert_eq!(
+            decoded.get("gnome/schema/key").map(String::as_str),
+            Some("line one\nline two\twith tab")
+        );
+    }
+
+    #[test]
+    fn corrupt_json_and_ambiguous_legacy_lines_are_rejected() {
+        assert!(decode_backup(r#"{"gnome/schema/key":"unterminated}"#).is_err());
+        assert!(decode_backup("gnome/schema/key\tfirst line\nsecond line").is_err());
+        assert!(decode_backup("missing-tab").is_err());
+        assert!(decode_backup("\torphan").is_err());
+    }
+
+    #[test]
+    fn legacy_decoder_splits_only_the_first_tab() {
+        let decoded = decode_backup("gnome/schema/key\tvalue\twith-tab\n").unwrap();
+        assert_eq!(
+            decoded.get("gnome/schema/key").map(String::as_str),
+            Some("value\twith-tab")
+        );
+    }
+
+    #[test]
+    fn unlock_never_forces_touchpad_enabled() {
+        let source = include_str!("mod.rs");
+        let unlock = source
+            .split_once("pub fn unlock_desktop()")
+            .unwrap()
+            .1
+            .split_once("/// Preserve every failed key")
+            .unwrap()
+            .0;
+        assert!(!unlock.contains("set_touchpad_enabled"));
+        assert!(unlock.contains("disable_keyboard_intercept"));
+    }
+}
+
+#[cfg(test)]
+mod phase_f_resolver_tests {
+    #[test]
+    fn directives_comments_and_ipv6_aliases_are_normalized() {
+        let result = super::parse_resolv_nameservers(
+            "nameserver 2001:0db8:0:0:0:0:0:1 # primary\nnameserver 2001:db8::1; duplicate\nnameserver 1.1.1.1 # dns\nnameserver1.2.3.4\nnameserver 2.2.2.2 extra\nnameserver invalid\n");
+        assert_eq!(result, vec!["2001:db8::1", "1.1.1.1"]);
+    }
+}
+
+#[cfg(test)]
+mod review_regression_tests {
+    use super::*;
+    #[test]
+    fn advisory_desktop_budget_failure_does_not_escape_to_outer_required_scan() {
+        let outer = Budget::new(std::time::Duration::from_secs(1));
+        crate::process_runner::optional(|| {
+            let inner = Budget::new(std::time::Duration::ZERO);
+            assert!(inner.expired());
+            assert!(inner.failure().is_some());
+        });
+        assert_eq!(outer.failure(), None);
+    }
+    #[test]
+    fn kde_active_requires_every_core_family_but_not_version_optional_activity() {
+        assert!(kde_required_coverage(
+            &[true, true, true, false],
+            &[true, true, true, false]
+        ));
+        assert!(!kde_required_coverage(
+            &[true, true, false, true],
+            &[true, true, false, true]
+        ));
+        assert!(!kde_required_coverage(
+            &[true, true, true, true],
+            &[true, false, true, true]
+        ));
+    }
+    #[test]
+    fn meta_original_is_persisted_before_mutation_and_conflict_remains_retryable() {
+        use std::cell::Cell;
+        let persisted = Cell::new(false);
+        let mutated = Cell::new(false);
+        let mut saved = HashMap::new();
+        assert!(backup_before_apply(
+            &mut saved,
+            "kde_meta",
+            || Some(kde::UNSET.into()),
+            |_| {
+                assert!(persisted.get());
+                mutated.set(true);
+                true
+            },
+            |_| {
+                persisted.set(true);
+                true
+            }
+        ));
+        assert!(mutated.get());
+        assert_eq!(saved["kde_meta"], kde::UNSET);
+        let mut conflict = saved.clone();
+        restore_saved_settings(&mut conflict, |_, _| false, || true);
+        assert!(conflict.contains_key("kde_meta"));
+    }
+    #[test]
+    fn legacy_pending_predicate_accepts_only_owned_regular_files() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("ams-legacy-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("owned");
+        std::fs::write(&file, b"malformed-but-pending").unwrap();
+        assert!(owned_regular_file(&file));
+        assert!(!owned_regular_file(&root));
+        let link = root.join("link");
+        symlink(&file, &link).unwrap();
+        assert!(!owned_regular_file(&link));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn kde_meta_apply_and_restore_preserve_external_edits() {
+        let mut writes = Vec::new();
+        assert!(apply_kde_meta_with(
+            kde::UNSET,
+            || Some(kde::UNSET.into()),
+            |v| {
+                writes.push(v.to_owned());
+                true
+            }
+        ));
+        assert_eq!(writes, [""]);
+        writes.clear();
+        assert!(!apply_kde_meta_with(
+            "launcher",
+            || Some("external".into()),
+            |v| {
+                writes.push(v.to_owned());
+                true
+            }
+        ));
+        assert!(writes.is_empty());
+        assert!(apply_kde_meta_with(
+            "launcher",
+            || Some("".into()),
+            |_| panic!("idempotent apply must not write")
+        ));
+
+        assert!(restore_kde_meta_with(
+            kde::UNSET,
+            || Some("".into()),
+            |v| {
+                writes.push(v.to_owned());
+                true
+            }
+        ));
+        assert_eq!(writes, [kde::UNSET]);
+        writes.clear();
+        assert!(restore_kde_meta_with(
+            "launcher",
+            || Some("".into()),
+            |v| {
+                writes.push(v.to_owned());
+                true
+            }
+        ));
+        assert_eq!(writes, ["launcher"]);
+        writes.clear();
+        assert!(!restore_kde_meta_with(
+            "launcher",
+            || Some("external".into()),
+            |v| {
+                writes.push(v.to_owned());
+                true
+            }
+        ));
+        assert!(writes.is_empty());
+        assert!(restore_kde_meta_with(
+            "",
+            || Some("".into()),
+            |_| panic!("explicit empty original is already restored")
+        ));
+    }
+
+    #[test]
+    fn unsafe_legacy_types_are_ignored_but_owned_malformed_regular_file_is_error() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("ams-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let link = root.join("legacy");
+        symlink(root.join("missing"), &link).unwrap();
+        assert_eq!(read_legacy_backup_file(&link).unwrap(), None);
+        std::fs::remove_file(&link).unwrap();
+        std::fs::write(&link, b"malformed").unwrap();
+        assert!(read_legacy_backup_file(&link).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

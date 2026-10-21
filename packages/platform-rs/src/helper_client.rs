@@ -198,12 +198,31 @@ fn connect_with_timeout(path: &std::path::Path, timeout: Duration) -> std::io::R
     }
 }
 
-fn exchange(mut stream: UnixStream, json: &str) -> Result<(), String> {
+/// Read-only startup probe with one deadline across connect, write and reply.
+/// Unlike mutation requests this needs no busy retry: the caller owns polling.
+pub fn ping_until(path: &std::path::Path, deadline: Instant) -> Result<(), String> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|time| !time.is_zero())
+        .ok_or("helper startup timed out")?;
+    let stream = connect_with_timeout(path, remaining).map_err(|error| error.to_string())?;
+    exchange_until(stream, r#"{"cmd":"ping_v2"}"#, Some(deadline))
+}
+
+fn exchange(stream: UnixStream, json: &str) -> Result<(), String> {
+    exchange_until(stream, json, None)
+}
+
+fn exchange_until(
+    mut stream: UnixStream,
+    json: &str,
+    deadline: Option<Instant>,
+) -> Result<(), String> {
     if json.len() >= MAX_FRAME {
         return Err("helper request too large".into());
     }
     let request = format!("{json}\n");
-    let write_deadline = Instant::now() + Duration::from_secs(1);
+    let write_deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(1));
     let mut remaining = request.as_bytes();
     let written = (|| -> Result<(), String> {
         while !remaining.is_empty() {
@@ -225,7 +244,10 @@ fn exchange(mut stream: UnixStream, json: &str) -> Result<(), String> {
     })();
     // An overloaded helper may send its explicit rejection before reading our
     // request, then close. Read that response even if our write hit BrokenPipe.
-    let response = read_response(&mut stream);
+    let response = read_response_until(
+        &mut stream,
+        deadline.unwrap_or_else(|| Instant::now() + RESPONSE_TIMEOUT),
+    );
     if response.as_ref().is_err_and(|error| error == BUSY) {
         return response;
     }
@@ -233,8 +255,7 @@ fn exchange(mut stream: UnixStream, json: &str) -> Result<(), String> {
     response
 }
 
-fn read_response(stream: &mut UnixStream) -> Result<(), String> {
-    let deadline = Instant::now() + RESPONSE_TIMEOUT;
+fn read_response_until(stream: &mut UnixStream, deadline: Instant) -> Result<(), String> {
     let mut bytes = Vec::new();
     let mut chunk = [0; 1024];
     loop {
@@ -305,6 +326,27 @@ pub fn send(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_ping_deadline_bounds_a_silent_connected_peer() {
+        use std::io::Read;
+        let (client, mut server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut byte = [0; 1];
+            // Read until the bounded caller closes instead of sleeping or
+            // touching the real daemon. Never reply to the probe.
+            while server.read(&mut byte).is_ok_and(|n| n > 0) {}
+        });
+        let start = std::time::Instant::now();
+        let result = super::exchange_until(
+            client,
+            r#"{"cmd":"ping"}"#,
+            Some(start + std::time::Duration::from_millis(40)),
+        );
+        assert!(result.is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        peer.join().unwrap();
+    }
+
     use super::*;
     #[test]
     fn full_local_listen_backlog_is_a_bounded_connection_failure() {

@@ -40,6 +40,8 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const FIREWALL_TIMEOUT: Duration = Duration::from_secs(8);
+#[cfg(target_os = "linux")]
+const MAX_ALLOWED_DESTINATIONS: usize = 64;
 thread_local! {
     static FIREWALL_DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
 }
@@ -283,6 +285,9 @@ fn remove_marker() -> Result<(), String> {
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
     Ping,
+    #[cfg(target_os = "linux")]
+    #[serde(rename = "ping_v2")]
+    PingV2,
     Enable {
         ips: Vec<String>,
         /// DNS resolvers, allowed on port 53/853 ONLY.
@@ -800,6 +805,8 @@ fn dispatch(json: &str) -> String {
     let _deadline = FirewallDeadline::begin();
     match serde_json::from_str::<Request>(json.trim()) {
         Ok(Request::Ping) => json_ok(),
+        #[cfg(target_os = "linux")]
+        Ok(Request::PingV2) => json_ok(),
         Ok(Request::Enable {
             ips,
             resolvers,
@@ -873,6 +880,7 @@ fn acquire_firewall(lock: &std::sync::Mutex<()>) -> Result<std::sync::MutexGuard
 #[cfg(target_os = "linux")]
 fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
+    validate_linux_enable_input(ips, resolvers, token)?;
     let marker = Marker {
         disabling: false,
         token: token.to_string(),
@@ -1113,110 +1121,112 @@ fn teardown_with(
 /// the given same-family IP strings, and hook it into OUTPUT at position 1.
 #[cfg(target_os = "linux")]
 fn build_chain(bin: &str, allowed: &[&str], resolvers: &[&str]) -> Result<(), String> {
-    // Fresh chain (teardown already ran).
-    let out = run_tables(bin, &["-N", CHAIN])?;
+    build_chain_with(allowed, resolvers, |args| run_tables(bin, args))
+        .map_err(|error| format!("{bin} {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn build_chain_with(
+    allowed: &[&str],
+    resolvers: &[&str],
+    mut run: impl FnMut(&[&str]) -> Result<std::process::Output, String>,
+) -> Result<(), String> {
+    let out = run(&["-N", CHAIN])?;
     if !out.status.success() {
         let msg = String::from_utf8_lossy(&out.stderr);
         if !msg.contains("Chain already exists") {
-            return Err(format!("{bin} -N failed: {}", msg.trim()));
+            return Err(format!("-N failed: {}", msg.trim()));
         }
     }
 
-    // Loopback always passes.
-    let out = run_tables(bin, &["-A", CHAIN, "-o", "lo", "-j", "ACCEPT"])?;
+    let out = run(&["-A", CHAIN, "-o", "lo", "-j", "ACCEPT"])?;
     if !out.status.success() {
         return Err(format!(
-            "{bin} loopback rule failed: {}",
+            "loopback rule failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
 
-    // Keep already-established connections alive so the exam session does not
-    // drop the instant the default-DROP rule lands. Use the modern `conntrack`
-    // match (xt_conntrack), NOT the legacy `state` match (xt_state): on
-    // nft-backend distros xt_state is typically neither loaded nor built-in, and
-    // the helper's systemd unit drops CAP_SYS_MODULE, so iptables' lazy autoload
-    // of xt_state fails ("Couldn't load match `state'") and the whole enable
-    // aborts. xt_conntrack is already loaded wherever conntrack is in use.
-    let out = run_tables(
-        bin,
-        &[
-            "-A",
-            CHAIN,
-            "-m",
-            "conntrack",
-            "--ctstate",
-            "ESTABLISHED,RELATED",
-            "-j",
-            "ACCEPT",
-        ],
-    )?;
-    if !out.status.success() {
-        return Err(format!(
-            "{bin} established rule failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-
-    // Allow each same-family whitelisted IP.
+    // Destination rules also match subsequent packets in connections that were
+    // open before lockdown. A blanket ESTABLISHED rule would preserve every
+    // unrelated pre-existing egress connection and bypass resolver port scope.
     for ip in allowed {
-        let out = run_tables(bin, &["-A", CHAIN, "-d", ip, "-j", "ACCEPT"])?;
+        let out = run(&["-A", CHAIN, "-d", ip, "-j", "ACCEPT"])?;
         if !out.status.success() {
             return Err(format!(
-                "{bin} allow {ip} failed: {}",
+                "allow {ip} failed: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             ));
         }
     }
 
-    // Resolvers get DNS ports ONLY, never a bare `-d`.
-    //
-    // An unscoped `-d <resolver> -j ACCEPT` was a complete egress bypass. A
-    // candidate installing at home is root on their own laptop: writing
-    // `nameserver 203.0.113.7` into /etc/resolv.conf before launch allowlisted
-    // an arbitrary internet host on *every port and protocol* — SSH, WireGuard,
-    // a plain HTTP proxy — while the UI reported the lockdown engaged and the
-    // readiness report recorded a pass. Every other defect here costs one
-    // candidate their exam; that one cost the contest its integrity.
-    //
-    // 853 is DNS-over-TLS: omitting it would break resolution on hosts
-    // configured for DoT, which is the failure mode that tempts someone to
-    // widen this back out again.
+    // Resolvers get DNS ports ONLY, never a bare `-d` rule. Parsed-address
+    // filtering removes them from `allowed`, including equivalent IPv6 forms.
     for ip in resolvers {
         for (proto, port) in [("udp", "53"), ("tcp", "53"), ("tcp", "853")] {
-            let out = run_tables(
-                bin,
-                &[
-                    "-A", CHAIN, "-d", ip, "-p", proto, "--dport", port, "-j", "ACCEPT",
-                ],
-            )?;
+            let out = run(&[
+                "-A", CHAIN, "-d", ip, "-p", proto, "--dport", port, "-j", "ACCEPT",
+            ])?;
             if !out.status.success() {
                 return Err(format!(
-                    "{bin} allow resolver {ip} {proto}/{port} failed: {}",
+                    "allow resolver {ip} {proto}/{port} failed: {}",
                     String::from_utf8_lossy(&out.stderr).trim()
                 ));
             }
         }
     }
 
-    // Drop everything else.
-    let out = run_tables(bin, &["-A", CHAIN, "-j", "DROP"])?;
+    let out = run(&["-A", CHAIN, "-j", "DROP"])?;
     if !out.status.success() {
         return Err(format!(
-            "{bin} DROP rule failed: {}",
+            "DROP rule failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
 
-    // Hook into OUTPUT at position 1 (evaluated first).
-    let out = run_tables(bin, &["-I", "OUTPUT", "1", "-j", CHAIN])?;
+    let out = run(&["-I", "OUTPUT", "1", "-j", CHAIN])?;
     if !out.status.success() {
         return Err(format!(
-            "{bin} OUTPUT hook failed: {}",
+            "OUTPUT hook failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
+    Ok(())
+}
 
+#[cfg(target_os = "linux")]
+fn validate_linux_enable_input(
+    ips: &[String],
+    resolvers: &[String],
+    token: &str,
+) -> Result<(), String> {
+    use std::collections::HashSet;
+    use std::net::IpAddr;
+
+    if token.is_empty() {
+        return Err("enable requires a non-empty session token".to_string());
+    }
+    let mut destinations = HashSet::new();
+    for raw in ips {
+        destinations.insert(
+            raw.parse::<IpAddr>()
+                .map_err(|_| format!("invalid allowed IP: {raw}"))?,
+        );
+    }
+    for raw in resolvers {
+        destinations.insert(
+            raw.parse::<IpAddr>()
+                .map_err(|_| format!("invalid resolver IP: {raw}"))?,
+        );
+    }
+    if destinations.is_empty() {
+        return Err("empty allowlist: refusing to apply a near-total egress block".to_string());
+    }
+    if destinations.len() > MAX_ALLOWED_DESTINATIONS {
+        return Err(format!(
+            "allowlist exceeds {MAX_ALLOWED_DESTINATIONS} unique destinations"
+        ));
+    }
     Ok(())
 }
 
@@ -1235,14 +1245,16 @@ fn split_ip_families(ips: &[String]) -> Result<(Vec<String>, Vec<String>), Strin
     let mut v6: Vec<String> = Vec::new();
     for raw in ips {
         match raw.parse::<IpAddr>() {
-            Ok(IpAddr::V4(_)) => {
-                if !v4.contains(raw) {
-                    v4.push(raw.clone());
+            Ok(IpAddr::V4(ip)) => {
+                let canonical = ip.to_string();
+                if !v4.contains(&canonical) {
+                    v4.push(canonical);
                 }
             }
-            Ok(IpAddr::V6(_)) => {
-                if !v6.contains(raw) {
-                    v6.push(raw.clone());
+            Ok(IpAddr::V6(ip)) => {
+                let canonical = ip.to_string();
+                if !v6.contains(&canonical) {
+                    v6.push(canonical);
                 }
             }
             Err(_) => return Err(format!("invalid allowed IP: {raw}")),
@@ -1379,6 +1391,26 @@ mod tests {
     };
 
     #[test]
+    fn enable_validation_requires_owned_bounded_input() {
+        assert!(super::validate_linux_enable_input(&["192.0.2.1".into()], &[], "").is_err());
+        assert!(super::validate_linux_enable_input(&["bad".into()], &[], "token").is_err());
+        assert!(super::validate_linux_enable_input(&[], &["bad".into()], "token").is_err());
+
+        let too_many = (0..=super::MAX_ALLOWED_DESTINATIONS)
+            .map(|index| format!("2001:db8::{:x}", index + 1))
+            .collect::<Vec<_>>();
+        assert!(super::validate_linux_enable_input(&too_many, &[], "token").is_err());
+
+        // Equivalent spellings count once, matching resolver scoping semantics.
+        assert!(super::validate_linux_enable_input(
+            &["2606:4700:0:0:0:0:0:1111".into()],
+            &["2606:4700::1111".into()],
+            "token",
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn builds_v6_chain_only_when_stack_present() {
         // Stack present → build (even if the v6 allow-list is later empty, the
         // caller still constructs the DROP chain to block all v6 egress).
@@ -1399,6 +1431,13 @@ mod tests {
         let (v4, v6) = split_ip_families(&ips).expect("valid IPs");
         assert_eq!(v4, vec!["1.2.3.4".to_string(), "8.8.8.8".to_string()]);
         assert_eq!(v6, vec!["2606:4700::1111".to_string()]);
+
+        let (_, aliases) = split_ip_families(&[
+            "2606:4700:0:0:0:0:0:1111".to_string(),
+            "2606:4700::1111".to_string(),
+        ])
+        .expect("equivalent IPv6 forms");
+        assert_eq!(aliases, vec!["2606:4700::1111".to_string()]);
     }
 
     #[test]
@@ -1768,6 +1807,15 @@ mod bounded_firewall_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_v2_probe_is_explicit_and_unknown_capabilities_fail_closed() {
+        assert_eq!(dispatch(r#"{"cmd":"ping_v2"}"#), json_ok());
+        let unknown = dispatch(r#"{"cmd":"ping_v3"}"#);
+        assert!(unknown.contains("invalid request"));
+        assert!(unknown.contains("unknown variant"));
+    }
+
+    #[test]
     fn contention_is_busy_before_any_firewall_mutation() {
         let _held = FIREWALL_LOCK.lock().unwrap();
         assert!(
@@ -1810,6 +1858,32 @@ mod bounded_firewall_tests {
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn generated_chain_scopes_existing_connections_by_destination_and_port() {
+        let mut calls = Vec::new();
+        build_chain_with(&["192.0.2.10"], &["9.9.9.9"], |args| {
+            calls.push(args.join(" "));
+            Ok(output(true, ""))
+        })
+        .unwrap();
+
+        assert!(!calls.iter().any(|call| call.contains("ESTABLISHED")));
+        assert!(!calls
+            .iter()
+            .any(|call| call == "-A AMS_PROCTOR -d 9.9.9.9 -j ACCEPT"));
+        assert!(calls
+            .iter()
+            .any(|call| { call == "-A AMS_PROCTOR -d 192.0.2.10 -j ACCEPT" }));
+        assert!(calls
+            .iter()
+            .any(|call| { call == "-A AMS_PROCTOR -d 9.9.9.9 -p udp --dport 53 -j ACCEPT" }));
+        assert_eq!(
+            calls.last().map(String::as_str),
+            Some("-I OUTPUT 1 -j AMS_PROCTOR")
+        );
     }
 
     #[test]

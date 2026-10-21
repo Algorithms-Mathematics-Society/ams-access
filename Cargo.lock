@@ -2437,6 +2437,8 @@ dependencies = [
  "block2",
  "cfg-if",
  "core-rs",
+ "gio",
+ "glib",
  "objc2",
  "raw-cpuid",
  "rusqlite",

@@ -78,15 +78,19 @@ pub(crate) fn keyboard_required(
         .keyboard
         .as_ref()
         .is_some_and(|keyboard| keyboard.method == "unsupported");
-    policy.checks.iter().any(|check| {
-        check.kind == CheckKind::KeyboardLockdown
-            && check.required
-            && (if unsupported {
-                &check.unsupported_severity
-            } else {
-                &check.severity
-            }) == &BlockingSeverity::Block
-    })
+    policy
+        .checks
+        .iter()
+        .rev()
+        .find(|check| check.kind == CheckKind::KeyboardLockdown)
+        .is_some_and(|check| {
+            check.required
+                && (if unsupported {
+                    &check.unsupported_severity
+                } else {
+                    &check.severity
+                }) == &BlockingSeverity::Block
+        })
 }
 
 #[cfg(test)]
@@ -316,6 +320,50 @@ mod tests {
             .find(|check| check.kind == CheckKind::KeyboardLockdown)
             .unwrap()
             .unsupported_severity = BlockingSeverity::Block;
+        assert!(keyboard_required(&policy, &device));
+    }
+
+    #[test]
+    fn keyboard_gate_uses_last_matching_requirement() {
+        use core_rs::exam::*;
+        let mut policy = SessionPolicy::for_profile_with_platform(
+            EnforcementProfile::StrictContest,
+            Some("windows"),
+        );
+        let mut override_requirement = policy
+            .checks
+            .iter()
+            .find(|check| check.kind == CheckKind::KeyboardLockdown)
+            .unwrap()
+            .clone();
+        override_requirement.required = false;
+        policy.checks.push(override_requirement.clone());
+
+        let mut device = DeviceState {
+            platform: Some("windows".into()),
+            camera_available: None,
+            microphone_available: None,
+            network: None,
+            keyboard: Some(KeyboardInterceptResult {
+                active: false,
+                method: "windows_hook".into(),
+                platform: "windows".into(),
+            }),
+            restricted_processes: None,
+            virtualization: None,
+            external_displays: None,
+            rdp_server: None,
+            network_helper_ready: None,
+        };
+        assert!(!keyboard_required(&policy, &device));
+
+        override_requirement.required = true;
+        override_requirement.severity = BlockingSeverity::Block;
+        override_requirement.unsupported_severity = BlockingSeverity::Block;
+        policy.checks.push(override_requirement);
+        assert!(keyboard_required(&policy, &device));
+
+        device.keyboard.as_mut().unwrap().method = "unsupported".into();
         assert!(keyboard_required(&policy, &device));
     }
 }

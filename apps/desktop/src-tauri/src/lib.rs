@@ -1,7 +1,12 @@
 mod blocking_probe;
 mod event_recorder;
 mod event_store;
+mod keyboard_probe;
+#[cfg(target_os = "linux")]
+mod linux_network;
 mod lockdown_lifecycle;
+#[cfg(target_os = "linux")]
+static LINUX_NETWORK: linux_network::Coordinator = linux_network::Coordinator::new();
 mod network_probe;
 mod shutdown;
 #[cfg(target_os = "windows")]
@@ -104,6 +109,9 @@ static LOCKDOWN_ENGAGED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static LOCKDOWN_REQUIRES_KEYBOARD: AtomicBool = AtomicBool::new(false);
 static LOCKDOWN_GENERATION: AtomicU64 = AtomicU64::new(0);
+// Invalidates queued keyboard probes before teardown or a real session start.
+static KEYBOARD_PROBE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
 static LOCKDOWN_LIFECYCLE: OnceLock<Mutex<lockdown_lifecycle::Lifecycle>> = OnceLock::new();
 fn lockdown_lifecycle() -> &'static Mutex<lockdown_lifecycle::Lifecycle> {
     LOCKDOWN_LIFECYCLE.get_or_init(|| Mutex::new(lockdown_lifecycle::Lifecycle::default()))
@@ -1086,6 +1094,7 @@ async fn collect_device_state_inner(
     microphone_available: Option<bool>,
     activate_keyboard: bool,
 ) -> Result<DeviceState, String> {
+    let probe_epoch = KEYBOARD_PROBE_EPOCH.load(Ordering::SeqCst);
     let mut state = blocking_probe::run(blocking_probe::Priority::Readiness, move || -> Result<DeviceState, String> {
         let mut state = {
             let budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
@@ -1099,14 +1108,35 @@ async fn collect_device_state_inner(
             // Setup/teardown and this entire probe share one owner lock. A probe
             // cannot release an intercept while a real entry is in flight.
             let owner = lockdown_lifecycle().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let result = native_enable_keyboard_intercept();
-            if !owner.active {
-                platform_dispatch!(disable_keyboard_intercept(), else ());
-                #[cfg(target_os = "linux")]
-                if platform_rs::linux::keyboard_recovery_pending() {
-                    return Err("Keyboard probe cleanup is incomplete. Restore system controls before retrying.".into());
-                }
+            if KEYBOARD_PROBE_EPOCH.load(Ordering::SeqCst) != probe_epoch {
+                return Err("Device probe was superseded by desktop entry or recovery.".into());
             }
+            #[cfg(target_os = "linux")]
+            let result = {
+                if owner.active {
+                    return Err("A secure session owns desktop controls; a setup probe cannot change them.".into());
+                }
+                keyboard_probe::probe_with_cleanup(
+                    || KEYBOARD_PROBE_EPOCH.load(Ordering::SeqCst) == probe_epoch,
+                    native_enable_keyboard_intercept,
+                    || {
+                        platform_rs::linux::disable_keyboard_intercept();
+                        if platform_rs::linux::keyboard_recovery_pending() {
+                            Err("Restore system controls before retrying.".into())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                )?
+            };
+            #[cfg(not(target_os = "linux"))]
+            let result = {
+                let result = native_enable_keyboard_intercept();
+                if !owner.active {
+                    platform_dispatch!(disable_keyboard_intercept(), else ());
+                }
+                result
+            };
             state.keyboard = Some(result);
         }
         // This IPC can block on the privileged helper, so it belongs on the
@@ -1477,13 +1507,44 @@ fn native_detect_virtualization() -> VirtDetectionResult {
 /// Install platform-level keyboard intercept.
 #[tauri::command]
 async fn enable_keyboard_intercept() -> Result<KeyboardInterceptResult, String> {
-    blocking_probe::run(blocking_probe::Priority::Readiness, || {
-        let _owner = lockdown_lifecycle()
+    let epoch = KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
+    let queued_at = std::time::Instant::now();
+    blocking_probe::run(blocking_probe::Priority::Readiness, move || {
+        let owner = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        native_enable_keyboard_intercept()
+        if KEYBOARD_PROBE_EPOCH.load(Ordering::SeqCst) != epoch
+            || queued_at.elapsed() > Duration::from_secs(20)
+        {
+            return Err("Keyboard probe expired or was superseded. Retry setup.".into());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if owner.active {
+                return Err("A secure session already owns desktop controls.".into());
+            }
+            // Linux Stage 3 is a reversible capability probe. Never leave a
+            // timed-out/unmounted UI owning persistent desktop mutations.
+            keyboard_probe::probe_with_cleanup(
+                || KEYBOARD_PROBE_EPOCH.load(Ordering::SeqCst) == epoch,
+                native_enable_keyboard_intercept,
+                || {
+                    platform_rs::linux::disable_keyboard_intercept();
+                    if platform_rs::linux::keyboard_recovery_pending() {
+                        Err("Restore system controls before retrying.".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = owner;
+            Ok(native_enable_keyboard_intercept())
+        }
     })
-    .await
+    .await?
 }
 
 fn native_enable_keyboard_intercept() -> KeyboardInterceptResult {
@@ -1497,6 +1558,7 @@ fn native_enable_keyboard_intercept() -> KeyboardInterceptResult {
 /// Release keyboard intercept (called on exit / crash recovery).
 #[tauri::command]
 async fn disable_keyboard_intercept() -> Result<(), String> {
+    KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
     // Recovery must not wait behind ordinary readiness scans.
     tauri::async_runtime::spawn_blocking(|| {
         let _owner = lockdown_lifecycle()
@@ -1896,6 +1958,14 @@ fn lockdown_restore_status() -> LockdownRestoreStatus {
                 .collect(),
         };
     }
+    #[cfg(target_os = "linux")]
+    if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        return LockdownRestoreStatus {
+            pending: platform_rs::linux::keyboard_recovery_pending()
+                || LINUX_NETWORK.recovery_pending(),
+            items: vec![],
+        };
+    }
     LockdownRestoreStatus {
         pending: false,
         items: vec![],
@@ -1910,6 +1980,7 @@ fn get_lockdown_restore_status() -> LockdownRestoreStatus {
 /// Try the restore again now, rather than waiting for the background retry.
 #[tauri::command]
 async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestoreStatus, String> {
+    KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
     #[cfg(not(target_os = "windows"))]
     let _ = &app;
     tauri::async_runtime::spawn_blocking(move || {
@@ -1926,6 +1997,14 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
             let mut owner = _owner;
             owner.stop(&mut DesktopOperations::new(app, false))?;
+        }
+        #[cfg(target_os = "linux")]
+        if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+            let mut owner = _owner;
+            let desktop = owner.stop(&mut DesktopOperations::new(app, false));
+            LINUX_NETWORK.invalidate();
+            let network = LINUX_NETWORK.restore(platform_rs::linux::disable_network_lockdown);
+            lockdown_lifecycle::combine_cleanup(desktop, network)?;
         }
         Ok(lockdown_restore_status())
     })
@@ -2386,6 +2465,7 @@ fn release_native_desktop() -> Result<(), String> {
 }
 
 async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result<(), String> {
+    KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
@@ -2544,6 +2624,7 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
 
 #[tauri::command]
 async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
+    KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
@@ -2718,89 +2799,119 @@ async fn enable_network_lockdown(
     app: tauri::AppHandle,
     allowed_domains: Vec<String>,
 ) -> Result<bool, String> {
-    // A build that never asked for elevation cannot raise a firewall, so say
-    // so instead of resolving every allowlist host and then handing netsh a
-    // command it will refuse. `false` is the existing "not applied" answer —
-    // the caller already treats it as advisory, because this has always been
-    // best-effort on machines where it could not engage.
-    #[cfg(target_os = "windows")]
-    if !WANTS_FIREWALL {
-        return Ok(false);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    let _ = app;
-    let mut ips: Vec<String> = Vec::new();
-
-    for domain in &allowed_domains {
-        // If it's already a raw IP, use it directly
-        if domain.parse::<std::net::IpAddr>().is_ok() {
-            if !ips.contains(domain) {
-                ips.push(domain.clone());
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        let ticket = LINUX_NETWORK.ticket()?;
+        let deadline = Instant::now() + Duration::from_secs(8);
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut ips = Vec::new();
+            for domain in allowed_domains {
+                if let Ok(ip) = domain.parse::<std::net::IpAddr>() {
+                    let ip = ip.to_string();
+                    if !ips.contains(&ip) {
+                        ips.push(ip);
+                    }
+                } else if let Ok(addresses) = (domain.as_str(), 443).to_socket_addrs() {
+                    for address in addresses {
+                        let ip = address.ip().to_string();
+                        if !ips.contains(&ip) {
+                            ips.push(ip);
+                        }
+                    }
+                }
             }
-            continue;
+            // DNS-only destinations must never turn an unresolved API allowlist
+            // into a successful lockdown that prevents reaching the contest.
+            if ips.is_empty() {
+                return Err("Could not resolve any allowed domains to IPs".into());
+            }
+            for ns in resolv_conf_nameservers() {
+                if !ips.contains(&ns) {
+                    ips.push(ns);
+                }
+            }
+            LINUX_NETWORK.apply(ticket, deadline, || {
+                platform_rs::linux::enable_network_lockdown(&ips).map(|_| true)
+            })
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // A build that never asked for elevation cannot raise a firewall, so say
+        // so instead of resolving every allowlist host and then handing netsh a
+        // command it will refuse. `false` is the existing "not applied" answer —
+        // the caller already treats it as advisory, because this has always been
+        // best-effort on machines where it could not engage.
+        #[cfg(target_os = "windows")]
+        if !WANTS_FIREWALL {
+            return Ok(false);
         }
-        // Try resolving as hostname (port doesn't matter for resolution; use 443)
-        let addr = format!("{}:443", domain);
-        if let Ok(addrs) = addr.as_str().to_socket_addrs() {
-            for a in addrs {
-                let ip = a.ip().to_string();
-                if !ips.contains(&ip) {
-                    ips.push(ip);
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = app;
+        let mut ips: Vec<String> = Vec::new();
+
+        for domain in &allowed_domains {
+            // If it's already a raw IP, use it directly
+            if domain.parse::<std::net::IpAddr>().is_ok() {
+                if !ips.contains(domain) {
+                    ips.push(domain.clone());
+                }
+                continue;
+            }
+            // Try resolving as hostname (port doesn't matter for resolution; use 443)
+            let addr = format!("{}:443", domain);
+            if let Ok(addrs) = addr.as_str().to_socket_addrs() {
+                for a in addrs {
+                    let ip = a.ip().to_string();
+                    if !ips.contains(&ip) {
+                        ips.push(ip);
+                    }
                 }
             }
         }
-    }
 
-    // LX-3/LX-4: under the default-DROP firewall the system DNS resolver must
-    // stay reachable or every subsequent name lookup (incl. re-resolution of the
-    // allowed API/judge hosts) fails. Add each /etc/resolv.conf nameserver to the
-    // allowlist. We add the resolver *host* (covers both UDP and TCP 53 in the
-    // helper's address-based rules) rather than port-scoping, mirroring how the
-    // allowed API hosts are permitted wholesale. Both v4 and v6 nameservers are
-    // included; the helper family-splits them.
-    #[cfg(target_os = "linux")]
-    for ns in resolv_conf_nameservers() {
-        if !ips.contains(&ns) {
-            ips.push(ns);
+        // LX-3/LX-4: under the default-DROP firewall the system DNS resolver must
+        // stay reachable or every subsequent name lookup (incl. re-resolution of the
+        // allowed API/judge hosts) fails. Add each /etc/resolv.conf nameserver to the
+        // allowlist. We add the resolver *host* (covers both UDP and TCP 53 in the
+        // helper's address-based rules) rather than port-scoping, mirroring how the
+        // allowed API hosts are permitted wholesale. Both v4 and v6 nameservers are
+        // included; the helper family-splits them.
+        #[cfg(target_os = "linux")]
+        for ns in resolv_conf_nameservers() {
+            if !ips.contains(&ns) {
+                ips.push(ns);
+            }
         }
-    }
 
-    if ips.is_empty() {
-        return Err("Could not resolve any allowed domains to IPs".to_string());
-    }
+        if ips.is_empty() {
+            return Err("Could not resolve any allowed domains to IPs".to_string());
+        }
 
-    // The Linux/macOS client returns Err when the privileged helper is not
-    // installed/running. Propagate that failure to ContestLaunch's final network
-    // gate; the earlier readiness policy treats CheckKind::Network as advisory.
-    // The frontend's decideNetworkLockdown applies the final platform policy.
-    #[cfg(target_os = "windows")]
-    return windows_firewall::enable(app, ips).await;
-    #[cfg(not(target_os = "windows"))]
-    platform_dispatch!(
-        enable_network_lockdown(&ips),
-        else Err("Network lockdown not supported on this platform".to_string())
-    )
-    .map(|_| true)
+        // The Linux/macOS client returns Err when the privileged helper is not
+        // installed/running. Propagate that failure to ContestLaunch's final network
+        // gate; the earlier readiness policy treats CheckKind::Network as advisory.
+        // The frontend's decideNetworkLockdown applies the final platform policy.
+        #[cfg(target_os = "windows")]
+        return windows_firewall::enable(app, ips).await;
+        #[cfg(not(target_os = "windows"))]
+        platform_dispatch!(
+            enable_network_lockdown(&ips),
+            else Err("Network lockdown not supported on this platform".to_string())
+        )
+        .map(|_| true)
+    }
 }
 
 /// Parse `nameserver <ip>` lines out of a resolv.conf-format string.
 /// Returns valid IP literals only, in order, deduped.
 #[cfg(target_os = "linux")]
 fn parse_resolv_nameservers(contents: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for line in contents.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("nameserver") {
-            let candidate = rest.trim();
-            if candidate.parse::<std::net::IpAddr>().is_ok()
-                && !out.contains(&candidate.to_string())
-            {
-                out.push(candidate.to_string());
-            }
-        }
-    }
-    out
+    platform_rs::linux::parse_resolv_nameservers(contents)
 }
 
 /// Nameservers the default-DROP firewall must keep reachable so name
@@ -2855,21 +2966,35 @@ mod resolv_tests {
 /// Remove all AMS firewall rules and restore normal internet access.
 #[tauri::command]
 async fn disable_network_lockdown() -> Result<bool, String> {
-    // Nothing was ever applied, so there is nothing to tear down — and calling
-    // netsh here would fail noisily on the exit path of every ordinary exam.
-    #[cfg(target_os = "windows")]
-    if !WANTS_FIREWALL {
-        return Ok(false);
+    #[cfg(target_os = "linux")]
+    {
+        LINUX_NETWORK.invalidate();
+        tauri::async_runtime::spawn_blocking(|| {
+            LINUX_NETWORK
+                .restore(platform_rs::linux::disable_network_lockdown)
+                .map(|_| true)
+        })
+        .await
+        .map_err(|error| error.to_string())?
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Nothing was ever applied, so there is nothing to tear down — and calling
+        // netsh here would fail noisily on the exit path of every ordinary exam.
+        #[cfg(target_os = "windows")]
+        if !WANTS_FIREWALL {
+            return Ok(false);
+        }
 
-    #[cfg(target_os = "windows")]
-    return windows_firewall::disable().await;
-    #[cfg(not(target_os = "windows"))]
-    platform_dispatch!(
-        disable_network_lockdown(),
-        else Err("Network lockdown not supported on this platform".to_string())
-    )
-    .map(|_| true)
+        #[cfg(target_os = "windows")]
+        return windows_firewall::disable().await;
+        #[cfg(not(target_os = "windows"))]
+        platform_dispatch!(
+            disable_network_lockdown(),
+            else Err("Network lockdown not supported on this platform".to_string())
+        )
+        .map(|_| true)
+    }
 }
 
 /// Where face captures land. One definition, because the purge below has to
@@ -3356,6 +3481,9 @@ fn finish_shutdown() {
             }
         }
         // Even a failed/timed-out drain must restore network access.
+        #[cfg(target_os = "linux")]
+        let _ = LINUX_NETWORK.close(platform_rs::linux::disable_network_lockdown);
+        #[cfg(not(target_os = "linux"))]
         let _ = platform_dispatch!(disable_network_lockdown(), else Ok(()));
     });
 }
@@ -3372,6 +3500,16 @@ pub fn run_helper_mode() -> Option<i32> {
 }
 
 pub fn run() {
+    // Hold ownership before any startup or shutdown recovery. A second GUI
+    // must never undo a first instance's live desktop/firewall protections.
+    #[cfg(target_os = "linux")]
+    let _linux_instance = match platform_rs::linux::instance::acquire() {
+        Ok(owner) => owner,
+        Err(error) => {
+            eprintln!("AMS Access cannot acquire desktop ownership: {error}");
+            return;
+        }
+    };
     // F5: harden the DLL search path before anything else loads a library, so a
     // malicious DLL planted in the launch directory or %CWD% can never be
     // preferred over the system copy (DLL preloading / search-order hijack).
@@ -3404,11 +3542,17 @@ pub fn run() {
         }
     }
 
-    // Keyboard recovery only. Firewall recovery is owned by the network helper,
-    // which reconciles the AMS_PROCTOR chain against its /run marker on its own
-    // startup; a tokenless disable from here would be rejected anyway.
     #[cfg(target_os = "linux")]
-    platform_rs::linux::recover_keyboard_if_crashed();
+    {
+        platform_rs::linux::recover_keyboard_if_crashed();
+        // Startup precedes the webview/login and owns the sole GUI instance.
+        // Reuse the durable session token; never blindly flush a shared chain.
+        // Keep failed recovery visible and retain its capability for retry.
+        LINUX_NETWORK.invalidate();
+        if let Err(error) = LINUX_NETWORK.restore(platform_rs::linux::disable_network_lockdown) {
+            eprintln!("Linux startup firewall recovery incomplete: {error}");
+        }
+    }
 
     // Auto-elevate on Windows: full exam lockdown (firewall, registry, taskkill)
     // requires Administrator. Rather than make the candidate discover the Resolve
@@ -3697,7 +3841,7 @@ pub fn run() {
                     // disabled touchpad — not just the keyboard.
                     platform_rs::linux::unlock_desktop();
                     // Firewall rules must be cleared even on crash — intentional persistence
-                    let _ = platform_rs::linux::disable_network_lockdown();
+                    let _ = LINUX_NETWORK.close(platform_rs::linux::disable_network_lockdown);
                 }
                 #[cfg(target_os = "windows")]
                 {
