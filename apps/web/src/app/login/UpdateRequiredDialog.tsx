@@ -11,11 +11,17 @@
  *
  * Only ever raised for a newer *minor* release -- see lib/client-update.ts
  * for why patches say nothing.
+ *
+ * Deliberately short. It said which account the download page wanted (it
+ * wants none, the page is public) and why installing mattered, to someone
+ * who has one button and no decision to make. The version pair stays,
+ * because "I already updated" is the one thing a candidate may need to
+ * check against an invigilator.
  */
 
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
-import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 
 export function UpdateRequiredDialog({
@@ -50,28 +56,16 @@ export function UpdateRequiredDialog({
           <Heading level={2} id="update-required-title">
             Update AMS Access
           </Heading>
-          <Text>
-            A newer version of AMS Access is available. Install it before signing in, so your
-            exam runs on the current build.
+          <Text>A newer version is available. Install it to continue.</Text>
+          <Text type="supporting" color="secondary">
+            {currentVersion} &rarr; {latestVersion}
           </Text>
-          <HStack gap={3} align="center" wrap="wrap">
-            <Text type="supporting" color="secondary">
-              You have {currentVersion}
-            </Text>
-            <Text type="supporting" color="secondary">
-              Latest is {latestVersion}
-            </Text>
-          </HStack>
           <Button
             label="Install"
             variant="primary"
             onClick={() => onInstall(downloadUrl)}
             style={{ alignSelf: "flex-start" }}
           />
-          <Text type="supporting" color="secondary">
-            Signing in to the download page uses your organisation account, not your exam
-            passphrase.
-          </Text>
         </VStack>
       </Card>
     </div>
