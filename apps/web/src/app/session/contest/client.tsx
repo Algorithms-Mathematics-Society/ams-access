@@ -51,7 +51,10 @@ import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
   samplePresence,
+  ANOMALY_STREAK,
+  PRESENCE_SAMPLE_MS,
   type Framing,
+  type PresenceStatus,
   type PresenceDetector,
 } from "@/lib/presence-monitor";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -545,6 +548,8 @@ export default function ContestPageClient() {
   const cameraEnabledRef = useRef(true);
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
+  // What the detector last saw. Drives the tile border, nothing else.
+  const [presenceStatus, setPresenceStatus] = useState<PresenceStatus>("presence_ok");
   // Bumped when the candidate picks a different camera, to re-run the
   // acquisition effect below against the new preference.
   const [cameraPickKey, setCameraPickKey] = useState(0);
@@ -2368,6 +2373,11 @@ export default function ContestPageClient() {
     let detector: PresenceDetector | null = null;
     let objectDetector: Awaited<ReturnType<typeof loadObjectDetector>> | null = null;
     let objectDetectorFailed = false;
+    // Consecutive bad samples, and whether this run of them has been sent.
+    // Reported once per run: a candidate who steps away for two minutes is
+    // one event, not twenty-four.
+    let anomalyStreak = 0;
+    let anomalyReported = false;
     const canvas = document.createElement("canvas");
 
     const video = document.createElement("video");
@@ -2431,11 +2441,38 @@ export default function ContestPageClient() {
           if (detector && !cancelled) {
             const sample = await samplePresence(video, detector, canvas);
             if (sample && !cancelled) {
-              logPresence(sample.status, `presence check: ${sample.faces} face(s) detected`, {
-                faces: sample.faces,
-                thumbnail: sample.thumbnail,
-                framing: sample.framing,
-              });
+              // Shown on the tile immediately, every sample. The border is
+              // feedback for the candidate -- "the camera cannot see you" is
+              // something they can act on in a second, and most of the time
+              // acting on it is all that was needed.
+              setPresenceStatus(sample.status);
+
+              // Recorded only once it persists. At a five-second cadence a
+              // glance at the keyboard or a blink caught mid-frame makes one
+              // bad sample, which is noise; ANOMALY_STREAK of them in a row
+              // is fifteen seconds, which is not.
+              if (sample.status === "presence_ok") {
+                anomalyStreak = 0;
+                anomalyReported = false;
+              } else {
+                anomalyStreak += 1;
+                if (anomalyStreak >= ANOMALY_STREAK && !anomalyReported) {
+                  anomalyReported = true;
+                  logPresence(
+                    sample.status,
+                    `presence check: ${sample.faces} face(s) over ${anomalyStreak} samples`,
+                    {
+                      faces: sample.faces,
+                      samples: anomalyStreak,
+                      // A readable frame, not the 96px indicator thumbnail:
+                      // this is the one an invigilator opens.
+                      thumbnail: thumbnailOf(video) ?? sample.thumbnail,
+                      framing: sample.framing,
+                    }
+                  );
+                }
+              }
+
               // Advice, not a flag. Most face_missing samples are someone who
               // has drifted out of shot while thinking, so saying so removes
               // the false reading at source. Cleared as soon as they are back.
@@ -2489,7 +2526,19 @@ export default function ContestPageClient() {
     }
 
     function schedule() {
-      timer = setTimeout(() => void tick(), 30_000 + Math.random() * 60_000);
+      // Five seconds, fixed.
+      //
+      // It was 30-90s jittered, which is a sampling rate for "was anyone
+      // here" and far too coarse for "is the right person here now": a
+      // substitution, or a second face leaning in, fits comfortably between
+      // two samples. BlazeFace runs at 128x128 in about 7ms, so this costs a
+      // fraction of a percent of one core.
+      //
+      // Unjittered on purpose. The jitter existed to spread uploads, and
+      // this loop no longer uploads on every sample -- only a *confirmed*
+      // anomaly sends anything, which is rare and already spread by being
+      // driven by the candidate's own behaviour.
+      timer = setTimeout(() => void tick(), PRESENCE_SAMPLE_MS);
     }
     schedule();
 
@@ -3651,6 +3700,7 @@ export default function ContestPageClient() {
           </VStack>
           <CameraTile
             framingHint={framingHint}
+            presenceStatus={presenceStatus}
             onPickCamera={handlePickCamera}
             cameraVideoRef={cameraVideoRef}
             cameraStream={cameraStream}

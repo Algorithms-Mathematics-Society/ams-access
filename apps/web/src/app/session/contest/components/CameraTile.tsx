@@ -20,6 +20,8 @@ export interface CameraTileProps {
   onPickCamera?: (deviceId: string) => void;
   /** How the candidate is sitting in frame. Advice to them, nothing more. */
   framingHint?: "ok" | "off_centre" | "too_close" | "too_far";
+  /** What the detector last saw. Colours the tile. */
+  presenceStatus?: "presence_ok" | "face_missing" | "multiple_faces";
 }
 
 // ALWAYS MOUNTED — visibility is a display toggle (below), never a mount
@@ -31,7 +33,24 @@ const FRAMING_COPY: Record<string, string> = {
   too_far: "Move a bit closer",
 };
 
+// What the border says, at a glance and without reading anything.
+//
+// Red is "the camera cannot see you", which is the candidate's to fix and
+// usually takes a second. Amber is "there is more than one face", which is
+// not necessarily their fault -- someone walked behind them -- so it warns
+// rather than accuses. Neither blocks anything.
+const PRESENCE_BORDER: Record<string, string> = {
+  face_missing: "var(--color-border-error)",
+  multiple_faces: "var(--color-border-warning)",
+};
+
+const PRESENCE_COPY: Record<string, string> = {
+  face_missing: "Camera cannot see you",
+  multiple_faces: "More than one face in view",
+};
+
 export function CameraTile({
+  presenceStatus = "presence_ok",
   onPickCamera,
   framingHint = "ok",
   cameraVideoRef,
@@ -84,7 +103,9 @@ export function CameraTile({
             ? "flex"
             : "none",
         background: "var(--color-background-card)",
-        border: "var(--border-width) solid var(--color-border)",
+        border: `var(--border-width) solid ${
+          (cameraEnabled && PRESENCE_BORDER[presenceStatus]) || "var(--color-border)"
+        }`,
         overflow: "hidden",
       }}
     >
@@ -204,7 +225,32 @@ export function CameraTile({
         {/* Shown over the candidate's own picture, where they are already
             looking, and only while they are out of shot. It clears itself:
             there is nothing to dismiss and nothing to get wrong. */}
-        {cameraEnabled && framingHint !== "ok" && FRAMING_COPY[framingHint] && (
+        {cameraEnabled && PRESENCE_COPY[presenceStatus] && (
+          // Colour alone is not a message: it fails for anyone who cannot
+          // distinguish these two, and says nothing about which problem it is.
+          <Text
+            role="status"
+            aria-live="polite"
+            type="supporting"
+            style={{
+              position: "absolute",
+              left: "var(--spacing-2)",
+              right: "var(--spacing-2)",
+              bottom: "var(--spacing-2)",
+              padding: "var(--spacing-1) var(--spacing-2)",
+              borderRadius: "var(--radius-element)",
+              background: "color-mix(in srgb, var(--color-background-body) 82%, transparent)",
+              color:
+                presenceStatus === "face_missing"
+                  ? "var(--color-text-error)"
+                  : "var(--color-text-yellow)",
+              textAlign: "center",
+            }}
+          >
+            {PRESENCE_COPY[presenceStatus]}
+          </Text>
+        )}
+        {cameraEnabled && presenceStatus === "presence_ok" && framingHint !== "ok" && FRAMING_COPY[framingHint] && (
           <Text
             role="status"
             aria-live="polite"

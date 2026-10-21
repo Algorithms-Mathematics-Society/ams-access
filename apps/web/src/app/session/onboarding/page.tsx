@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { BatteryStatus } from "../contest/components/BatteryStatus";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
@@ -152,6 +153,18 @@ export default function OnboardingPage() {
   const [results, setResults] = useState<Record<number, StageStatus>>({});
   const [warningDetails, setWarningDetails] = useState<Record<number, string>>({});
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+
+  /**
+   * Reopen the camera after the candidate picks a different one.
+   *
+   * Release first: the device has to be handed back before it can be opened
+   * again, and `ensure` adopts whatever is already open otherwise -- which
+   * would hand back the same sensor they just rejected.
+   */
+  function restartCamera() {
+    cameraSession.release();
+    setCameraStream(null);
+  }
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
   const [contestWindow, setContestWindow] = useState<ContestWindowMeta | null>(null);
@@ -948,6 +961,11 @@ export default function OnboardingPage() {
             </Text>
           </HStack>
           <HStack gap={3} align="center" wrap="wrap">
+            {/* Setup runs for several minutes on a machine that is about to
+                be locked down for two hours. Knowing the charge now, while
+                there is still time to find a cable, is worth more than
+                knowing it mid-paper. */}
+            <BatteryStatus />
             <ThemeToggle />
             {wideLayout && <SetupExitShortcut />}
             <Button
@@ -1365,6 +1383,7 @@ export default function OnboardingPage() {
                               onPass={advancePass}
                               dryRun={dryRun}
                               onFaceFallback={handleFaceFallback}
+                              onRequestCameraRestart={restartCamera}
                             />
                           )}
                           {currentStage === 9 && (

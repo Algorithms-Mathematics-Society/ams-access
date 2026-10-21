@@ -204,17 +204,6 @@ export function Stage7_CameraInit({
             maxWidth: "100%",
           }}
         >
-          <Text
-            style={{
-              fontSize: "var(--font-size-base)",
-              fontFamily: "var(--font-family-body)",
-              color: "var(--color-error)",
-              textAlign: "center",
-              lineHeight: 1.65,
-            }}
-          >
-            {error}
-          </Text>
           {/* The wrong camera is the failure this stage cannot otherwise
               escape. A Windows-Hello laptop exposes its infrared sensor as
               an ordinary video device and Linux hands it out as the
@@ -264,6 +253,17 @@ export function Stage7_CameraInit({
               </select>
             </VStack>
           )}
+          <Text
+            style={{
+              fontSize: "var(--font-size-base)",
+              fontFamily: "var(--font-family-body)",
+              color: "var(--color-error)",
+              textAlign: "center",
+              lineHeight: 1.65,
+            }}
+          >
+            {error}
+          </Text>
           {isWindows && permissionIssue && (
             <Button
               theme={theme}

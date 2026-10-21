@@ -1,4 +1,5 @@
 import { Button } from "@astryxdesign/core/Button";
+import { preferredCamera, setPreferredCamera } from "@/lib/preferred-camera";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
@@ -20,6 +21,7 @@ export function Stage8_FaceCalibration({
   onPass,
   dryRun = false,
   onFaceFallback,
+  onRequestCameraRestart,
 }: {
   stream: MediaStream | null;
   onPass(): void;
@@ -30,6 +32,8 @@ export function Stage8_FaceCalibration({
   // can defeat the model), let the candidate proceed for manual proctor review
   // rather than being hard-blocked. Never a silent skip — the parent records it.
   onFaceFallback?: () => void;
+  /** Reopen the camera after the candidate picks a different one. */
+  onRequestCameraRestart?: () => void;
 }) {
   type FaceKeypointLike = { x: number; y: number; label?: string };
   type FacePredictionLike = {
@@ -92,6 +96,25 @@ export function Stage8_FaceCalibration({
   const [scanState, setScanState] = useState<FaceScanState>("loading");
   // Count of rejected captures; after a few we surface the proctor-review fallback.
   const [captureRejections, setCaptureRejections] = useState(0);
+  // The camera list, for the picker below. This is the screen where the
+  // wrong camera actually bites: a laptop that opened its infrared sensor
+  // shows a grey rectangle and "Please come back into frame" forever, with
+  // nothing on screen to say the camera itself is the problem.
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [chosenCamera, setChosenCamera] = useState<string>(() => preferredCamera() ?? "");
+
+  useEffect(() => {
+    let cancelled = false;
+    void navigator.mediaDevices
+      ?.enumerateDevices?.()
+      .then((devices) => {
+        if (!cancelled) setCameras(devices.filter((d) => d.kind === "videoinput" && d.deviceId));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const FACE_FALLBACK_AFTER = 3;
 
   const PHASE_HOLD_MS = 700;
@@ -777,6 +800,57 @@ export function Stage8_FaceCalibration({
           reference image.
         </Text>
       </VStack>
+
+      {/* Above the preview, not under it.
+          Below the video it needs a scroll to reach, and a candidate looking
+          at a grey rectangle and "Please come back into frame" has no reason
+          to think scrolling would help. By the time the equity fallback
+          appears they have already spent a minute being told to move, and
+          the answer was never their position -- it was that the app opened a
+          sensor that cannot see them. */}
+      {cameras.length > 1 && !done && (
+        <VStack gap={2} style={{ width: "100%", maxWidth: "22rem", alignSelf: "center" }}>
+          <Text
+            style={{
+              fontSize: "var(--font-size-sm)",
+              fontFamily: "var(--font-family-body)",
+              color: "var(--color-text-secondary)",
+              textAlign: "center",
+            }}
+          >
+            Camera
+          </Text>
+          <select
+            value={chosenCamera}
+            aria-label="Choose a camera"
+            onChange={(event) => {
+              const next = event.target.value;
+              setChosenCamera(next);
+              setPreferredCamera(next || null);
+              // Reopen against the new choice. The stage restarts itself
+              // from the stream, so there is nothing else to reset.
+              onRequestCameraRestart?.();
+            }}
+            style={{
+              width: "100%",
+              padding: "var(--spacing-2)",
+              borderRadius: "var(--radius-element)",
+              border: "var(--border-width) solid var(--color-border)",
+              background: "var(--color-background-body)",
+              color: "var(--color-text-primary)",
+              fontFamily: "var(--font-family-body)",
+              fontSize: "var(--font-size-sm)",
+            }}
+          >
+            <option value="">System default</option>
+            {cameras.map((camera, index) => (
+              <option key={camera.deviceId} value={camera.deviceId}>
+                {camera.label || `Camera ${index + 1}`}
+              </option>
+            ))}
+          </select>
+        </VStack>
+      )}
 
       <VStack
         width="100%"
