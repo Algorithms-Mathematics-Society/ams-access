@@ -3347,19 +3347,34 @@ export default function ContestPageClient() {
   // free and the candidate can act on it in a second; the record is a claim
   // about their sitting and deserves fifteen seconds of evidence.
   const presenceWarning = cameraEnabled && presenceStatus !== "presence_ok";
-  const shouldShowFaceBlock = presenceWarning || (softBlockActive && faceStatus !== "ok");
+  // Framing shares the same banner. It lived inside the camera tile, where
+  // it overlapped the buttons and truncated mid-word -- a thumbnail in the
+  // corner is not somewhere a sentence can be read. One place for anything
+  // the camera needs to say.
+  const framingWarning = cameraEnabled && !presenceWarning && framingHint !== "ok";
+  const shouldShowFaceBlock =
+    presenceWarning || framingWarning || (softBlockActive && faceStatus !== "ok");
   // Says what to do, in the fewest words that still say it. Nothing about
   // pausing or resuming: nothing is paused any more.
+  const FRAMING_TITLE: Record<string, string> = {
+    off_centre: "Move back into the centre of the frame",
+    too_close: "Move back a little",
+    too_far: "Move a bit closer",
+  };
   const faceBlockTitle = !cameraHealthy
     ? "Camera not responding"
     : presenceStatus === "multiple_faces"
       ? "More than one person in frame"
-      : "Come back into frame";
+      : presenceWarning
+        ? "Come back into frame"
+        : (FRAMING_TITLE[framingHint] ?? "Adjust your position");
   const faceBlockMessage = !cameraHealthy
     ? cameraError || "Waiting for a live camera frame."
     : presenceStatus === "multiple_faces"
       ? "Make sure nobody else is visible behind you."
-      : "Face the camera so it can see you.";
+      : presenceWarning
+        ? "Face the camera so it can see you."
+        : "The camera can see you, but not clearly enough to check.";
   // The camera warning is not critical and never was. It paused the
   // workspace behind a modal for a candidate who had looked down at their
   // keyboard, and the only button on it was Exit contest -- so a two-second
@@ -3720,7 +3735,6 @@ export default function ContestPageClient() {
             />
           </VStack>
           <CameraTile
-            framingHint={framingHint}
             presenceStatus={presenceStatus}
             onPickCamera={handlePickCamera}
             cameraVideoRef={cameraVideoRef}
@@ -3800,10 +3814,27 @@ export default function ContestPageClient() {
             zIndex: 1000,
             width: "min(calc(100% - var(--spacing-8)), calc(var(--spacing-10) * 12))",
             pointerEvents: "none",
+            // An opaque surface under the Banner.
+            //
+            // Banner fills warning and error with a translucent colour, which
+            // is fine inline on a page background and looks washed out
+            // floating over an editor -- the code shows straight through the
+            // red. Info happens to be solid, which is why only that one
+            // looked right. This gives all three something to sit on.
+            borderRadius: "var(--radius-container)",
+            overflow: "hidden",
+            background: "var(--color-background-card)",
+            boxShadow: "var(--shadow-high)",
           }}
         >
           <Banner
-            status={presenceStatus === "multiple_faces" ? "warning" : "error"}
+            status={
+              framingWarning
+                ? "info"
+                : presenceStatus === "multiple_faces"
+                  ? "warning"
+                  : "error"
+            }
             title={faceBlockTitle}
             description={faceBlockMessage}
           />

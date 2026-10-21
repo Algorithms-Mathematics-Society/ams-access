@@ -18,8 +18,6 @@ export interface CameraTileProps {
   handleToggleMedia: (type: "camera" | "mic", value: boolean) => void;
   /** Switch to another camera, mid-exam. See the picker below. */
   onPickCamera?: (deviceId: string) => void;
-  /** How the candidate is sitting in frame. Advice to them, nothing more. */
-  framingHint?: "ok" | "off_centre" | "too_close" | "too_far";
   /** What the detector last saw. Colours the tile. */
   presenceStatus?: "presence_ok" | "face_missing" | "multiple_faces";
 }
@@ -27,12 +25,6 @@ export interface CameraTileProps {
 // ALWAYS MOUNTED — visibility is a display toggle (below), never a mount
 // conditional. A webcam teardown mid-exam is a candidate-facing failure; the
 // <video> element and its bound MediaStream must never unmount.
-const FRAMING_COPY: Record<string, string> = {
-  off_centre: "Move back into the centre of the frame",
-  too_close: "Move back a little",
-  too_far: "Move a bit closer",
-};
-
 // What the border says, at a glance and without reading anything.
 //
 // Red is "the camera cannot see you", which is the candidate's to fix and
@@ -54,7 +46,6 @@ const PRESENCE_BORDER: Record<string, string> = {
 export function CameraTile({
   presenceStatus = "presence_ok",
   onPickCamera,
-  framingHint = "ok",
   cameraVideoRef,
   cameraStream,
   cameraError,
@@ -228,26 +219,6 @@ export function CameraTile({
         {/* Shown over the candidate's own picture, where they are already
             looking, and only while they are out of shot. It clears itself:
             there is nothing to dismiss and nothing to get wrong. */}
-        {cameraEnabled && presenceStatus === "presence_ok" && framingHint !== "ok" && FRAMING_COPY[framingHint] && (
-          <Text
-            role="status"
-            aria-live="polite"
-            type="supporting"
-            style={{
-              position: "absolute",
-              left: "var(--spacing-2)",
-              right: "var(--spacing-2)",
-              top: "var(--spacing-2)",
-              padding: "var(--spacing-1) var(--spacing-2)",
-              borderRadius: "var(--radius-element)",
-              background: "color-mix(in srgb, var(--color-background-body) 82%, transparent)",
-              color: "var(--color-text-primary)",
-              textAlign: "center",
-            }}
-          >
-            {FRAMING_COPY[framingHint]}
-          </Text>
-        )}
       </VStack>
       <HStack
         role="status"
