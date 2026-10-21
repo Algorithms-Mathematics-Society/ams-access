@@ -49,8 +49,29 @@ export function connectionLevel(state: HeartbeatState): ConnectionLevel {
 
 /** A known browser disconnection blocks immediately. Server silence blocks
  * only at `offline`; `degraded` remains a nonblocking warning. */
-export function shouldLockEditor(state: HeartbeatState, browserOnline = true): boolean {
-  return !browserOnline || connectionLevel(state) === "offline";
+/**
+ * Whether connectivity should stop a candidate typing. It should not.
+ *
+ * This used to return true after three missed heartbeats, and the contest
+ * room passed it straight into the editor's `readOnly`. On 21 Oct the server
+ * was saturated rather than unreachable, heartbeats timed out, and
+ * candidates who had got into the room found the editor dead. One of them
+ * pressed keys trying to make it respond, opened Windows Game Bar by
+ * accident, and was then shown a blocking "restricted application" overlay
+ * he could not dismiss. He powered the machine off to escape.
+ *
+ * Nothing was gained for that. The draft is written to the device on every
+ * keystroke and does not need the network; the only thing that genuinely
+ * requires the server is submitting, which has its own guard and its own
+ * error. Taking the keyboard away during an exam because a heartbeat was
+ * slow is a far worse failure than letting someone type into a buffer that
+ * is already safe.
+ *
+ * Kept as a named function returning false, rather than deleted at the call
+ * site, so the reasoning sits where the next person looks for it.
+ */
+export function shouldLockEditor(_state: HeartbeatState, _browserOnline = true): boolean {
+  return false;
 }
 
 /**

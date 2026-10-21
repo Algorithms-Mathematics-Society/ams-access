@@ -127,7 +127,6 @@ import {
   initialHeartbeatState,
   onFailure as onHeartbeatFailure,
   onSuccess as onHeartbeatSuccess,
-  shouldLockEditor,
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
@@ -2959,9 +2958,12 @@ export default function ContestPageClient() {
   // The editor goes read-only on a *sustained* outage, not the first dropped
   // packet — see `heartbeat-policy`. Locking a whole exam hall on one lost
   // packet would be a self-inflicted incident.
-  const networkDisconnected = shouldLockEditor(heartbeatState, browserOnline);
-  const editorLocked =
-    networkDisconnected || bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
+  // Connectivity is reported, never enforced: see `shouldLockEditor`. The
+  // editor locks for reasons that are actually about the sitting -- the bell,
+  // a session an invigilator ended, a submission already made -- and not
+  // because a heartbeat was slow.
+  const networkDisconnected = connectionLevel(heartbeatState) === "offline" || !browserOnline;
+  const editorLocked = bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
 
   const judgingUnavailableReason = sessionEnded
     ? sessionEnded === "terminated"
