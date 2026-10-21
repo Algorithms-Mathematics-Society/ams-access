@@ -1418,6 +1418,48 @@ fn native_scan_processes() -> ProcessScanResult {
     })
 }
 
+/// Open a URL in the candidate's own browser, outside the exam shell.
+///
+/// Exists for exactly one thing: the Install button on the update prompt,
+/// which is shown on the login screen before any exam has begun. There is no
+/// opener plugin in this app and `window.open` inside a locked-down webview
+/// either does nothing or navigates the shell itself, neither of which gets
+/// somebody to a download page.
+///
+/// Only https, and only the hosts that serve the client. A command that
+/// takes an arbitrary string from the web layer and hands it to the shell is
+/// a way out of the lockdown, so this one does not.
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = url.trim();
+    if !parsed.starts_with("https://") {
+        return Err("only https URLs may be opened".into());
+    }
+    let host = parsed
+        .trim_start_matches("https://")
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let allowed = host == "amsaccess.com" || host.ends_with(".amsaccess.com");
+    if !allowed {
+        return Err(format!("refusing to open {host}"));
+    }
+
+    #[cfg(target_os = "linux")]
+    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![parsed]);
+    #[cfg(target_os = "macos")]
+    let (program, args): (&str, Vec<&str>) = ("open", vec![parsed]);
+    #[cfg(target_os = "windows")]
+    let (program, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", parsed]);
+
+    std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open browser: {error}"))
+}
+
 /// Detect virtualisation / VM environment.
 #[tauri::command]
 async fn detect_virtualization() -> Result<VirtDetectionResult, String> {
@@ -3456,6 +3498,7 @@ pub fn run() {
             start_secure_session,
             scan_processes,
             detect_virtualization,
+            open_external_url,
             enable_keyboard_intercept,
             disable_keyboard_intercept,
             lock_desktop,

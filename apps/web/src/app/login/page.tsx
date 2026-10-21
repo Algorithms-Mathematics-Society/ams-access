@@ -28,6 +28,9 @@ import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
 import { BrandPane } from "./components/BrandPane";
 import { SlipForm } from "./components/SlipForm";
 import styles from "./login.module.css";
+import { UpdateRequiredDialog } from "./UpdateRequiredDialog";
+import { fetchClientVersion, minorUpgradeAvailable } from "@/lib/client-update";
+import { resolveApiBase } from "@/lib/api-base";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -41,6 +44,37 @@ export default function LoginPage() {
   // without it. See `network-error.ts`.
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  // A newer minor release, if the server says there is one. Asked once, on
+  // the one screen that exists before an exam has started.
+  const [update, setUpdate] = useState<{ latest: string; url: string } | null>(null);
+
+  const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? "";
+  useEffect(() => {
+    if (!appVersion) return;
+    let cancelled = false;
+    void fetchClientVersion(resolveApiBase()).then((info) => {
+      if (cancelled || !info?.latest) return;
+      if (minorUpgradeAvailable(appVersion, info.latest)) {
+        setUpdate({ latest: info.latest, url: info.download_url });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [appVersion]);
+
+  // The candidate's own browser, not this window: a download page opened
+  // inside a locked-down webview is a dead end.
+  function openDownload(url: string) {
+    const tauri = (window as unknown as { __TAURI__?: { core?: { invoke: (c: string, a: unknown) => Promise<unknown> } } }).__TAURI__;
+    if (tauri?.core?.invoke) {
+      void tauri.core.invoke("open_external_url", { url }).catch(() => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 
   const homePrefetched = useRef(false);
   useEffect(() => {
@@ -115,6 +149,14 @@ export default function LoginPage() {
   // available at short heights and the theme control remains in normal flow.
   return (
     <AppShell height="fill" variant="section" contentPadding={0}>
+      {update && (
+        <UpdateRequiredDialog
+          currentVersion={appVersion}
+          latestVersion={update.latest}
+          downloadUrl={update.url}
+          onInstall={openDownload}
+        />
+      )}
       <VStack
         data-login-page
         className={styles.page}
