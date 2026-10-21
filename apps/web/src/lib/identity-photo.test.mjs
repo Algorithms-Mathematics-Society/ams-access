@@ -2,11 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   INTERVAL_MS,
+  INTERVAL_PHOTO_QUALITY,
+  INTERVAL_PHOTO_WIDTH,
+  JITTER_MS,
   MIN_PLAUSIBLE_BYTES,
+  PHOTO_QUALITY,
   PHOTO_WIDTH,
   base64Bytes,
   captureFrame,
   isPlausiblePhoto,
+  jitterOffset,
   scaledSize,
   stripDataUrl,
 } from "./identity-photo.ts";
@@ -98,10 +103,25 @@ test("an empty frame is dropped even though encoding succeeded", () => {
   assert.equal(captureFrame(video, () => blank), null);
 });
 
-test("the capture interval is short enough to catch a swap, long enough not to film", () => {
-  // Thirty minutes over a three-hour paper is seven frames: a strip a
-  // human reads in one glance, and a gap too short to swap seats inside.
-  assert.equal(INTERVAL_MS, 30 * 60 * 1000);
-  const threeHourPaper = Math.floor((3 * 60 * 60 * 1000) / INTERVAL_MS);
-  assert.equal(threeHourPaper, 6);
+test("the capture interval is short enough to catch a swap", () => {
+  // Two minutes. Half an hour was a window a substitution fits inside
+  // comfortably. Must stay in step with INTERVAL_MINUTES in amsaccess's
+  // src/lib/invigilation-timeline.ts, or a strip with a real hole in it
+  // reads as one continuous clean sitting.
+  assert.equal(INTERVAL_MS, 2 * 60 * 1000);
+  const twoHourPaper = Math.floor((2 * 60 * 60 * 1000) / INTERVAL_MS);
+  assert.equal(twoHourPaper, 60);
+});
+
+test("an interval frame is cheaper than the portraits either side of it", () => {
+  // Sixty frames per candidate across a hall, against two that an
+  // invigilator actually studies beside a name.
+  assert.ok(INTERVAL_PHOTO_WIDTH < PHOTO_WIDTH);
+  assert.ok(INTERVAL_PHOTO_QUALITY < PHOTO_QUALITY);
+});
+
+test("jitter is bounded and centred on zero", () => {
+  assert.equal(jitterOffset(() => 0), -JITTER_MS);
+  assert.equal(jitterOffset(() => 1), JITTER_MS);
+  assert.equal(jitterOffset(() => 0.5), 0);
 });

@@ -68,12 +68,63 @@ export async function loadPresenceDetector(): Promise<PresenceDetector> {
   return detector as PresenceDetector;
 }
 
+/**
+ * How the candidate is sitting in frame.
+ *
+ * Not a proctoring signal -- it is advice, shown to the candidate and to
+ * nobody else. Every other check here is about whether the right person is
+ * present; this one exists because most `face_missing` samples are not an
+ * absent candidate at all, they are someone who has drifted out of shot
+ * while thinking. Telling them costs nothing and removes the false flag at
+ * source.
+ */
+export type Framing = "ok" | "off_centre" | "too_close" | "too_far";
+
 export type PresenceSample = {
   status: "presence_ok" | "face_missing" | "multiple_faces";
   faces: number;
   /** Low-res JPEG data URL — only populated for anomaly samples. */
   thumbnail: string | null;
+  /** Only meaningful when exactly one face was found. */
+  framing: Framing;
 };
+
+/**
+ * Judge one face box against the frame.
+ *
+ * Mirrors `isInsideGuide` in Stage8_FaceCalibration, which the candidate
+ * already passed during onboarding, so the contest room asks for nothing
+ * stricter than the door did. Tolerances are deliberately loose: this
+ * interrupts someone sitting an exam, so it should only speak when they are
+ * genuinely about to fall out of shot.
+ */
+export function framingOf(
+  topLeft: number[] | undefined,
+  bottomRight: number[] | undefined,
+  width: number,
+  height: number
+): Framing {
+  if (!topLeft || !bottomRight || width <= 0 || height <= 0) return "ok";
+  const [x1, y1] = topLeft;
+  const [x2, y2] = bottomRight;
+  if ([x1, y1, x2, y2].some((n) => typeof n !== "number" || !Number.isFinite(n))) return "ok";
+
+  const w = (x2 - x1) / width;
+  const h = (y2 - y1) / height;
+  if (w <= 0 || h <= 0) return "ok";
+
+  // Size first: someone very close is also off-centre by definition, and
+  // "move back" is the more useful of the two sentences.
+  if (w > 0.72 || h > 0.92) return "too_close";
+  if (w < 0.1 || h < 0.12) return "too_far";
+
+  const cx = (x1 + x2) / 2 / width;
+  const cy = (y1 + y2) / 2 / height;
+  const dx = cx - 0.5;
+  const dy = cy - 0.48;
+  const inside = (dx * dx) / (0.22 * 0.22) + (dy * dy) / (0.37 * 0.37) <= 1.8;
+  return inside ? "ok" : "off_centre";
+}
 
 /// One presence sample from the live camera video element.
 export async function samplePresence(
@@ -96,8 +147,12 @@ export async function samplePresence(
   if (!ctx) return null;
   ctx.drawImage(video, 0, 0, W, H);
 
-  const faces = await detector.estimateFaces(canvas, false, false, false);
+  // annotateBoxes so the face box comes back: it is what the framing hint
+  // is computed from.
+  const faces = await detector.estimateFaces(canvas, false, false, true);
   const count = faces.length;
+  const framing =
+    count === 1 ? framingOf(faces[0]?.topLeft as number[], faces[0]?.bottomRight as number[], W, H) : "ok";
   const status: PresenceSample["status"] =
     count === 1 ? "presence_ok" : count === 0 ? "face_missing" : "multiple_faces";
 
@@ -110,5 +165,5 @@ export async function samplePresence(
     thumbnail = thumb.toDataURL("image/jpeg", 0.5);
   }
 
-  return { status, faces: count, thumbnail };
+  return { status, faces: count, thumbnail, framing };
 }

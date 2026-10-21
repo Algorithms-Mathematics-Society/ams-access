@@ -44,11 +44,13 @@ import {
 } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
-import { INTERVAL_MS, captureFrame } from "@/lib/identity-photo";
+import { INTERVAL_MS, captureFrame, jitterOffset } from "@/lib/identity-photo";
+import { loadObjectDetector, sampleObjects } from "@/lib/object-watch";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
   samplePresence,
+  type Framing,
   type PresenceDetector,
 } from "@/lib/presence-monitor";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -538,6 +540,8 @@ export default function ContestPageClient() {
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(false);
   const cameraEnabledRef = useRef(true);
+  // Advice to the candidate about how they are sitting, never sent anywhere.
+  const [framingHint, setFramingHint] = useState<Framing>("ok");
   const micEnabledRef = useRef(false);
   const mediaInitialStateLoggedRef = useRef(false);
   const [hasToggledMedia, setHasToggledMedia] = useState(false);
@@ -2327,6 +2331,8 @@ export default function ContestPageClient() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let detectorFailed = false;
     let detector: PresenceDetector | null = null;
+    let objectDetector: Awaited<ReturnType<typeof loadObjectDetector>> | null = null;
+    let objectDetectorFailed = false;
     const canvas = document.createElement("canvas");
 
     const video = document.createElement("video");
@@ -2335,6 +2341,22 @@ export default function ContestPageClient() {
     keepPlaying(video);
     video.srcObject = cameraStream;
     void video.play().catch(() => {});
+
+    // A small JPEG for an invigilator to look at, matching the one a
+    // presence anomaly attaches. Returns null rather than throwing on a
+    // frame the browser will not encode.
+    const thumbnailOf = (source: HTMLVideoElement): string | null => {
+      try {
+        if (!source.videoWidth || !source.videoHeight) return null;
+        const thumb = document.createElement("canvas");
+        thumb.width = 160;
+        thumb.height = Math.max(1, Math.round((160 * source.videoHeight) / source.videoWidth));
+        thumb.getContext("2d")?.drawImage(source, 0, 0, thumb.width, thumb.height);
+        return thumb.toDataURL("image/jpeg", 0.5);
+      } catch {
+        return null;
+      }
+    };
 
     const logPresence = (kind: string, detail: string, payload: Record<string, unknown>) => {
       void window.__TAURI__?.core
@@ -2377,7 +2399,50 @@ export default function ContestPageClient() {
               logPresence(sample.status, `presence check: ${sample.faces} face(s) detected`, {
                 faces: sample.faces,
                 thumbnail: sample.thumbnail,
+                framing: sample.framing,
               });
+              // Advice, not a flag. Most face_missing samples are someone who
+              // has drifted out of shot while thinking, so saying so removes
+              // the false reading at source. Cleared as soon as they are back.
+              setFramingHint(sample.status === "presence_ok" ? sample.framing : "ok");
+            }
+
+            // Phone detection shares this tick deliberately: the frame is
+            // already drawn and the models never run on the same pass, which
+            // is what keeps the cost off an old laptop's main thread.
+            if (!objectDetectorFailed && !cancelled) {
+              if (!objectDetector) {
+                try {
+                  objectDetector = await loadObjectDetector();
+                } catch {
+                  // One attempt. A machine that cannot load this must not
+                  // retry every minute for two hours.
+                  objectDetectorFailed = true;
+                }
+              }
+              if (objectDetector && !cancelled) {
+                try {
+                  const seen = sampleObjects(canvas, objectDetector);
+                  if (seen && !cancelled) {
+                    // Advisory, with a thumbnail, for a human to look at. At
+                    // webcam resolution a dark rectangle is a phone, a wallet
+                    // or a calculator case, so this decides nothing and is
+                    // never shown to the candidate.
+                    logPresence(
+                      "object_suspected",
+                      `possible ${seen.label} in frame`,
+                      {
+                        label: seen.label,
+                        score: Number(seen.score.toFixed(3)),
+                        thumbnail: thumbnailOf(video),
+                      }
+                    );
+                  }
+                } catch {
+                  // A detector that throws mid-exam is not the candidate's
+                  // problem either.
+                }
+              }
             }
           }
         }
@@ -2399,6 +2464,8 @@ export default function ContestPageClient() {
       video.srcObject = null;
       detector?.dispose?.();
       detector = null;
+      objectDetector?.close?.();
+      objectDetector = null;
     };
   }, [cameraStream, contestId]);
 
@@ -2414,18 +2481,32 @@ export default function ContestPageClient() {
   // server, so a retry after a dropped connection replaces that frame
   // rather than adding a near-identical one to the strip.
   const photoSequenceRef = useRef(0);
+  const photoInFlightRef = useRef(false);
 
   async function captureAndUploadIdentityPhoto(
     uid: string,
     kind: "entry" | "interval" | "exit",
     sequence: number
   ): Promise<void> {
+    // A camera the candidate has switched off still delivers frames --
+    // applyMediaToggle only sets track.enabled = false -- and a black 640x480
+    // JPEG clears MIN_PLAUSIBLE_BYTES comfortably. At half-hourly cadence
+    // that put six black rectangles in the strip; at two minutes it would be
+    // sixty. The presence loop already refuses to sample in this state.
+    if (!cameraEnabledRef.current) return;
+    // setInterval has no idea whether the last upload finished. At two
+    // minutes against a 20 s timeout they cannot overlap today, but the
+    // guard is what keeps that true if either number moves.
+    if (photoInFlightRef.current) return;
+    photoInFlightRef.current = true;
     try {
-      const frame = captureFrame(cameraVideoRef.current);
+      const frame = captureFrame(cameraVideoRef.current, undefined, kind);
       if (!frame) return;
       await uploadIdentityPhoto(uid, kind, frame, sequence);
     } catch {
       // Deliberately silent. See above.
+    } finally {
+      photoInFlightRef.current = false;
     }
   }
 
@@ -2472,11 +2553,20 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!sessionId || !cameraVideoReady || !cameraStream) return;
     if (bellRung || !paperIsOpen({ endsAtMs: null, phase: contestPhase })) return;
-    const timer = setInterval(() => {
+    // Jittered, not on the tick: every machine in the hall starts within a
+    // few minutes of the others, so an exact interval has a thousand
+    // clients posting a photo at the same instant, over and over, for the
+    // length of the paper. The offset is drawn once and held, so this
+    // candidate's own cadence stays even.
+    const offset = jitterOffset();
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
       photoSequenceRef.current += 1;
       void captureAndUploadIdentityPhoto(sessionId, "interval", photoSequenceRef.current);
-    }, INTERVAL_MS);
-    return () => clearInterval(timer);
+      timer = setTimeout(tick, INTERVAL_MS);
+    };
+    timer = setTimeout(tick, Math.max(1_000, INTERVAL_MS + offset));
+    return () => clearTimeout(timer);
   }, [bellRung, cameraStream, cameraVideoReady, contestPhase, sessionId]);
 
   useEffect(() => {
@@ -3521,6 +3611,7 @@ export default function ContestPageClient() {
             />
           </VStack>
           <CameraTile
+            framingHint={framingHint}
             cameraVideoRef={cameraVideoRef}
             cameraStream={cameraStream}
             cameraError={cameraError}

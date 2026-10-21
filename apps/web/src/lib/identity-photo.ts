@@ -27,6 +27,16 @@
 export const PHOTO_WIDTH = 640;
 export const PHOTO_QUALITY = 0.82;
 
+/** The same frame at interval cadence: ~15-25 KB.
+ *
+ * Entry and exit are the two frames an invigilator studies beside a name, so
+ * they stay full size. The ones in between are a timeline -- read as a strip,
+ * opened only when something looks wrong -- and at a two-minute cadence there
+ * are ninety of them per candidate. Full size, that is 1,236 people uploading
+ * ~55 KB every two minutes into a single-worker API; this is a third of it. */
+export const INTERVAL_PHOTO_WIDTH = 320;
+export const INTERVAL_PHOTO_QUALITY = 0.6;
+
 /** Anything smaller than this is not a photograph of anyone.
  *
  * A camera that has opened but not yet produced a frame yields a canvas that
@@ -37,14 +47,32 @@ export const MIN_PLAUSIBLE_BYTES = 2_048;
 /**
  * How often a frame is taken once the exam is running.
  *
- * Half an hour. Entry and exit alone cannot answer the question an
+ * Two minutes. Entry and exit alone cannot answer the question an
  * invigilator actually has -- a stand-in only has to be absent for the two
  * moments that get photographed -- so the gap has to be short enough that
- * swapping seats is visible and long enough that nobody is filming the
- * candidate. Thirty minutes over a three-hour paper is seven frames: a
- * strip a human can read in one glance.
+ * swapping seats is visible.
+ *
+ * It was half an hour, which a substitution comfortably fits inside. Two
+ * minutes over a two-hour paper is about sixty frames per candidate, which
+ * is why the interval frame is downscaled and why the upload is jittered:
+ * see INTERVAL_PHOTO_WIDTH and JITTER_MS.
  */
-export const INTERVAL_MS = 30 * 60 * 1000;
+export const INTERVAL_MS = 2 * 60 * 1000;
+
+/**
+ * Spread each client's upload across a window instead of on the tick.
+ *
+ * Every machine in the hall starts its exam within a few minutes of the
+ * others, so an unjittered interval has a thousand clients posting a photo
+ * at the same instant, repeatedly, for two hours. The offset is drawn once
+ * per session and then held, so the cadence stays even for that candidate.
+ */
+export const JITTER_MS = 20_000;
+
+/** A per-session offset in [-JITTER_MS, +JITTER_MS]. */
+export function jitterOffset(random: () => number = Math.random): number {
+  return Math.round((random() * 2 - 1) * JITTER_MS);
+}
 
 export type PhotoKind = "entry" | "interval" | "exit";
 
@@ -107,10 +135,16 @@ type CaptureSource = {
  */
 export function captureFrame(
   video: (CaptureSource & CanvasImageSource) | null,
-  createCanvas: () => HTMLCanvasElement = () => document.createElement("canvas")
+  createCanvas: () => HTMLCanvasElement = () => document.createElement("canvas"),
+  // Interval frames are a timeline; entry and exit are the portraits. The
+  // default keeps every existing caller at full size.
+  kind: PhotoKind = "entry"
 ): string | null {
   if (!video) return null;
-  const { width, height } = scaledSize(video.videoWidth ?? 0, video.videoHeight ?? 0);
+  const interval = kind === "interval";
+  const targetWidth = interval ? INTERVAL_PHOTO_WIDTH : PHOTO_WIDTH;
+  const quality = interval ? INTERVAL_PHOTO_QUALITY : PHOTO_QUALITY;
+  const { width, height } = scaledSize(video.videoWidth ?? 0, video.videoHeight ?? 0, targetWidth);
 
   try {
     const canvas = createCanvas();
@@ -119,7 +153,7 @@ export function captureFrame(
     const context = canvas.getContext("2d");
     if (!context) return null;
     context.drawImage(video, 0, 0, width, height);
-    const base64 = stripDataUrl(canvas.toDataURL("image/jpeg", PHOTO_QUALITY));
+    const base64 = stripDataUrl(canvas.toDataURL("image/jpeg", quality));
     return isPlausiblePhoto(base64) ? base64 : null;
   } catch {
     // A tainted canvas, a browser that will not encode, a source that is not

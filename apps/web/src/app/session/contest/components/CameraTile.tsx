@@ -16,12 +16,21 @@ export interface CameraTileProps {
   cameraEnabled: boolean;
   micEnabled: boolean;
   handleToggleMedia: (type: "camera" | "mic", value: boolean) => void;
+  /** How the candidate is sitting in frame. Advice to them, nothing more. */
+  framingHint?: "ok" | "off_centre" | "too_close" | "too_far";
 }
 
 // ALWAYS MOUNTED — visibility is a display toggle (below), never a mount
 // conditional. A webcam teardown mid-exam is a candidate-facing failure; the
 // <video> element and its bound MediaStream must never unmount.
+const FRAMING_COPY: Record<string, string> = {
+  off_centre: "Move back into the centre of the frame",
+  too_close: "Move back a little",
+  too_far: "Move a bit closer",
+};
+
 export function CameraTile({
+  framingHint = "ok",
   cameraVideoRef,
   cameraStream,
   cameraError,
@@ -113,6 +122,29 @@ export function CameraTile({
             borderRadius: "0",
           }}
         />
+        {/* Shown over the candidate's own picture, where they are already
+            looking, and only while they are out of shot. It clears itself:
+            there is nothing to dismiss and nothing to get wrong. */}
+        {cameraEnabled && framingHint !== "ok" && FRAMING_COPY[framingHint] && (
+          <Text
+            role="status"
+            aria-live="polite"
+            type="supporting"
+            style={{
+              position: "absolute",
+              left: "var(--spacing-2)",
+              right: "var(--spacing-2)",
+              top: "var(--spacing-2)",
+              padding: "var(--spacing-1) var(--spacing-2)",
+              borderRadius: "var(--radius-element)",
+              background: "color-mix(in srgb, var(--color-background-body) 82%, transparent)",
+              color: "var(--color-text-primary)",
+              textAlign: "center",
+            }}
+          >
+            {FRAMING_COPY[framingHint]}
+          </Text>
+        )}
       </VStack>
       <HStack
         role="status"
