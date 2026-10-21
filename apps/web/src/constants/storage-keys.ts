@@ -13,5 +13,13 @@ export const STORAGE_KEYS = {
   // know which session's submissions to show, and it opens *after* that.
   LAST_SESSION: "ams_last_session",
 
+  // The camera the candidate picked, by deviceId.
+  //
+  // Onboarding used to open whatever the OS called the default, which on a
+  // Windows-Hello laptop is often the infrared sensor: a grey, near-black
+  // image the face check can never pass. Settings had a picker whose value
+  // was read by nothing. One key, honoured everywhere a camera is opened.
+  PREFERRED_CAMERA: "ams_preferred_camera",
+
   THEME: "ams_theme",
 } as const;

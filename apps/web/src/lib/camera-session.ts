@@ -1,4 +1,5 @@
 import { withCameraTimeout } from "./camera-readiness.ts";
+import { withPreferredCamera } from "./preferred-camera.ts";
 
 // One camera for the whole exam.
 //
@@ -205,7 +206,11 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
     const md = deps.mediaDevices!;
     const request =
       kind === "video"
-        ? md.getUserMedia({ video: VIDEO_CONSTRAINTS })
+        ? // The candidate's own choice, when they have made one. `ideal`, so
+          // a saved id that no longer matches anything falls back to the
+          // default instead of failing as OverconstrainedError -- which
+          // reads as "no camera" and has no remedy inside the exam shell.
+          md.getUserMedia({ video: withPreferredCamera(VIDEO_CONSTRAINTS) })
         : md.getUserMedia({ audio: true });
     return withCameraTimeout(
       request,

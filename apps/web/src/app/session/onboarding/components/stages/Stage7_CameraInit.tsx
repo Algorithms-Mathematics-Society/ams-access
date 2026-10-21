@@ -1,4 +1,5 @@
 import { VStack } from "@astryxdesign/core/VStack";
+import { preferredCamera, setPreferredCamera } from "@/lib/preferred-camera";
 import { Text } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/app/home/components/ui-primitives";
@@ -23,6 +24,28 @@ export function Stage7_CameraInit({
   const [isWindows, setIsWindows] = useState(false);
   const [isMac, setIsMac] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  // Every camera the machine will admit to, and which one the candidate
+  // picked. Enumerated only once the preview has failed or more than one
+  // exists: a list of one device is a decision nobody needs to make.
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [chosen, setChosen] = useState<string>(() => preferredCamera() ?? "");
+
+  useEffect(() => {
+    let cancelled = false;
+    void navigator.mediaDevices
+      ?.enumerateDevices?.()
+      .then((devices) => {
+        if (cancelled) return;
+        setCameras(devices.filter((d) => d.kind === "videoinput" && d.deviceId));
+      })
+      .catch(() => {
+        // No permission yet, or no enumerate at all. The picker simply does
+        // not appear, which is the behaviour that existed before it did.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [retryKey, phase]);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -192,6 +215,55 @@ export function Stage7_CameraInit({
           >
             {error}
           </Text>
+          {/* The wrong camera is the failure this stage cannot otherwise
+              escape. A Windows-Hello laptop exposes its infrared sensor as
+              an ordinary video device and Linux hands it out as the
+              default, so the preview is a near-black rectangle, the face
+              check can never pass, and nothing on screen offered a way to
+              say "not that one". Shown whenever there is a real choice. */}
+          {cameras.length > 1 && (
+            <VStack gap={2} style={{ width: "100%", maxWidth: "22rem" }}>
+              <Text
+                style={{
+                  fontSize: "var(--font-size-sm)",
+                  fontFamily: "var(--font-family-body)",
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                Using the wrong camera? Pick another.
+              </Text>
+              <select
+                value={chosen}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setChosen(next);
+                  setPreferredCamera(next || null);
+                  // Retry immediately: the choice is only meaningful once
+                  // the preview shows what it picked.
+                  setError(null);
+                  setPhase("checking");
+                  setRetryKey((key) => key + 1);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "var(--spacing-2)",
+                  borderRadius: "var(--radius-element)",
+                  border: "var(--border-width) solid var(--color-border)",
+                  background: "var(--color-background-body)",
+                  color: "var(--color-text-primary)",
+                  fontFamily: "var(--font-family-body)",
+                  fontSize: "var(--font-size-sm)",
+                }}
+              >
+                <option value="">System default</option>
+                {cameras.map((camera, index) => (
+                  <option key={camera.deviceId} value={camera.deviceId}>
+                    {camera.label || `Camera ${index + 1}`}
+                  </option>
+                ))}
+              </select>
+            </VStack>
+          )}
           {isWindows && permissionIssue && (
             <Button
               theme={theme}

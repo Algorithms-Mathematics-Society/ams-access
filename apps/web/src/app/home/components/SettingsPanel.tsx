@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, memo } from "react";
+import { preferredCamera, setPreferredCamera } from "@/lib/preferred-camera";
 import type { Dispatch, SetStateAction } from "react";
 import { AspectRatio } from "@astryxdesign/core/AspectRatio";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -56,7 +57,10 @@ export const SettingsPanel = memo(function SettingsPanel({
   );
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
-  const [selectedCam, setSelectedCam] = useState("");
+  // Seeded from the saved choice, so the panel opens showing what the exam
+  // will actually use rather than "System default" next to a different
+  // camera.
+  const [selectedCam, setSelectedCam] = useState(() => preferredCamera() ?? "");
   const [cameraBusy, setCameraBusy] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const cameraRequestOwner = useRef(createMediaRequestOwner());
@@ -467,7 +471,16 @@ export const SettingsPanel = memo(function SettingsPanel({
                       <Selector
                         label="Camera"
                         value={selectedCam}
-                        onChange={setSelectedCam}
+                        onChange={(next: string) => {
+                          setSelectedCam(next);
+                          // Remembered here, not on "Start camera": the
+                          // choice is what the candidate meant, and the test
+                          // is optional. This value was read by nothing
+                          // before, so onboarding kept opening the OS
+                          // default -- the infrared sensor, on the laptops
+                          // that fail.
+                          setPreferredCamera(next || null);
+                        }}
                         width="100%"
                         renderOption={(option) => (
                           <Text

@@ -3375,6 +3375,7 @@ export default function ContestPageClient() {
           <BlockedAppsOverlay
             lockViolationDialogRef={lockViolationDialogRef}
             blockedApps={blockedApps}
+            onExit={() => void redirectAfterRelease("/home")}
           />
         )}
         <TopBar
@@ -3687,6 +3688,20 @@ export default function ContestPageClient() {
           </Heading>
           <Banner status="warning" title="Camera attention needed" description={faceBlockMessage} />
           <Text color="secondary">The workspace will resume when the camera check clears.</Text>
+          {/* Same reason as the restricted-app overlay: a full-screen block
+              with no control, in an app that cannot be quit, leaves a
+              candidate whose camera will not clear with nothing but the
+              power button. One of them used it. */}
+          <Button
+            variant="secondary"
+            label="Exit contest"
+            onClick={() => void redirectAfterRelease("/home")}
+            style={{ alignSelf: "flex-start" }}
+          />
+          <Text type="supporting" color="secondary">
+            Exiting ends your sitting and releases this computer. Fix the camera instead if you
+            can, or call an invigilator.
+          </Text>
         </ContestOverlay>
       )}
 
