@@ -63,7 +63,7 @@ export type CameraSession = {
   preferredVideoDevice(): string | null;
   setPreferredVideoDevice(deviceId: string | null): Promise<MediaStream>;
   /** Release only the owned video. A stale stream cannot release a replacement. */
-  releaseVideo(expectedStream?: MediaStream): void;
+  releaseVideo(expectedStream?: MediaStream, options?: { preserveRecovery?: boolean }): void;
   /** Notified on loss and on recovery. Returns an unsubscribe function. */
   subscribe(listener: CameraListener): () => void;
   /**
@@ -369,14 +369,16 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       return assemble(isTrackUsable(audioTrack ?? undefined));
     },
 
-    releaseVideo(expectedStream) {
+    releaseVideo(expectedStream, options) {
       const expectedTrack = expectedStream?.getVideoTracks()[0];
       if (expectedStream && expectedTrack !== videoTrack) return;
       videoGeneration += 1;
       pendingVideo = null;
       videoTrack?.stop();
       videoTrack = null;
-      everOpened = false;
+      // Contest preview retries retain permission/replug ownership. Settings
+      // and intentional release keep the default: never reopen automatically.
+      everOpened = options?.preserveRecovery === true && everOpened;
       announce("lost");
     },
 

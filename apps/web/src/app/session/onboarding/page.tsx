@@ -500,6 +500,9 @@ export default function OnboardingPage() {
           return;
         }
       }
+      // A timed-out start may still acquire native controls. Its rollback must
+      // settle before another setup probe or entry can share the desktop.
+      attempts.assertSettled("secure session start");
       let devices: MediaDeviceInfo[] | null = null;
       try {
         if (navigator.mediaDevices?.enumerateDevices) {
@@ -810,7 +813,8 @@ export default function OnboardingPage() {
       // rather than throwing: the session is already an unproctored dev one,
       // which the readiness modal states outright before letting anyone in.
       if (nativeAvailable)
-        await wait(
+        await attempts.runResource(
+          attempt,
           "secure session start",
           () =>
             startSecureSession({
@@ -827,7 +831,10 @@ export default function OnboardingPage() {
               apiUrl: API_URL,
               token: participantToken(),
             }),
-          45000
+          45000,
+          async () => {
+            await invokeStrict("unlock_desktop");
+          }
         );
 
       if (windowMeta && !isTestAccount) {

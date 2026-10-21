@@ -2084,7 +2084,7 @@ export default function ContestPageClient() {
     };
 
     const stopStream = (stream: MediaStream | null) => {
-      if (stream) cameraSession.releaseVideo(stream);
+      if (stream) cameraSession.releaseVideo(stream, { preserveRecovery: true });
     };
 
     const displayCameraError = (err: unknown) => {

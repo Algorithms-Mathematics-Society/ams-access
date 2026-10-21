@@ -730,3 +730,29 @@ test("ensure waiting on audio rejects when video selection changes", async () =>
   await assert.rejects(waiting, /selection changed/);
   assert.deepEqual((await switched).tracks[0], freshVideo);
 });
+
+test("contest preview release retains exact-camera hotplug recovery after exhausted retries", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = { read: () => "camera-b", write() {} };
+  deps.createStream = (tracks) => ({
+    tracks,
+    getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
+  });
+  const session = createCameraSession(deps);
+  const stream = await session.ensure({ audio: true });
+  session.releaseVideo(stream, { preserveRecovery: true });
+  deps.failWith = new Error("NotFoundError");
+  for (let attempt = 0; attempt < 3; attempt++) await assert.rejects(session.ensure());
+  const before = deps.opens.length;
+  deps.failWith = null;
+  deps.fireDeviceChange();
+  await new Promise(setImmediate);
+  assert.equal(deps.opens.length, before + 1);
+  assert.deepEqual(deps.opens.at(-1).video.deviceId, { exact: "camera-b" });
+  assert.equal(session.status(), "live");
+  assert.equal(deps.tracks.audio[0].stopped, false);
+  session.release();
+  deps.fireDeviceChange();
+  await new Promise(setImmediate);
+  assert.equal(deps.opens.length, before + 1, "exam exit must still stop recovery");
+});

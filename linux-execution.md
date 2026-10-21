@@ -1,6 +1,8 @@
 # Linux execution plan
 
-Status: A–F have local implementation and automated evidence. The pre-G review repairs are implemented locally on `linux/pre-phase-g-review-20261021`. **Do not treat previous 3.2.0 artifacts as validation of the newer review fixes.** Phase G has not started. Final integrated checks passed: 684 web tests; 112 platform, 89 desktop, 43 core and 48 helper Rust tests; 47 packaging scenarios; web build/typecheck, formatting and Clippy.
+Status: A–F have local implementation and automated evidence. The pre-G review repairs are implemented locally on `linux/pre-phase-g-review-20261021`. **Do not treat previous 3.2.0 artifacts as validation of the newer review fixes.** Phase G has not started. Previous integrated checks passed: 684 web tests; 112 platform, 89 desktop, 43 core and 48 helper Rust tests; 47 packaging scenarios; web build/typecheck, formatting and Clippy.
+
+Follow-up recovery validation: **689 web tests passed**, including five new regression scenarios; web typecheck and diff whitespace checks passed. Native and packaging checks above are from the preceding integrated run.
 
 This is the implementation and acceptance plan. [audit-test.md](audit-test.md) is the incident briefing; [linux-review.md](linux-review.md) records each review finding, alternatives and disposition. Detailed historical material is preserved locally in [the execution archive](reports/linux-review/archive/execution-before-review.md); its statuses are historical. Logs and scratch captures under `reports/` are intentionally excluded from Git.
 
@@ -33,6 +35,7 @@ Shared backend capacity, synchronized start, admission timing and submission ide
 - [x] Keep keyboard guidance honest about aggregate versus individually verified coverage.
 - [x] Restore advisory network/ordinary recorder behavior and preserve loaded waivers during a failed final refresh.
 - [x] Separate cancellation, timeout and ownership transfer so late native work cannot undo a successful contest transition or survive an abandoned attempt unhandled.
+- [x] Retain secure-start rollback through verification failure, timeout and cancellation; hold retry probes until late startup and cleanup settle. Regression fixtures exercise the actual final-entry callback.
 - [ ] Exercise installed entry with slow DNS, denied helper authorization, failed recorder, stale/updated waivers, cancellation and retry. Required policy failures must still block.
 
 ## Phase D — Settings and cameras
@@ -40,6 +43,7 @@ Shared backend capacity, synchronized start, admission timing and submission ide
 - [x] Bound listing/acquisition/preview operations; retain actual native/browser ownership until requests settle.
 - [x] Persist exact camera selection across Settings, onboarding and contest; prevent silent substitution.
 - [x] Explain when a saved camera is unavailable and offer reconnect/reselection. Hidden IDs or a listing error are not proof it disappeared.
+- [x] Preserve contest hotplug recovery after preview release and exhausted reopen retries, while Settings release and exam exit still stop automatic capture.
 - [ ] Test RGB/IR devices, unplug/replug, changed IDs, denied permission, stalled frames, repeated navigation, and camera/mic indicators on real WebKit builds.
 - [ ] Keep the Arch renderer-freeze investigation separate from a merely pending JavaScript promise; no speculative global GPU/portal workaround.
 

@@ -37,6 +37,35 @@ export function createEntryAttemptController(
       return active;
     },
     current,
+    assertSettled(key: string) {
+      if (pending.has(key))
+        throw new EntryTimeoutError(
+          `The previous ${key} is still finishing or restoring controls. Wait a moment, then retry.`
+        );
+    },
+    /** Required acquisition with rollback ownership until the attempt commits.
+     * Cleanup runs immediately on abandonment and again after late settlement.
+     * Call assertSettled before any retry probes that share this resource. */
+    async runResource<T>(
+      attempt: number,
+      key: string,
+      start: () => Promise<T>,
+      ms: number,
+      cleanup: () => Promise<void>
+    ): Promise<T> {
+      this.assertSettled(key);
+      const result = await this.runAdvisory(
+        attempt,
+        key,
+        start,
+        ms,
+        `${key} timed out. Retry contest entry.`,
+        cleanup,
+        true
+      );
+      if (result.status !== "completed") throw result.error;
+      return result.value;
+    },
     commit(attempt: number) {
       if (active !== attempt) return;
       committedAttempts.add(attempt);

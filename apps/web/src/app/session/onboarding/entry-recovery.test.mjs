@@ -8,6 +8,7 @@ import {
   EntryTimeoutError,
   createEntryAttemptController,
   entryMediaFacts,
+  refreshEntryValue,
 } from "./entry-attempt.ts";
 
 const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
@@ -74,7 +75,7 @@ async function flushUntil(predicate) {
   assert.ok(predicate(), "expected async flow to reach checkpoint");
 }
 
-function fixture({ enumerateDevices, collectDeviceState }) {
+function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
   const time = fakeClock();
   const attempts = createEntryAttemptController(time.clock);
   attempts.activate();
@@ -95,6 +96,7 @@ function fixture({ enumerateDevices, collectDeviceState }) {
     cameraStreamRef: { current: null },
     cameraAttemptedRef: { current: true },
     entryMediaFacts,
+    refreshEntryValue,
     browserDeviceState() {
       throw new Error("browser path must not run");
     },
@@ -120,10 +122,11 @@ function fixture({ enumerateDevices, collectDeviceState }) {
       return {};
     },
   };
+  Object.assign(context, overrides);
   const finalize = new Function(...Object.keys(context), `return ${callbackCode}`)(
     ...Object.values(context)
   );
-  return { finalize, time, state };
+  return { finalize, time, state, attempts };
 }
 
 test("real final entry handles a pending media enumeration deadline without creating a session", async () => {
@@ -174,3 +177,112 @@ test("real final entry prevents overlapping native scans and allows a fresh scan
   assert.equal(f.state.sessions, 0);
   assert.deepEqual(f.state.navigation, []);
 });
+
+function desktopFixture({ start, verify, cleanup } = {}) {
+  const desktop = { active: false, scans: 0, starts: 0, unlocks: 0 };
+  const invoke = async (name) => {
+    if (name === "is_lockdown_engaged") return verify ? verify() : desktop.active;
+    if (name === "unlock_desktop") {
+      desktop.unlocks++;
+      if (cleanup) await cleanup();
+      desktop.active = false;
+    }
+    return true;
+  };
+  const f = fixture({
+    enumerateDevices: async () => [],
+    collectDeviceState: async () => {
+      desktop.scans++;
+      if (desktop.active) throw new Error("A secure session owns desktop controls");
+      return { platform: "linux" };
+    },
+    overrides: {
+      contestId: "contest",
+      preparedSessionIdRef: { current: "session" },
+      faceReviewRef: { current: { isRequested: () => false } },
+      warningRecordsRef: { current: new Map() },
+      invokeStrict: invoke,
+      invoke,
+      window: { __TAURI__: { core: { invoke } } },
+      participantToken: () => "token",
+      getNetworkLockdownAllowlistHost: () => "api.invalid",
+      decideNetworkLockdown: () => ({ violation: false, eventKind: "network", detail: "" }),
+      getOrCreateDeviceId: () => "device",
+      refreshEntryValue,
+      overrides: [],
+      fetchOrganizerOverrides: async () => [],
+      setOverrides() {},
+      applyOrganizerOverrides: (p) => p,
+      applyLockdownConfig: (p) => p,
+      strictContestPolicy: () => ({}),
+      startSecureSession: async () => {
+        desktop.starts++;
+        if (start) await start();
+        desktop.active = true;
+      },
+    },
+  });
+  return { ...f, desktop };
+}
+
+test("failed post-start verification releases desktop before a successful retry", async () => {
+  let fail = true;
+  const f = desktopFixture({
+    verify: async () => {
+      if (fail) throw new Error("verification IPC failed");
+      return true;
+    },
+  });
+  await f.finalize();
+  await flushUntil(() => !f.desktop.active);
+  assert.equal(f.desktop.unlocks, 1);
+  fail = false;
+  await flush();
+  await f.finalize();
+  assert.deepEqual(f.state.navigation, ["/session/contest?contestId=contest"]);
+  assert.equal(f.desktop.active, true);
+  f.attempts.cancel();
+  await flush();
+  assert.equal(f.desktop.unlocks, 1, "successful navigation transfers desktop ownership");
+});
+
+test("verification timeout holds retries until desktop cleanup settles", async () => {
+  const verification = deferred();
+  const cleanup = deferred();
+  const f = desktopFixture({ verify: () => verification.promise, cleanup: () => cleanup.promise });
+  const run = f.finalize();
+  await flushUntil(() => f.desktop.active);
+  await flush();
+  f.time.fire(5000);
+  await run;
+  await f.finalize();
+  assert.equal(f.desktop.scans, 1);
+  assert.match(f.state.blocks.at(-1), /restoring controls/);
+  cleanup.resolve();
+  verification.resolve(true);
+  await flush();
+  assert.equal(f.desktop.active, false);
+});
+
+for (const reason of ["timeout", "cancel"]) {
+  test(`late secure startup is released after ${reason} without overlapping retry`, async () => {
+    const start = deferred();
+    const f = desktopFixture({ start: () => start.promise });
+    const run = f.finalize();
+    await flushUntil(() => f.desktop.starts === 1);
+    if (reason === "timeout") f.time.fire(45000);
+    else f.attempts.cancel();
+    await run;
+    await flush();
+    assert.equal(f.desktop.unlocks, 1, "abandonment requests immediate restoration");
+    if (reason === "timeout") {
+      await f.finalize();
+      assert.equal(f.desktop.scans, 1, "retry must not probe while startup is pending");
+    }
+    start.resolve();
+    await flushUntil(() => f.desktop.unlocks === 2);
+    await flush();
+    assert.equal(f.desktop.active, false, "late engagement is rolled back");
+    assert.deepEqual(f.state.navigation, []);
+  });
+}
