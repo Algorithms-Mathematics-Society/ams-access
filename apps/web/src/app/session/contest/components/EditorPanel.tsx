@@ -1,7 +1,7 @@
 import type { DiagnosticNavigation } from "../compiler-diagnostics";
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { Play, Send, Check, X, Settings2 } from "lucide-react";
+import { Play, Send, Check, X, Settings2, AlignLeft } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -17,7 +17,11 @@ import {
   parseEditorPreferences,
   type EditorPreferences,
 } from "../editor-preferences";
-import { CONTEST_EDITOR_THEMES, type ContestEditorThemeId } from "../editor-pane";
+import {
+  CONTEST_EDITOR_THEMES,
+  formatActiveEditor,
+  type ContestEditorThemeId,
+} from "../editor-pane";
 import { type ContestMeta } from "./questions";
 import { type SubmitButtonView } from "../submit-button";
 
@@ -228,6 +232,18 @@ export function EditorPanel({
           </select>
         </HStack>
         <HStack gap={2} align="center" wrap="wrap">
+          {/* Indentation only, and the same command Ctrl/Cmd-S runs. Hidden
+              once the bell has rung, when the document is read-only and the
+              button could only fail. */}
+          {!readOnly && (
+            <IconButton
+              label="Format code"
+              {...{ title: "Format code (Ctrl+S)" }}
+              variant="ghost"
+              icon={<AlignLeft size={16} aria-hidden="true" />}
+              onClick={() => formatActiveEditor()}
+            />
+          )}
           <VStack gap={0}>
             <IconButton
               id="contest-editor-settings-trigger"

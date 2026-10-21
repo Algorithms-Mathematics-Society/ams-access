@@ -3,6 +3,7 @@
 import { canNavigateDiagnostic, type DiagnosticNavigation } from "./compiler-diagnostics";
 import { toLanguageId } from "./components/language";
 import { editorLockExtensions } from "./editor-lock";
+import { CONTEST_INDENT_UNIT, formatView } from "./format-code";
 import {
   DEFAULT_EDITOR_PREFERENCES,
   editorPreferenceExtensions,
@@ -35,6 +36,7 @@ import {
   HighlightStyle,
   foldKeymap,
   indentOnInput,
+  indentUnit,
   syntaxHighlighting,
 } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
@@ -389,7 +391,9 @@ const preferencesCompartment = new Compartment();
  * contest language label. Autocomplete lives here (not in createEditorExtensions)
  * so that switching languages cleanly replaces both in a single compartment dispatch.
  */
-function resolveLanguageBundle(language: string): Extension[] {
+/** The language extensions a document gets, shared so a starter file can
+ *  be indented by the same rules before it reaches the pane. */
+export function resolveLanguageBundle(language: string): Extension[] {
   if (language === "Python3") {
     return [python(), autocompletion({ activateOnTyping: true, maxRenderedOptions: 14 })];
   }
@@ -543,6 +547,19 @@ const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
 /// Mark a string as an allowed clipboard source — pasting it back will be
 /// classified internal, not external. Used by the statement sample "Copy" button.
+/**
+ * The pane currently on screen, so the toolbar can format without the
+ * command being drilled through EditorPanel. Same shape as
+ * `registerAllowedClipboard` below: one editor is mounted at a time.
+ */
+let activeView: EditorView | null = null;
+
+/** Format whatever is in the editor. False when there is nothing mounted or
+ *  nothing to change, which the caller uses to stay quiet. */
+export function formatActiveEditor(): boolean {
+  return activeView ? formatView(activeView) : false;
+}
+
 export function registerAllowedClipboard(text: string) {
   lastInternalCopy = { text: norm(text), ts: Date.now() };
 }
@@ -678,6 +695,8 @@ function createEditorExtensions(
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
+    // Match the starter files, and what Ctrl+S will produce.
+    indentUnit.of(CONTEST_INDENT_UNIT),
     bracketMatching(),
     closeBrackets(),
     rectangularSelection(),
@@ -687,6 +706,20 @@ function createEditorExtensions(
     // Language extension + its autocomplete — swapped via compartment on language change
     languageCompartment.of(resolveLanguageBundle(language)),
     keymap.of([
+      {
+        // Ctrl/Cmd-S formats. The reflex it overrides is "save", and there
+        // is nothing to save: the draft is written continuously and on
+        // submit. Binding it here also stops the browser's own save dialog
+        // appearing over a locked-down exam.
+        key: "Mod-s",
+        preventDefault: true,
+        run: (view) => {
+          formatView(view);
+          // Handled either way. Returning false would let the keypress fall
+          // through to the browser.
+          return true;
+        },
+      },
       { key: "Mod-/", run: toggleComment },
       indentWithTab,
       ...closeBracketsKeymap,
@@ -788,6 +821,7 @@ export default function EditorPane({
       state: EditorState.create({ doc: currentCode, extensions }),
     });
     viewRef.current = view;
+    activeView = view;
     documentTextRef.current = currentCode;
 
     // Seed the correct language on recreation — the memoised extensions carry the
@@ -799,6 +833,7 @@ export default function EditorPane({
     return () => {
       view.destroy();
       if (viewRef.current === view) viewRef.current = null;
+      if (activeView === view) activeView = null;
       // The destroyed view never fires blur — re-arm Escape blocking so a
       // tab switch or page exit can never leave Escape passing through.
       setNativeEscapeBlocked(true);

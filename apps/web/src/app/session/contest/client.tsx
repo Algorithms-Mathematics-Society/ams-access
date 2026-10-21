@@ -1,5 +1,6 @@
 "use client";
 
+import { formatSource } from "./format-code";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 import { ContestSponsor } from "@/components/ContestSponsor";
@@ -54,6 +55,7 @@ import { STORAGE_KEYS } from "@/constants/storage-keys";
 import {
   CONTEST_EDITOR_THEMES,
   registerAllowedClipboard,
+  resolveLanguageBundle,
   type ContestEditorThemeId,
 } from "./editor-pane";
 import {
@@ -1401,7 +1403,15 @@ export default function ContestPageClient() {
       content = saved.content;
       setSelectedLanguage(lang);
     } else {
-      content = q.starter_code ?? defaultStarterFor(lang);
+      // Indent the starter on the way in, so a skeleton always opens tidy
+      // whatever the setter pasted. Only on this branch: a saved draft is
+      // the candidate's own work, and reformatting it under them on every
+      // question switch would be both a surprise and a diff they did not
+      // ask for.
+      content = formatSource(
+        q.starter_code ?? defaultStarterFor(lang),
+        resolveLanguageBundle(lang)
+      );
       if (cxxprobeQuestion) setSelectedLanguage("C++23");
     }
 
