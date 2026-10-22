@@ -1,0 +1,249 @@
+{
+  "release_id": 420358050,
+  "tag": "v4.0.1",
+  "source_commit": "ab23bc6c93e30a273c3d1d8042880725c047ee2e",
+  "release_run": 39730820957,
+  "draft": true,
+  "published_at": null,
+  "independent_download_hashes": "pass",
+  "assets": [
+    {
+      "id": 664857946,
+      "name": "AMS.Access-4.0.1-1.x86_64.rpm",
+      "bytes": 14733280,
+      "sha256": "f21ce6a667da251eee99ad758679ea692020d1ff3e539292cd4e4eb9fac2e655",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664847341,
+      "name": "AMS.Access_4.0.1_aarch64.dmg",
+      "bytes": 15416222,
+      "sha256": "902143bd256f07a181f72ce5b0458e87d7d237acbbc5d81180f74bed786c652c",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664857945,
+      "name": "AMS.Access_4.0.1_amd64.AppImage",
+      "bytes": 103741944,
+      "sha256": "fb05eaf169b39d78325f55734a1f5a622877db24fcdcf2164ec2253cb16b42cf",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664857943,
+      "name": "AMS.Access_4.0.1_amd64.deb",
+      "bytes": 14727180,
+      "sha256": "3edd2debaa08f2776676669dee5d1ff64b7c6eab2257d9a22b84ccfe6b184f63",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664853529,
+      "name": "AMS.Access_4.0.1_x64-setup.exe",
+      "bytes": 13315454,
+      "sha256": "ccb96501c8273d5668b0d72aba73aeb199d60f9bb686b526239bf2723146c055",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664858382,
+      "name": "AMS.Access_4.0.1_x64.dmg",
+      "bytes": 16003148,
+      "sha256": "980f8a0735f61dfabccca4d68bc48407ce43996567f5a0f448bf20803b989fe4",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664853531,
+      "name": "AMS.Access_4.0.1_x64_en-US.msi",
+      "bytes": 14888960,
+      "sha256": "7bf8d8e3a1ab4bb388c2d8e3a499d5b2ede10065cd11e32fc975f63032007115",
+      "kind": "installer",
+      "installer_manifest_match": true,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664847340,
+      "name": "SHA256SUMS-aarch64-apple-darwin.txt",
+      "bytes": 95,
+      "sha256": "3aa7950ecebf63faa323da44497b69b8dfbdb3b591403f4b527b2ea3aaaaa547",
+      "kind": "checksum_manifest",
+      "installer_manifest_match": null,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664858380,
+      "name": "SHA256SUMS-x86_64-apple-darwin.txt",
+      "bytes": 91,
+      "sha256": "3dfb2239950a7fa6c84a3c00a322f113e705c0dbcd8e65cc37f74327942e1f22",
+      "kind": "checksum_manifest",
+      "installer_manifest_match": null,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664853527,
+      "name": "SHA256SUMS-x86_64-pc-windows-msvc.txt",
+      "bytes": 194,
+      "sha256": "c579bfe7ed929fdd9295ec0ace33cc30b966668f662d448ffd42b937eac4a626",
+      "kind": "checksum_manifest",
+      "installer_manifest_match": null,
+      "api_digest_match": true,
+      "size_match": true
+    },
+    {
+      "id": 664857944,
+      "name": "SHA256SUMS-x86_64-unknown-linux-gnu.txt",
+      "bytes": 287,
+      "sha256": "8df4dc1d0c7afb80d2f4a53e630dc805e1a5814b51734eac3831d6bc9809e906",
+      "kind": "checksum_manifest",
+      "installer_manifest_match": null,
+      "api_digest_match": true,
+      "size_match": true
+    }
+  ],
+  "scope": "Downloaded draft bytes match API digests and all four manifests. Does not certify native hardware, signing, backend, or final publication metadata.",
+  "tag_object": "766e13d8acead81b31f28000ebb1a69ef8cd0959",
+  "release_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-4996966a523b8523d2f6",
+  "release_workflow_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/actions/runs/39730820957",
+  "phase_g_complete": false,
+  "linux_runtime_validation": {
+    "release_workflow_run": 39730820957,
+    "artifacts": {
+      "deb": {
+        "file": "assets/AMS.Access_4.0.1_amd64.deb",
+        "size": 14727180,
+        "sha256": "3edd2debaa08f2776676669dee5d1ff64b7c6eab2257d9a22b84ccfe6b184f63",
+        "ci_payload_report": "linux-validation-ci/deb.json",
+        "ci_payload_valid": true,
+        "clean_install_remove_exit": 0,
+        "installed_launch_exit": 0
+      },
+      "rpm": {
+        "file": "assets/AMS.Access-4.0.1-1.x86_64.rpm",
+        "size": 14733280,
+        "sha256": "f21ce6a667da251eee99ad758679ea692020d1ff3e539292cd4e4eb9fac2e655",
+        "ci_payload_report": "linux-validation-ci/rpm.json",
+        "ci_payload_valid": true,
+        "clean_install_remove_exit": 0
+      },
+      "appimage": {
+        "file": "assets/AMS.Access_4.0.1_amd64.AppImage",
+        "size": 103741944,
+        "sha256": "fb05eaf169b39d78325f55734a1f5a622877db24fcdcf2164ec2253cb16b42cf",
+        "ci_payload_report": "linux-validation-ci/appimage.json",
+        "ci_payload_valid": true,
+        "extract_and_run_exit": 0
+      }
+    },
+    "containers": {
+      "clean_deb": {
+        "image": "ubuntu:22.04",
+        "image_id": "sha256:cee13550f97b8a595506e8e4ca74263ba44924248779a4ba4f942e197652acff",
+        "network": "bridge"
+      },
+      "clean_rpm": {
+        "image": "fedora:43",
+        "image_id": "sha256:8162d27a3b7f2b6c9d347c152189725e91e5af3a189ac5f691005556bcedbcf7",
+        "network": "bridge"
+      },
+      "headless_launch": {
+        "image": "ams-phase-g-desktop:local",
+        "image_id": "sha256:e5d9fe75a7f4ed203aa5194aaa693366a9b73eabce9f635cc3c90b55bd4fabe8",
+        "network": "none",
+        "display": "Xvfb/Openbox"
+      }
+    },
+    "scope": "Exact draft bytes. CI payload reports are release-build provenance, not an independent compiled-helper comparison. Headless launch is not GNOME, KDE, camera, systemd/polkit, or physical-desktop certification."
+  },
+  "windows_macos_metadata_validation": {
+    "release_id": 420358050,
+    "release_run": 39730820957,
+    "source_commit": "ab23bc6c93e30a273c3d1d8042880725c047ee2e",
+    "scope": "Non-executing package metadata and release-log verification; whole-file hashes are owned by integrity.json.",
+    "assets": [
+      {
+        "id": 664853529,
+        "name": "AMS.Access_4.0.1_x64-setup.exe",
+        "bytes": 13315454,
+        "format": "NSIS 3 Unicode",
+        "installer_stub_machine": "i386 (PE32)",
+        "payload_machine": "x86-64 (PE32+)",
+        "file_version": "4.0.1",
+        "product_version": "4.0.1",
+        "authenticode": "unsigned",
+        "evidence": "PE resources and extracted payload inspected with pefile/file; osslsigncode found no signature; Windows job skipped certificate import and logged UNSIGNED.",
+        "network_helper_machine": "x86-64 (PE32+)"
+      },
+      {
+        "id": 664853531,
+        "name": "AMS.Access_4.0.1_x64_en-US.msi",
+        "bytes": 14888960,
+        "format": "MSI / WiX 3.14.1",
+        "template": "x64;0",
+        "product_name": "AMS Access",
+        "product_version": "4.0.1",
+        "embedded_payload_machine": "x86-64 (PE32+)",
+        "authenticode": "unsigned",
+        "evidence": "MSI SummaryInformation and Property table inspected with msiinfo; embedded payload extracted with msiextract; osslsigncode reported no MSI signature.",
+        "network_helper_machine": "x86-64 (PE32+)"
+      },
+      {
+        "id": 664847341,
+        "name": "AMS.Access_4.0.1_aarch64.dmg",
+        "bytes": 15416222,
+        "bundle_identifier": "com.ams.access",
+        "bundle_short_version": "4.0.1",
+        "bundle_version": "4.0.1",
+        "minimum_macos": "12.0",
+        "payload_machine": "Mach-O 64-bit arm64",
+        "code_signature_resources_present": true,
+        "apple_notarization": "Accepted",
+        "notarization_submission_id": "21b4ce03-73e2-452d-9ba9-1f6aaa62ee2e",
+        "stapled_app": true,
+        "dmg_signed": true,
+        "evidence": "Extracted Info.plist/Mach-O/_CodeSignature; ARM job imported Apple certificate, signed app and executable, received Accepted notarization, stapled app, then signed DMG.",
+        "network_helpers": {
+          "ams-access-networkhelper": "Mach-O universal x86_64+arm64",
+          "com.ams.access.networkhelper": "Mach-O universal x86_64+arm64"
+        }
+      },
+      {
+        "id": 664858382,
+        "name": "AMS.Access_4.0.1_x64.dmg",
+        "bytes": 16003148,
+        "bundle_identifier": "com.ams.access",
+        "bundle_short_version": "4.0.1",
+        "bundle_version": "4.0.1",
+        "minimum_macos": "12.0",
+        "payload_machine": "Mach-O 64-bit x86_64",
+        "code_signature_resources_present": true,
+        "apple_notarization": "Accepted",
+        "notarization_submission_id": "1eb2b2a9-7c08-41e9-865f-d923abac9a80",
+        "stapled_app": true,
+        "dmg_signed": true,
+        "evidence": "Extracted Info.plist/Mach-O/_CodeSignature; Intel job imported Apple certificate, signed app and executable, received Accepted notarization, stapled app, then signed DMG.",
+        "network_helpers": {
+          "ams-access-networkhelper": "Mach-O universal x86_64+arm64",
+          "com.ams.access.networkhelper": "Mach-O universal x86_64+arm64"
+        }
+      }
+    ]
+  }
+}
