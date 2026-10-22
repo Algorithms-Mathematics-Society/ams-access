@@ -34,3 +34,7 @@ The incident is **not closed**. Release gates remain: affected-device reproducti
 - **Unverified:** requires the named device, environment, server record or packet-level check.
 
 Detailed historical logs/captures are local evidence under ignored `reports/`; they are not application assets or automatically staged release files. The dangerous fixture patch was moved outside the product repository. No production service or host desktop/firewall was used as a test target.
+
+### v4.0.1 publication — 22 October
+
+Published v4.0.1 at 2026-10-22T06:29:38Z after explicit authorization and independent artifact/source/Linux checks. All executed release gates passed; the published seven installers/four manifests match the verified draft exactly. This supersedes earlier draft/public-v4.0.0 status snapshots above. Physical cameras/desktops/restoration, real helper authorization/network recovery and deployed-backend/capacity acceptance remain open; Phase G is not complete. See [the publication record](release-v4.0.1.md#publication-decision).
