@@ -67,12 +67,24 @@ const KIOSK_WINDOW_LEVEL: isize = 25;
 
 // NSWindowStyleMask
 const STYLE_TITLED: usize = 1 << 0;
+const STYLE_CLOSABLE: usize = 1 << 1;
+const STYLE_MINIATURIZABLE: usize = 1 << 2;
+const STYLE_RESIZABLE: usize = 1 << 3;
 const STYLE_FULL_SCREEN: usize = 1 << 14;
+// Everything that lets the candidate change the window's size or get it out
+// of the way. Hiding the Dock and raising the level did nothing about any of
+// them: the exam floated on top at whatever size it happened to be, with the
+// desktop and every other app usable around it.
+const STYLE_ESCAPES: usize = STYLE_CLOSABLE | STYLE_MINIATURIZABLE | STYLE_RESIZABLE;
 
 // Options in force before the first apply; a re-apply never overwrites them.
 static PRESENTATION: Mutex<Option<usize>> = Mutex::new(None);
 // (NSWindow pointer, original level, original collection behaviour).
 static WINDOW: Mutex<Option<(usize, isize, usize)>> = Mutex::new(None);
+// The style mask and frame as they were before the kiosk took them, so the
+// window can be given back on a normal exit. Separate from WINDOW so the
+// existing save/restore pairing is left exactly as it was.
+static WINDOW_SHAPE: Mutex<Option<(usize, usize, Rect)>> = Mutex::new(None);
 // (notification center, +1 observer token) as raw addresses.
 static OBSERVERS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 
@@ -250,6 +262,18 @@ fn apply_on_main(ns_window: usize) -> Result<(), String> {
         }
     } else {
         problems.push("the exam window could not be read");
+    }
+
+    // Take away the ways out of the window itself.
+    //
+    // Hiding the Dock, raising the level and pinning to every Space all
+    // assumed the window already filled the screen. None of them stop a
+    // candidate dragging a corner: the exam sat on top at whatever size it
+    // was, with a PDF and a second app comfortably readable around it. The
+    // resize, minimise and close controls go, and the frame is put to the
+    // whole screen.
+    if !lock_window_shape(window) {
+        problems.push("the exam window could not be locked to the screen");
     }
 
     if guarded(|| unsafe {
@@ -439,6 +463,89 @@ pub fn top_safe_inset(ns_window: usize) -> f64 {
 
 /// Put the exam window's level and Spaces behaviour back. Only touches the
 /// saved window: a different pointer means the saved one may be gone.
+/// Strip the window controls that resize or hide the exam, and put its frame
+/// over the whole screen. Main thread only; callers are already there.
+///
+/// Returns false when AppKit refused any part, so the caller can report an
+/// incomplete kiosk rather than a clean one.
+fn lock_window_shape(window: *mut AnyObject) -> bool {
+    let ns_window = window as usize;
+    let Some(style) = guarded(|| unsafe {
+        let style: usize = msg_send![window, styleMask];
+        style
+    }) else {
+        return false;
+    };
+
+    // A window already in native fullscreen is a Space of its own and AppKit
+    // owns its frame; changing either there is how the title bar comes back.
+    if style & STYLE_FULL_SCREEN != 0 {
+        return true;
+    }
+
+    let frame = guarded(|| unsafe {
+        let frame: Rect = msg_send![window, frame];
+        frame
+    });
+
+    {
+        let mut saved = lock(&WINDOW_SHAPE);
+        if let Some(frame) = frame {
+            if !matches!(*saved, Some((saved_window, _, _)) if saved_window == ns_window) {
+                *saved = Some((ns_window, style, frame));
+            }
+        }
+    }
+
+    let mut ok = true;
+    if style & STYLE_ESCAPES != 0 {
+        ok &= guarded(|| unsafe {
+            let _: () = msg_send![window, setStyleMask: style & !STYLE_ESCAPES];
+        })
+        .is_some();
+    }
+
+    // The screen the exam is actually on, not the main one: a candidate who
+    // dragged it to a second display should have it filled there as well,
+    // and asking for the main screen's frame would move it under them.
+    let screen: *mut AnyObject = match guarded(|| unsafe {
+        let screen: *mut AnyObject = msg_send![window, screen];
+        screen
+    }) {
+        Some(screen) if !screen.is_null() => screen,
+        _ => return ok,
+    };
+    let Some(bounds) = guarded(|| unsafe {
+        let bounds: Rect = msg_send![screen, frame];
+        bounds
+    }) else {
+        return ok;
+    };
+
+    ok &= guarded(|| unsafe {
+        let _: () = msg_send![window, setFrame: bounds, display: Bool::YES];
+    })
+    .is_some();
+    ok
+}
+
+/// Give back the style mask and frame taken by `lock_window_shape`.
+fn restore_window_shape(ns_window: usize) {
+    let Some((window, style, frame)) = lock(&WINDOW_SHAPE).take() else {
+        return;
+    };
+    if window != ns_window {
+        return;
+    }
+    let window = ns_window as *mut AnyObject;
+    guarded(|| unsafe {
+        let _: () = msg_send![window, setStyleMask: style];
+    });
+    guarded(|| unsafe {
+        let _: () = msg_send![window, setFrame: frame, display: Bool::YES];
+    });
+}
+
 pub fn restore_kiosk_window(ns_window: usize) {
     let Some((window, level, behavior)) = lock(&WINDOW).take() else {
         return;
@@ -454,6 +561,7 @@ pub fn restore_kiosk_window(ns_window: usize) {
         guarded(|| unsafe {
             let _: () = msg_send![window, setLevel: level];
         });
+        restore_window_shape(ns_window);
     });
 }
 

@@ -568,6 +568,8 @@ export default function ContestPageClient() {
   // The watched object currently in frame, or null. Drives the banner only;
   // the flag itself goes to the invigilation timeline.
   const [objectHint, setObjectHint] = useState<string | null>(null);
+  // Screens the exam can see. 1 is the only acceptable answer during a paper.
+  const [monitorCount, setMonitorCount] = useState(1);
   // What the detector last saw. Drives the tile border, nothing else.
   const [presenceStatus, setPresenceStatus] = useState<PresenceStatus>("presence_ok");
   // Bumped when the candidate picks a different camera, to re-run the
@@ -2374,6 +2376,47 @@ export default function ContestPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online, sessionId, bellRung]);
 
+  // Screens, every ten seconds.
+  //
+  // The readiness probe counted them once, at the door. Plugging a monitor in
+  // afterwards was invisible for the rest of the paper, and the exam being
+  // pinned to one screen is no help at all when there is a second one next to
+  // it. Reported once per run of a change, so a candidate sitting with a
+  // second screen for two hours is one flag rather than seven hundred.
+  const extraScreensReportedRef = useRef(false);
+  useEffect(() => {
+    if (!window.__TAURI__ || bellRung) return;
+    let cancelled = false;
+    const look = async () => {
+      try {
+        const count = (await window.__TAURI__?.core.invoke("count_monitors")) as number;
+        if (cancelled || typeof count !== "number") return;
+        setMonitorCount(count);
+        if (count > 1) {
+          if (!extraScreensReportedRef.current) {
+            extraScreensReportedRef.current = true;
+            reportViolation({
+              kind: "extra_display",
+              severity: "critical",
+              detail: `${count} screens connected during the exam`,
+              evidence: { monitors: count, contest_id: contestId },
+            });
+          }
+        } else {
+          extraScreensReportedRef.current = false;
+        }
+      } catch {
+        // A probe that fails is not the candidate's problem.
+      }
+    };
+    void look();
+    const id = setInterval(() => void look(), 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [bellRung, contestId]);
+
   // A steady flush, because reconnecting was the only thing that sent one.
   //
   // The queue persists to localStorage and batches, which is exactly right
@@ -3557,11 +3600,20 @@ export default function ContestPageClient() {
   // Ranked above framing and below presence. "Nobody is in the chair" is
   // more urgent; "sit a little more centrally" is less consequential than
   // being told something on the desk is about to be flagged.
-  const objectWarning = cameraEnabled && !presenceWarning && objectHint !== null;
+  // Above everything else the banner says. A second screen is not a framing
+  // nudge: nothing else on this list lets someone read a different document
+  // for the whole paper, and it is the one a candidate can fix in seconds by
+  // unplugging it.
+  const displayWarning = monitorCount > 1;
+  const objectWarning = cameraEnabled && !presenceWarning && !displayWarning && objectHint !== null;
   const framingWarning =
-    cameraEnabled && !presenceWarning && !objectWarning && framingHint !== "ok";
+    cameraEnabled && !presenceWarning && !displayWarning && !objectWarning && framingHint !== "ok";
   const shouldShowFaceBlock =
-    presenceWarning || objectWarning || framingWarning || (softBlockActive && faceStatus !== "ok");
+    displayWarning ||
+    presenceWarning ||
+    objectWarning ||
+    framingWarning ||
+    (softBlockActive && faceStatus !== "ok");
   // Says what to do, in the fewest words that still say it. Nothing about
   // pausing or resuming: nothing is paused any more.
   const FRAMING_TITLE: Record<string, string> = {
@@ -3574,24 +3626,28 @@ export default function ContestPageClient() {
   const OBJECT_TITLE: Record<string, string> = {
     "cell phone": "Phone detected - this will be flagged",
   };
-  const faceBlockTitle = !cameraHealthy
-    ? "Camera not responding"
-    : presenceStatus === "multiple_faces"
-      ? "More than one person in frame"
-      : presenceWarning
-        ? "Come back into frame"
-        : objectWarning
-          ? (OBJECT_TITLE[objectHint ?? ""] ?? "Something on your desk will be flagged")
-          : (FRAMING_TITLE[framingHint] ?? "Adjust your position");
-  const faceBlockMessage = !cameraHealthy
-    ? cameraError || "Waiting for a live camera frame."
-    : presenceStatus === "multiple_faces"
-      ? "Make sure nobody else is visible behind you."
-      : presenceWarning
-        ? "Face the camera so it can see you."
-        : objectWarning
-          ? "Move it out of view of the camera. An invigilator will review the frame."
-          : "The camera can see you, but not clearly enough to check.";
+  const faceBlockTitle = displayWarning
+    ? `${monitorCount} screens detected - disconnect the extra one`
+    : !cameraHealthy
+      ? "Camera not responding"
+      : presenceStatus === "multiple_faces"
+        ? "More than one person in frame"
+        : presenceWarning
+          ? "Come back into frame"
+          : objectWarning
+            ? (OBJECT_TITLE[objectHint ?? ""] ?? "Something on your desk will be flagged")
+            : (FRAMING_TITLE[framingHint] ?? "Adjust your position");
+  const faceBlockMessage = displayWarning
+    ? "Only one screen is allowed during the exam. This has been flagged."
+    : !cameraHealthy
+      ? cameraError || "Waiting for a live camera frame."
+      : presenceStatus === "multiple_faces"
+        ? "Make sure nobody else is visible behind you."
+        : presenceWarning
+          ? "Face the camera so it can see you."
+          : objectWarning
+            ? "Move it out of view of the camera. An invigilator will review the frame."
+            : "The camera can see you, but not clearly enough to check.";
   // The camera warning is not critical and never was. It paused the
   // workspace behind a modal for a candidate who had looked down at their
   // keyboard, and the only button on it was Exit contest -- so a two-second
@@ -4046,11 +4102,13 @@ export default function ContestPageClient() {
         >
           <Banner
             status={
-              framingWarning
-                ? "info"
-                : objectWarning || presenceStatus === "multiple_faces"
-                  ? "warning"
-                  : "error"
+              displayWarning
+                ? "error"
+                : framingWarning
+                  ? "info"
+                  : objectWarning || presenceStatus === "multiple_faces"
+                    ? "warning"
+                    : "error"
             }
             title={faceBlockTitle}
             description={faceBlockMessage}

@@ -2808,6 +2808,24 @@ async fn log_proctoring_event(
         .await
 }
 
+/// How many screens the exam can see, right now.
+///
+/// The readiness probe counts displays once, at the door, as part of a
+/// twenty-second scan. Nothing looked again: a candidate who passed entry on
+/// a laptop and then plugged in a monitor had a second screen for the whole
+/// paper, with the exam pinned to one of them and anything at all on the
+/// other.
+///
+/// Deliberately not the readiness probe. That one enumerates processes and
+/// remote-access tools and is far too heavy to run on a timer; this is a
+/// monitor enumeration and nothing else, cheap enough to ask every few
+/// seconds. Tauri's own API, so it behaves the same on all three platforms
+/// rather than needing a native probe per OS.
+#[tauri::command]
+fn count_monitors(window: tauri::Window) -> usize {
+    window.available_monitors().map(|m| m.len()).unwrap_or(1)
+}
+
 /// Return bounded persisted structured events for the current session.
 #[tauri::command]
 async fn get_proctoring_log(app: tauri::AppHandle) -> Result<Vec<ProctoringEventEntry>, String> {
@@ -3715,6 +3733,7 @@ pub fn run() {
             get_proctoring_log,
             log_violation,
             log_proctoring_event,
+            count_monitors,
             check_network_stability,
             get_full_telemetry,
             get_platform,
