@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, memo } from "react";
 import { dateTimeFormatter } from "@/lib/date-time-format";
+import { serverNow } from "@/lib/proctor-api";
 import { useRouter } from "next/navigation";
 import { Clock3, ListChecks, Loader2, ShieldCheck } from "lucide-react";
 import {
@@ -30,7 +31,12 @@ export const ScheduledContestCard = memo(
     onPreflight: (contestId: string, type: "new" | "resume") => void;
     theme: "dark" | "light";
   }) {
-    const [now, setNow] = useState(() => Date.now());
+    // serverNow(), never Date.now(). Onboarding and the contest surface
+    // already run on the server's clock; this screen did not, so a candidate
+    // whose PC clock was wrong was held at "Not open yet" on a contest the
+    // server considered open, with no way to argue with it. It falls back to
+    // the local clock when nothing has anchored yet, and login anchors it.
+    const [now, setNow] = useState(() => serverNow());
     const [hovered, setHovered] = useState(false);
     const themeColors = useMemo(() => getThemeColors(theme), [theme]);
 
@@ -39,18 +45,18 @@ export const ScheduledContestCard = memo(
       let timerId: ReturnType<typeof setTimeout> | null = null;
 
       const scheduleNextTick = () => {
-        const current = Date.now();
+        const current = serverNow();
         timerId = setTimeout(
           () => {
             if (!active) return;
-            setNow(Date.now());
+            setNow(serverNow());
             scheduleNextTick();
           },
           getScheduledContestTickDelay(c, current)
         );
       };
 
-      setNow(Date.now());
+      setNow(serverNow());
       scheduleNextTick();
 
       return () => {
@@ -171,8 +177,7 @@ export const ScheduledContestCard = memo(
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span>
                 {dateTimeFormatter({ month: "short", day: "numeric" }).format(new Date(c.start_at))}{" "}
-                —{" "}
-                {dateTimeFormatter({ month: "short", day: "numeric" }).format(new Date(c.end_at))}
+                — {dateTimeFormatter({ month: "short", day: "numeric" }).format(new Date(c.end_at))}
               </span>
             </div>
 
@@ -275,7 +280,7 @@ export const ActiveContestCard = memo(
     isHighlighted?: boolean;
   }) {
     const router = useRouter();
-    const [now, setNow] = useState(() => Date.now());
+    const [now, setNow] = useState(() => serverNow());
     const [entering, setEntering] = useState(false);
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
@@ -298,18 +303,18 @@ export const ActiveContestCard = memo(
       let timerId: ReturnType<typeof setTimeout> | null = null;
 
       const scheduleNextTick = () => {
-        const current = Date.now();
+        const current = serverNow();
         timerId = setTimeout(
           () => {
             if (!active) return;
-            setNow(Date.now());
+            setNow(serverNow());
             scheduleNextTick();
           },
           getScheduledContestTickDelay(c, current)
         );
       };
 
-      setNow(Date.now());
+      setNow(serverNow());
       scheduleNextTick();
 
       return () => {
@@ -389,7 +394,11 @@ export const ActiveContestCard = memo(
       >
         <VStack gap={3} style={{ minWidth: 0 }}>
           <HStack gap={3} wrap="wrap" align="center">
-            <Token label={entryState.phase === "draft" ? "Not published yet" : entryState.statusLabel} color={statusColor} size="sm" />
+            <Token
+              label={entryState.phase === "draft" ? "Not published yet" : entryState.statusLabel}
+              color={statusColor}
+              size="sm"
+            />
             {c.org_name && (
               <Text type="supporting" maxLines={1} style={{ minWidth: 0, maxWidth: "100%" }}>
                 {c.org_name}
@@ -399,60 +408,91 @@ export const ActiveContestCard = memo(
           <Heading level={2} accessibilityLevel={3} maxLines={2} wordBreak="break-word">
             {c.title}
           </Heading>
-          {c.description && <Text color="secondary" maxLines={2}>{c.description}</Text>}
+          {c.description && (
+            <Text color="secondary" maxLines={2}>
+              {c.description}
+            </Text>
+          )}
           <ContestSponsor contestId={c.id} placement="home" />
         </VStack>
-        <MetadataList columns={c.is_practice ? 2 : 3} label={{ position: "top" }} className="dashboard-contest-metadata">
+        <MetadataList
+          columns={c.is_practice ? 2 : 3}
+          label={{ position: "top" }}
+          className="dashboard-contest-metadata"
+        >
           <MetadataListItem label={c.is_practice ? "Format" : "Date"}>
             <Text hasTabularNumbers>{c.is_practice ? "Practice · untimed" : cardDate}</Text>
           </MetadataListItem>
-          {!c.is_practice && <MetadataListItem label="Starts">
-            <Text hasTabularNumbers>{entryState.contestStartsAt}</Text>
-          </MetadataListItem>}
+          {!c.is_practice && (
+            <MetadataListItem label="Starts">
+              <Text hasTabularNumbers>{entryState.contestStartsAt}</Text>
+            </MetadataListItem>
+          )}
           <MetadataListItem label="Questions">
-            <Text hasTabularNumbers>{c.question_count} {c.question_count === 1 ? "question" : "questions"}</Text>
+            <Text hasTabularNumbers>
+              {c.question_count} {c.question_count === 1 ? "question" : "questions"}
+            </Text>
           </MetadataListItem>
         </MetadataList>
         <ContestBriefing contest={c} entryState={entryState} />
-        <HStack gap={4} justify="between" align="center" wrap="wrap" style={{
-          borderTop: "var(--border-width) solid var(--color-border)", paddingTop: "var(--spacing-4)",
-        }}>
+        <HStack
+          gap={4}
+          justify="between"
+          align="center"
+          wrap="wrap"
+          style={{
+            borderTop: "var(--border-width) solid var(--color-border)",
+            paddingTop: "var(--spacing-4)",
+          }}
+        >
           <Text type="supporting" style={{ flex: "1 1 calc(var(--spacing-10) * 3)", minWidth: 0 }}>
-            {showHelper ? entryState.actionHelper : c.is_practice ? "Practice at your own pace." : metaStatus}
+            {showHelper
+              ? entryState.actionHelper
+              : c.is_practice
+                ? "Practice at your own pace."
+                : metaStatus}
           </Text>
-            <AstryxButton
-              onClick={() => {
-                if (entering) return;
-                if (resultsReady) {
-                  // No identity in the URL. Results are own-only and the
-                  // participant token says whose they are; an `?email=` param
-                  // was both redundant and an invitation to change it.
-                  router.push(`/results?contestId=${encodeURIComponent(c.id)}`);
-                } else if (canEnter) {
-                  setEntering(true);
-                  try {
-                    onPreflight(c.id, entryState.sessionType);
-                  } finally {
-                    // onPreflight is async-like (navigates away); reset only if still mounted.
-                    // Use a short timeout so the spinner shows during navigation.
-                    setTimeout(() => setEntering(false), 5000);
-                  }
+          <AstryxButton
+            onClick={() => {
+              if (entering) return;
+              if (resultsReady) {
+                // No identity in the URL. Results are own-only and the
+                // participant token says whose they are; an `?email=` param
+                // was both redundant and an invitation to change it.
+                router.push(`/results?contestId=${encodeURIComponent(c.id)}`);
+              } else if (canEnter) {
+                setEntering(true);
+                try {
+                  onPreflight(c.id, entryState.sessionType);
+                } finally {
+                  // onPreflight is async-like (navigates away); reset only if still mounted.
+                  // Use a short timeout so the spinner shows during navigation.
+                  setTimeout(() => setEntering(false), 5000);
                 }
-              }}
-              label={
-                entering
-                  ? "Opening..."
-                  : entryState.phase === "ended"
-                    ? "View my submissions"
-                    : entryState.phase === "draft"
-                      ? "Not published yet"
-                      : entryState.ctaLabel
               }
-              isDisabled={(!canEnter && !resultsReady) || entering}
-              isLoading={entering}
-              variant={canEnter || resultsReady ? "primary" : "secondary"}
-              tooltip={!canEnter && !resultsReady ? (entryState.phase === "ended" ? metaStatus : entryState.phase === "draft" ? "This contest is not published yet" : entryState.disabledTitle) : undefined}
-            />
+            }}
+            label={
+              entering
+                ? "Opening..."
+                : entryState.phase === "ended"
+                  ? "View my submissions"
+                  : entryState.phase === "draft"
+                    ? "Not published yet"
+                    : entryState.ctaLabel
+            }
+            isDisabled={(!canEnter && !resultsReady) || entering}
+            isLoading={entering}
+            variant={canEnter || resultsReady ? "primary" : "secondary"}
+            tooltip={
+              !canEnter && !resultsReady
+                ? entryState.phase === "ended"
+                  ? metaStatus
+                  : entryState.phase === "draft"
+                    ? "This contest is not published yet"
+                    : entryState.disabledTitle
+                : undefined
+            }
+          />
         </HStack>
       </VStack>
     );
