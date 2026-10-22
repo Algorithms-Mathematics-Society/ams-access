@@ -120,7 +120,7 @@
   ],
   "scope": "Downloaded draft bytes match API digests and all four manifests. Does not certify native hardware, signing, backend, or final publication metadata.",
   "tag_object": "766e13d8acead81b31f28000ebb1a69ef8cd0959",
-  "release_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-163a6ce20215885891d2",
+  "release_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-4996966a523b8523d2f6",
   "release_workflow_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/actions/runs/39730820957",
   "phase_g_complete": false,
   "linux_runtime_validation": {

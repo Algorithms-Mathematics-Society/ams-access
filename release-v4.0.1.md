@@ -55,7 +55,7 @@ See [the integrity record](release-v4.0.1-integrity.json) for all eleven asset I
 
 ## Exact draft validation
 
-Release workflow [39730820957](https://github.com/Algorithms-Mathematics-Society/ams-access/actions/runs/39730820957) built the [v4.0.1 draft](https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-163a6ce20215885891d2). All seven installers and four checksum manifests were downloaded independently and matched GitHub sizes/digests; every installer matched its manifest. Asset identities remained stable across download.
+Release workflow [39730820957](https://github.com/Algorithms-Mathematics-Society/ams-access/actions/runs/39730820957) built the [v4.0.1 draft](https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-4996966a523b8523d2f6). All seven installers and four checksum manifests were downloaded independently and matched GitHub sizes/digests; every installer matched its manifest. Asset identities remained stable across download.
 
 Fresh draft DEB SHA-256 `3edd2debaa08f2776676669dee5d1ff64b7c6eab2257d9a22b84ccfe6b184f63` passed clean Ubuntu 22.04 installation/removal, isolated Xvfb/Openbox/D-Bus startup, owned-state permission repair from 0755 to 0700, and a visible duplicate-instance error without disturbing the first process. The RPM passed clean Fedora 43 installation, package verification and removal. The AppImage rendered the home screen and remained alive in an offline Ubuntu 22.04 container using `--appimage-extract-and-run`; FUSE mounting was not tested. Release CI payload reports matched these exact Linux artifact hashes and sizes. Helper comparisons in those reports are CI provenance, not an independent local helper rebuild.
 
