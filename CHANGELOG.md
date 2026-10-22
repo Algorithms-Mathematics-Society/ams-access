@@ -1,3 +1,37 @@
+# AMS Access 4.1.0
+
+## macOS kiosk
+
+- The exam window can no longer be resized, minimised or closed during a contest, and its frame is held to the screen it is on. Hiding the Dock, raising the window level and pinning to every Space all assumed the window already filled the screen; none of them stopped a candidate dragging a corner and reading another document beside the exam.
+- The original style mask and frame are restored on a normal exit. A window already in native fullscreen is left alone, because AppKit owns its frame there.
+
+## Second screens
+
+- Displays are counted every ten seconds for the whole paper, not once at the door inside the readiness scan. Connecting a monitor after entry was previously invisible.
+- A second screen raises a banner that outranks every other camera warning and is flagged for review. Reported once per change, so two hours on two screens is one flag.
+
+## Proctoring evidence reaches the server
+
+- Presence anomalies, suspected phones, leaving the exam window, copying the statement and external pastes into the answer editor are now uploaded. All of them were detected before and stopped on the candidate's own machine, so `proctor.violations` was empty for every contest the platform had run.
+- Only confirmed anomalies are sent, each once per run; routine presence samples stay local. A detector that fails to start is recorded as a device problem rather than counted against the candidate.
+- The queue is flushed every thirty seconds. Previously only a network recovery sent one, so a candidate whose connection never faltered finished with every flag still in their browser.
+
+## Phone detection
+
+- The detector is fed a frame at its own input width instead of the 128px presence canvas, where a phone survived as roughly a dozen pixels and could not reach any score threshold.
+- The acting threshold is 0.35 rather than the sample-page 0.5, and near misses are kept so a non-detection can be told apart from a detector that never loaded.
+- A detection shows the candidate a banner saying the frame will be flagged, and sends a thumbnail for human review.
+
+## Framing
+
+- A face slumped low or running past a frame edge is now off-centre. The old ellipse put the bottom of "ok" at y=0.98, so the nudge never fired for the posture it exists to catch.
+
+## Validation scope
+
+CI is green on Linux, macOS and Windows, including bundle smoke on all three. The macOS window changes are compiled and bundled but have not been exercised on a real contest; second-screen detection uses Tauri's monitor enumeration and behaves the same on all three platforms.
+
+---
+
 # AMS Access 4.0.1
 
 ## Linux recovery and setup fixes
