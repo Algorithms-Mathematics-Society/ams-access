@@ -1,6 +1,6 @@
 # v4.0.1 release and Phase G acceptance
 
-Status: preparing the follow-up to public v4.0.0. Do not overwrite the published v4.0.0 tag or assets. Phase G remains open until its actual acceptance evidence is recorded.
+Status: source fixes merged through PR #148 (`5b379fb`); all ten CI jobs passed on tested source `ab23bc6`. Creating/pushing the v4.0.1 tag was rejected by automatic approval review because the user explicitly named v4.0.0; new-version authorization is pending. No v4.0.1 tag or release has been created. Do not overwrite the published v4.0.0 tag or assets. Phase G remains open until its actual acceptance evidence is recorded.
 
 ## Source scope
 
@@ -17,10 +17,10 @@ Local backend contract checks cover authoritative timing, duplicate open/finish,
 ## Completion checklist
 
 - [x] Integrated-source tests (718 web, 18 desktop JavaScript, 3 API-client), typecheck and production build.
-- [ ] Native tests, formatting and strict Clippy on final source.
+- [x] Native tests (306), formatting and strict Clippy on integrated source `ab23bc6`.
 - [ ] Four platform builds; independently verify all installer hashes and manifests.
 - [ ] Exact Linux package installation/removal and installed startup/ownership checks.
-- [ ] Real API → queue → worker → judge → result persistence rehearsal.
+- [x] Real current API → Moto queue/storage → worker → judge → result persistence rehearsal (isolated local integration; not production capacity).
 - [ ] Installed camera, desktop restoration and required-policy acceptance on supported environments.
 - [ ] Synchronized-start/backend capacity acceptance or explicitly documented remaining limitation.
 - [ ] Publish the verified follow-up and update website download metadata to actual assets.
@@ -30,3 +30,21 @@ Do not convert incomplete checks into passes based on unit tests, browser fixtur
 ## Team/release recheck
 
 On 22 October, remote desktop main was `677d2cf`; all three commits beyond the v4.0.0 source are ancestors of this branch. Public v4.0.0 still resolves to source `092897b` (annotated tag `cef1ab7`); all eleven live asset IDs and SHA-256 digests match the earlier verified candidate. No v4.0.1 tag existed at this check. A fetch reported an unrelated historical `v0.10.3-shell-alpha` tag mismatch; no tag was force-updated. Website main advanced to `14799e2` and is being integrated separately.
+
+Integrated production browser recheck at `ab23bc6`: 4/4 practice checks and 102/102 Settings layout checks passed (`reports/v401/`). These remain fixture-only checks.
+
+## Current backend and website evidence
+
+The current Python API baseline is `df1b0f9`, worker `e6d07c0`, and the deployment script pins official cxxprobe v0.14.0 (binary SHA-256 `e27ae236197b146700277b0a42845fa4d3d3b35f52220a6fd32316464fb8b5f9`). The stale local v0.10 checkout is not deployment authority.
+
+A deterministic PostgreSQL race reproduced `UniqueViolation` before repair when concurrent requests shared a submission idempotency key. Backend commit `c40e758` uses a savepoint and returns the winning submission before S3/SQS side effects. Its regression proves one UID, one row, one source write and one enqueue. Focused checks passed 3 tests; broader session/run/idempotency checks initially passed 50; final focused checks including unrelated integrity-error propagation passed 62, with full Ruff lint/format checks. The separate backend PR is [ams-api #7](https://github.com/Algorithms-Mathematics-Society/ams-api/pull/7).
+
+On that repaired current API, the full local rehearsal passed login → open → Run → real worker/judge → Submit → duplicate result callback → Finish. It produced two AC submissions, two unique persisted results and two completed jobs; package cache miss then hit. Judge runs took 3.471s and 2.695s. PostgreSQL 16 and Moto used disposable loopback resources and dummy credentials. The API used in-process TestClient with the actual internal bearer contract; S3/SQS and judge crossed real service/VM boundaries. This is not a production HTTP/TLS or capacity test. Evidence: `reports/phase-g-kvm/full-chain/` in the parent workspace.
+
+Website PR [amsaccess #1](https://github.com/Algorithms-Mathematics-Society/amsaccess/pull/1) merged as `a6a4ca2` after preserving team main `14799e2`. All 85 website tests and production build passed. Vercel production deployment succeeded; the live release API, download page and seven identity-bound download endpoints match published v4.0.0 assets. The preview was SSO-protected, so anonymous preview route checks were unavailable; production route checks passed. No speculative v4.0.1 asset metadata is registered.
+
+## Installed Linux runtime
+
+CI run `39727386367` passed all ten jobs, including Linux payload validation, clean DEB/RPM installation/removal and Windows MSIX certification checks. Its Ubuntu 22.04 DEB is 14,726,694 bytes, SHA-256 `3efeb7984f430d71c20890724021c38c44f2722d4d8a6d647a5833c71ec9c42f`. In an offline, disposable Ubuntu 22.04/Xvfb/Openbox/D-Bus container, installed launch passed; owned state permissions tightened from 0755 to 0700; the first process remained alive; a second process displayed a GTK ownership error dialog and did not disturb the first. Evidence: `reports/v4-phase-g/installed-launch/ci-ab23-ubuntu22/`.
+
+A locally built Ubuntu 24.04-linked DEB failed on Ubuntu 22.04 due to newer GLIBC requirements and passed on Ubuntu 24.04. It is not the CI release-baseline artifact and must not replace it. Neither headless smoke establishes GNOME/KDE/Wayland controls, physical cameras, real authorization or network restoration. Those remain explicit acceptance gaps.
