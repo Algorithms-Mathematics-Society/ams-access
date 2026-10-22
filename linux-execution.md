@@ -1,6 +1,6 @@
 # Linux execution plan
 
-Status: v4.0.0 was published externally on 22 October 2026 at 04:03 UTC. Its tag and installers are preserved. Review repairs are committed in `24f9ade`; the three subsequent team commits through `677d2cf` are integrated into the v4.0.1 follow-up. **Phase G remains in progress.** Before integration, review fixes passed 703 web tests, 18 desktop JavaScript tests, 3 API-client tests and 306 native tests, plus strict workspace Clippy. Production browser fixtures passed 102 Settings layout checks and four practice-flow checks; these do not establish native acceptance. Fresh integrated-source tests, installer evidence and the real API/worker/judge rehearsal are being collected in [the v4.0.1 release record](release-v4.0.1.md). [The v4.0.0 record](release-v4.0.0.md) preserves historical artifact hashes and build evidence.
+Status: v4.0.0 was published externally on 22 October 2026 at 04:03 UTC; its tag and all eleven verified assets remain unchanged. Review repairs and all twelve team commits through `677d2cf` are merged into main via PR #148 (`5b379fb`). Tested follow-up source `ab23bc6` uses version 4.0.1 and passed all ten CI jobs (`39727386367`), 718 web/18 desktop JavaScript/3 API-client/306 native tests, typecheck, strict Clippy, production build, 102 Settings layout assertions and four practice checks. The CI DEB passed installed startup, private-state repair and visible second-instance rejection on isolated Ubuntu 22.04/Xvfb/Openbox. Current API → storage/queue → real worker/judge → persisted result rehearsal passed with a separately reviewed backend retry fix. **Phase G remains open for physical desktop/camera and production-capacity acceptance.** Creating the new v4.0.1 tag/draft was stopped by automatic approval review pending explicit authorization for that version. See [the current release record](release-v4.0.1.md) and [the acceptance checklist](docs/phase-g-acceptance.md).
 
 This is the implementation and acceptance plan. [audit-test.md](audit-test.md) is the incident briefing; [linux-review.md](linux-review.md) records each review finding, alternatives and disposition. Detailed historical material is preserved locally in [the execution archive](reports/linux-review/archive/execution-before-review.md); its statuses are historical. Logs and scratch captures under `reports/` are intentionally excluded from Git.
 
@@ -83,15 +83,18 @@ Primary references: [Tauri AppImage](https://tauri.app/distribute/appimage/), [W
 
 ## Phase G — End-to-end rehearsal (in progress)
 
-- [x] Prepare a v4.0.0 release checkout including all team commits through `3288672`; reconcile camera picker/storage ownership and retain failed-cleanup recovery.
+- [x] Preserve public v4.0.0 and integrate all twelve team commits through `677d2cf` with review repairs into main (PR #148).
 - [ ] Complete backend capacity/fairness acceptance, including late arrival and short contests. Source review confirmed that the former 150-second post-start delay loses working time against the fixed backend deadline; the v4 candidate removes this unfair wait. Client-only deadline extension is not valid. See `release-v4.0.0.md` for the isolated backend prerequisites and alternatives.
 - [x] Run local synthetic browser fault checks: contest 33 checks, login 36 checks, and onboarding scrolling at six viewport sizes. These do not establish real judge/native behavior.
 - [x] Reproduce CI packaging failures against retained installers; fix strict RPM extraction compatibility and AppImage destination handling. Final source CI `39667744005` passes all three Linux payload validators, clean Ubuntu DEB and Fedora RPM installation/removal, and all other platform jobs. Replacement draft-release builds and independent installer/manifest integrity checks also pass; real-device acceptance remains open. See `release-v4.0.0.md` for hashes and scope.
 - [x] Run 12 focused Python API contracts against disposable PostgreSQL: admission, fixed clock, session/finish/draft/resume behavior pass. This covers matching desktop API contracts, not the separate Go handler or judge pipeline.
-- [ ] Run a staging roster and fault rehearsal: login → checks → capture/review → entry → Run → Submit → Finish → verified restoration.
+- [x] Run the isolated current API → Moto S3/SQS → worker → official cxxprobe v0.14 → result callback path, including Run, Submit, duplicate callback and Finish. Two AC results and two completed jobs; API endpoint layer uses TestClient, not production HTTP.
+- [x] Verify the exact CI DEB launches unprivileged, tightens owned state permissions and visibly rejects a second instance without harming the first. Scope: Ubuntu 22.04/Xvfb/Openbox.
+- [ ] Complete the installed staging roster and fault rehearsal: login → checks → physical capture/review → entry → Run → Submit → Finish → verified desktop/firewall restoration.
 - [ ] Validate real retry/backoff, 4xx/429/5xx behavior, stored-token restart and submission idempotency with backend evidence.
 - [ ] Exercise denied authorization, advisory warnings, required failures, cancellation/retry, crashes and network changes for each supported tuple.
-- [ ] Approve a support matrix and candidate/invigilator instructions tied to exact artifact hashes; publish only after release gates pass.
+- [x] Prepare candidate/invigilator instructions and an evidence matrix in [the Phase G checklist](docs/phase-g-acceptance.md). Website PR #1 is merged/deployed, with all seven published v4.0.0 download routes verified.
+- [ ] Complete the supported physical tuple matrix, production capacity observations and new-release artifact gates before representing Phase G as complete.
 
 ## Review and evidence rules
 
