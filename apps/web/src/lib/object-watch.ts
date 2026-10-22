@@ -8,9 +8,14 @@
  * **Advisory, and only ever advisory.** At the resolution a webcam gives, a
  * dark rectangle is a phone, a wallet, a calculator case or a closed book.
  * This produces a flag and a thumbnail for a human to look at. Nothing here
- * decides anything about a candidate, and nothing here is shown to them --
- * being told "we think that is a phone" mid-exam would wreck the sitting of
- * whoever it is wrong about.
+ * decides anything about a candidate.
+ *
+ * It is now also surfaced to them, as a banner saying the frame will be
+ * flagged. That is a deliberate reversal: this file used to argue that
+ * telling someone "we think that is a phone" would wreck their sitting, and
+ * the quieter reading is that a candidate who has left a phone on the desk
+ * by accident would much rather be told while they can still move it than
+ * find out from a flag afterwards. It stays a toast, never a block.
  *
  * Offline by construction: the model and the wasm runtime ship in `public/`
  * and are served from the app bundle. The exam machine's CSP and network
@@ -22,6 +27,44 @@ const WATCHED = new Set(["cell phone"]);
 
 /** Below this, it is a guess rather than a detection. */
 export const MIN_SCORE = 0.5;
+
+/**
+ * The width this detector is fed at.
+ *
+ * EfficientDet-Lite0 resizes its input to 320x320 internally. It was being
+ * handed the BlazeFace canvas, which is 128x128 -- a phone in someone's hand
+ * survives that as roughly a dozen pixels, which cannot reach `MIN_SCORE`
+ * for any class, so the detector ran for the whole paper and found nothing
+ * it was ever capable of finding. Feeding it a frame at its own input width
+ * is the difference between "no phones were seen" and "phones could not
+ * have been seen".
+ *
+ * Drawn at the video's aspect ratio rather than squashed into a square: the
+ * model letterboxes internally, and a stretched phone matches nothing.
+ */
+export const DETECT_WIDTH = 320;
+
+/**
+ * Draw a video frame into `canvas` at detector resolution.
+ *
+ * Returns false when the video has no frame yet, so the caller can skip the
+ * sample rather than score an empty canvas.
+ */
+export function drawForObjects(video: HTMLVideoElement, canvas: HTMLCanvasElement): boolean {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return false;
+  const w = DETECT_WIDTH;
+  const h = Math.max(1, Math.round((DETECT_WIDTH * vh) / vw));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  ctx.drawImage(video, 0, 0, w, h);
+  return true;
+}
 
 export type ObjectDetector = {
   detect: (input: HTMLCanvasElement) => {
@@ -61,9 +104,9 @@ export async function loadObjectDetector(): Promise<ObjectDetector> {
 }
 
 /** The highest-scoring watched object in one frame. */
-export function watchedObject(
-  result: { detections: Array<{ categories?: Array<{ categoryName?: string; score?: number }> }> }
-): ObjectSample {
+export function watchedObject(result: {
+  detections: Array<{ categories?: Array<{ categoryName?: string; score?: number }> }>;
+}): ObjectSample {
   let best: ObjectSample = { label: null, score: 0 };
   for (const detection of result.detections ?? []) {
     for (const category of detection.categories ?? []) {

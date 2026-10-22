@@ -45,7 +45,7 @@ import {
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { INTERVAL_MS, captureFrame, jitterOffset } from "@/lib/identity-photo";
-import { loadObjectDetector, sampleObjects } from "@/lib/object-watch";
+import { drawForObjects, loadObjectDetector, sampleObjects } from "@/lib/object-watch";
 import { isGatingRelaxed } from "@/lib/gating";
 import {
   loadPresenceDetector,
@@ -548,6 +548,9 @@ export default function ContestPageClient() {
   const cameraEnabledRef = useRef(true);
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
+  // The watched object currently in frame, or null. Drives the banner only;
+  // the flag itself goes to the invigilation timeline.
+  const [objectHint, setObjectHint] = useState<string | null>(null);
   // What the detector last saw. Drives the tile border, nothing else.
   const [presenceStatus, setPresenceStatus] = useState<PresenceStatus>("presence_ok");
   // Bumped when the candidate picks a different camera, to re-run the
@@ -2430,6 +2433,10 @@ export default function ContestPageClient() {
     let anomalyStreak = 0;
     let anomalyReported = false;
     const canvas = document.createElement("canvas");
+    // Separate from the presence canvas on purpose: that one is 128x128 for
+    // BlazeFace, and the object detector needs a great deal more than that
+    // to see a phone at all.
+    const objectCanvas = document.createElement("canvas");
 
     const video = document.createElement("video");
     video.muted = true;
@@ -2476,6 +2483,9 @@ export default function ContestPageClient() {
             "presence check skipped: camera disabled by contestant",
             {}
           );
+          // No frame, so no claim either way. Leaving a stale phone banner
+          // up behind a disabled camera would be unanswerable.
+          setObjectHint(null);
         } else {
           if (!detector && !detectorFailed) {
             try {
@@ -2541,16 +2551,36 @@ export default function ContestPageClient() {
                   // One attempt. A machine that cannot load this must not
                   // retry every minute for two hours.
                   objectDetectorFailed = true;
+                  // Said out loud, which it was not before. The presence
+                  // detector logs `presence_monitor_unavailable` when it
+                  // cannot start; this latch was silent, so a bundle that
+                  // shipped without the wasm runtime looked exactly like a
+                  // room with no phones in it.
+                  logPresence(
+                    "object_monitor_unavailable",
+                    "object detector failed to initialise; phone detection disabled",
+                    {}
+                  );
                 }
               }
               if (objectDetector && !cancelled) {
                 try {
-                  const seen = sampleObjects(canvas, objectDetector);
+                  // Drawn fresh at the detector's own resolution rather than
+                  // reusing the 128px presence canvas, which is what kept
+                  // this from ever detecting anything.
+                  const drawn = drawForObjects(video, objectCanvas);
+                  const seen = drawn ? sampleObjects(objectCanvas, objectDetector) : null;
+                  if (!cancelled) {
+                    // Told to the candidate as well as logged. Cleared as
+                    // soon as a later sample is clean, the same way the
+                    // presence border is: the banner tracks the frame, so
+                    // moving the phone off the desk takes it away.
+                    setObjectHint(seen ? (seen.label ?? null) : null);
+                  }
                   if (seen && !cancelled) {
                     // Advisory, with a thumbnail, for a human to look at. At
                     // webcam resolution a dark rectangle is a phone, a wallet
-                    // or a calculator case, so this decides nothing and is
-                    // never shown to the candidate.
+                    // or a calculator case, so this decides nothing.
                     logPresence("object_suspected", `possible ${seen.label} in frame`, {
                       label: seen.label,
                       score: Number(seen.score.toFixed(3)),
@@ -2597,6 +2627,7 @@ export default function ContestPageClient() {
       detector = null;
       objectDetector?.close?.();
       objectDetector = null;
+      setObjectHint(null);
     };
   }, [cameraStream, contestId]);
 
@@ -3395,9 +3426,14 @@ export default function ContestPageClient() {
   // it overlapped the buttons and truncated mid-word -- a thumbnail in the
   // corner is not somewhere a sentence can be read. One place for anything
   // the camera needs to say.
-  const framingWarning = cameraEnabled && !presenceWarning && framingHint !== "ok";
+  // Ranked above framing and below presence. "Nobody is in the chair" is
+  // more urgent; "sit a little more centrally" is less consequential than
+  // being told something on the desk is about to be flagged.
+  const objectWarning = cameraEnabled && !presenceWarning && objectHint !== null;
+  const framingWarning =
+    cameraEnabled && !presenceWarning && !objectWarning && framingHint !== "ok";
   const shouldShowFaceBlock =
-    presenceWarning || framingWarning || (softBlockActive && faceStatus !== "ok");
+    presenceWarning || objectWarning || framingWarning || (softBlockActive && faceStatus !== "ok");
   // Says what to do, in the fewest words that still say it. Nothing about
   // pausing or resuming: nothing is paused any more.
   const FRAMING_TITLE: Record<string, string> = {
@@ -3405,20 +3441,29 @@ export default function ContestPageClient() {
     too_close: "Move back a little",
     too_far: "Move a bit closer",
   };
+  // "Phone detected" rather than the raw COCO label: the class is
+  // `cell phone`, which reads as machine output in the middle of an exam.
+  const OBJECT_TITLE: Record<string, string> = {
+    "cell phone": "Phone detected - this will be flagged",
+  };
   const faceBlockTitle = !cameraHealthy
     ? "Camera not responding"
     : presenceStatus === "multiple_faces"
       ? "More than one person in frame"
       : presenceWarning
         ? "Come back into frame"
-        : (FRAMING_TITLE[framingHint] ?? "Adjust your position");
+        : objectWarning
+          ? (OBJECT_TITLE[objectHint ?? ""] ?? "Something on your desk will be flagged")
+          : (FRAMING_TITLE[framingHint] ?? "Adjust your position");
   const faceBlockMessage = !cameraHealthy
     ? cameraError || "Waiting for a live camera frame."
     : presenceStatus === "multiple_faces"
       ? "Make sure nobody else is visible behind you."
       : presenceWarning
         ? "Face the camera so it can see you."
-        : "The camera can see you, but not clearly enough to check.";
+        : objectWarning
+          ? "Move it out of view of the camera. An invigilator will review the frame."
+          : "The camera can see you, but not clearly enough to check.";
   // The camera warning is not critical and never was. It paused the
   // workspace behind a modal for a candidate who had looked down at their
   // keyboard, and the only button on it was Exit contest -- so a two-second
@@ -3873,7 +3918,11 @@ export default function ContestPageClient() {
         >
           <Banner
             status={
-              framingWarning ? "info" : presenceStatus === "multiple_faces" ? "warning" : "error"
+              framingWarning
+                ? "info"
+                : objectWarning || presenceStatus === "multiple_faces"
+                  ? "warning"
+                  : "error"
             }
             title={faceBlockTitle}
             description={faceBlockMessage}
