@@ -3,8 +3,8 @@
   "tag": "v4.0.1",
   "source_commit": "ab23bc6c93e30a273c3d1d8042880725c047ee2e",
   "release_run": 39730820957,
-  "draft": true,
-  "published_at": null,
+  "draft": false,
+  "published_at": "2026-10-22T06:29:38Z",
   "independent_download_hashes": "pass",
   "assets": [
     {
@@ -118,9 +118,9 @@
       "size_match": true
     }
   ],
-  "scope": "Downloaded draft bytes match API digests and all four manifests. Does not certify native hardware, signing, backend, or final publication metadata.",
+  "scope": "All eleven published asset identities, sizes and API digests match the independently downloaded draft bytes and all installer manifests. Publication metadata rechecked. Hardware and deployed-service acceptance remain open; signing scope is recorded separately.",
   "tag_object": "766e13d8acead81b31f28000ebb1a69ef8cd0959",
-  "release_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-4996966a523b8523d2f6",
+  "release_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/v4.0.1",
   "release_workflow_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/actions/runs/39730820957",
   "phase_g_complete": false,
   "linux_runtime_validation": {
@@ -245,5 +245,37 @@
         }
       }
     ]
+  },
+  "public_download_verification": {
+    "checked_at": "2026-10-22T06:32:45Z",
+    "method": "Anonymous GitHub API reads, anonymous public download HEAD requests, and full downloads of the four checksum manifests.",
+    "release": {
+      "id": 420358050,
+      "tag": "v4.0.1",
+      "name": "AMS Access v4.0.1",
+      "url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/v4.0.1",
+      "draft": false,
+      "prerelease": false,
+      "published_at": "2026-10-22T06:29:38Z",
+      "anonymous_latest_release": true,
+      "expected_asset_inventory_match": true,
+      "asset_count": 11,
+      "all_public_head_status_200": true,
+      "all_public_content_lengths_match": true,
+      "all_api_ids_names_sizes_digests_match": true,
+      "checksum_manifests_fully_downloaded_and_hashed": true
+    },
+    "previous_release": {
+      "id": 420029337,
+      "tag": "v4.0.0",
+      "url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/v4.0.0",
+      "draft": false,
+      "prerelease": false,
+      "published_at": "2026-10-22T04:03:24Z",
+      "asset_count": 11,
+      "asset_ids_names_sizes_digests_unchanged": true,
+      "compared_against": "release-v4.0.0-integrity.json"
+    },
+    "result": "pass"
   }
 }

@@ -113,3 +113,7 @@ Run web tests/typecheck and the affected Rust suites. Installer mocks never targ
 - [ ] Physical desktop/camera/network recovery and production capacity acceptance. These checks still block claiming Phase G complete.
 
 See [the release record](release-v4.0.1.md#exact-draft-validation) and [exact identities and validation scope](release-v4.0.1-integrity.json). v4.0.1 remains a draft; public downloads remain v4.0.0.
+
+### v4.0.1 publication — 22 October
+
+Published v4.0.1 at 2026-10-22T06:29:38Z after explicit authorization and independent artifact/source/Linux checks. All executed release gates passed; the published seven installers/four manifests match the verified draft exactly. This supersedes earlier draft/public-v4.0.0 status snapshots above. Physical cameras/desktops/restoration, real helper authorization/network recovery and deployed-backend/capacity acceptance remain open; Phase G is not complete. See [the publication record](release-v4.0.1.md#publication-decision).
