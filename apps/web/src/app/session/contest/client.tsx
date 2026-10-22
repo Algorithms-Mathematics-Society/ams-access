@@ -118,7 +118,7 @@ import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
-import { flush as flushViolationQueue } from "@/lib/violation-queue";
+import { enqueue as enqueueViolation, flush as flushViolationQueue } from "@/lib/violation-queue";
 import {
   activeContent,
   clear as clearAnswerBuffer,
@@ -546,6 +546,11 @@ export default function ContestPageClient() {
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(false);
   const cameraEnabledRef = useRef(true);
+  // Read by the presence loop, which must not restart when the session id
+  // arrives -- reloading BlazeFace mid-exam to learn a string it could have
+  // been handed is a cost nobody gets anything for.
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = sessionId;
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
   // The watched object currently in frame, or null. Drives the banner only;
@@ -2357,6 +2362,21 @@ export default function ContestPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online, sessionId, bellRung]);
 
+  // A steady flush, because reconnecting was the only thing that sent one.
+  //
+  // The queue persists to localStorage and batches, which is exactly right
+  // for a candidate who drops off the network -- but the only caller was the
+  // recovery path above, so a candidate whose connection never faltered
+  // reached the end of the paper with every flag still sitting in their own
+  // browser. Thirty seconds keeps the invigilation page close to live
+  // without making a request per sample.
+  useEffect(() => {
+    if (!sessionId || bellRung) return;
+    const id = setInterval(() => {
+      void flushViolationQueue(sessionId);
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [sessionId, bellRung]);
   // `navigator.onLine` is a hint, not a fact — it is true on a captive portal
   // and true when the wifi is up but the exam server is unreachable. It is
   // combined with the heartbeat's own verdict below.
@@ -2461,7 +2481,28 @@ export default function ContestPageClient() {
       }
     };
 
-    const logPresence = (kind: string, detail: string, payload: Record<string, unknown>) => {
+    // Whether a run of camera-off / phone-in-frame samples has already been
+    // reported. Same contract as `anomalyReported`: a candidate who leaves a
+    // phone on the desk for ten minutes is one flag, not a hundred and
+    // twenty.
+    let cameraOffReported = false;
+    let objectReported = false;
+
+    /**
+     * Record one proctoring event.
+     *
+     * `severity` is what decides whether it also reaches the server. Local
+     * recording is free; a row in `proctor.violations` is a claim about
+     * somebody's exam, and the five-second presence sample is far too noisy
+     * to make one of every tick. Only confirmed anomalies are uploaded, and
+     * each is reported once per run rather than once per sample.
+     */
+    const logPresence = (
+      kind: string,
+      detail: string,
+      payload: Record<string, unknown>,
+      severity?: "info" | "warning" | "critical"
+    ) => {
       // Browser-hosted dev has no Tauri bridge, so every one of these calls
       // is a no-op there -- which is how phone detection could be debugged
       // for an hour with the one event that explains it going nowhere.
@@ -2478,6 +2519,22 @@ export default function ContestPageClient() {
           payload: { ...payload, contest_id: contestId },
         })
         .catch(() => {});
+
+      // The upload half, which never existed. `enqueue` had no callers at
+      // all: the queue, its batching, its offline persistence and its tests
+      // were all complete, and nothing ever put an event in it. Every
+      // proctoring event ever recorded stayed on the candidate's own
+      // machine, so `proctor.violations` had no rows and the invigilation
+      // page had nothing to draw.
+      const session = sessionIdRef.current;
+      if (severity && session) {
+        enqueueViolation(session, {
+          kind,
+          severity,
+          detail,
+          evidence: { ...payload, contest_id: contestId },
+        });
+      }
     };
 
     async function tick() {
@@ -2489,12 +2546,17 @@ export default function ContestPageClient() {
           logPresence(
             "presence_skipped_camera_off",
             "presence check skipped: camera disabled by contestant",
-            {}
+            {},
+            // Once per run. The camera being off is worth a flag; it is not
+            // worth one every five seconds for as long as it stays off.
+            cameraOffReported ? undefined : "warning"
           );
+          cameraOffReported = true;
           // No frame, so no claim either way. Leaving a stale phone banner
           // up behind a disabled camera would be unanswerable.
           setObjectHint(null);
         } else {
+          cameraOffReported = false;
           if (!detector && !detectorFailed) {
             try {
               detector = await loadPresenceDetector();
@@ -2503,7 +2565,8 @@ export default function ContestPageClient() {
               logPresence(
                 "presence_monitor_unavailable",
                 "face detector failed to initialise; periodic presence checks disabled",
-                {}
+                {},
+                "info"
               );
             }
           }
@@ -2537,7 +2600,8 @@ export default function ContestPageClient() {
                       // this is the one an invigilator opens.
                       thumbnail: thumbnailOf(video) ?? sample.thumbnail,
                       framing: sample.framing,
-                    }
+                    },
+                    "warning"
                   );
                 }
               }
@@ -2567,7 +2631,8 @@ export default function ContestPageClient() {
                   logPresence(
                     "object_monitor_unavailable",
                     "object detector failed to initialise; phone detection disabled",
-                    {}
+                    {},
+                    "info"
                   );
                 }
               }
@@ -2602,11 +2667,21 @@ export default function ContestPageClient() {
                     // Advisory, with a thumbnail, for a human to look at. At
                     // webcam resolution a dark rectangle is a phone, a wallet
                     // or a calculator case, so this decides nothing.
-                    logPresence("object_suspected", `possible ${seen.label} in frame`, {
-                      label: seen.label,
-                      score: Number(seen.score.toFixed(3)),
-                      thumbnail: thumbnailOf(video),
-                    });
+                    logPresence(
+                      "object_suspected",
+                      `possible ${seen.label} in frame`,
+                      {
+                        label: seen.label,
+                        score: Number(seen.score.toFixed(3)),
+                        thumbnail: thumbnailOf(video),
+                      },
+                      objectReported ? undefined : "warning"
+                    );
+                    objectReported = true;
+                  } else if (!cancelled) {
+                    // Clean frame: re-arm, so a phone put away and brought
+                    // back out is two flags rather than one.
+                    objectReported = false;
                   }
                 } catch {
                   // A detector that throws mid-exam is not the candidate's
