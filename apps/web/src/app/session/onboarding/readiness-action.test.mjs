@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { readinessAction } from "./readiness-action.ts";
+import { effectiveReadinessPolicy } from "./effective-policy.ts";
 
 const requirement = (overrides = {}) => ({
   kind: "camera",
@@ -58,4 +59,24 @@ test("the last requirement wins, matching core policy merge and organizer overri
   const result = readinessAction(policy(base, override), "camera", "failure");
   assert.equal(result.decision, "warn");
   assert.equal(result.requirement, override);
+});
+
+test("practice without a contest receives the platform baseline policy", () => {
+  const practice = effectiveReadinessPolicy({
+    dryRun: true,
+    nativeAvailable: true,
+    platform: "linux",
+    hasContest: false,
+    lockdown: null,
+    overrides: [],
+  });
+  assert.equal(practice?.profile, "strict_contest");
+  assert.ok(practice?.checks.some((check) => check.kind === "external_display"));
+  assert.ok(practice?.checks.some((check) => check.kind === "camera"));
+});
+
+test("native practice waits for platform while browser practice can use baseline", () => {
+  const input = { dryRun: true, platform: null, hasContest: false, lockdown: null, overrides: [] };
+  assert.equal(effectiveReadinessPolicy({ ...input, nativeAvailable: true }), null);
+  assert.ok(effectiveReadinessPolicy({ ...input, nativeAvailable: false }));
 });

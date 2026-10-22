@@ -3,6 +3,8 @@ mod event_recorder;
 mod event_store;
 #[cfg(any(target_os = "linux", test))]
 mod keyboard_probe;
+#[cfg(any(target_os = "linux", test))]
+mod keyboard_recovery;
 #[cfg(target_os = "linux")]
 mod linux_network;
 mod lockdown_lifecycle;
@@ -2018,6 +2020,34 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
     .map_err(|error| error.to_string())?
 }
 
+/// Explicitly abandon only owned keyboard recovery snapshots. Keep the
+/// lifecycle mutex through cleanup so a concurrent entry cannot lose its journal.
+#[tauri::command]
+async fn discard_keyboard_recovery(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut owner = lockdown_lifecycle()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            keyboard_recovery::discard_when_idle(
+                &mut owner,
+                LOCKDOWN_ENGAGED.load(Ordering::SeqCst),
+                platform_rs::linux::discard_keyboard_recovery,
+                &mut DesktopOperations::new(app, false),
+            )
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Err("Discarding saved keyboard settings is available only on Linux.".into())
+    }
+}
+
 /// Measure the configured server transport. DNS success and another public
 /// host cannot establish that the exam server is reachable.
 #[tauri::command]
@@ -3505,6 +3535,31 @@ pub fn run_helper_mode() -> Option<i32> {
     None
 }
 
+#[cfg(target_os = "linux")]
+fn show_linux_startup_error(error: &str) {
+    use gtk::prelude::*;
+    // GTK is already a runtime requirement of the Linux webview. A native
+    // dialog works before Tauri startup without acquiring desktop ownership or
+    // running restoration that could affect the first instance.
+    if let Err(init_error) = gtk::init() {
+        eprintln!("Cannot display startup error: {init_error}");
+        return;
+    }
+    let dialog = gtk::MessageDialog::new(
+        None::<&gtk::Window>,
+        gtk::DialogFlags::MODAL,
+        gtk::MessageType::Error,
+        gtk::ButtonsType::Close,
+        "AMS Access could not start",
+    );
+    dialog.set_title("AMS Access");
+    dialog.set_secondary_text(Some(&format!(
+        "{error}\n\nIf AMS Access is already open, use that window or close it before retrying. Otherwise, check that your local state folder is writable and supports file locking."
+    )));
+    dialog.run();
+    dialog.close();
+}
+
 pub fn run() {
     // Hold ownership before any startup or shutdown recovery. A second GUI
     // must never undo a first instance's live desktop/firewall protections.
@@ -3513,6 +3568,7 @@ pub fn run() {
         Ok(owner) => owner,
         Err(error) => {
             eprintln!("AMS Access cannot acquire desktop ownership: {error}");
+            show_linux_startup_error(&error);
             return;
         }
     };
@@ -3687,6 +3743,7 @@ pub fn run() {
             configure_event_stream,
             get_lockdown_restore_status,
             retry_lockdown_restore,
+            discard_keyboard_recovery,
         ])
         .setup(|app| {
             let shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());

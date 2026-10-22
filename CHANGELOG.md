@@ -1,3 +1,25 @@
+# AMS Access 4.0.1
+
+## Linux recovery and setup fixes
+
+- Practice onboarding now loads its platform policy without requiring a contest.
+- Recorder binding completes within its advisory deadline before network lockdown; session-binding failures remain visible with a working exit.
+- Failed camera selection preserves the previous working camera and preference, including overlapping switches.
+- Settings offers an explicit, confirmed discard of stale keyboard recovery records while preserving current desktop settings and unrelated recovery obligations.
+- GNOME coverage no longer reports success after partial failure or deadline expiry; writable checks are cached per operation and Ubuntu Dock recovery includes its schema.
+- Linux startup ownership failures display a native dialog, and owned state directories are tightened to private permissions.
+- Narrow Settings navigation fits 320px displays.
+
+## Included team changes
+
+Preserves the nine team commits shipped in v4.0.0 and adds `74c1f2a`, `e212716`, and `677d2cf`: face-position guidance and improved webcam phone detection/evidence reporting.
+
+## Validation scope
+
+See [the release record](release-v4.0.1.md) for exact source, artifact checks and Phase G acceptance. Fixture checks do not certify physical cameras, every Linux desktop, or production backend capacity.
+
+---
+
 # AMS Access 4.0.0
 
 ## Linux setup and recovery
@@ -35,7 +57,7 @@ Includes all nine commits by `aezyus` from `f94f02d` through `3288672`, preservi
 - The existing backend remains `https://api.amsaccess.com`; no new server protocol or data migration is introduced here.
 - Each build target attaches a SHA256SUMS manifest. Match the installer filename and hash before installation.
 
-This candidate remains a draft while Phase G acceptance is collected. Local browser fault fixtures do not certify actual backend delivery, desktop/firewall restoration, physical cameras, or unsupported Linux desktop configurations. See `linux-execution.md` and `release-v4.0.0.md` for evidence and outstanding acceptance.
+Historical note: v4.0.0 was published externally on 22 October 2026; Phase G acceptance was incomplete at publication. Local browser fault fixtures do not certify actual backend delivery, desktop/firewall restoration, physical cameras, or unsupported Linux desktop configurations. See `linux-execution.md` and `release-v4.0.0.md` for evidence and outstanding acceptance.
 
 ---
 

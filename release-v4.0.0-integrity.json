@@ -1,0 +1,131 @@
+{
+  "release_id": 420029337,
+  "tag": "v4.0.0",
+  "source_commit": "092897b5dd2e51d6ab32055e2a3a3c756b8d7054",
+  "release_run": 39669622379,
+  "draft": true,
+  "published_at": null,
+  "independent_download_hashes": "pass",
+  "assets": [
+    {
+      "id": 663717522,
+      "name": "AMS.Access-4.0.0-1.x86_64.rpm",
+      "bytes": 14719657,
+      "sha256": "d1e4607547a7707db3a7ea3cd599fa5761d43d71bf79e101a8984e7173673505",
+      "manifest_match": true
+    },
+    {
+      "id": 663717582,
+      "name": "AMS.Access_4.0.0_aarch64.dmg",
+      "bytes": 15419028,
+      "sha256": "8395add210790455470f0be92d0b6dd35784d02ab2c485735204af24dd2dbabe",
+      "manifest_match": true
+    },
+    {
+      "id": 663717525,
+      "name": "AMS.Access_4.0.0_amd64.AppImage",
+      "bytes": 103721464,
+      "sha256": "f4faaa0cf95f8b5793ca6e460912c8453b5b1836b46f035fc6ebd497912b9f76",
+      "manifest_match": true
+    },
+    {
+      "id": 663717523,
+      "name": "AMS.Access_4.0.0_amd64.deb",
+      "bytes": 14713866,
+      "sha256": "cf238d950e3f1276369033867a0e15c4fb399f2e05ac4f39bb9e5ce9ef043466",
+      "manifest_match": true
+    },
+    {
+      "id": 663716945,
+      "name": "AMS.Access_4.0.0_x64-setup.exe",
+      "bytes": 13316626,
+      "sha256": "5863fa77b89a4011fd8e0c2b5232f1f582b137c9de3d26e15aa68cdea7c0e7d3",
+      "manifest_match": true
+    },
+    {
+      "id": 663720148,
+      "name": "AMS.Access_4.0.0_x64.dmg",
+      "bytes": 15989403,
+      "sha256": "2bf10c74423b2c067c6abbf692749cd2c02977f2953bfedb84be84f88bbcc4b3",
+      "manifest_match": true
+    },
+    {
+      "id": 663716950,
+      "name": "AMS.Access_4.0.0_x64_en-US.msi",
+      "bytes": 14888960,
+      "sha256": "24ba896c38812f23b7134f28617f7566c7e7e9157f4cb24bd536d7c19d1b699e",
+      "manifest_match": true
+    },
+    {
+      "id": 663717583,
+      "name": "SHA256SUMS-aarch64-apple-darwin.txt",
+      "bytes": 95,
+      "sha256": "140c0f9e7b335d0b126c50ce338317f226b088af6e1cedd5202727aecd1ed043",
+      "manifest_match": false
+    },
+    {
+      "id": 663720145,
+      "name": "SHA256SUMS-x86_64-apple-darwin.txt",
+      "bytes": 91,
+      "sha256": "9f04b884208a151d655c909a0f795b4e943b385da03f19f0074b03621a990872",
+      "manifest_match": false
+    },
+    {
+      "id": 663716946,
+      "name": "SHA256SUMS-x86_64-pc-windows-msvc.txt",
+      "bytes": 194,
+      "sha256": "7f69ca03501d0736e4dcb5e4a585af562a29bb1d7d77167112871b03990d788b",
+      "manifest_match": false
+    },
+    {
+      "id": 663717517,
+      "name": "SHA256SUMS-x86_64-unknown-linux-gnu.txt",
+      "bytes": 287,
+      "sha256": "eadc06e7ca38ffb1d0942deca00e25cdc0ec67c266bb466d8bbc932d5ebddc33",
+      "manifest_match": false
+    }
+  ],
+  "scope": "Downloaded draft bytes match API digests and all four manifests. Does not certify native hardware, signing, backend, or final publication metadata.",
+  "draft_url": "https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-61588505d565e6301574",
+  "ci_run": 39667744005,
+  "team_baseline": "3288672cd8eaaddb71a7bbb0512829ab541d2640",
+  "linux_payload_validation": "All 3 downloaded Linux installer hashes match successful release-run payload reports.",
+  "open_acceptance": [
+    "Installed physical Linux camera/desktop/helper/network restoration",
+    "Full isolated login-to-judge rehearsal and duplicate judged-submission evidence",
+    "Admission burst capacity and deployed clock acceptance",
+    "Final public metadata and website requirements registration after publication"
+  ],
+  "linux_container_checks": {
+    "deb": {
+      "environment": "Ubuntu 22.04",
+      "exit_status": 0,
+      "checks": [
+        "install",
+        "declared dependencies/tools/GStreamer",
+        "no missing shared libraries",
+        "camera rule mode 0644",
+        "privileged helper inactive",
+        "remove",
+        "camera rule removed",
+        "package record absent"
+      ],
+      "evidence": "reports/v4-draft-integrity/deb-smoke"
+    },
+    "rpm": {
+      "environment": "Fedora 43",
+      "exit_status": 0,
+      "checks": [
+        "install",
+        "declared dependencies/tools/GStreamer",
+        "no missing shared libraries",
+        "camera rule mode 0644",
+        "privileged helper inactive",
+        "remove",
+        "camera rule removed",
+        "package record absent"
+      ],
+      "evidence": "reports/v4-draft-integrity/rpm-smoke"
+    }
+  }
+}

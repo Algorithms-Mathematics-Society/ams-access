@@ -13,6 +13,7 @@ import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList"
 import { Token } from "@astryxdesign/core/Token";
 import { manualRecoveryCommand, recoveryFailureMessage } from "@/lib/recovery-message";
 import { useAppVersion } from "@/lib/use-app-version";
+import { AccessDialog } from "@/components/AccessDialog";
 import type { ReadinessState, SecurityLogLevel, TelemetryQueryState } from "./types";
 
 const groupStyle = { border: 0, borderRadius: "var(--radius-container)", minWidth: 0 };
@@ -65,6 +66,12 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
   // this is what the candidate can do meanwhile.
   const [unrestored, setUnrestored] = useState<RestoreStatus | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardResult, setDiscardResult] = useState<{
+    status: "success" | "error";
+    detail: string;
+  } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -161,6 +168,35 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
     onSecurityEvent("RECOVERY: system settings restored by user");
   }
 
+  async function discardKeyboardRecovery() {
+    setDiscarding(true);
+    setDiscardResult(null);
+    try {
+      await invoke("discard_keyboard_recovery");
+      const remaining = await invoke<RestoreStatus>("get_lockdown_restore_status").catch(
+        () => null
+      );
+      setUnrestored(remaining?.pending ? remaining : null);
+      setDiscardOpen(false);
+      setDiscardResult({
+        status: "success",
+        detail: remaining?.pending
+          ? "The saved keyboard recovery was archived and will no longer be used to restore prior settings. Your current keyboard settings were not changed. Other recovery work is still pending."
+          : "The saved keyboard recovery was archived and will no longer be used to restore prior settings. Your current keyboard settings were not changed.",
+      });
+      onSecurityEvent("RECOVERY: saved Linux keyboard recovery discarded", "warn");
+    } catch {
+      setDiscardResult({
+        status: "error",
+        detail:
+          "AMS Access could not discard the saved keyboard recovery record. Try restoring again or ask an invigilator for help.",
+      });
+      onSecurityEvent("RECOVERY: discard saved Linux keyboard recovery failed", "warn");
+    } finally {
+      setDiscarding(false);
+    }
+  }
+
   const working = status === "working";
 
   return (
@@ -242,10 +278,61 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
                 isDisabled={retrying}
                 isLoading={retrying}
               />
+              {platform === "linux" && (
+                <Button
+                  label="Discard saved keyboard recovery"
+                  variant="ghost"
+                  onClick={() => setDiscardOpen(true)}
+                  isDisabled={retrying || discarding}
+                />
+              )}
             </HStack>
           </VStack>
         )}
+        {discardResult && (
+          <Banner
+            status={discardResult.status}
+            title={
+              discardResult.status === "success"
+                ? "Saved keyboard recovery discarded"
+                : "Could not discard keyboard recovery"
+            }
+            description={discardResult.detail}
+          />
+        )}
       </VStack>
+      <AccessDialog
+        open={discardOpen}
+        onClose={() => {
+          if (!discarding) setDiscardOpen(false);
+        }}
+        labelId="discard-keyboard-recovery-title"
+        title="Discard saved keyboard recovery?"
+        width="calc(var(--spacing-10) * 12)"
+      >
+        <VStack gap={5}>
+          <Text color="secondary">
+            AMS Access will stop trying to restore the prior Linux keyboard settings. Your current
+            keyboard settings will stay as they are, and the recovery evidence will be archived.
+            This does not clear firewall recovery or change any contest session.
+          </Text>
+          <HStack gap={3} justify="end" wrap="wrap">
+            <Button
+              label="Keep recovery and try again"
+              variant="ghost"
+              onClick={() => setDiscardOpen(false)}
+              isDisabled={discarding}
+            />
+            <Button
+              label={discarding ? "Discarding..." : "Discard keyboard recovery"}
+              variant="destructive"
+              onClick={() => void discardKeyboardRecovery()}
+              isDisabled={discarding}
+              isLoading={discarding}
+            />
+          </HStack>
+        </VStack>
+      </AccessDialog>
     </Card>
   );
 });

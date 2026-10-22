@@ -656,17 +656,61 @@ test("switching video preserves audio and same-id selection forces recovery", as
   assert.deepEqual(stream.tracks, [deps.tracks.video[2], audio]);
 });
 
-test("failed exact selection stays lost and never falls back to default", async () => {
+test("failed exact selection preserves the working camera and preference", async () => {
   const deps = makeDeps();
-  deps.preferenceStore = { read: () => null, write() {} };
+  const writes = [];
+  deps.preferenceStore = { read: () => "camera-a", write: (value) => writes.push(value) };
   const session = createCameraSession(deps);
   await session.ensure();
+  const original = deps.tracks.video[0];
   deps.failWith = Object.assign(new Error("selected camera missing"), { name: "NotFoundError" });
 
   await assert.rejects(session.setPreferredVideoDevice("stale-id"), /selected camera missing/);
-  assert.equal(session.preferredVideoDevice(), "stale-id");
-  assert.equal(session.status(), "lost");
+  assert.equal(session.preferredVideoDevice(), "camera-a");
+  assert.equal(session.status(), "live");
+  assert.equal(original.stopped, false);
+  assert.deepEqual(writes, []);
   assert.deepEqual(deps.opens.at(-1).video.deviceId, { exact: "stale-id" });
+});
+
+test("preference write failure discards the replacement and preserves the working camera", async () => {
+  const deps = makeDeps();
+  deps.preferenceStore = {
+    read: () => "camera-a",
+    write() {
+      throw new Error("storage full");
+    },
+  };
+  const session = createCameraSession(deps);
+  await session.ensure();
+  const original = deps.tracks.video[0];
+
+  await assert.rejects(session.setPreferredVideoDevice("camera-b"), /storage full/);
+  assert.equal(session.preferredVideoDevice(), "camera-a");
+  assert.equal(session.status(), "live");
+  assert.equal(original.stopped, false);
+  assert.equal(deps.tracks.video[1].stopped, true);
+});
+
+test("a stale failed selection cannot overwrite a newer live selection", async () => {
+  const { deps, grants } = controlledDeps();
+  deps.preferenceStore = { read: () => "camera-a", write() {} };
+  const session = createCameraSession(deps);
+  const initial = session.ensure();
+  grants[0].resolve(granted(makeTrack("video")));
+  await initial;
+
+  const older = session.setPreferredVideoDevice("camera-b");
+  const newer = session.setPreferredVideoDevice("camera-c");
+  const newestTrack = makeTrack("video");
+  grants[2].resolve(granted(newestTrack));
+  await newer;
+  grants[1].resolve(granted(makeTrack("video")));
+  await assert.rejects(older, /selection changed/);
+
+  assert.equal(session.status(), "live");
+  assert.equal(session.current().tracks[0], newestTrack);
+  assert.equal(session.preferredVideoDevice(), "camera-c");
 });
 
 test("conditional video release cannot stop a newer owner and preserves audio", async () => {

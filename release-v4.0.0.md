@@ -1,5 +1,7 @@
 # v4.0.0 candidate and Phase G acceptance
 
+**Historical record:** v4.0.0 was subsequently published outside this work at `2026-10-22T04:03:24Z` (release `420029337`). Its published tag and assets must remain immutable. The attached review repairs and three later team commits are being prepared as v4.0.1; the draft-only statements below describe the earlier verification state. See `linux-review.md` for the follow-up findings.
+
 ## Source reconciliation
 
 Desktop source: `Algorithms-Mathematics-Society/ams-access`, branch `release/v4.0.0`.
@@ -7,7 +9,7 @@ Team baseline: `3288672`, including all nine `aezyus` commits since `85ef18e`.
 Linux review baseline: `c519bd6`, including the four A–F/review commits and follow-up entry/camera fixes.
 Website: `Algorithms-Mathematics-Society/amsaccess`, separate clean checkout based on `f692351`. Original dirty checkouts are preserved.
 
-Merge decisions: retain bounded device operations and exact camera selection, migrate the team's preference key, keep their Stage 8/contest camera picker features, retain all warning/battery/Windows typing improvements, and use required desktop-resource recovery with a failed-cleanup latch. Retain both branches' regression test lists. The admission timing review below identifies a fairness blocker that must be resolved before publication.
+Merge decisions: retain bounded device operations and exact camera selection, migrate the team's preference key, keep their Stage 8/contest camera picker features, retain all warning/battery/Windows typing improvements, and use required desktop-resource recovery with a failed-cleanup latch. Retain both branches' regression test lists. The admission timing review below records the corrected fairness defect and remaining backend capacity gate.
 
 ## Acceptance record
 
@@ -17,10 +19,11 @@ Merge decisions: retain bounded device operations and exact camera selection, mi
 - [x] Web production build and size budgets passed (22.01 MB static export).
 - [x] Local browser fault rehearsal: production-export contest audit 33 checks / 11 captures / zero failures or runtime exceptions; login fixtures 36 checks / four captures / zero failures; onboarding scroll six viewport sizes. These use synthetic API/native/media responses. Full onboarding production flow and real backend/native acceptance remain open.
 - [x] Native suites: 117 platform, 43 core, 48 helper, 89 desktop; formatting/Clippy passed. Installer mocks: 9 post-install and 24 pre-remove; 17 artifact validator tests passed.
-- [ ] Fresh CI-built installers tied to immutable commit, size and SHA-256; Linux payload and container install/remove validation.
+- [x] Fresh CI source `092897b` passed all native/web/package jobs; Linux DEB/RPM/AppImage payloads and clean DEB/RPM installation/removal passed in run `39667744005`.
+- [x] Replacement draft release `420029337`, run `39669622379`: all four builds passed; seven installers and four checksum manifests independently downloaded and verified against API sizes/digests and manifest entries.
 - [ ] Installed Linux desktop/camera/helper/packet acceptance across declared supported configurations.
 - [ ] Real nonproduction roster: login → checks → capture/review → entry → Run → Submit → Finish → verified restoration, with backend evidence for retry/idempotency/token restart.
-- [ ] Admission delay and clock fairness approved against the actual backend/contest configuration.
+- [ ] Admission capacity and clock fairness verified against the deployed backend/contest configuration.
 - [ ] Website exact-artifact requirement/evidence registration and public download verification after publication.
 
 No nonproduction roster or endpoint was supplied or discovered in the candidate repository. Local fixture tests are appropriate for fault injection; production API is not a substitute. These fixtures cannot establish actual judge processing or native desktop restoration. Do not mark the remaining acceptance items complete from unit tests or historical v3 packages.
@@ -29,9 +32,9 @@ The live website was checked read-only: `amsaccess.com` redirects to `www.amsacc
 
 ## Phase G: isolated backend and timing findings
 
-The safest rehearsal target is a disposable local deployment of `AccessGolang/ams-golang`, not the production URL in the example frontend configurations. Its load harness can seed an organization, active contest, question and synthetic candidates. It bypasses OTP and does not seed the immutable judge bundle, so it cannot certify the full candidate journey by itself.
+The selected runnable rehearsal is the Python `ams-api` contract suite against a uniquely named disposable PostgreSQL database. Its `/participant/sessions` routes and `server_time`/`remaining_ms`/`ends_at` response fields match the desktop client. The separate `AccessGolang/ams-golang` load harness can seed an organization, active contest, question and synthetic candidates, but bypasses OTP and lacks the immutable judge bundle. Its `/sessions` handlers are separate; passing Python tests does not establish deployed Go behavior. Neither production URLs nor cloud-default development configuration are a safe substitute for isolated staging.
 
-Required setup before real backend acceptance:
+Requirements for an eventual complete Go API/judge rehearsal, if that is the deployment being certified:
 
 1. Start disposable PostgreSQL on loopback port 55432 using the documented separate admin/runtime/migration roles and `AMS_TEST_DATABASE_DISPOSABLE=1`. Pin the server major to the deployment being certified.
 2. Use a throwaway candidate signing secret, hard candidate authentication, loopback CORS, a test project, Firebase Auth emulator and disabled autoscaling. Do not load production credentials or production frontend example configuration.
@@ -39,7 +42,9 @@ Required setup before real backend acceptance:
 4. Seed emulator login credentials, then exercise login, onboarding, entry, Run, Submit and Finish. Capture API/worker logs, attempt/idempotency records, verdict and restoration evidence.
 5. Run burst and scheduled-readiness cohorts, including early, on-time, late and near-end arrivals. The existing load harness supports a 150-second ramp but is only a capacity component of this rehearsal.
 
-No complete emulator orchestration or judge-ready seed exists in the inspected repositories. This remains an acceptance gap, not a passing end-to-end result.
+No complete emulator orchestration or judge-ready seed exists in the inspected repositories. Python seed tooling also requires an absent `~/ams-ascent` problem/package source and defaults to cloud object storage; the Go judge performs cloud synchronization at startup. This remains an acceptance gap, not a passing end-to-end result.
+
+The selected scratch-database rehearsal passed **12/12** focused tests at Python source `f48d7065dc6344a1476c5c2220e5ed0c1995f166`, with PostgreSQL 16 image digest `postgres@sha256:a902560563d3a5661228585f53474c5065e7f273b21ffd77e555a8b5682c5690`. Tests covered verification-window/late admission, early refusal, fixed remaining time, authoritative clock response, repeated session creation, pending-to-active transition, finish idempotency, repeated draft revision, deadline enforcement and finish/resume preserving one session. The unique database passed its disposable-name guard; fake storage credentials and disabled cloud metadata prevented production access, and the container was removed. Exact commands, test names and logs are under `reports/v4-backend-contracts/`. This does not cover duplicate judged-submission creation, OTP, the Go implementation, real judge processing or native restoration.
 
 ### Confirmed timing defect
 
@@ -76,6 +81,20 @@ Retained package identities (source `bb38a88`, run `39663690332`):
 | RPM      |  14721441 | `49198ff85bf94f507cc6dce5b4ce9c61bdc8728956068d45d6d71c5eac7f7a34` |
 | AppImage | 103447032 | `ff17ab614292f64c7f0db9b419729f38727cc8617ec9ffc0f73ef00924e7d25a` |
 
-The exact DEB passed clean Ubuntu 22.04 container installation/removal, dependency and executable checks, complete shared-library resolution, camera-rule permissions/removal, and absence of an activated privileged helper. Reports are under `reports/v4-linux-artifacts/run-39663690332/`. Container results do not certify a graphical desktop, physical camera, or packet restoration.
+The exact DEB passed clean Ubuntu 22.04 container installation/removal. The exact RPM passed the equivalent Fedora 43 container rehearsal. Both passed dependency and executable checks, complete shared-library resolution, camera-rule permissions/removal, and absence of an activated privileged helper. Reports are under `reports/v4-linux-artifacts/run-39663690332/`. Container results do not certify a graphical desktop, physical camera, or packet restoration.
 
 Both workflows collect all three payload reports before failing the aggregate gate; failure-only package retention lasts three days. Invalid packages still cannot proceed to installer smoke tests or release upload. Fresh CI and draft release builds must pass against the final source revision before these diagnostic artifacts can be superseded as release evidence.
+
+## Final source CI
+
+Run `39667744005` passed every job at immutable source `092897b5dd2e51d6ab32055e2a3a3c756b8d7054`: web, native Linux/Windows/macOS, all platform bundles, Windows MSIX certification, all three Linux payload validators, clean Ubuntu DEB and Fedora 43 RPM installation/removal. Downloaded validation reports are under `reports/v4-linux-artifacts/run-39667744005/validation/`. These CI artifacts are distinct from forthcoming signed/notarized draft-release assets.
+
+| CI format | SHA-256                                                            |
+| --------- | ------------------------------------------------------------------ |
+| deb       | `ad1a663b88847dac9d93f1ea68e332a7f0ed2ac870a11428765f137a0d7812d3` |
+| rpm       | `ee5dc2c748495a8d71e8a0bfb883636f3ae88f3ca123ec80a62f24ccb3da6149` |
+| appimage  | `6df37e364efd774829c5a47d74788fbbb652b9d817c653679e66c05db792f27e` |
+
+The unpublished tag was refreshed with an explicit lease after confirming no v4.0.0 release existed: annotated tag `cef1ab7` resolves to the green source above. Replacement draft build run `39669622379` passed its source gate and all four platform builds. Draft release `420029337` contains exactly seven installers and four manifests. All eleven independently downloaded files match API byte sizes and SHA-256 digests; every installer also matches its platform manifest. All three Linux downloads match the successful release payload-validation reports. The stable metadata and hashes are recorded in [release-v4.0.0-integrity.json](release-v4.0.0-integrity.json). The release remains unpublished (`published_at: null`); this is draft evidence, not a completed public release.
+
+Final draft-byte container acceptance passed for both the downloaded DEB on clean Ubuntu 22.04 and RPM on clean Fedora 43: installation, declared dependency/tool/GStreamer checks, complete library resolution, camera rule mode/removal, inactive privileged helper and package removal without residue. Both exited 0. Evidence is under `reports/v4-draft-integrity/{deb-smoke,rpm-smoke}/`. These are container packaging checks, not graphical desktop, camera or network-restoration certification.

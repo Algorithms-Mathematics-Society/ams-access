@@ -24,6 +24,7 @@ fn path(schema: &str, key: &str) -> Option<String> {
         }
         "org.gnome.shell.extensions.dash-to-dock" => "/org/gnome/shell/extensions/dash-to-dock/",
         "org.gnome.shell.extensions.dash-to-panel" => "/org/gnome/shell/extensions/dash-to-panel/",
+        "org.gnome.shell.extensions.ubuntu-dock" => "/org/gnome/shell/extensions/ubuntu-dock/",
         _ => return None,
     };
     if key.is_empty() || !key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
@@ -46,6 +47,7 @@ pub(super) struct Settings<R> {
     run: R,
     schemas: HashSet<String>,
     keys: HashMap<String, HashSet<String>>,
+    writable: HashMap<(String, String), bool>,
 }
 impl<R: FnMut(&str, &[&str]) -> Option<String>> Settings<R> {
     pub(super) fn new(mut run: R) -> Self {
@@ -58,6 +60,7 @@ impl<R: FnMut(&str, &[&str]) -> Option<String>> Settings<R> {
             run,
             schemas,
             keys: HashMap::new(),
+            writable: HashMap::new(),
         }
     }
     fn supported(&mut self, schema: &str, key: &str) -> bool {
@@ -72,9 +75,16 @@ impl<R: FnMut(&str, &[&str]) -> Option<String>> Settings<R> {
                 .collect();
             self.keys.insert(schema.to_owned(), keys);
         }
-        self.keys[schema].contains(key)
-            && (self.run)("gsettings", &["writable", schema, key])
-                .is_some_and(|s| s.trim() == "true")
+        if !self.keys[schema].contains(key) {
+            return false;
+        }
+        *self
+            .writable
+            .entry((schema.to_owned(), key.to_owned()))
+            .or_insert_with(|| {
+                (self.run)("gsettings", &["writable", schema, key])
+                    .is_some_and(|s| s.trim() == "true")
+            })
     }
     fn effective(&mut self, schema: &str, key: &str) -> Option<String> {
         (self.run)("gsettings", &["get", schema, key]).map(|s| s.trim().to_owned())
@@ -159,10 +169,12 @@ impl<R: FnMut(&str, &[&str]) -> Option<String>> Settings<R> {
         if same_user(&user, &snapshot.user) {
             return true;
         }
-        // An external/user edit wins. Retain the journal for explicit recovery;
-        // do not overwrite it with an old preference on repeated cleanup.
+        // An external/user edit wins. It resolves this recovery entry: never
+        // overwrite the candidate's newer preference or retain a permanent
+        // admission blocker that repeated cleanup cannot resolve.
         if !same_user(&user, &Some(snapshot.applied.clone())) {
-            return false;
+            eprintln!("[ams][kb] external edit resolves recovery entry {schema}/{key}");
+            return true;
         }
         let wrote = match &snapshot.user {
             Some(value) => (self.run)("gsettings", &["set", schema, key, value]),
@@ -282,13 +294,13 @@ mod tests {
     }
 
     #[test]
-    fn external_edit_wins_and_restore_remains_retryable() {
+    fn external_edit_wins_and_resolves_recovery_entry() {
         let state = Rc::new(RefCell::new(Fake::default()));
         let mut settings = adapter(state.clone());
         let saved = settings.snapshot(SCHEMA, KEY, "@as []").unwrap();
         assert!(settings.apply(SCHEMA, KEY, &saved));
         state.borrow_mut().user = Some("['external']".into());
-        assert!(!settings.restore(SCHEMA, KEY, &saved));
+        assert!(settings.restore(SCHEMA, KEY, &saved));
         assert_eq!(state.borrow().user.as_deref(), Some("['external']"));
     }
 
@@ -317,6 +329,34 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_and_apply_cache_writability_but_write_failure_still_fails_closed() {
+        let state = Rc::new(RefCell::new(Fake::default()));
+        let mut settings = adapter(state.clone());
+        let saved = settings.snapshot(SCHEMA, KEY, "@as []").unwrap();
+        state.borrow_mut().fail_write = true;
+        assert!(!settings.apply(SCHEMA, KEY, &saved));
+
+        let state = state.borrow();
+        let writable_calls = state
+            .calls
+            .iter()
+            .filter(|(program, args)| {
+                program == "gsettings" && args.first().is_some_and(|arg| arg == "writable")
+            })
+            .count();
+        let set_calls = state
+            .calls
+            .iter()
+            .filter(|(program, args)| {
+                program == "gsettings" && args.first().is_some_and(|arg| arg == "set")
+            })
+            .count();
+        assert_eq!(writable_calls, 1);
+        assert_eq!(set_calls, 1);
+        assert_eq!(state.user, None);
+    }
+
+    #[test]
     fn legacy_and_malformed_snapshots_are_handled_conservatively() {
         let state = Rc::new(RefCell::new(Fake::default()));
         let mut settings = adapter(state.clone());
@@ -324,6 +364,14 @@ mod tests {
         assert_eq!(state.borrow().user, None);
         assert!(settings.restore(SCHEMA, KEY, "['legacy']"));
         assert_eq!(state.borrow().user.as_deref(), Some("['legacy']"));
+    }
+
+    #[test]
+    fn ubuntu_dock_schema_has_a_safe_dconf_path() {
+        assert_eq!(
+            path("org.gnome.shell.extensions.ubuntu-dock", "dock-fixed").as_deref(),
+            Some("/org/gnome/shell/extensions/ubuntu-dock/dock-fixed")
+        );
     }
 
     #[test]
