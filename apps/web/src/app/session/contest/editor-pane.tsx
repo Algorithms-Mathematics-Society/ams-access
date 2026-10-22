@@ -1,6 +1,7 @@
 "use client";
 
 import { canNavigateDiagnostic, type DiagnosticNavigation } from "./compiler-diagnostics";
+import { report as reportViolation } from "@/lib/violation-queue";
 import { toLanguageId } from "./components/language";
 import { editorLockExtensions } from "./editor-lock";
 import { CONTEST_INDENT_UNIT, formatView } from "./format-code";
@@ -568,6 +569,23 @@ export function registerAllowedClipboard(text: string) {
 /// never clipboard content. No-op (silently) outside Tauri, like the focus-loss
 /// effect in client.tsx.
 function logClipboardEvent(kind: string, detail: string, payload: Record<string, unknown>) {
+  // Uploaded as well as recorded locally, but only when it came from
+  // outside the exam.
+  //
+  // A paste into the answer editor is the least ambiguous signal this app
+  // produces, and it has never reached the server. Copying and pasting your
+  // own code around the editor, though, is ordinary work: uploading that
+  // would put dozens of rows against every honest candidate and bury the one
+  // that matters. The editor has already decided which is which, so this
+  // reads its answer rather than guessing again.
+  if (payload.external === true) {
+    reportViolation({
+      kind,
+      severity: payload.severity === "high" ? "critical" : "warning",
+      detail,
+      evidence: payload,
+    });
+  }
   type TauriGlobal = {
     core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
   };

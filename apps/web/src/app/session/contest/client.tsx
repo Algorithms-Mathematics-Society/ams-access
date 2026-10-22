@@ -118,7 +118,12 @@ import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
-import { enqueue as enqueueViolation, flush as flushViolationQueue } from "@/lib/violation-queue";
+import {
+  enqueue as enqueueViolation,
+  flush as flushViolationQueue,
+  report as reportViolation,
+  setActiveSession as setViolationSession,
+} from "@/lib/violation-queue";
 import {
   activeContent,
   clear as clearAnswerBuffer,
@@ -551,6 +556,13 @@ export default function ContestPageClient() {
   // been handed is a cost nobody gets anything for.
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId;
+  // Detectors that sit far from this component -- the paste handler inside
+  // CodeMirror, the window focus listener -- report against this rather than
+  // having a session id threaded down to them.
+  useEffect(() => {
+    setViolationSession(sessionId);
+    return () => setViolationSession(null);
+  }, [sessionId]);
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
   // The watched object currently in frame, or null. Drives the banner only;
@@ -3036,6 +3048,16 @@ export default function ContestPageClient() {
       } catch {
         // Tauri not available (browser/dev); ignore.
       }
+      // Uploaded as well as recorded locally. Leaving the exam window is the
+      // least ambiguous signal this app produces -- there is no innocent
+      // reading of it that a reviewer needs a model's opinion about -- and it
+      // went no further than the candidate's own machine.
+      reportViolation({
+        kind: "focus_loss",
+        severity: "warning",
+        detail,
+        evidence: { source: detail, contest_id: contestId },
+      });
     };
 
     const onVisibilityChange = () => {
@@ -3077,6 +3099,16 @@ export default function ContestPageClient() {
             source: "statement",
             len: String(selection).length,
             severity: "medium",
+          },
+        });
+        reportViolation({
+          kind: "clipboard_copy",
+          severity: "warning",
+          detail: `Statement ${verb}`,
+          evidence: {
+            source: "statement",
+            length: String(selection).length,
+            contest_id: contestId,
           },
         });
       } catch {

@@ -30,9 +30,7 @@ const store =
 function forSession(sessionUid: string): ViolationQueue {
   if (queue === null || boundSession !== sessionUid) {
     boundSession = sessionUid;
-    queue = new ViolationQueue(store, (events: StoredEvent[]) =>
-      reportEvents(sessionUid, events),
-    );
+    queue = new ViolationQueue(store, (events: StoredEvent[]) => reportEvents(sessionUid, events));
   }
   return queue;
 }
@@ -40,6 +38,33 @@ function forSession(sessionUid: string): ViolationQueue {
 /** Record an event locally. Never throws — callers are detectors. */
 export function enqueue(sessionUid: string, event: QueuedEvent): void {
   forSession(sessionUid).enqueue(event);
+}
+
+// The session the exam surface is currently running.
+//
+// Most detectors sit a long way from where the session id lives: the paste
+// handler is a CodeMirror extension, the focus listener is a window event.
+// Threading an id through CodeMirror to reach a logging call is a lot of
+// plumbing for one string, and the queue already knows which session it is
+// bound to. So the surface declares it once and detectors report without
+// having to be handed it.
+let activeSession: string | null = null;
+
+/** Called by the contest surface when the session is known, and with null on
+ *  the way out so nothing is attributed to a session that has ended. */
+export function setActiveSession(sessionUid: string | null): void {
+  activeSession = sessionUid;
+}
+
+/**
+ * Report an event against whatever session is running.
+ *
+ * A no-op before a session exists, which is the right answer: an event with
+ * nowhere to belong is not worth inventing a home for.
+ */
+export function report(event: QueuedEvent): void {
+  if (!activeSession) return;
+  enqueue(activeSession, event);
 }
 
 export function pendingCount(sessionUid: string): number {
