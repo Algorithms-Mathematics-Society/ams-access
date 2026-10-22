@@ -2462,7 +2462,15 @@ export default function ContestPageClient() {
     };
 
     const logPresence = (kind: string, detail: string, payload: Record<string, unknown>) => {
-      void window.__TAURI__?.core
+      // Browser-hosted dev has no Tauri bridge, so every one of these calls
+      // is a no-op there -- which is how phone detection could be debugged
+      // for an hour with the one event that explains it going nowhere.
+      // The console is the timeline when there isn't one.
+      if (!window.__TAURI__) {
+        console.info(`[proctor] ${kind}: ${detail}`, payload);
+        return;
+      }
+      void window.__TAURI__.core
         .invoke("log_proctoring_event", {
           kind,
           detail,
@@ -2569,7 +2577,20 @@ export default function ContestPageClient() {
                   // reusing the 128px presence canvas, which is what kept
                   // this from ever detecting anything.
                   const drawn = drawForObjects(video, objectCanvas);
-                  const seen = drawn ? sampleObjects(objectCanvas, objectDetector) : null;
+                  const frame = drawn ? sampleObjects(objectCanvas, objectDetector) : null;
+                  const seen = frame?.found ?? null;
+                  // Every frame, in dev only: the whole candidate list with
+                  // scores. This is the difference between "the detector is
+                  // dead" and "the phone scored 0.31", which look identical
+                  // from the outside and want opposite fixes.
+                  if (frame && process.env.NODE_ENV !== "production") {
+                    console.debug(
+                      "[proctor] objects:",
+                      frame.candidates.length
+                        ? frame.candidates.map((c) => `${c.label} ${c.score.toFixed(2)}`).join(", ")
+                        : "(nothing above the detector threshold)"
+                    );
+                  }
                   if (!cancelled) {
                     // Told to the candidate as well as logged. Cleared as
                     // soon as a later sample is clean, the same way the

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DETECT_WIDTH, drawForObjects, watchedObject } from "./object-watch.ts";
+import {
+  DETECT_THRESHOLD,
+  DETECT_WIDTH,
+  MIN_SCORE,
+  drawForObjects,
+  sampleObjects,
+  watchedObject,
+} from "./object-watch.ts";
 
 function fakeCanvas() {
   const drawn = [];
@@ -87,4 +94,42 @@ test("malformed detector output does not throw", () => {
   assert.equal(watchedObject({ detections: [{}] }).label, null);
   assert.equal(watchedObject({ detections: [{ categories: [{}] }] }).label, null);
   assert.equal(watchedObject({}).label, null);
+});
+
+test("the detector keeps near misses so a non-flag can be told apart from a dead model", () => {
+  // Built with scoreThreshold: MIN_SCORE, MediaPipe dropped everything
+  // weaker before this file saw it, so "scored the phone 0.31" and "never
+  // loaded" were the same silence. They want opposite fixes.
+  assert.ok(DETECT_THRESHOLD < MIN_SCORE, "detector must be looser than the acting threshold");
+
+  const detector = {
+    detect: () => ({
+      detections: [
+        { categories: [{ categoryName: "laptop", score: 0.71 }] },
+        { categories: [{ categoryName: "cell phone", score: 0.28 }] },
+      ],
+    }),
+  };
+  const frame = sampleObjects({}, detector);
+  assert.equal(frame.found, null, "0.28 is below MIN_SCORE, so nothing is flagged");
+  assert.deepEqual(
+    frame.candidates.map((c) => c.label),
+    ["laptop", "cell phone"],
+    "but the near miss is still visible, best score first"
+  );
+});
+
+test("a webcam-grade phone score is flagged now that the bar is not a stock-photo bar", () => {
+  const detector = {
+    detect: () => ({ detections: [{ categories: [{ categoryName: "cell phone", score: 0.42 }] }] }),
+  };
+  assert.equal(sampleObjects({}, detector).found?.label, "cell phone");
+  assert.ok(MIN_SCORE <= 0.42, "0.42 is a realistic handheld-phone score on int8 Lite0");
+});
+
+test("an empty candidate list is distinguishable from a quiet one", () => {
+  const detector = { detect: () => ({ detections: [] }) };
+  const frame = sampleObjects({}, detector);
+  assert.equal(frame.found, null);
+  assert.deepEqual(frame.candidates, []);
 });

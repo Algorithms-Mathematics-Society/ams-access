@@ -25,8 +25,30 @@
 /** The COCO classes worth flagging. Deliberately short. */
 const WATCHED = new Set(["cell phone"]);
 
-/** Below this, it is a guess rather than a detection. */
-export const MIN_SCORE = 0.5;
+/**
+ * Below this, it is a guess rather than a detection.
+ *
+ * 0.5 was borrowed from the MediaPipe sample pages, which score tidy stock
+ * photographs. This runs on a webcam in a bedroom: EfficientDet-Lite0 is
+ * already the smallest model in the family, the int8 build is quantised on
+ * top of that, and a phone held at arm's length under a ceiling light lands
+ * well under half. The cost of being slightly generous is a human glancing
+ * at a thumbnail of a wallet, which is the job an invigilator already has.
+ */
+export const MIN_SCORE = 0.35;
+
+/**
+ * What the detector itself is told to discard.
+ *
+ * Deliberately below `MIN_SCORE`. The detector used to be built with
+ * `scoreThreshold: MIN_SCORE`, which meant everything weaker was dropped
+ * inside MediaPipe before this file ever saw it -- so "the model scored the
+ * phone 0.38" and "the model never loaded" produced exactly the same
+ * silence, and neither could be told apart from a room with no phone in it.
+ * Keeping the near misses is what makes the threshold tunable from evidence
+ * rather than from guessing.
+ */
+export const DETECT_THRESHOLD = 0.2;
 
 /**
  * The width this detector is fed at.
@@ -97,7 +119,7 @@ export async function loadObjectDetector(): Promise<ObjectDetector> {
       delegate: "CPU",
     },
     runningMode: "IMAGE",
-    scoreThreshold: MIN_SCORE,
+    scoreThreshold: DETECT_THRESHOLD,
     maxResults: 8,
   });
   return detector as unknown as ObjectDetector;
@@ -119,16 +141,36 @@ export function watchedObject(result: {
   return best;
 }
 
+/** One frame's worth of detector output. */
+export type ObjectFrame = {
+  /** The watched object worth acting on, or null. */
+  found: ObjectSample | null;
+  /**
+   * Everything the detector saw at all, best first, watched or not.
+   *
+   * Carried purely so a failure to flag can be diagnosed: "laptop 0.71,
+   * person 0.64" says the model is working and the phone simply did not
+   * score, which is a different problem from an empty list.
+   */
+  candidates: ObjectSample[];
+};
+
 /**
  * Sample one frame.
  *
- * Returns null when nothing was found, so the caller logs only the
- * interesting case rather than a steady stream of "no phone".
+ * `found` is null when nothing watched cleared `MIN_SCORE`, so the caller
+ * acts on the interesting case rather than a steady stream of "no phone".
  */
-export function sampleObjects(
-  canvas: HTMLCanvasElement,
-  detector: ObjectDetector
-): ObjectSample | null {
-  const found = watchedObject(detector.detect(canvas));
-  return found.label ? found : null;
+export function sampleObjects(canvas: HTMLCanvasElement, detector: ObjectDetector): ObjectFrame {
+  const result = detector.detect(canvas);
+  const candidates: ObjectSample[] = [];
+  for (const detection of result.detections ?? []) {
+    for (const category of detection.categories ?? []) {
+      const label = (category.categoryName ?? "").toLowerCase();
+      if (label) candidates.push({ label, score: category.score ?? 0 });
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const best = watchedObject(result);
+  return { found: best.label ? best : null, candidates: candidates.slice(0, 6) };
 }
