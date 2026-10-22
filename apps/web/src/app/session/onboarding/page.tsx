@@ -34,6 +34,7 @@ import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { decideNetworkLockdown } from "./network-gate";
+import { effectiveReadinessPolicy } from "./effective-policy";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
 import { Stage1_Fullscreen } from "./components/stages/Stage1_Fullscreen";
 import { Stage2_MonitorDetection } from "./components/stages/Stage2_MonitorDetection";
@@ -265,13 +266,18 @@ export default function OnboardingPage() {
   const cameraOverride = overrides.some(
     (o) => o.check_kind === "camera" && o.expires_at_ms > Date.now()
   );
-  const effectivePolicy = useMemo(() => {
-    if (!contestIndex || (hasNativeBridge() && !platform)) return null;
-    return applyOrganizerOverrides(
-      applyLockdownConfig(strictContestPolicy(platform ?? undefined), contestIndex.lockdown),
-      overrides.filter((grant) => grant.expires_at_ms > Date.now())
-    );
-  }, [platform, contestIndex, overrides]);
+  const effectivePolicy = useMemo(
+    () =>
+      effectiveReadinessPolicy({
+        dryRun,
+        nativeAvailable: hasNativeBridge(),
+        platform,
+        hasContest: Boolean(contestIndex),
+        lockdown: contestIndex?.lockdown ?? null,
+        overrides,
+      }),
+    [dryRun, platform, contestIndex, overrides]
+  );
   const handleCameraReady = useCallback((stream: MediaStream | null) => {
     cameraAttemptedRef.current = true;
     cameraStreamRef.current = stream;
@@ -603,20 +609,21 @@ export default function OnboardingPage() {
       }
 
       if (nativeAvailable && !faceReviewRef.current.isRequested()) {
-        void attempts
-          .runAdvisory(
-            attempt,
-            "event recorder setup",
-            () =>
-              invokeStrict("configure_event_stream", {
-                apiUrl: API_URL,
-                sessionId: preparedSessionIdRef.current,
-                token: participantToken(),
-              }),
-            5000,
-            "event recorder setup timed out"
-          )
-          .catch(() => {});
+        // Bind the native spool before any lockdown failure can be recorded.
+        // Setup remains advisory, but waiting for its bounded result prevents
+        // a fast failure below from becoming an unbound, upload-ineligible event.
+        await attempts.runAdvisory(
+          attempt,
+          "event recorder setup",
+          () =>
+            invokeStrict("configure_event_stream", {
+              apiUrl: API_URL,
+              sessionId: preparedSessionIdRef.current,
+              token: participantToken(),
+            }),
+          5000,
+          "event recorder setup timed out"
+        );
       }
 
       if (faceReviewRef.current.isRequested() && nativeAvailable) {
@@ -907,9 +914,8 @@ export default function OnboardingPage() {
             ? "This session was started on a different device. Return to the home screen to request re-entry from your organizer."
             : "Your session timed out due to inactivity. Return to the home screen to request re-entry."
         );
-        // Return to the organizer-approved resume flow without a delayed callback
-        // that could outlive this entry attempt.
-        router.push("/home");
+        // Keep the failure visible. The persistent Exit setup action above
+        // returns to Home, where the organizer-approved resume flow lives.
         return;
       }
       const rawMsg = readinessErrorText(error);

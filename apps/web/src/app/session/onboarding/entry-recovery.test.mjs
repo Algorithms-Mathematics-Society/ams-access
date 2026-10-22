@@ -312,3 +312,21 @@ test("failed desktop cleanup blocks probes until an explicit retry restores it",
   assert.equal(f.desktop.scans, 2);
   assert.deepEqual(f.state.navigation, ["/session/contest?contestId=contest"]);
 });
+
+test("real final entry awaits recorder binding before network lockdown can emit events", () => {
+  const recorder = callbackCode.indexOf(
+    'await attempts.runAdvisory(attempt, "event recorder setup"'
+  );
+  const lockdown = callbackCode.indexOf('"enable_network_lockdown"', recorder);
+  assert.ok(recorder >= 0, "event recorder setup must be awaited");
+  assert.ok(lockdown > recorder, "network lockdown must start after the bounded recorder binding");
+});
+
+test("session binding failures remain visible instead of navigating in the same catch", () => {
+  const start = callbackCode.indexOf("error instanceof SessionBindingError");
+  const end = callbackCode.indexOf("const rawMsg", start);
+  assert.ok(start >= 0 && end > start);
+  const branch = callbackCode.slice(start, end);
+  assert.match(branch, /setPolicyBlock/);
+  assert.doesNotMatch(branch, /router\.(?:push|replace)/);
+});

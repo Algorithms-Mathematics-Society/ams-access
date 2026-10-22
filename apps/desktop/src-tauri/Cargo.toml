@@ -37,6 +37,7 @@ sha2 = "0.10"
 hex = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
 webkit2gtk = { version = "2.0", features = ["v2_22"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

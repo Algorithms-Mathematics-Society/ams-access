@@ -1,5 +1,7 @@
 # v4.0.0 candidate and Phase G acceptance
 
+**Historical record:** v4.0.0 was subsequently published outside this work at `2026-10-22T04:03:24Z` (release `420029337`). Its published tag and assets must remain immutable. The attached review repairs and three later team commits are being prepared as v4.0.1; the draft-only statements below describe the earlier verification state. See `linux-review.md` for the follow-up findings.
+
 ## Source reconciliation
 
 Desktop source: `Algorithms-Mathematics-Society/ams-access`, branch `release/v4.0.0`.

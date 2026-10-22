@@ -115,6 +115,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
   let videoGeneration = 0;
   let preferredDeviceId: string | null | undefined;
   let pendingVideo: Promise<void> | null = null;
+  let selectionPending = false;
   // Whether a camera has ever been opened in this session. Guards the replug
   // recovery so it can never raise a permission prompt by itself.
   let everOpened = false;
@@ -162,7 +163,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
 
   /** Try to reopen the explicitly owned camera after a device-list change. */
   function recover(): Promise<void> {
-    if (pendingVideo || !deps.mediaDevices) return Promise.resolve();
+    if (pendingVideo || selectionPending || !deps.mediaDevices) return Promise.resolve();
     const opened = generation;
     const pending = openTrack("video", opened);
     pendingVideo = pending;
@@ -250,6 +251,39 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
         return;
       }
       adopt(track, kind);
+    });
+  }
+
+  /** Open a replacement without disturbing the currently delivering track.
+   * The caller commits it only after both acquisition and preference storage
+   * succeed, making selection a two-phase transaction. */
+  function openVideoCandidate(
+    deviceId: string | null,
+    opened: number,
+    openedVideo: number
+  ): Promise<MediaStreamTrack> {
+    const constraints = deviceId
+      ? { ...VIDEO_CONSTRAINTS, deviceId: { exact: deviceId } }
+      : VIDEO_CONSTRAINTS;
+    return withCameraTimeout(
+      deps.mediaDevices!.getUserMedia({ video: constraints }),
+      deps.requestTimeoutMs ?? 8000,
+      "Camera request timed out",
+      (late) => late.getTracks().forEach((track) => track.stop())
+    ).then((stream) => {
+      const track = stream.getVideoTracks()[0];
+      for (const granted of stream.getTracks()) {
+        if (granted !== track) granted.stop();
+      }
+      if (opened !== generation || openedVideo !== videoGeneration) {
+        track?.stop();
+        throw new Error("Camera selection changed");
+      }
+      if (!track || !isTrackUsable(track)) {
+        track?.stop();
+        throw new Error("Camera opened without a video track");
+      }
+      return track;
     });
   }
 
@@ -344,26 +378,37 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       if (!deps.mediaDevices) throw new Error("Camera not available on this device");
       attachDeviceListener();
       const next = deviceId?.trim() || null;
-      // Persist first: a storage failure must not switch to a preference the
-      // next launch cannot reproduce.
-      deps.preferenceStore?.write(next);
-      preferredDeviceId = next;
       videoGeneration += 1;
       const opened = generation;
       const openedVideo = videoGeneration;
       pendingVideo = null;
-      videoTrack?.stop();
-      videoTrack = null;
-      announce("lost");
-      const pending = openTrack("video", opened, openedVideo);
-      pendingVideo = pending;
+      const previous = videoTrack;
+      selectionPending = true;
+      const pending = openVideoCandidate(next, opened, openedVideo);
       try {
-        await pending;
+        const replacement = await pending;
+        if (opened !== generation || openedVideo !== videoGeneration) {
+          replacement.stop();
+          throw new Error("Camera selection changed");
+        }
+        try {
+          // A storage failure must leave the working track and preference intact.
+          deps.preferenceStore?.write(next);
+        } catch (error) {
+          replacement.stop();
+          throw error;
+        }
+        preferredDeviceId = next;
+        adopt(replacement, "video");
+        previous?.stop();
+      } catch (error) {
+        // A superseded selection must not overwrite the newer owner's status.
+        if (openedVideo === videoGeneration) {
+          announce(isTrackDelivering(previous ?? undefined) ? "live" : "lost");
+        }
+        throw error;
       } finally {
-        if (pendingVideo === pending) pendingVideo = null;
-      }
-      if (opened !== generation || openedVideo !== videoGeneration) {
-        throw new Error("Camera selection changed");
+        if (openedVideo === videoGeneration) selectionPending = false;
       }
       announce(isTrackDelivering(videoTrack ?? undefined) ? "live" : "lost");
       return assemble(isTrackUsable(audioTrack ?? undefined));
@@ -374,6 +419,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       if (expectedStream && expectedTrack !== videoTrack) return;
       videoGeneration += 1;
       pendingVideo = null;
+      selectionPending = false;
       videoTrack?.stop();
       videoTrack = null;
       // Contest preview retries retain permission/replug ownership. Settings

@@ -41,9 +41,17 @@ fn acquire_at(path: &Path) -> Result<File, String> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(e.to_string()),
     }
-    let dm = std::fs::symlink_metadata(dir).map_err(|e| e.to_string())?;
-    if !dm.is_dir() || dm.uid() != uid()? || dm.permissions().mode() & 0o077 != 0 {
-        return Err("instance-lock directory is not private and owned by this user".into());
+    let mut dm = std::fs::symlink_metadata(dir).map_err(|e| e.to_string())?;
+    if !dm.is_dir() || dm.uid() != uid()? {
+        return Err("instance-lock directory is not owned by this user".into());
+    }
+    if dm.permissions().mode() & 0o077 != 0 {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("cannot make instance-lock directory private: {e}"))?;
+        dm = std::fs::symlink_metadata(dir).map_err(|e| e.to_string())?;
+        if !dm.is_dir() || dm.uid() != uid()? || dm.permissions().mode() & 0o077 != 0 {
+            return Err("instance-lock directory could not be made private".into());
+        }
     }
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -102,6 +110,25 @@ mod tests {
         assert!(acquire_at(&path).is_ok());
         assert!(path.exists());
         std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn owned_public_state_directory_is_tightened() {
+        let path = p();
+        std::fs::DirBuilder::new()
+            .mode(0o755)
+            .create(path.parent().unwrap())
+            .unwrap();
+        let _guard = acquire_at(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

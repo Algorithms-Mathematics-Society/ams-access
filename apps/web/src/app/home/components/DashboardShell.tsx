@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { LogOut } from "lucide-react";
 import { AppShell, useAppShellMobile } from "@astryxdesign/core/AppShell";
+import { useMediaQuery } from "@astryxdesign/core/hooks";
 import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import { LayoutPanel } from "@astryxdesign/core/Layout";
 import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
@@ -11,7 +12,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { AccessLogo } from "@/components/AccessLogo";
+import { AccessLogo, AccessMark } from "@/components/AccessLogo";
 
 type Destination = "overview" | "settings" | "diagnostics";
 const destinations = [
@@ -40,6 +41,7 @@ export function DashboardShell({
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const compactHeader = useMediaQuery("(max-width: 350px)");
   const navigate = (nav: Destination) => {
     onNavigate(nav);
     setMobileOpen(false);
@@ -57,19 +59,8 @@ export function DashboardShell({
       topNav={
         <TopNav
           label="Account"
-          heading={<TopNavHeading logo={<AccessLogo />} />}
-          endContent={
-            <HStack gap={2} align="center">
-              <ThemeToggle />
-              <Button
-                label={signingOut ? "Signing out..." : "Sign out"}
-                variant="ghost"
-                isDisabled={signingOut}
-                onClick={onSignOut}
-                icon={<Icon icon={LogOut} size="sm" />}
-              />
-            </HStack>
-          }
+          heading={<TopNavHeading logo={compactHeader ? <AccessMark /> : <AccessLogo />} />}
+          endContent={<DashboardTopActions signingOut={signingOut} onSignOut={onSignOut} />}
         />
       }
       sideNav={<WorkspacePanel activeNav={activeNav} onNavigate={navigate} calendar={calendar} />}
@@ -115,6 +106,31 @@ export function DashboardShell({
         <MobileCalendar>{calendar}</MobileCalendar>
       </VStack>
     </AppShell>
+  );
+}
+
+function DashboardTopActions({
+  signingOut,
+  onSignOut,
+}: {
+  signingOut: boolean;
+  onSignOut: () => void;
+}) {
+  const { isMobile } = useAppShellMobile();
+  const label = signingOut ? "Signing out..." : "Sign out";
+  return (
+    <HStack gap={2} align="center">
+      <ThemeToggle />
+      <Button
+        label={label}
+        variant="ghost"
+        isDisabled={signingOut}
+        onClick={onSignOut}
+        icon={<Icon icon={LogOut} size="sm" />}
+        isIconOnly={isMobile}
+        tooltip={isMobile ? label : undefined}
+      />
+    </HStack>
   );
 }
 

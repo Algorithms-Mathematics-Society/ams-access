@@ -1111,6 +1111,19 @@ fn restore_kde_meta_with(
     current == original || (current.is_empty() && write(original))
 }
 
+fn gnome_intercept_outcome(
+    applied: usize,
+    total: usize,
+    method: &str,
+    shortcuts_applied: usize,
+    budget: &Budget,
+) -> KeyboardInterceptResult {
+    let incomplete = budget.expired() || budget.failure().is_some();
+    let mut result = intercept_outcome(applied, total, method);
+    result.active = shortcuts_applied > 0 && !incomplete;
+    result
+}
+
 /// Disable supported compositor shortcuts and report observed coverage.
 fn enable_keyboard_intercept_inner() -> KeyboardInterceptResult {
     let budget = Budget::new(std::time::Duration::from_secs(8));
@@ -1136,7 +1149,7 @@ fn enable_keyboard_intercept_inner() -> KeyboardInterceptResult {
     }
     let mut applied = 0;
     if desktop.contains("cinnamon") {
-        return intercept_outcome(0, 0, "cinnamon/unsupported-unverified-adapter");
+        return intercept_outcome(0, 0, "unsupported");
     }
     if desktop.contains("gnome") || desktop.contains("ubuntu") {
         let mut shortcuts_applied = 0;
@@ -1164,7 +1177,7 @@ fn enable_keyboard_intercept_inner() -> KeyboardInterceptResult {
                 }
             }
         }
-        let mut result = intercept_outcome(
+        return gnome_intercept_outcome(
             applied,
             GNOME_SHORTCUTS.len() + GNOME_DOCK_SETTINGS.len(),
             if is_wayland {
@@ -1172,14 +1185,13 @@ fn enable_keyboard_intercept_inner() -> KeyboardInterceptResult {
             } else {
                 "gsettings/x11"
             },
+            shortcuts_applied,
+            &budget,
         );
-        // Workspace, dock or hot-corner changes alone are not a keyboard intercept.
-        result.active = shortcuts_applied > 0;
-        return result;
     }
     if desktop.contains("kde") || desktop.contains("plasma") {
         let Some(mut adapter) = kde_live::Adapter::discover() else {
-            return intercept_outcome(0, KDE_SHORTCUTS.len(), "kde/unsupported-gdbus-unavailable");
+            return intercept_outcome(0, KDE_SHORTCUTS.len(), "unsupported");
         };
         let mut available = 0;
         let mut family_available = [false; 4];
@@ -1606,6 +1618,52 @@ pub fn keyboard_recovery_pending() -> bool {
     !saved().lock().unwrap_or_else(|e| e.into_inner()).is_empty()
         || backup_file().exists()
         || owned_regular_file(std::path::Path::new(LEGACY_BACKUP_PATH))
+}
+
+fn quarantine_owned_journal(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+        Ok(_) if !owned_regular_file(path) => {
+            return Err(format!(
+                "refusing to discard unsafe recovery journal {}",
+                path.display()
+            ))
+        }
+        Ok(_) => {}
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("recovery journal has no valid filename")?;
+    let quarantine =
+        path.with_file_name(format!("{name}.discarded-{}-{stamp}", std::process::id()));
+    std::fs::rename(path, quarantine).map_err(|error| error.to_string())
+}
+
+fn quarantine_owned_legacy_journal(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+        // The legacy location is shared. Foreign or otherwise unsafe objects
+        // are unrelated state and must remain untouched without blocking the
+        // candidate from discarding their owned current journal.
+        Ok(_) if !owned_regular_file(path) => Ok(()),
+        Ok(_) => quarantine_owned_journal(path),
+    }
+}
+
+/// Forget recovery records only after an explicit candidate action. This does
+/// not mutate desktop settings; owned journals are quarantined as evidence.
+pub fn discard_keyboard_recovery() -> Result<(), String> {
+    quarantine_owned_journal(&backup_file())?;
+    quarantine_owned_legacy_journal(std::path::Path::new(LEGACY_BACKUP_PATH))?;
+    saved().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    Ok(())
 }
 
 pub fn disable_keyboard_intercept() {
@@ -2452,6 +2510,22 @@ mod tests {
     }
 
     #[test]
+    fn gnome_coverage_outcome_observes_the_real_budget_state() {
+        let healthy = super::Budget::new(std::time::Duration::from_secs(1));
+        let complete = super::gnome_intercept_outcome(2, 3, "gsettings", 1, &healthy);
+        assert!(complete.active);
+        drop(healthy);
+
+        let expired = super::Budget::new(std::time::Duration::ZERO);
+        let partial = super::gnome_intercept_outcome(2, 3, "gsettings", 1, &expired);
+        assert!(!partial.active);
+        assert_eq!(
+            expired.failure().as_deref(),
+            Some("native scan budget exhausted")
+        );
+    }
+
+    #[test]
     fn keyboard_readback_only_normalizes_the_equivalent_empty_array() {
         assert_eq!(super::normalize_gvariant(" @as []\n"), "[]");
         assert_ne!(
@@ -2701,6 +2775,34 @@ mod review_regression_tests {
         restore_saved_settings(&mut conflict, |_, _| false, || true);
         assert!(conflict.contains_key("kde_meta"));
     }
+    #[test]
+    fn explicit_discard_quarantines_owned_journal_and_rejects_symlink() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("ams-discard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let journal = root.join("journal");
+        std::fs::write(&journal, b"evidence").unwrap();
+        quarantine_owned_journal(&journal).unwrap();
+        assert!(!journal.exists());
+        let quarantined: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(std::fs::read(&quarantined[0]).unwrap(), b"evidence");
+
+        let target = root.join("target");
+        std::fs::write(&target, b"foreign").unwrap();
+        symlink(&target, &journal).unwrap();
+        assert!(quarantine_owned_journal(&journal).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"foreign");
+        quarantine_owned_legacy_journal(&journal).unwrap();
+        assert!(journal.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), b"foreign");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn legacy_pending_predicate_accepts_only_owned_regular_files() {
         use std::os::unix::fs::symlink;
