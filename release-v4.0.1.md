@@ -1,6 +1,6 @@
 # v4.0.1 release and Phase G acceptance
 
-Status: source fixes merged through PR #148 (`5b379fb`); all ten CI jobs passed on tested source `ab23bc6`. Creating/pushing the v4.0.1 tag was rejected by automatic approval review because the user explicitly named v4.0.0; new-version authorization is pending. No v4.0.1 tag or release has been created. Do not overwrite the published v4.0.0 tag or assets. Phase G remains open until its actual acceptance evidence is recorded.
+Status: source fixes merged through PR #148 (`5b379fb`); all ten CI jobs passed on tested source `ab23bc6`. The user explicitly authorized v4.0.1 after the earlier approval-review rejection. Annotated tag `v4.0.1` now points to verified source `ab23bc6c93e30a273c3d1d8042880725c047ee2e`; draft release workflow `39730820957` passed its source gate and all four platform builds. Draft release `420358050` contains seven installers and four manifests; independently downloaded sizes, SHA-256 digests and all installer manifest entries match. Public publication is outside this draft-build step. Do not overwrite the published v4.0.0 tag or assets. Phase G remains open until its actual acceptance evidence is recorded.
 
 ## Source scope
 
@@ -12,14 +12,14 @@ Status: source fixes merged through PR #148 (`5b379fb`); all ten CI jobs passed 
 
 Before the latest team merge: 703 web, 18 desktop JavaScript, 3 API-client and 306 native tests passed. Strict workspace Clippy passed. Production browser fixtures passed 102 Settings layout assertions and four practice-flow assertions. These fixtures do not establish installed runtime or physical-device acceptance.
 
-Local backend contract checks cover authoritative timing, duplicate open/finish, run/submit isolation, cooldown and duplicate worker-result idempotency. A shared local Moto S3/SQS service was exercised by separate API-style clients and actual worker adapters. Real judge and integrated API-to-worker execution are still being collected in an isolated KVM guest; no production roster or credentials are used.
+Local backend contract checks cover authoritative timing, duplicate open/finish, run/submit isolation, cooldown and duplicate worker-result idempotency. The current API, shared local Moto S3/SQS service, actual worker and official cxxprobe v0.14 in an isolated KVM guest passed the full local Run/Submit/result/Finish chain described below. No production roster or credentials were used. Backend PR #7 is merged as `ba906a7`; Python 3.12/3.13 CI and migration checks passed. Deployment to the running server remains separate and unverified.
 
 ## Completion checklist
 
 - [x] Integrated-source tests (718 web, 18 desktop JavaScript, 3 API-client), typecheck and production build.
 - [x] Native tests (306), formatting and strict Clippy on integrated source `ab23bc6`.
-- [ ] Four platform builds; independently verify all installer hashes and manifests.
-- [ ] Exact Linux package installation/removal and installed startup/ownership checks.
+- [x] Four platform builds and source gate passed (`39730820957`); all seven installers/four manifests independently verified.
+- [x] Exact draft DEB/RPM installation/removal; DEB headless startup/ownership recovery and AppImage extraction-mode startup. Physical-desktop acceptance remains separate.
 - [x] Real current API → Moto queue/storage → worker → judge → result persistence rehearsal (isolated local integration; not production capacity).
 - [ ] Installed camera, desktop restoration and required-policy acceptance on supported environments.
 - [ ] Synchronized-start/backend capacity acceptance or explicitly documented remaining limitation.
@@ -27,7 +27,7 @@ Local backend contract checks cover authoritative timing, duplicate open/finish,
 
 Do not convert incomplete checks into passes based on unit tests, browser fixtures or older installer evidence.
 
-## Team/release recheck
+## Historical team/release recheck (before draft creation)
 
 On 22 October, remote desktop main was `677d2cf`; all three commits beyond the v4.0.0 source are ancestors of this branch. Public v4.0.0 still resolves to source `092897b` (annotated tag `cef1ab7`); all eleven live asset IDs and SHA-256 digests match the earlier verified candidate. No v4.0.1 tag existed at this check. A fetch reported an unrelated historical `v0.10.3-shell-alpha` tag mismatch; no tag was force-updated. Website main advanced to `14799e2` and is being integrated separately.
 
@@ -48,3 +48,19 @@ Website PR [amsaccess #1](https://github.com/Algorithms-Mathematics-Society/amsa
 CI run `39727386367` passed all ten jobs, including Linux payload validation, clean DEB/RPM installation/removal and Windows MSIX certification checks. Its Ubuntu 22.04 DEB is 14,726,694 bytes, SHA-256 `3efeb7984f430d71c20890724021c38c44f2722d4d8a6d647a5833c71ec9c42f`. In an offline, disposable Ubuntu 22.04/Xvfb/Openbox/D-Bus container, installed launch passed; owned state permissions tightened from 0755 to 0700; the first process remained alive; a second process displayed a GTK ownership error dialog and did not disturb the first. Evidence: `reports/v4-phase-g/installed-launch/ci-ab23-ubuntu22/`.
 
 A locally built Ubuntu 24.04-linked DEB failed on Ubuntu 22.04 due to newer GLIBC requirements and passed on Ubuntu 24.04. It is not the CI release-baseline artifact and must not replace it. Neither headless smoke establishes GNOME/KDE/Wayland controls, physical cameras, real authorization or network restoration. Those remain explicit acceptance gaps.
+
+## Draft artifact identity
+
+See [the integrity record](release-v4.0.1-integrity.json) for all eleven asset IDs, exact filenames, byte sizes and SHA-256 values. Tag object `766e13d8acead81b31f28000ebb1a69ef8cd0959` resolves to source `ab23bc6c93e30a273c3d1d8042880725c047ee2e`. Release metadata was checked before and after download; asset identities stayed unchanged and `draft=true`, `published_at=null`. Public v4.0.0 is preserved.
+
+## Exact draft validation
+
+Release workflow [39730820957](https://github.com/Algorithms-Mathematics-Society/ams-access/actions/runs/39730820957) built the [v4.0.1 draft](https://github.com/Algorithms-Mathematics-Society/ams-access/releases/tag/untagged-163a6ce20215885891d2). All seven installers and four checksum manifests were downloaded independently and matched GitHub sizes/digests; every installer matched its manifest. Asset identities remained stable across download.
+
+Fresh draft DEB SHA-256 `3edd2debaa08f2776676669dee5d1ff64b7c6eab2257d9a22b84ccfe6b184f63` passed clean Ubuntu 22.04 installation/removal, isolated Xvfb/Openbox/D-Bus startup, owned-state permission repair from 0755 to 0700, and a visible duplicate-instance error without disturbing the first process. The RPM passed clean Fedora 43 installation, package verification and removal. The AppImage rendered the home screen and remained alive in an offline Ubuntu 22.04 container using `--appimage-extract-and-run`; FUSE mounting was not tested. Release CI payload reports matched these exact Linux artifact hashes and sizes. Helper comparisons in those reports are CI provenance, not an independent local helper rebuild.
+
+Windows EXE/MSI metadata reports 4.0.1 and x64 application/helper payloads; both installers are unsigned. The NSIS outer launcher is i386, which does not change the x64 payload architecture. Both macOS bundles report 4.0.1, minimum macOS 12, and their expected ARM/Intel application architectures; both bundled network helpers are universal x86_64/arm64. Apple build logs show accepted notarization, app stapling and signed DMGs. These are metadata and CI signing checks, not physical Windows/macOS runtime or independent Gatekeeper acceptance.
+
+Before tagging, desktop main was `5efea1d61bc00858c9914953593b57f69dde8752` (documentation/merge changes after tested source); backend main was `ba906a781b8ddc88a1e34f2c62d7fbd4e35037ad`. All twelve relevant team commits are included. The public release API and download page still advertise v4.0.0, and all eleven public asset identities match the previous snapshot. No public release or website change is part of this draft verification.
+
+Physical cameras, GNOME/KDE/Wayland controls and restoration, real authorization/network-helper recovery, backend deployment verification and synchronized production capacity remain open Phase G gates. Detailed machine-readable validation accompanies the asset identity record; raw local logs are under `reports/v401-draft-integrity/`.

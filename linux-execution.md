@@ -1,6 +1,6 @@
 # Linux execution plan
 
-Status: v4.0.0 was published externally on 22 October 2026 at 04:03 UTC; its tag and all eleven verified assets remain unchanged. Review repairs and all twelve team commits through `677d2cf` are merged into main via PR #148 (`5b379fb`). Tested follow-up source `ab23bc6` uses version 4.0.1 and passed all ten CI jobs (`39727386367`), 718 web/18 desktop JavaScript/3 API-client/306 native tests, typecheck, strict Clippy, production build, 102 Settings layout assertions and four practice checks. The CI DEB passed installed startup, private-state repair and visible second-instance rejection on isolated Ubuntu 22.04/Xvfb/Openbox. Current API → storage/queue → real worker/judge → persisted result rehearsal passed with a separately reviewed backend retry fix. **Phase G remains open for physical desktop/camera and production-capacity acceptance.** Creating the new v4.0.1 tag/draft was stopped by automatic approval review pending explicit authorization for that version. See [the current release record](release-v4.0.1.md) and [the acceptance checklist](docs/phase-g-acceptance.md).
+Status: **v4.0.1 is built as a draft** from verified source `ab23bc6`, including all twelve team commits through `677d2cf`. Release workflow `39730820957` passed the source gate and all four platform builds; seven installers and four manifests passed independent hash verification. Public v4.0.0 and its eleven assets are unchanged, and the website still serves v4.0.0. **Phase G remains open for physical desktop/camera, real authorization/network restoration and production-capacity acceptance.** See [the release record](release-v4.0.1.md), [exact artifact identities](release-v4.0.1-integrity.json) and [the acceptance checklist](docs/phase-g-acceptance.md).
 
 This is the implementation and acceptance plan. [audit-test.md](audit-test.md) is the incident briefing; [linux-review.md](linux-review.md) records each review finding, alternatives and disposition. Detailed historical material is preserved locally in [the execution archive](reports/linux-review/archive/execution-before-review.md); its statuses are historical. Logs and scratch captures under `reports/` are intentionally excluded from Git.
 
@@ -86,8 +86,9 @@ Primary references: [Tauri AppImage](https://tauri.app/distribute/appimage/), [W
 - [x] Preserve public v4.0.0 and integrate all twelve team commits through `677d2cf` with review repairs into main (PR #148).
 - [ ] Complete backend capacity/fairness acceptance, including late arrival and short contests. Source review confirmed that the former 150-second post-start delay loses working time against the fixed backend deadline; the v4 candidate removes this unfair wait. Client-only deadline extension is not valid. See `release-v4.0.0.md` for the isolated backend prerequisites and alternatives.
 - [x] Run local synthetic browser fault checks: contest 33 checks, login 36 checks, and onboarding scrolling at six viewport sizes. These do not establish real judge/native behavior.
-- [x] Reproduce CI packaging failures against retained installers; fix strict RPM extraction compatibility and AppImage destination handling. Final source CI `39667744005` passes all three Linux payload validators, clean Ubuntu DEB and Fedora RPM installation/removal, and all other platform jobs. Replacement draft-release builds and independent installer/manifest integrity checks also pass; real-device acceptance remains open. See `release-v4.0.0.md` for hashes and scope.
+- [x] Historical v4.0.0: reproduce CI packaging failures against retained installers; fix strict RPM extraction compatibility and AppImage destination handling. Final source CI `39667744005` passes all three Linux payload validators, clean Ubuntu DEB and Fedora RPM installation/removal, and all other platform jobs. Replacement draft-release builds and independent installer/manifest integrity checks also pass; real-device acceptance remains open. See `release-v4.0.0.md` for hashes and scope.
 - [x] Run 12 focused Python API contracts against disposable PostgreSQL: admission, fixed clock, session/finish/draft/resume behavior pass. This covers matching desktop API contracts, not the separate Go handler or judge pipeline.
+- [x] Build the authorized v4.0.1 draft from `ab23bc6`; all four release builds and independent checks of seven installers/four manifests pass. Keep it unpublished while remaining acceptance is open.
 - [x] Run the isolated current API → Moto S3/SQS → worker → official cxxprobe v0.14 → result callback path, including Run, Submit, duplicate callback and Finish. Two AC results and two completed jobs; API endpoint layer uses TestClient, not production HTTP.
 - [x] Verify the exact CI DEB launches unprivileged, tightens owned state permissions and visibly rejects a second instance without harming the first. Scope: Ubuntu 22.04/Xvfb/Openbox.
 - [ ] Complete the installed staging roster and fault rehearsal: login → checks → physical capture/review → entry → Run → Submit → Finish → verified desktop/firewall restoration.
@@ -101,3 +102,14 @@ Primary references: [Tauri AppImage](https://tauri.app/distribute/appimage/), [W
 Preserve unrelated edits, stage explicit files/hunks, and review source by concern. Earlier A–F edits overlap; do not invent historical per-phase commits or claim that a reconstructed intermediate tree was tested. Keep source fixes, packaging and documentation reviewable, with the final integrated test result attached.
 
 Run web tests/typecheck and the affected Rust suites. Installer mocks never target host paths. Actual installer/helper/desktop trials belong in disposable containers/VMs or explicitly prepared accounts. Each acceptance record needs the commit/artifact SHA, environment, expected/observed result, original-setting restoration result, and remaining uncertainty.
+
+### v4.0.1 exact-draft verification — 22 October
+
+- [x] Four release targets built; seven installers and four manifests independently matched sizes, hashes and stable asset identities.
+- [x] Fresh draft DEB: Ubuntu 22.04 install/remove, isolated startup, private-state permissions and duplicate-instance feedback.
+- [x] Fresh draft RPM: Fedora 43 install/verify/remove.
+- [x] Fresh draft AppImage: offline Ubuntu 22.04 extraction-mode startup; FUSE mounting remains untested.
+- [x] Windows/macOS package versions and architectures checked; Windows unsigned, Apple notarization accepted in CI.
+- [ ] Physical desktop/camera/network recovery and production capacity acceptance. These checks still block claiming Phase G complete.
+
+See [the release record](release-v4.0.1.md#exact-draft-validation) and [exact identities and validation scope](release-v4.0.1-integrity.json). v4.0.1 remains a draft; public downloads remain v4.0.0.
