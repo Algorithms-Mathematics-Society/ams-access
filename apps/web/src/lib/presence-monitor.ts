@@ -175,9 +175,17 @@ export type PresenceSample = {
  *
  * Mirrors `isInsideGuide` in Stage8_FaceCalibration, which the candidate
  * already passed during onboarding, so the contest room asks for nothing
- * stricter than the door did. Tolerances are deliberately loose: this
- * interrupts someone sitting an exam, so it should only speak when they are
- * genuinely about to fall out of shot.
+ * stricter than the door did. Tolerances are loose: this interrupts someone
+ * sitting an exam, so it should only speak when they are genuinely about to
+ * fall out of shot.
+ *
+ * They were, however, far too loose to do that. The ellipse carried a 1.8
+ * tolerance on top of a 0.37 vertical radius, which puts the effective
+ * bottom of "ok" at y=0.98 -- a face slumped to the very bottom edge still
+ * read as centred, and the nudge never fired for the one posture it exists
+ * to catch. The tolerance is now 1.0 against explicit radii, and a box that
+ * runs past an edge is off-centre regardless of where its midpoint sits:
+ * half a face centred in frame is still half a face.
  */
 export function framingOf(
   topLeft: number[] | undefined,
@@ -199,11 +207,29 @@ export function framingOf(
   if (w > 0.72 || h > 0.92) return "too_close";
   if (w < 0.1 || h < 0.12) return "too_far";
 
+  // Cut off by an edge. Checked before the midpoint, because clipping is
+  // what "my face is half out of shot" actually looks like to the detector:
+  // the box keeps a plausible centre while a third of the face is missing.
+  // A couple of percent of slack so a face filling the frame cleanly does
+  // not trip it.
+  const EDGE_SLACK = 0.02;
+  if (
+    x1 < -EDGE_SLACK * width ||
+    y1 < -EDGE_SLACK * height ||
+    x2 > (1 + EDGE_SLACK) * width ||
+    y2 > (1 + EDGE_SLACK) * height
+  ) {
+    return "off_centre";
+  }
+
   const cx = (x1 + x2) / 2 / width;
   const cy = (y1 + y2) / 2 / height;
   const dx = cx - 0.5;
   const dy = cy - 0.48;
-  const inside = (dx * dx) / (0.22 * 0.22) + (dy * dy) / (0.37 * 0.37) <= 1.8;
+  // Radii are the real allowance now that the tolerance is 1: a face may sit
+  // a fifth of the frame off to either side, and a quarter of it high or
+  // low, before it is worth saying anything.
+  const inside = (dx * dx) / (0.2 * 0.2) + (dy * dy) / (0.25 * 0.25) <= 1.0;
   return inside ? "ok" : "off_centre";
 }
 
