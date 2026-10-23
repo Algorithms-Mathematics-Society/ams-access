@@ -49,6 +49,7 @@ export function parseFollowUpParts(desc: string): ClientFollowUpPart[] {
 }
 
 export type ContestMeta = {
+  reference_sheet?: import("../reference-sheet").ReferenceSheet | null;
   id: string;
   title: string;
   start_at?: string;

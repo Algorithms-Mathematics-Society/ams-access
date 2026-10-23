@@ -347,7 +347,11 @@ export default function OnboardingPage() {
     // call went to `/contests/{id}`, a staff route, unauthenticated: it 403s
     // for a participant, so `contestWindow` stayed null and every client-side
     // time gate silently disabled itself.
-    withTimeout(getContest(contestId), 10000, "Contest policy request timed out")
+    withTimeout(
+      getContest(contestId, { includeReference: false }),
+      10000,
+      "Contest policy request timed out"
+    )
       .then((index) => {
         if (cancelled) return;
         setContestIndex(index);
@@ -395,7 +399,7 @@ export default function OnboardingPage() {
     if (!contestId) return { ok: false, reason: "Missing contest id.", state: "UNKNOWN" };
     if (isTestAccount) return { ok: true, reason: null as string | null, state: "LIVE" };
     try {
-      const index = await getContest(contestId);
+      const index = await getContest(contestId, { includeReference: false });
       if (isCurrent()) setContestIndex(index);
       const decision = decideEntry(index, serverNow());
       return {

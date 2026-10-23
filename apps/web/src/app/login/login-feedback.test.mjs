@@ -98,7 +98,10 @@ for (const [loginId, password, field] of [
     assert.equal(h.calls.length, 0);
     assert.equal(h.state.invalidField, field);
     assert.deepEqual(h.focused, [field === "handle" ? "login-id" : "login-password"]);
-    assert.match(h.state.error, /Enter your/);
+    assert.equal(
+      h.state.error,
+      field === "handle" ? "Enter the login ID from your slip." : "Enter your password."
+    );
     assert.equal(h.state.loading, undefined);
   });
 }
@@ -138,15 +141,15 @@ const formCode = compile(
   readFileSync(new URL("./components/SlipForm.tsx", import.meta.url), "utf8")
 );
 function formHarness() {
-  let visible = true;
+  let visible;
   const jsx = (type, props) => ({ type, props });
   const context = {
     exports: {},
     require(name) {
       if (name === "react")
         return {
-          useState: () => [
-            visible,
+          useState: (initial) => [
+            (visible ??= initial),
             (fn) => {
               visible = fn(visible);
             },
@@ -176,18 +179,21 @@ function all(node) {
     ? []
     : [node, ...[node.props?.children].flat(Infinity).flatMap(all)];
 }
-test("handle helper remains described with errors; only missing field is invalid", () => {
+test("password format and errors are described; only missing field is invalid", () => {
   const render = formHarness();
   for (const error of [null, "Connection failed"]) {
     const nodes = all(render({ error })),
       input = nodes.find((n) => n.props?.id === "login-id"),
       field = nodes.find((n) => n.props?.inputID === "login-id");
-    assert.match(field.props.description, /@access is added automatically/);
+    assert.equal(field.props.label, "Login ID");
+    assert.equal(input.props["aria-describedby"], error ? "login-error" : undefined);
+    const passwordInput = nodes.find((n) => n.props?.id === "login-password");
+    const passwordField = nodes.find((n) => n.props?.inputID === "login-password");
+    assert.equal(passwordField.props.descriptionID, "login-password-help");
     assert.equal(
-      input.props["aria-describedby"],
-      error ? "login-handle-help login-error" : "login-handle-help"
+      passwordInput.props["aria-describedby"],
+      error ? "login-password-help login-error" : "login-password-help"
     );
-    assert.equal(field.props.descriptionID, "login-handle-help");
     assert.equal(input.props["aria-invalid"], undefined);
   }
   const nodes = all(render({ invalidField: "password", error: "Enter your password." }));
@@ -208,6 +214,9 @@ test("full-handle paste and password reveal behavior stay intact", () => {
     .find((n) => n.props?.id === "login-id")
     .props.onChange({ target: { value: "Candidate@access" } });
   assert.equal(handle, "candidate");
+  assert.equal(nodes.find((n) => n.props?.id === "login-password").props.type, "password");
+  nodes.find((n) => n.props?.label === "Show").props.onClick();
+  nodes = all(render());
   assert.equal(nodes.find((n) => n.props?.id === "login-password").props.type, "text");
   nodes.find((n) => n.props?.label === "Hide").props.onClick();
   nodes = all(render());

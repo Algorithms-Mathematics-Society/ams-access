@@ -1,3 +1,24 @@
+# AMS Access 4.4.0
+
+## Contest reference sheets
+
+- Open the organizer-published, read-only reference sheet from the contest toolbar. The sheet is preloaded with contest data, so opening it makes no network request and adds no polling.
+- Keep the editor draft, cursor, contest timer and sheet reading position while opening and closing. Keyboard focus stays inside the sheet and returns to the toolbar when closed.
+- Match both themes, respect reduced motion and support small windows and older WebViews. Required contest and security dialogs take priority.
+- Load only published content for candidates; skip reference content on readiness, onboarding and results requests. Refresh contest metadata when entry crosses the scheduled start.
+
+## Sign-in
+
+- Match the printed credentials with a Login ID field and clearer instructions. Passwords start hidden and can be revealed for checking.
+
+## Organizer setup and validation
+
+The companion website supports saving drafts, previewing and publishing one reference sheet per contest. Deployment requires the additive API migration and updated organizer website. Saved drafts are never included in candidate responses.
+
+The panel was stress-tested in Chromium and Linux WebKitGTK with maximum-length content, both themes and repeated opening/closing. Native Windows, macOS, KDE, Cinnamon and Hyprland device certification is outside that browser validation. This release also includes the preceding 4.3.0 changes listed below.
+
+---
+
 # AMS Access 4.3.0
 
 ## Changing network without leaving the exam

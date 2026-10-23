@@ -5,7 +5,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 const preparationSteps = [
   {
     title: "Sign in with your details",
-    description: "Your organizer provides the handle and password for your contest.",
+    description: "Your organizer provides the login ID and password for your contest.",
   },
   {
     title: "Check your setup",

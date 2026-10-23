@@ -58,7 +58,9 @@ export default function LoginPage() {
     const missingField = !loginId.trim() ? "handle" : !password ? "password" : null;
     if (missingField) {
       setInvalidField(missingField);
-      setError(missingField === "handle" ? "Enter your handle." : "Enter your password.");
+      setError(
+        missingField === "handle" ? "Enter the login ID from your slip." : "Enter your password."
+      );
       const input = event.currentTarget.elements.namedItem(
         missingField === "handle" ? "login-id" : "login-password"
       ) as HTMLInputElement | null;
@@ -185,7 +187,7 @@ export default function LoginPage() {
                   Sign in
                 </Heading>
                 <Text color="secondary">
-                  Use the handle and password from your email or printed sign-in slip.
+                  Use the details from your email or printed sign-in slip.
                 </Text>
               </VStack>
 

@@ -9,9 +9,7 @@
  * never be told "incorrect login" for punctuation or capitals.
  */
 
-/** The `@access` a candidate sees after their handle. Rendered as a fixed
- * suffix beside the field rather than typed, so there is nothing to misspell —
- * and stripped here anyway, because they will paste the whole thing. */
+/** Optional suffix accepted when a candidate pastes their full login handle. */
 export const HANDLE_SUFFIX = "@access";
 
 /**
