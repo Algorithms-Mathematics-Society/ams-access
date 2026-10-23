@@ -94,7 +94,7 @@ export function DashboardShell({
             </Heading>
             <Text color="secondary">
               {activeNav === "overview"
-                ? "Your next challenge starts here."
+                ? "Choose an assigned contest to review its schedule and entry checks."
                 : activeNav === "settings"
                   ? "Camera, microphone, security policies, and device settings."
                   : "Review your setup, inspect device checks, and get help with troubleshooting."}

@@ -39,7 +39,7 @@ The monochrome intro lasts about 1.8 seconds, offers **Skip intro**, and plays
 once per document/app window. In-app navigation back to Welcome does not replay
 it; a full reload starts a new launch. Device reduced-motion preference bypasses
 the intro, including when enabled mid-animation. Welcome is inert during client
-playback; skipping with the keyboard restores focus to **Enter workspace**.
+playback; skipping with the keyboard restores focus to **Continue to sign in**.
 A 2.1-second timer releases the screen if `animationend` is missed, and effect
 cleanup handles unmounts and React Strict Mode. Direct login, home and contest
 routes never mount the intro.
@@ -221,3 +221,23 @@ Linux keyboard setup checks are temporary native probes with restoration before 
 A failed network-helper setup stays on the connection stage with Retry connection check and Continue with warning. Preserve the actual warning and let final contest policy decide entry; never convert a dismissed or failed admin prompt into a pass. Give distinct guidance for unavailable authorization, missing packaged files, absent systemd, startup timeout and an installer already running. Navigation does not cancel an elevated native installation.
 
 Restore success requires a successful status query confirming no pending restoration. A rejected restore or unavailable status must remain actionable, and Linux network recovery instructions must not imply desktop settings were successfully restored. Manual network instructions concern only the application's named firewall rules.
+
+## Frontend feedback and request ownership
+
+Startup keeps a visible status after the intro while version and sign-in checks
+finish. Empty credentials are checked before requesting sign-in, and the handle
+field explains its automatic suffix. Optional display metadata storage failures
+do not become authentication errors; inaccessible recovery data remains an
+explicit warning. Cached contest search misses retain their stale-data notice
+and Clear search action.
+
+Help requests keep the original summary, contact and receipt across closing and
+reopening. Send another request starts a new composition after acknowledgement.
+Email uses native validation; an unacknowledged request is described as delivery
+not confirmed, without automatic resubmission. Draft text is retained only in the
+mounted dialog, not promised as durable storage.
+
+Session-creation request deadlines cover response-body consumption. Submission
+history refreshes are serialized within a session, and equivalent testcase
+updates preserve selection. The horizontal header logo is 180px wide with
+existing page gutters and built-in artwork clear space preserved.

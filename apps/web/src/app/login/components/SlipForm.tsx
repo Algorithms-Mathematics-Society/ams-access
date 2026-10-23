@@ -30,6 +30,7 @@ export function SlipForm({
   setPassword,
   loading,
   error,
+  invalidField,
   diagnostic,
   onSubmit,
 }: {
@@ -39,10 +40,11 @@ export function SlipForm({
   setPassword: (value: string) => void;
   loading: boolean;
   error: string | null;
+  invalidField?: "handle" | "password" | null;
   /** `host · CODE` for a connection that produced no HTTP response. Rendered
    * quietly under the error: it is for whoever is helping, not the candidate. */
   diagnostic?: string | null;
-  onSubmit: (event: FormEvent) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const errorDescription = error ? "login-error" : undefined;
   // Slip credentials start visible so candidates can spot typing errors; hiding is their choice.
@@ -51,7 +53,13 @@ export function SlipForm({
   return (
     <form onSubmit={onSubmit} data-login-form noValidate>
       <VStack gap={5}>
-        <Field label="Your handle" inputID="login-id" width="100%">
+        <Field
+          label="Your handle"
+          inputID="login-id"
+          description="Enter the part before @access, or paste your full handle. @access is added automatically."
+          descriptionID="login-handle-help"
+          width="100%"
+        >
           <HStack
             className={styles.fieldControl}
             align="center"
@@ -72,7 +80,8 @@ export function SlipForm({
               spellCheck={false}
               inputMode="text"
               maxLength={64}
-              aria-describedby={errorDescription}
+              aria-describedby={["login-handle-help", errorDescription].filter(Boolean).join(" ")}
+              aria-invalid={invalidField === "handle" || undefined}
               autoFocus
               required
             />
@@ -113,6 +122,7 @@ export function SlipForm({
               spellCheck={false}
               maxLength={14}
               aria-describedby={errorDescription}
+              aria-invalid={invalidField === "password" || undefined}
               required
             />
             <Button

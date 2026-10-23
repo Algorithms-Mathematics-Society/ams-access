@@ -74,7 +74,9 @@ inventing per-page font sizes. The supporting and small overrides are 12px.
 The brand wordmark is artwork, not tracked uppercase interface text. Never
 render it below a 24px cap height; use the standalone mark when space is tight.
 The mark's minimum is 16px. Preserve the SVG aspect ratios and built-in clear
-space: one base-leg width, 24 of the mark's 104 units, on each side.
+space: one base-leg width, 24 of the mark's 104 units, on each side. The shared
+horizontal header logo is 180px wide (about 26.2px wordmark cap height). Keep
+its built-in clear space and existing page gutters; do not add logo-only margins.
 
 Use readable labels and wrap long contest names and diagnostics. Keep detailed
 compiler output and source code in monospaced, independently scrollable regions.

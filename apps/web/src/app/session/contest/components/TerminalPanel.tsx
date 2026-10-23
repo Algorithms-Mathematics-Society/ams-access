@@ -289,6 +289,8 @@ export function TerminalPanel({
     const verdict = sub.final_verdict ?? sub.status;
     return testResultFilter === "passed" ? verdict === "AC" : verdict !== "AC";
   };
+  const visibleAttempts =
+    activeTab === "attempts" ? submissionsList.filter(attemptMatchesFilter) : [];
 
   return (
     <VStack
@@ -623,10 +625,10 @@ export function TerminalPanel({
               </VStack>
             ) : (
               <VStack gap={0}>
-                {submissionsList.filter(attemptMatchesFilter).length === 0 && (
+                {visibleAttempts.length === 0 && (
                   <Text color="secondary">No {testResultFilter} attempts yet.</Text>
                 )}
-                {submissionsList.filter(attemptMatchesFilter).map((sub) => {
+                {visibleAttempts.map((sub) => {
                   const isExpanded = expandedAttemptId === sub.id;
                   const status = sub.status;
                   const isPending = status === "QUEUED" || status === "RUNNING";

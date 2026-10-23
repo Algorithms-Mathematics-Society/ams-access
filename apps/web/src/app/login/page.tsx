@@ -36,6 +36,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [invalidField, setInvalidField] = useState<"handle" | "password" | null>(null);
   // `host · CODE` for a status-0. Shown small and quiet under the error: the
   // candidate does not need it, and the person helping them cannot work
   // without it. See `network-error.ts`.
@@ -48,23 +49,45 @@ export default function LoginPage() {
     router.prefetch("/home");
   }, [loginId, router]);
 
-  async function handleSubmit(event: React.FormEvent) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (loading) return;
     setError(null);
     setDiagnostic(null);
+    setInvalidField(null);
+    const missingField = !loginId.trim() ? "handle" : !password ? "password" : null;
+    if (missingField) {
+      setInvalidField(missingField);
+      setError(missingField === "handle" ? "Enter your handle." : "Enter your password.");
+      const input = event.currentTarget.elements.namedItem(
+        missingField === "handle" ? "login-id" : "login-password"
+      ) as HTMLInputElement | null;
+      input?.focus();
+      return;
+    }
     setLoading(true);
 
     try {
       const result = await studentLogin(loginId, password);
 
-      // The contest is remembered so the rest of the app never has to ask
-      // which one this is. It is the server's answer, not the candidate's.
-      if (result.contest) {
-        localStorage.setItem(STORAGE_KEYS.ACTIVE_CONTEST, result.contest.uid);
-        localStorage.setItem(STORAGE_KEYS.ACTIVE_CONTEST_TITLE, result.contest.title);
+      // Optional presentation metadata must not turn successful authentication
+      // into a sign-in error. Required session/draft persistence is checked at entry.
+      const metadata = [
+        [STORAGE_KEYS.DISPLAY_NAME, result.user.display_name],
+        ...(result.contest
+          ? [
+              [STORAGE_KEYS.ACTIVE_CONTEST, result.contest.uid],
+              [STORAGE_KEYS.ACTIVE_CONTEST_TITLE, result.contest.title],
+            ]
+          : []),
+      ];
+      for (const [key, value] of metadata) {
+        try {
+          localStorage.setItem(key, value);
+        } catch {
+          // Home can render without these labels; authentication already succeeded.
+        }
       }
-      localStorage.setItem(STORAGE_KEYS.DISPLAY_NAME, result.user.display_name);
 
       router.push("/home");
     } catch (caught) {
@@ -173,6 +196,7 @@ export default function LoginPage() {
                 setPassword={setPassword}
                 loading={loading}
                 error={error}
+                invalidField={invalidField}
                 diagnostic={diagnostic}
                 onSubmit={handleSubmit}
               />

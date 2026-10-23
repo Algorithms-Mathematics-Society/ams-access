@@ -82,7 +82,7 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
             <VStack gap={3} align="center" style={{ width: "100%" }}>
               <Button
                 type="button"
-                label="Enter workspace"
+                label="Continue to sign in"
                 data-startup-focus
                 variant="primary"
                 size="lg"

@@ -157,3 +157,65 @@ test("list results replace pending cases while preserving the separately polled 
   assert.equal(merged.scored, cases);
   assert.deepEqual(previous.scored, []);
 });
+
+test("equivalent refreshed testcases keep array identity per attempt", async () => {
+  const { mergeAttemptTestResults } = await import("./attempt-adapter.ts");
+  const cases = [
+    {
+      kind: "io",
+      testcase_no: 1,
+      label: "sample",
+      verdict: "AC",
+      runtime_ms: 12,
+      memory_kb: 2048,
+      checker_message: "ok",
+      stdout_text: null,
+      stderr_text: "",
+    },
+  ];
+  const previous = { a: cases, run: [{ verdict: "AC" }] };
+  const refreshed = cases.map((row) => ({ ...row }));
+  const result = mergeAttemptTestResults(previous, [{ id: "a", testcases: refreshed }]);
+  assert.equal(result.a, cases);
+  assert.equal(result.run, previous.run);
+  assert.equal(previous.a, cases);
+});
+
+test("changes to every testcase field publish the new result", async () => {
+  const { mergeAttemptTestResults } = await import("./attempt-adapter.ts");
+  const row = {
+    kind: "io",
+    testcase_no: 1,
+    label: "sample",
+    verdict: "AC",
+    runtime_ms: 12,
+    memory_kb: 2048,
+    checker_message: "ok",
+    stdout_text: null,
+    stderr_text: "",
+  };
+  for (const key of Object.keys(row)) {
+    const changed = [{ ...row, [key]: typeof row[key] === "number" ? 99 : "changed" }];
+    const previous = { a: [row] };
+    assert.equal(
+      mergeAttemptTestResults(previous, [{ id: "a", testcases: changed }]).a,
+      changed,
+      key
+    );
+    assert.equal(previous.a[0], row);
+  }
+});
+
+test("different attempts, reordered or shortened cases retain distinct identities", async () => {
+  const { mergeAttemptTestResults } = await import("./attempt-adapter.ts");
+  const cases = [
+    { testcase_no: 1, verdict: "AC" },
+    { testcase_no: 2, verdict: "WA" },
+  ];
+  const previous = { a: cases };
+  for (const incoming of [cases.slice().reverse(), cases.slice(0, 1), []]) {
+    assert.equal(mergeAttemptTestResults(previous, [{ id: "a", testcases: incoming }]).a, incoming);
+  }
+  const other = cases.map((row) => ({ ...row }));
+  assert.equal(mergeAttemptTestResults(previous, [{ id: "b", testcases: other }]).b, other);
+});
