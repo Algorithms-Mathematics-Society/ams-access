@@ -78,8 +78,10 @@ jobs:
         timeout-minutes: 20
         run: |
           set -eu
-          sudo sed -i 's|https\?://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' \
-            /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          # Include deb822 .sources files used by current runner images.
+          sudo find /etc/apt -maxdepth 2 -type f \
+            \( -name sources.list -o -name '*.list' -o -name '*.sources' \) \
+            -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
           for attempt in 1 2 3; do
             if sudo timeout 180 apt-get update; then
               break
@@ -244,8 +246,10 @@ jobs:
         timeout-minutes: 20
         run: |
           set -eu
-          sudo sed -i 's|https\?://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' \
-            /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          # Include deb822 .sources files used by current runner images.
+          sudo find /etc/apt -maxdepth 2 -type f \
+            \( -name sources.list -o -name '*.list' -o -name '*.sources' \) \
+            -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
           for attempt in 1 2 3; do
             if sudo timeout 180 apt-get update; then
               break

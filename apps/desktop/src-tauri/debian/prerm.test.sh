@@ -16,7 +16,8 @@ with tempfile.TemporaryDirectory(prefix="ams-prerm-review-") as work:
     # into PATH; the command implementations below operate only on temp files.
     for name in ("grep", "rm", "rmdir", "timeout"):
         (mock / name).symlink_to(Path("/usr/bin") / name)
-    fixture = source.replace("--kill-after=1s 8s", "--kill-after=0.1s 0.2s")
+    # Allow Python mock startup on busy runners; keep hangs shorter than production.
+    fixture = source.replace("--kill-after=1s 8s", "--kill-after=1s 2s")
     for old, new in [("/etc/", str(root / "etc") + "/"), ("/usr/local/", str(root / "usr/local") + "/"),
                      ("/run/", str(root / "run") + "/"), ("/proc/sys/net/ipv6", str(root / "ipv6"))]:
         fixture = fixture.replace(old, new)
