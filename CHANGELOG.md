@@ -1,3 +1,26 @@
+# AMS Access 4.5.0
+
+**Everyone on 4.4.0 should install this.** A minor release rather than a patch, because the update prompt compares major and minor only: a 4.4.1 would have reached nobody.
+
+## The exam UI no longer freezes
+
+- The wifi scan ran on the main thread. `scan_wifi` and `connect_wifi` were synchronous Tauri commands, and every platform's implementation spawns a subprocess (`nmcli`, `netsh`, `networksetup`), so the whole interface stalled for the length of each scan: stuck mouse, delayed typing. Both now run off the main thread.
+- Scanning happens on demand: once at startup to learn whether the machine can list networks, then only while the picker is open or the connection is down. It polled every twenty seconds for the whole paper before.
+
+## The network picker is reachable where it matters
+
+- The menu opened downward at a fixed height, so in the offline dialog it ran off the bottom of the screen and the networks could not be clicked. It now opens upward when there is no room below and fits itself to the space available.
+
+## Leaving a contest no longer puts you back in it
+
+- An approved resume grant was consumed the moment the poller noticed it, which routed straight back into onboarding. Exiting a contest landed on the home screen and was immediately re-entered, with no way out from inside the app. Approval now means rejoining is available; the Resume button does it when the candidate chooses.
+
+## Validation scope
+
+CI green on Linux, macOS and Windows including bundle smoke. The wifi picker's native paths are unit-tested at the parsing layer and have now been exercised on real hardware; the Apple Intelligence toggle still has not.
+
+---
+
 # AMS Access 4.4.0
 
 ## Contest reference sheets
