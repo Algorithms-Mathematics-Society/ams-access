@@ -1,5 +1,18 @@
 /** Scoped styles for responsive composition and the existing sanitized HTML renderer. */
 export const CONTEST_STYLES = `
+/* Older WKWebView ignores the overlay's inline dvh height; modern engines
+   retain that inline value while this bounds the sheet on those older builds. */
+[data-contest-page] .contest-reference-sheet { overflow:hidden !important; max-height:calc(100vh - var(--spacing-8)); }
+[data-contest-page] .contest-reference-sheet > :first-child,
+[data-contest-page] .contest-reference-sheet > :last-child { flex-shrink:0; }
+@media (prefers-reduced-motion: no-preference) {
+ [data-contest-page] .contest-reference-sheet { animation:contest-reference-enter var(--duration-fast) ease-out; }
+}
+@keyframes contest-reference-enter {
+ from { opacity:0; transform:translateY(var(--spacing-2)); }
+ to { opacity:1; transform:translateY(0); }
+}
+
 [data-contest-page] { font-family: var(--font-family-body); }
 /* Override Astryx's high-specificity backdrop only for connection loss. */
 .contest-network-dialog::backdrop { backdrop-filter:blur(var(--spacing-2)) !important; -webkit-backdrop-filter:blur(var(--spacing-2)) !important; }

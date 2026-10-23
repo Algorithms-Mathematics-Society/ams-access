@@ -1,16 +1,6 @@
 "use client";
 
-/**
- * Sign-in, by handle.
- *
- * A candidate receives a handle such as `ayush.s-kqmwd@access` from their
- * organizer on a printed slip or by email. Everything here serves that: `@access` is rendered as a fixed suffix
- * inside the field rather than typed, so there is nothing to misspell and
- * nothing to forget; pasting the whole string still works because the
- * formatter drops everything from the `@` on; and the password is shown by
- * default, preserving the existing credential-entry behavior and making
- * typing errors easier to spot before submitting.
- */
+/** Credential-slip labels with existing handle and password normalization. */
 
 import { useState, type FormEvent } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -20,7 +10,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 
-import { formatHandle, formatPassword, HANDLE_SUFFIX } from "./slip-format";
+import { formatHandle, formatPassword } from "./slip-format";
 import styles from "../login.module.css";
 
 export function SlipForm({
@@ -47,19 +37,13 @@ export function SlipForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const errorDescription = error ? "login-error" : undefined;
-  // Slip credentials start visible so candidates can spot typing errors; hiding is their choice.
-  const [passwordVisible, setPasswordVisible] = useState(true);
+  // Keep credentials private until the candidate chooses to reveal them.
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   return (
     <form onSubmit={onSubmit} data-login-form noValidate>
       <VStack gap={5}>
-        <Field
-          label="Your handle"
-          inputID="login-id"
-          description="Enter the part before @access, or paste your full handle. @access is added automatically."
-          descriptionID="login-handle-help"
-          width="100%"
-        >
+        <Field label="Login ID" inputID="login-id" width="100%">
           <HStack
             className={styles.fieldControl}
             align="center"
@@ -72,7 +56,7 @@ export function SlipForm({
               className={styles.fieldInput}
               value={loginId}
               onChange={(event) => setLoginId(formatHandle(event.target.value))}
-              placeholder="username"
+              placeholder="e.g. test-student"
               autoComplete="username"
               // Preserve lowercase handles on mobile keyboards.
               autoCapitalize="none"
@@ -80,28 +64,21 @@ export function SlipForm({
               spellCheck={false}
               inputMode="text"
               maxLength={64}
-              aria-describedby={["login-handle-help", errorDescription].filter(Boolean).join(" ")}
+              aria-describedby={errorDescription}
               aria-invalid={invalidField === "handle" || undefined}
               autoFocus
               required
             />
-            <Text
-              type="supporting"
-              color="secondary"
-              aria-hidden="true"
-              style={{
-                alignSelf: "center",
-                paddingInlineEnd: "var(--spacing-3)",
-                whiteSpace: "nowrap",
-                userSelect: "none",
-              }}
-            >
-              {HANDLE_SUFFIX}
-            </Text>
           </HStack>
         </Field>
 
-        <Field label="Password" inputID="login-password" width="100%">
+        <Field
+          label="Password"
+          inputID="login-password"
+          description="Format: XXXX-XXXX-XXXX"
+          descriptionID="login-password-help"
+          width="100%"
+        >
           <HStack
             className={styles.fieldControl}
             align="center"
@@ -113,15 +90,16 @@ export function SlipForm({
               name="login-password"
               type={passwordVisible ? "text" : "password"}
               className={styles.fieldInput}
+              style={passwordVisible ? { fontFamily: "var(--font-mono), monospace" } : undefined}
               value={password}
               onChange={(event) => setPassword(formatPassword(event.target.value))}
-              placeholder="XXXX-XXXX-XXXX"
+              placeholder="Enter your password"
               autoComplete="off"
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}
               maxLength={14}
-              aria-describedby={errorDescription}
+              aria-describedby={["login-password-help", errorDescription].filter(Boolean).join(" ")}
               aria-invalid={invalidField === "password" || undefined}
               required
             />

@@ -403,6 +403,8 @@ export type ContestSummary = {
 };
 
 export type ContestIndex = {
+  /** Optional published guidance, loaded once with the paper. Never draft content. */
+  reference_sheet?: import("@/app/session/contest/reference-sheet").ReferenceSheet | null;
   uid: string;
   title: string;
   starts_at: string;
@@ -621,8 +623,17 @@ export async function listContests(): Promise<ContestSummary[]> {
  * One call rather than the old pair: the client needs all of it before it can
  * render anything, and two calls meant two chances to disagree about what
  * time it was. */
-export async function getContest(contestUid: string): Promise<ContestIndex> {
-  return request<ContestIndex>("GET", `/participant/contests/${encodeURIComponent(contestUid)}`);
+export async function getContest(
+  contestUid: string,
+  options: { includeReference?: boolean } = {}
+): Promise<ContestIndex> {
+  // Metadata-only screens do not need to download the reference sheet. Keep
+  // the default inclusive so workspace callers retain their one-call preload.
+  const query = options.includeReference === false ? "?include_reference=false" : "";
+  return request<ContestIndex>(
+    "GET",
+    `/participant/contests/${encodeURIComponent(contestUid)}${query}`
+  );
 }
 
 /** The statement, samples, limits and marking scheme for one problem.

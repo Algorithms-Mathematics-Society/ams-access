@@ -130,7 +130,7 @@ export function SessionReadinessModal({
     // The decision is the server's `phase`, via the same `decideEntry` the
     // onboarding gate uses — one rule for whether a candidate may enter, not
     // two that can disagree.
-    getContest(contestId)
+    getContest(contestId, { includeReference: false })
       .then((index) => {
         if (cancelled) return;
         const decision = decideEntry(index, Date.parse(index.server_time) || Date.now());

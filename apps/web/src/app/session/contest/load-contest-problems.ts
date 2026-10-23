@@ -131,10 +131,20 @@ export function toCandidateQuestion(
 export async function loadContestPaper(
   contestUid: string
 ): Promise<{ index: ContestIndex; questions: CandidateQuestion[] }> {
-  const index = await getContest(contestUid);
-  const projections = await Promise.all(
+  let index = await getContest(contestUid);
+  let projections = await Promise.all(
     index.problems.map((problem) => getProblem(contestUid, problem.label))
   );
+  // Statements are available only once the contest starts. If the index was
+  // fetched just before that boundary, pick up the final published reference
+  // and running clock before mounting the workspace. Normal entry stays one call.
+  if (index.phase === "verification" || index.phase === "before_window") {
+    index = await getContest(contestUid);
+    // Keep the paper aligned if the organizer also finalized its problem list.
+    projections = await Promise.all(
+      index.problems.map((problem) => getProblem(contestUid, problem.label))
+    );
+  }
   const assetUrls = await Promise.all(
     projections.map((projection) => loadStatementAssets(contestUid, projection))
   );

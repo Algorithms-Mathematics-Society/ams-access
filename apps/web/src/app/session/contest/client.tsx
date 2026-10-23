@@ -116,6 +116,7 @@ import {
 } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
 import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
+import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
@@ -1344,6 +1345,7 @@ export default function ContestPageClient() {
 
       setContest({
         id: index.uid,
+        reference_sheet: readReferenceSheet(index.reference_sheet),
         title: index.title,
         end_at: index.ends_at,
         status: index.phase === "running" ? "ACTIVE" : index.phase.toUpperCase(),

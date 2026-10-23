@@ -9,6 +9,7 @@ import type { ClockSnapshot } from "../session-clock";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
+import { ReferenceSheetButton } from "./ReferenceSheet";
 import { BatteryStatus } from "./BatteryStatus";
 import { WifiControl } from "./WifiControl";
 
@@ -186,6 +187,14 @@ export function TopBar({
       >
         <ThemeToggle />
         {workspaceControls}
+        {contest?.reference_sheet && (
+          <ReferenceSheetButton
+            key={contest.id}
+            sheet={contest.reference_sheet}
+            clock={clock}
+            suspended={finishReviewSuspended || submitConfirm || timeUpState !== "idle"}
+          />
+        )}
         <Button
           label="Help"
           aria-label="Request support"

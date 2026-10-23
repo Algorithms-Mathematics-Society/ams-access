@@ -159,3 +159,9 @@ Camera settings retain observed device-list states independently of permission/c
 Linux keyboard setup checks are temporary native probes with restoration before completion. Show aggregate capability separately from individual shortcut enforcement: individual rows remain “Not individually verified.” Keep one pending probe, discard late results after navigation, and provide warning/continuation according to contest policy after the presentation deadline. A successful settings check must not imply gesture prevention, complete shortcut coverage, or Cinnamon support.
 
 Network-helper warnings use explicit retry or policy-aware warning continuation. Recovery feedback reports verified state: fulfilled commands without a successful pending-state query are insufficient to declare everything restored. Keep desktop and network recovery claims separate when their outcomes differ.
+
+Published contest references use an ordinary in-app overlay, below mandatory
+security/network and expiry flows. Keep the workspace mounted and background
+controls inert, with focus restored only on ordinary dismissal. Reference content
+is bounded plain text from the existing authenticated contest payload, with a
+fast, reduced-motion-aware opening transition and no network work on open.

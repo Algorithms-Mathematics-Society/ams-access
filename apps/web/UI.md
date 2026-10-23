@@ -9,7 +9,7 @@ The Next.js frontend is statically exported into the Tauri desktop app.
 | Surface                             | Entry point                                                          | What must stay intact                                                                         |
 | ----------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | Welcome `/`                         | `src/app/WelcomeScreen.tsx`                                          | Shared logo, theme toggle, workspace entry and preparation guidance.                          |
-| Login `/login/`                     | `src/app/login/page.tsx`                                             | Organizer-issued handle/password, password visibility, diagnostics and help.                  |
+| Login `/login/`                     | `src/app/login/page.tsx`                                             | Organizer-issued login ID/password, password visibility, diagnostics and help.                |
 | Home `/home/`                       | `src/app/home/page.tsx`, `components/DashboardShell.tsx`             | Assigned contests, practice/graded states, schedule, recovery and readiness.                  |
 | Settings                            | `src/app/home/components/SettingsPanel.tsx`, `SettingsDetails.tsx`   | Hardware, Permissions, Security and About tabs; media ownership and real status reporting.    |
 | Device                              | Home's device destination                                            | Readiness details, diagnostics, scan state, troubleshooting and help.                         |
@@ -225,8 +225,8 @@ Restore success requires a successful status query confirming no pending restora
 ## Frontend feedback and request ownership
 
 Startup keeps a visible status after the intro while version and sign-in checks
-finish. Empty credentials are checked before requesting sign-in, and the handle
-field explains its automatic suffix. Optional display metadata storage failures
+finish. Empty credentials are checked before requesting sign-in, and the login ID
+field accepts short IDs or full handles. Optional display metadata storage failures
 do not become authentication errors; inaccessible recovery data remains an
 explicit warning. Cached contest search misses retain their stale-data notice
 and Clear search action.
@@ -241,3 +241,37 @@ Session-creation request deadlines cover response-body consumption. Submission
 history refreshes are serialized within a session, and equivalent testcase
 updates preserve selection. The horizontal header logo is 180px wide with
 existing page gutters and built-in artwork clear space preserved.
+
+Sign-in labels match the credential slip: Login ID and Password. Short IDs and full
+`@access` handles retain the existing normalization. The password starts masked,
+with a Show/Hide control and a persistent format hint linked to the input.
+
+## Contest reference sheet
+
+A contest with published organizer guidance has a **Reference** action beside
+Help. It opens a read-only, theme-matched dialog with the shared sheet title and
+plain text. HTML, links and Markdown are not interpreted. The published snapshot
+arrives in the authenticated contest index; opening the sheet performs no fetch.
+It remains readable after a connection loss while the workspace stays mounted,
+subject to mandatory connection/security overlays. This is not durable offline
+storage, and reopening the app requires the usual contest load.
+
+Opening does not remount or resize the editor. Draft, selection and workspace
+scroll remain owned by the existing editor. Sheet state is local and keyed by
+contest; reading position survives closing within that mount. The body is
+keyboard-scrollable, Tab stays within the dialog, and Escape/Close returns focus
+to Reference. Background workspace controls become inert while open. A mandatory
+overlay or contest expiry dismisses it without stealing focus back. Its visible
+countdown shares the existing clock; only the original countdown owns expiry.
+Opening uses the fast motion token and skips animation under reduced motion.
+Older WebViews use an aria-hidden fallback with the same focus trap when inert
+is unavailable, and a vh height bound when dynamic viewport units are unsupported.
+Readiness, onboarding, and results request metadata without reference content;
+the workspace retains its one-call published-sheet preload.
+
+Older servers or absent/invalid published guidance omit the Reference action.
+The optional payload is validated at 120 title / 20,000 body Unicode codepoints;
+malformed data does not prevent contest entry. Draft content is never requested.
+The snapshot stays fixed until the next contest load. Timed-contest publication
+is frozen at contest start on the server. Native overlay/lockdown acceptance still
+requires testing in a packaged build; browser checks do not certify OS behavior.

@@ -69,7 +69,7 @@ test("an absurdly long paste is bounded", () => {
   assert.equal(formatHandle("a".repeat(200)).length, 64);
 });
 
-test("the suffix shown beside the field is the one that gets stripped", () => {
+test("the optional full-handle suffix gets stripped", () => {
   // If these ever disagree, the field would display one thing and accept
   // another.
   assert.equal(formatHandle(`ayush.s-kqmwd${HANDLE_SUFFIX}`), "ayush.s-kqmwd");
