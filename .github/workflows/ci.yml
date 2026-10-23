@@ -78,9 +78,9 @@ jobs:
         timeout-minutes: 20
         run: |
           set -eu
-          # Include deb822 .sources files used by current runner images.
+          # Include deb822 sources and the mirror lists used by current runners.
           sudo find /etc/apt -maxdepth 2 -type f \
-            \( -name sources.list -o -name '*.list' -o -name '*.sources' \) \
+            \( -name sources.list -o -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors*.txt' \) \
             -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
           for attempt in 1 2 3; do
             if sudo timeout 180 apt-get update; then
@@ -246,9 +246,9 @@ jobs:
         timeout-minutes: 20
         run: |
           set -eu
-          # Include deb822 .sources files used by current runner images.
+          # Include deb822 sources and the mirror lists used by current runners.
           sudo find /etc/apt -maxdepth 2 -type f \
-            \( -name sources.list -o -name '*.list' -o -name '*.sources' \) \
+            \( -name sources.list -o -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors*.txt' \) \
             -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
           for attempt in 1 2 3; do
             if sudo timeout 180 apt-get update; then
