@@ -2209,22 +2209,6 @@ pub fn request_av_permissions() {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A recorded failure turns the whole result into an error upstream and
-    /// the readiness screen shows every field as Unknown. `ioreg -l` did that
-    /// on every real Mac by overrunning the output limit.
-    #[test]
-    fn virtualization_probe_records_no_failure() {
-        let budget = Budget::new(std::time::Duration::from_secs(20));
-        let result = detect_virtualization();
-        assert_eq!(budget.failure(), None);
-        assert_eq!(result.confidence, "high");
-    }
-}
-
 // ── wireless ────────────────────────────────────────────────────────────────
 //
 // `networksetup`, not `airport`: the private airport binary that everyone's
@@ -2329,5 +2313,21 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
             }
         }
         Err(error) => Err(format!("Could not run networksetup: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recorded failure turns the whole result into an error upstream and
+    /// the readiness screen shows every field as Unknown. `ioreg -l` did that
+    /// on every real Mac by overrunning the output limit.
+    #[test]
+    fn virtualization_probe_records_no_failure() {
+        let budget = Budget::new(std::time::Duration::from_secs(20));
+        let result = detect_virtualization();
+        assert_eq!(budget.failure(), None);
+        assert_eq!(result.confidence, "high");
     }
 }
