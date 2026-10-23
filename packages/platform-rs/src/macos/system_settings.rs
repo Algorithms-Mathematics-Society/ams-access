@@ -159,9 +159,13 @@ enum Guard {
 }
 
 /// One planned scalar change.
+///
+/// `key` is owned rather than `&'static str` because Apple Intelligence's
+/// opt-in key is a per-machine numeric id discovered at runtime, not a
+/// constant like every other key here.
 struct Change {
     domain: &'static str,
-    key: &'static str,
+    key: String,
     current_host: bool,
     value: Value,
     label: &'static str,
@@ -169,18 +173,51 @@ struct Change {
 
 fn change(
     domain: &'static str,
-    key: &'static str,
+    key: &str,
     current_host: bool,
     value: Value,
     label: &'static str,
 ) -> Change {
     Change {
         domain,
-        key,
+        key: key.to_string(),
         current_host,
         value,
         label,
     }
+}
+
+/// The domain holding the Apple Intelligence opt-in.
+const CLOUD_OPT_IN: &str = "com.apple.CloudSubscriptionFeatures.optIn";
+
+/// The opt-in keys present on this machine.
+///
+/// The real toggle is keyed by a numeric patch id that differs per machine
+/// and per macOS build, so it cannot be a constant: the domain is listed and
+/// every all-digits key taken. `auto_opt_in` is stable and always included,
+/// since leaving it set re-enables the feature on its own.
+///
+/// An empty result means the domain does not exist, which is the normal
+/// state on a Mac that never had Apple Intelligence -- nothing to turn off.
+fn apple_intelligence_keys() -> Vec<String> {
+    let mut keys = vec!["auto_opt_in".to_string()];
+    let Ok(output) = defaults(false).args(["read", CLOUD_OPT_IN]).output() else {
+        return keys;
+    };
+    if !output.status.success() {
+        return keys;
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        // Lines look like `    545129924 = 1;`
+        let Some((left, _)) = line.split_once('=') else {
+            continue;
+        };
+        let token = left.trim().trim_matches('"').trim();
+        if !token.is_empty() && token.chars().all(|c| c.is_ascii_digit()) {
+            keys.push(token.to_string());
+        }
+    }
+    keys
 }
 
 /// What this contest's config asks to change, and which services must reload.
@@ -275,6 +312,22 @@ fn plan(config: &LockdownConfig) -> (Vec<Change>, Reload) {
             "Siri",
         ));
         reload.siri = true;
+    }
+    if config.disable_apple_intelligence {
+        // Writing Tools rewrite and proofread in any standard text field and
+        // the Siri handoff answers from ChatGPT; neither is covered by
+        // turning off Siri's voice trigger, which is what `disable_siri`
+        // does. Restored from the snapshot on exit like everything else, so
+        // a candidate who had it on gets it back.
+        for key in apple_intelligence_keys() {
+            changes.push(change(
+                CLOUD_OPT_IN,
+                &key,
+                false,
+                Value::Boolean(false),
+                "Apple Intelligence",
+            ));
+        }
     }
     if config.block_function_keys {
         changes.push(change(

@@ -187,6 +187,8 @@ export type LockdownConfig = {
   disable_hot_corners?: boolean;
   disable_siri?: boolean;
   disable_mission_control?: boolean;
+  /** macOS only; other platforms ignore it. */
+  disable_apple_intelligence?: boolean;
   display_policy?: LockdownPolicy;
   remote_access_policy?: LockdownPolicy;
 };

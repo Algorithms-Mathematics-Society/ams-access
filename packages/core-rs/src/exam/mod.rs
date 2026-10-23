@@ -433,6 +433,14 @@ pub struct LockdownConfig {
     pub disable_siri: bool,
     #[serde(default = "default_true")]
     pub disable_mission_control: bool,
+    /// Turn Apple Intelligence off for the sitting, and back on after.
+    ///
+    /// Writing Tools rewrite and proofread text in any standard field, and
+    /// the Siri handoff answers from ChatGPT. Both are a short press away
+    /// from the exam, and neither is covered by disabling Siri's voice
+    /// trigger. macOS only; other platforms ignore it.
+    #[serde(default = "default_true")]
+    pub disable_apple_intelligence: bool,
     #[serde(default)]
     pub display_policy: LockdownPolicy,
     #[serde(default)]
@@ -449,6 +457,7 @@ impl Default for LockdownConfig {
             disable_hot_corners: true,
             disable_siri: true,
             disable_mission_control: true,
+            disable_apple_intelligence: true,
             display_policy: LockdownPolicy::Warn,
             remote_access_policy: LockdownPolicy::Warn,
         }

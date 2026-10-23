@@ -3685,6 +3685,21 @@ export default function ContestPageClient() {
     !sessionEnded &&
     timeUpState === "idle";
   const networkDialogRef = useFocusTrap<HTMLDialogElement>(networkOverlayActive);
+
+  // How long the connection has to stay down before the dialog offers a way
+  // out. A blip of a few seconds reconnects on its own and should not tempt
+  // anyone out of their exam; a dead network never does, and until now left
+  // them with a modal that has no buttons and a desktop they cannot reach.
+  const OFFLINE_EXIT_AFTER_MS = 20_000;
+  const [offlineTooLong, setOfflineTooLong] = useState(false);
+  useEffect(() => {
+    if (!networkOverlayActive) {
+      setOfflineTooLong(false);
+      return;
+    }
+    const id = setTimeout(() => setOfflineTooLong(true), OFFLINE_EXIT_AFTER_MS);
+    return () => clearTimeout(id);
+  }, [networkOverlayActive]);
   const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
     lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle"
   );
@@ -4087,6 +4102,33 @@ export default function ContestPageClient() {
             <Text color="secondary">Your workspace will resume when the connection returns.</Text>
           </HStack>
           <Text color="secondary">Keep this app open. The contest timer continues to run.</Text>
+          {offlineTooLong && (
+            /* The way out of a dead network.
+               This dialog had no buttons at all and `purpose="required"`, so
+               a candidate whose wifi died could not dismiss it, and on macOS
+               could not reach the wifi menu either: the kiosk hides the menu
+               bar and the window cannot be moved or minimised. The only
+               remaining move was holding the power button, which is what
+               people were doing.
+               It leaves without finishing. `redirectAfterRelease` releases
+               the desktop and the network lockdown while keeping the session
+               and its recovery record, which is what lets them join another
+               network and come straight back in. The native calls it makes
+               are local, so they work with no connection. */
+            <VStack gap={2}>
+              <Text color="secondary">
+                Still disconnected. You can leave the exam to change network and come back.
+                Your answers are saved on this device and your session stays open.
+              </Text>
+              <HStack gap={3} justify="end">
+                <Button
+                  label="Exit to change network"
+                  variant="secondary"
+                  onClick={() => void redirectAfterRelease("/home")}
+                />
+              </HStack>
+            </VStack>
+          )}
         </VStack>
       </Dialog>
 
