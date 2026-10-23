@@ -764,11 +764,11 @@ pub(super) fn engage(
         }) {
             continue;
         }
-        match read_value(item.domain, item.key, item.current_host) {
+        match read_value(item.domain, &item.key, item.current_host) {
             Ok(original) => {
                 prefs.push(SavedPref {
                     domain: item.domain.to_string(),
-                    key: item.key.to_string(),
+                    key: item.key.clone(),
                     current_host: item.current_host,
                     label: item.label.to_string(),
                     original,
@@ -797,13 +797,13 @@ pub(super) fn engage(
 
     let mut unapplied = skipped;
     for item in &planned {
-        if !write_value(item.domain, item.key, item.current_host, &item.value) {
+        if !write_value(item.domain, &item.key, item.current_host, &item.value) {
             unapplied.push(item.label.to_string());
         }
     }
     reload_services(&snapshot.reload, true);
     for item in &planned {
-        if !value_matches(item.domain, item.key, item.current_host, Some(&item.value))
+        if !value_matches(item.domain, &item.key, item.current_host, Some(&item.value))
             && !unapplied.iter().any(|label| label == item.label)
         {
             unapplied.push(item.label.to_string());
