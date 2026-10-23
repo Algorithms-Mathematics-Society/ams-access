@@ -1,3 +1,26 @@
+# AMS Access 4.3.0
+
+## Changing network without leaving the exam
+
+- A wifi button sits beside the battery in the contest top bar. The joined network is marked and sorted first, secured networks expand a password field inline, open ones join on click.
+- The same control is inside the offline dialog, with "Retry now" to force a heartbeat rather than waiting out the poll. That dialog is a native modal, so the top bar cannot be clicked through it; the control has to come to where the problem is stated.
+- A candidate whose connection died could not reach the system picker at all on macOS: the kiosk hides the menu bar and the exam window cannot be moved, minimised or closed. The only remaining move was holding the power button.
+- Native scan and connect on all three platforms. macOS uses `networksetup`, not the private `airport` binary macOS 14 removed. Windows parses `netsh` by the shape of its output rather than its labels, because it prints in the display language, and writes a profile to a temp file when joining a new network so the password never sits on a command line.
+
+## Leaving a dead network
+
+- After twenty seconds offline the dialog offers "Exit to change network". It releases the desktop and the network lockdown while keeping the session and its recovery record, so a candidate rejoins and comes straight back in without finishing the exam.
+
+## macOS
+
+- Apple Intelligence is turned off for the sitting and restored afterwards. Writing Tools rewrite and proofread in any standard text field and the Siri handoff answers from ChatGPT; neither was covered by disabling Siri's voice trigger.
+
+## Validation scope
+
+CI is green on Linux, macOS and Windows including bundle smoke. The wifi picker's native paths compile and are unit-tested at the parsing layer, but have not been exercised against a real wireless interface on any platform; the control renders nothing when the platform cannot list networks. The Apple Intelligence toggle has not been run on a Mac.
+
+---
+
 # AMS Access 4.2.0
 
 ## Sign-in and recovery
