@@ -100,6 +100,7 @@ import { FooterTrustStrip } from "./components/FooterTrustStrip";
 import { footerCameraStatus } from "./camera-status";
 import { nextPresenceEvidenceDelay, presenceUnavailableEvent } from "./presence-evidence";
 import { TopBar } from "./components/TopBar";
+import { WifiControl } from "./components/WifiControl";
 import { QuestionRail } from "./components/QuestionRail";
 import { ProblemPane } from "./components/ProblemPane";
 import { EditorPanel, type EditorFile } from "./components/EditorPanel";
@@ -486,6 +487,11 @@ export default function ContestPageClient() {
   // syncs the real value on mount (navigator is unavailable during SSR).
   const [browserOnline, setBrowserOnline] = useState(true);
   const [heartbeatState, setHeartbeatState] = useState(initialHeartbeatState);
+  // Set by the heartbeat effect so the offline dialog can ask for one
+  // immediately instead of waiting out the poll interval. Useful exactly
+  // when the browser thinks it is online and the server is still
+  // unreachable -- a captive portal, or a network joined seconds ago.
+  const retryBeatRef = useRef<() => void>(() => {});
   // Set when the *server* says this session is over — terminated by an
   // invigilator, or finished elsewhere. Distinct from the bell.
   const [sessionEnded, setSessionEnded] = useState<"terminated" | "submitted" | null>(null);
@@ -2378,6 +2384,8 @@ export default function ContestPageClient() {
       }
     };
 
+    // `beat` is defined above; expose it now that it exists.
+    retryBeatRef.current = () => void beat();
     void beat();
     const id = setInterval(() => void beat(), 60_000);
     return () => {
@@ -3802,6 +3810,7 @@ export default function ContestPageClient() {
           />
         )}
         <TopBar
+          online={!networkDisconnected}
           markedQuestionIds={markedQuestionIds}
           workspaceControls={
             <WorkspaceControls
@@ -4102,6 +4111,22 @@ export default function ContestPageClient() {
             <Text color="secondary">Your workspace will resume when the connection returns.</Text>
           </HStack>
           <Text color="secondary">Keep this app open. The contest timer continues to run.</Text>
+          {/* The picker, here as well as in the top bar.
+              This dialog is a native modal, so everything behind it is in the
+              inert top layer and the top bar cannot be clicked through it. It
+              is also the one moment a candidate actually needs to change
+              network, and on macOS the system wifi menu is unreachable: the
+              kiosk hides the menu bar and the window cannot be moved. So the
+              control comes to where the problem is stated. */}
+          <HStack gap={3} align="center" justify="between">
+            <HStack gap={2} align="center">
+              <Text type="supporting" color="secondary">
+                Change network
+              </Text>
+              <WifiControl online={false} />
+            </HStack>
+            <Button label="Retry now" variant="secondary" onClick={() => retryBeatRef.current()} />
+          </HStack>
           {offlineTooLong && (
             /* The way out of a dead network.
                This dialog had no buttons at all and `purpose="required"`, so
@@ -4117,8 +4142,8 @@ export default function ContestPageClient() {
                are local, so they work with no connection. */
             <VStack gap={2}>
               <Text color="secondary">
-                Still disconnected. You can leave the exam to change network and come back.
-                Your answers are saved on this device and your session stays open.
+                Still disconnected. You can leave the exam to change network and come back. Your
+                answers are saved on this device and your session stays open.
               </Text>
               <HStack gap={3} justify="end">
                 <Button

@@ -10,6 +10,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
 import { BatteryStatus } from "./BatteryStatus";
+import { WifiControl } from "./WifiControl";
 
 export interface FinishQuestionReview {
   id: string;
@@ -38,6 +39,9 @@ export interface TopBarProps {
   onReviewQuestion: (index: number) => void;
   markedQuestionIds: string[];
   workspaceControls?: ReactNode;
+  /** Drives the wifi glyph. The picker itself works either way, which is the
+   *  point: it is needed most when this is false. */
+  online?: boolean;
 }
 
 export function TopBar({
@@ -58,6 +62,7 @@ export function TopBar({
   finishReviewSuspended,
   onReviewQuestion,
   markedQuestionIds,
+  online = true,
   workspaceControls,
 }: TopBarProps) {
   const reviewRef = useRef<HTMLDivElement>(null);
@@ -170,6 +175,7 @@ export function TopBar({
         </Text>
       </HStack>
       <CountdownBadge clock={clock} onExpiry={handleContestExpiry} />
+      <WifiControl online={online} />
       <BatteryStatus />
       <HStack
         gap={2}

@@ -1989,3 +1989,139 @@ mod firewall_inventory_query_tests {
         assert!(output.stdout.is_empty());
     }
 }
+
+// ── wireless ────────────────────────────────────────────────────────────────
+//
+// `netsh`, parsed by the shape of its output rather than its labels: it
+// prints in the Windows display language, and a candidate on a Hindi or
+// German install must get the same list as everyone else.
+
+/// The SSID currently joined, if any.
+fn current_ssid() -> Option<String> {
+    let output = std::process::Command::new("netsh")
+        .args(["wlan", "show", "interfaces"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // The SSID line and the BSSID line differ only by that prefix, and
+    // "SSID" is one of the few tokens netsh does not translate.
+    text.lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(left, _)| {
+            let key = left.trim().to_ascii_lowercase();
+            key == "ssid"
+        })
+        .map(|(_, right)| right.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// What wireless networks this machine can see.
+pub fn wifi_scan() -> crate::WifiScan {
+    let Ok(output) = std::process::Command::new("netsh")
+        .args(["wlan", "show", "networks", "mode=bssid"])
+        .output()
+    else {
+        return crate::WifiScan::default();
+    };
+    if !output.status.success() {
+        return crate::WifiScan::default();
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let rows = crate::wifi_parse::parse_netsh(&text);
+    let current = current_ssid();
+    crate::WifiScan {
+        networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        current,
+        supported: true,
+    }
+}
+
+/// Join a network.
+///
+/// `netsh wlan connect` can only use a profile that already exists, so a
+/// network being joined for the first time needs one written first. The
+/// profile is a temporary file because the password would otherwise sit in
+/// the command line, where any other process can read it.
+pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
+    let secret = password.unwrap_or("");
+    if !secret.is_empty() {
+        let xml = profile_xml(ssid, secret);
+        let path = std::env::temp_dir().join(format!("ams-wifi-{}.xml", std::process::id()));
+        std::fs::write(&path, xml).map_err(|e| format!("Could not stage the profile: {e}"))?;
+        let added = std::process::Command::new("netsh")
+            .args(["wlan", "add", "profile"])
+            .arg(format!("filename={}", path.display()))
+            .arg("user=current")
+            .output();
+        // Remove it whatever happened: it holds the password in clear text.
+        let _ = std::fs::remove_file(&path);
+        match added {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => {
+                return Err(trimmed_or(
+                    &String::from_utf8_lossy(&out.stdout),
+                    "Windows refused that network profile.",
+                ))
+            }
+            Err(error) => return Err(format!("Could not run netsh: {error}")),
+        }
+    }
+    match std::process::Command::new("netsh")
+        .args(["wlan", "connect"])
+        .arg(format!("name={ssid}"))
+        .arg(format!("ssid={ssid}"))
+        .output()
+    {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(trimmed_or(
+            &String::from_utf8_lossy(&out.stdout),
+            "Could not join that network.",
+        )),
+        Err(error) => Err(format!("Could not run netsh: {error}")),
+    }
+}
+
+fn trimmed_or(text: &str, fallback: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        fallback.to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// A WPA2-PSK profile. The SSID and the key are XML-escaped: a password
+/// containing `&` is ordinary and would otherwise produce invalid XML that
+/// netsh rejects with a message nobody can act on.
+fn profile_xml(ssid: &str, password: &str) -> String {
+    let e = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    };
+    format!(
+        r#"<?xml version="1.0"?>
+<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
+  <name>{name}</name>
+  <SSIDConfig><SSID><name>{name}</name></SSID></SSIDConfig>
+  <connectionType>ESS</connectionType>
+  <connectionMode>auto</connectionMode>
+  <MSM><security>
+    <authEncryption>
+      <authentication>WPA2PSK</authentication>
+      <encryption>AES</encryption>
+      <useOneX>false</useOneX>
+    </authEncryption>
+    <sharedKey>
+      <keyType>passPhrase</keyType>
+      <protected>false</protected>
+      <keyMaterial>{key}</keyMaterial>
+    </sharedKey>
+  </security></MSM>
+</WLANProfile>"#,
+        name = e(ssid),
+        key = e(password)
+    )
+}

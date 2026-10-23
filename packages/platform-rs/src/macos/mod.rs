@@ -2224,3 +2224,110 @@ mod tests {
         assert_eq!(result.confidence, "high");
     }
 }
+
+// ── wireless ────────────────────────────────────────────────────────────────
+//
+// `networksetup`, not `airport`: the private airport binary that everyone's
+// scripts used was removed in macOS 14, so a scan built on it reports nothing
+// on exactly the machines this is for.
+//
+// What `networksetup` lists is the *preferred* networks -- the ones already
+// saved on this Mac -- rather than everything in range. That is the case this
+// exists for: a candidate whose wifi has died reconnects to their own network
+// or their phone's hotspot, both of which they have joined before. Anything
+// new is typed in, which the UI allows.
+
+/// The wireless interface, usually `en0` but not on every model.
+fn wifi_interface() -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/networksetup")
+        .arg("-listallhardwareports")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line.contains("Wi-Fi") || line.contains("AirPort") {
+            for next in lines.by_ref() {
+                if let Some(device) = next.strip_prefix("Device: ") {
+                    return Some(device.trim().to_string());
+                }
+                if next.trim().is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The SSID currently joined, if any.
+fn current_ssid(interface: &str) -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/networksetup")
+        .args(["-getairportnetwork", interface])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // "Current Wi-Fi Network: NAME", or "You are not associated ...".
+    let (_, name) = text.trim().split_once(": ")?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Saved networks, with the joined one marked.
+pub fn wifi_scan() -> crate::WifiScan {
+    let Some(interface) = wifi_interface() else {
+        return crate::WifiScan::default();
+    };
+    let current = current_ssid(&interface);
+    let Ok(output) = std::process::Command::new("/usr/sbin/networksetup")
+        .args(["-listpreferredwirelessnetworks", &interface])
+        .output()
+    else {
+        return crate::WifiScan::default();
+    };
+    if !output.status.success() {
+        return crate::WifiScan::default();
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut rows = crate::wifi_parse::parse_networksetup_list(&text);
+    // The joined network is not always in the preferred list.
+    if let Some(name) = current.as_deref() {
+        if !rows.iter().any(|r| r.ssid == name) {
+            rows.push(crate::WifiNetwork {
+                ssid: name.to_string(),
+                signal: None,
+                secured: true,
+                current: true,
+            });
+        }
+    }
+    crate::WifiScan {
+        networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        current,
+        supported: true,
+    }
+}
+
+/// Join a network. A saved one needs no password.
+pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
+    let Some(interface) = wifi_interface() else {
+        return Err("No wireless interface on this Mac.".into());
+    };
+    let mut command = std::process::Command::new("/usr/sbin/networksetup");
+    command.args(["-setairportnetwork", &interface, ssid]);
+    if let Some(secret) = password.filter(|p| !p.is_empty()) {
+        command.arg(secret);
+    }
+    match command.output() {
+        // networksetup exits 0 even when it failed, and says so on stdout.
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if text.is_empty() {
+                Ok(())
+            } else {
+                Err(text)
+            }
+        }
+        Err(error) => Err(format!("Could not run networksetup: {error}")),
+    }
+}

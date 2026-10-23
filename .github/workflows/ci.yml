@@ -305,6 +305,21 @@ jobs:
         working-directory: apps/desktop
         run: pnpm tauri build
 
+      # The Windows job already runs the real bundler and then threw the
+      # installer away, so testing a branch on Windows meant tagging a
+      # release for it. Keeping it costs one upload and makes a branch
+      # installable.
+      - name: Upload the Windows installers
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 5
+
       - name: Validate Linux package payloads
         if: runner.os == 'Linux'
         shell: bash

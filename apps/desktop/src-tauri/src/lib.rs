@@ -1029,6 +1029,31 @@ fn get_battery_status() -> Option<platform_rs::BatteryStatus> {
     platform_dispatch!(battery_status(), else None)
 }
 
+/// Wireless networks this machine can see, for the contest's network control.
+///
+/// A candidate whose connection dies mid-exam cannot reach the system wifi
+/// menu: the kiosk hides the menu bar and the window cannot be moved. Until
+/// now the only way back onto a network was leaving the exam, so this brings
+/// the picker inside it.
+#[tauri::command]
+fn scan_wifi() -> platform_rs::WifiScan {
+    platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default())
+}
+
+/// Join a wireless network. `password` is None or empty for an open one.
+#[tauri::command]
+fn connect_wifi(ssid: String, password: Option<String>) -> Result<(), String> {
+    if ssid.trim().is_empty() {
+        return Err("Choose a network first.".into());
+    }
+    let ssid = ssid.trim().to_string();
+    let password = password.clone();
+    platform_dispatch!(
+        wifi_connect(&ssid, password.as_deref()),
+        else Err("Changing network is not supported on this system.".to_string())
+    )
+}
+
 /// What the last macOS scan found, kept so the readiness report can name the
 /// displays and remote-access tools. `DeviceState` only carries a count and a
 /// bool, and it makes a round trip through the webview between the scan and
@@ -3734,6 +3759,8 @@ pub fn run() {
             log_violation,
             log_proctoring_event,
             count_monitors,
+            scan_wifi,
+            connect_wifi,
             check_network_stability,
             get_full_telemetry,
             get_platform,

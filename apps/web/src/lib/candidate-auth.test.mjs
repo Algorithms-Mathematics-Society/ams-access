@@ -684,6 +684,10 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
     },
     setInterval: () => 1,
     clearInterval() {},
+    // The effect publishes its beat function here so the offline dialog can
+    // ask for one immediately. Bound as a plain box: this test is about the
+    // 401 path, not about who else can trigger a heartbeat.
+    retryBeatRef: { current: () => {} },
   };
   const cleanup = new Function(...Object.keys(bindings), `${js}; return effect();`)(
     ...Object.values(bindings)
