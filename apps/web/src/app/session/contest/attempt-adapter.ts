@@ -109,6 +109,28 @@ export function mergeAttemptTestResults(
   attempts: AttemptRecord[]
 ): Record<string, TestcaseResult[]> {
   const next = { ...previous };
-  for (const attempt of attempts) next[attempt.id] = attempt.testcases;
+  for (const attempt of attempts) {
+    const cached = previous[attempt.id];
+    const incoming = attempt.testcases;
+    // Preserve selection in ResultsPanel on equivalent polling snapshots, but
+    // publish changes to diagnostics, ordering or any displayed result field.
+    const unchanged =
+      cached?.length === incoming.length &&
+      incoming.every((row, index) => {
+        const old = cached[index];
+        return (
+          old.kind === row.kind &&
+          old.testcase_no === row.testcase_no &&
+          old.label === row.label &&
+          old.verdict === row.verdict &&
+          old.runtime_ms === row.runtime_ms &&
+          old.memory_kb === row.memory_kb &&
+          old.checker_message === row.checker_message &&
+          old.stdout_text === row.stdout_text &&
+          old.stderr_text === row.stderr_text
+        );
+      });
+    next[attempt.id] = unchanged ? cached : incoming;
+  }
   return next;
 }

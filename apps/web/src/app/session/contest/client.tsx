@@ -718,42 +718,66 @@ export default function ContestPageClient() {
     };
   }, [isDryRun, contestId, router]);
 
-  const fetchSubmissions = useCallback(async () => {
-    if (!sessionId || !questions[activeQ]) return;
-    setLoadingSubmissions(true);
-    try {
-      // Adapted, not cast. The two shapes share almost no field names, so
-      // the `as unknown as` that used to be here matched nothing and left
-      // this panel permanently empty.
-      //
-      // No run filter: `session_submissions` already excludes them
-      // server-side, and the old `isRunSubmission` read `submission_kind`, a
-      // field v2 never sends — a filter on a field that does not exist is
-      // worse than none, because it reads as one.
-      // One list, unfiltered. The per-problem view is derived from it below
-      // rather than stored: a stored copy is written by whichever fetch
-      // resolves last, and fetches outlive the problem they were started for.
-      // Submit on A (which arms a 2s poll), switch to B, and A's reply would
-      // land and repaint B's Attempts panel with A's history.
-      const attempts = toAttemptRecords(await listMySubmissions(sessionId));
-      setAllSubmissionsList(attempts);
-      // Each list response already contains the per-case results. Refresh the
-      // cache as pending attempts complete, preserving separately polled runs.
-      setTestResults((previous) => mergeAttemptTestResults(previous, attempts));
-      setSubmissionHistoryStatus("available");
-      // Nothing here refreshes the run panel any more. This list excludes
-      // runs by construction — the server filters on `mode` — so searching it
-      // for the run's own row could only ever miss. Runs are polled by uid
-      // through `getRun` in `triggerRun`, which is the only place that can
-      // see them.
-    } catch (err) {
-      setSubmissionHistoryStatus((prev) =>
-        prev === "available" || prev === "stale" ? "stale" : "unavailable"
-      );
-      console.error("Failed to fetch submissions:", err);
-    } finally {
-      setLoadingSubmissions(false);
+  const submissionRefreshRef = useRef<{
+    sessionId: string | null;
+    active: boolean;
+    pending: Promise<void> | null;
+    queued: Promise<void> | null;
+  } | null>(null);
+
+  useEffect(() => {
+    const owner = { sessionId, active: true, pending: null, queued: null };
+    submissionRefreshRef.current = owner;
+    return () => {
+      owner.active = false;
+    };
+  }, [sessionId]);
+
+  const fetchSubmissions = useCallback((): Promise<void> => {
+    const owner = submissionRefreshRef.current;
+    if (!sessionId || !questions[activeQ] || !owner?.active || owner.sessionId !== sessionId) {
+      return Promise.resolve();
     }
+    const isCurrent = () => owner.active && submissionRefreshRef.current === owner;
+    const refresh = (): Promise<void> => {
+      if (!isCurrent()) return Promise.resolve();
+      setLoadingSubmissions(true);
+      // Defer execution so ownership is installed even if the API call throws.
+      owner.pending = Promise.resolve().then(async () => {
+        try {
+          if (!isCurrent()) return;
+          // This session-wide list excludes Runs. Keep their separate polling
+          // and results intact; the active problem's history is derived below.
+          const attempts = toAttemptRecords(await listMySubmissions(sessionId));
+          if (!isCurrent()) return;
+          setAllSubmissionsList(attempts);
+          setTestResults((previous) => mergeAttemptTestResults(previous, attempts));
+          setSubmissionHistoryStatus("available");
+        } catch (err) {
+          if (!isCurrent()) return;
+          setSubmissionHistoryStatus((prev) =>
+            prev === "available" || prev === "stale" ? "stale" : "unavailable"
+          );
+          console.error("Failed to fetch submissions:", err);
+        } finally {
+          owner.pending = null;
+          if (isCurrent() && !owner.queued) setLoadingSubmissions(false);
+        }
+      });
+      return owner.pending;
+    };
+    if (owner.queued) return owner.queued;
+    if (owner.pending) {
+      // A submission accepted during a GET needs a subsequent GET. Share that
+      // follow-up across question switches/poll ticks, and await only that GET
+      // so later poll ticks cannot keep the Submit action waiting indefinitely.
+      owner.queued ??= owner.pending.then(() => {
+        owner.queued = null;
+        return refresh();
+      });
+      return owner.queued;
+    }
+    return refresh();
   }, [sessionId, activeQ, questions]);
 
   /**
@@ -3469,7 +3493,7 @@ export default function ContestPageClient() {
     for (const sub of allSubmissionsList) {
       const qId = String(sub.problem_id ?? "");
       if (!qId) continue;
-      grouped[qId] = [...(grouped[qId] ?? []), sub];
+      (grouped[qId] ??= []).push(sub);
     }
     Object.values(grouped).forEach((items) =>
       items.sort((a, b) => Number(b.attempt_no ?? 0) - Number(a.attempt_no ?? 0))

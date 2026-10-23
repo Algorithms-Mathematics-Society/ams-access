@@ -736,12 +736,21 @@ export default function HomePage() {
     // The token outlives the page: restoring it here is what lets a candidate
     // whose app restarted mid-exam carry on instead of signing in again.
     restoreToken();
-    setDisplayName(localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "");
+    try {
+      setDisplayName(localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "");
+    } catch {
+      setDisplayName("");
+    }
     setIdentityHydrated(true);
-    const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
-    if (storedSession) {
-      try {
-        const parsed = JSON.parse(storedSession) as ActiveSession;
+    try {
+      const storedSession = localStorage.getItem(ACTIVE_SESSION_KEY);
+      if (storedSession) {
+        let parsed: ActiveSession | null = null;
+        try {
+          parsed = JSON.parse(storedSession) as ActiveSession;
+        } catch {
+          // Invalid saved data is removed below; removal can also be denied.
+        }
         if (parsed?.id) {
           setActiveSession(parsed);
           setResumeVerification("unverified");
@@ -750,10 +759,14 @@ export default function HomePage() {
           localStorage.removeItem(ACTIVE_SESSION_KEY);
           setResumeVerification("none");
         }
-      } catch {
-        localStorage.removeItem(ACTIVE_SESSION_KEY);
-        setResumeVerification("none");
       }
+    } catch {
+      // Unlike display metadata, recovery storage must not look healthy when
+      // it cannot be read or cleared. Existing entry persistence checks remain.
+      setResumeVerification("invalid");
+      setResumeStatus(
+        "Saved session data could not be accessed. Ask an invigilator before continuing."
+      );
     }
 
     return () => {

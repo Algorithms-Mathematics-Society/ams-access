@@ -105,11 +105,18 @@ function getCacheEntry<T>(key: string): QueryCacheEntry<T> | undefined {
   return queryCache.get(key) as QueryCacheEntry<T> | undefined;
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+async function fetchWithTimeout<T>(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+  consume: (response: Response) => Promise<T>
+) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: init.signal ?? controller.signal });
+    const response = await fetch(input, { ...init, signal: init.signal ?? controller.signal });
+    // Headers do not finish the request: body delivery must share its deadline.
+    return await consume(response);
   } finally {
     clearTimeout(timeout);
   }
@@ -144,22 +151,23 @@ export async function fetchJson<T>(
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
-        const response = await fetchWithTimeout(input, init, timeoutMs);
-        if (!response.ok) {
-          // Detect session-binding 403s so callers can route to the resume flow.
-          if (response.status === 403) {
-            let body: { code?: string; error?: string } | null = null;
-            try {
-              body = (await response.json()) as { code?: string; error?: string };
-            } catch {
-              // ignore parse failure — fall through to generic error
+        return await fetchWithTimeout(input, init, timeoutMs, async (response) => {
+          if (!response.ok) {
+            // Detect session-binding 403s so callers can route to the resume flow.
+            if (response.status === 403) {
+              let body: { code?: string; error?: string } | null = null;
+              try {
+                body = (await response.json()) as { code?: string; error?: string };
+              } catch {
+                // ignore parse failure — fall through to generic error
+              }
+              const bindingErr = checkSessionBindingError(response, body);
+              if (bindingErr) throw bindingErr;
             }
-            const bindingErr = checkSessionBindingError(response, body);
-            if (bindingErr) throw bindingErr;
+            throw new Error(`HTTP ${response.status}`);
           }
-          throw new Error(`HTTP ${response.status}`);
-        }
-        return (await response.json()) as T;
+          return (await response.json()) as T;
+        });
       } catch (error) {
         if (error instanceof SessionBindingError) throw error;
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -189,17 +197,22 @@ export async function fetchJson<T>(
 
   try {
     const data = await promise;
-    queryCache.set(dedupeKey, { data, updatedAt: Date.now() });
-    notifyQuery(dedupeKey);
+    // Clearing or replacing the entry revokes this request's cache ownership.
+    if (getCacheEntry<T>(dedupeKey)?.promise === promise) {
+      queryCache.set(dedupeKey, { data, updatedAt: Date.now() });
+      notifyQuery(dedupeKey);
+    }
     return data;
   } catch (error) {
     const normalized = error instanceof Error ? error : new Error(String(error));
-    queryCache.set(dedupeKey, {
-      data: previous?.data,
-      error: normalized,
-      updatedAt: previous?.updatedAt ?? 0,
-    });
-    notifyQuery(dedupeKey);
+    if (getCacheEntry<T>(dedupeKey)?.promise === promise) {
+      queryCache.set(dedupeKey, {
+        data: previous?.data,
+        error: normalized,
+        updatedAt: previous?.updatedAt ?? 0,
+      });
+      notifyQuery(dedupeKey);
+    }
     throw normalized;
   }
 }
@@ -242,17 +255,21 @@ export function useApiQuery<T>(
 
     try {
       const data = await promise;
-      queryCache.set(key, { data, updatedAt: Date.now() });
-      notifyQuery(key);
+      if (getCacheEntry<T>(key)?.promise === promise) {
+        queryCache.set(key, { data, updatedAt: Date.now() });
+        notifyQuery(key);
+      }
       return data;
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error(String(error));
-      queryCache.set(key, {
-        data: previous?.data,
-        error: normalized,
-        updatedAt: previous?.updatedAt ?? 0,
-      });
-      notifyQuery(key);
+      if (getCacheEntry<T>(key)?.promise === promise) {
+        queryCache.set(key, {
+          data: previous?.data,
+          error: normalized,
+          updatedAt: previous?.updatedAt ?? 0,
+        });
+        notifyQuery(key);
+      }
       throw normalized;
     } finally {
       setIsValidating(false);

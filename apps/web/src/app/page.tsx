@@ -25,6 +25,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { VStack } from "@astryxdesign/core/Stack";
+import { RouteLoadingShell } from "@/components/RouteLoadingShell";
 import WelcomeScreen from "./WelcomeScreen";
 import { StartupAnimation } from "@/components/StartupAnimation";
 import { UpdateRequiredDialog } from "./login/UpdateRequiredDialog";
@@ -92,12 +94,20 @@ export default function RootPage() {
     );
   }
 
-  // "checking" and "signed-in" both render the animation rather than a flash
-  // of the welcome screen: one is still deciding, the other is on its way to
-  // /home and showing "Enter" would invite a click that undoes it.
+  // Keep a visible status after Skip, reduced motion, or the intro deadline
+  // while the gates finish. Entry remains unavailable until they resolve.
   return (
     <StartupAnimation>
-      {gate === "welcome" ? <WelcomeScreen onEnter={() => router.push("/login")} /> : null}
+      {gate === "welcome" ? (
+        <WelcomeScreen onEnter={() => router.push("/login")} />
+      ) : (
+        <VStack role="status" aria-live="polite">
+          <RouteLoadingShell
+            variant="home"
+            label={gate === "signed-in" ? "Opening your workspace…" : "Checking your access…"}
+          />
+        </VStack>
+      )}
     </StartupAnimation>
   );
 }

@@ -152,9 +152,12 @@ export function setToken(value: string | null, expiresInSeconds?: number): void 
   }
 }
 
-/** Reload a token left by a previous run. Returns whether one was restored. */
+/** Restore persisted credentials if needed. Returns whether a token is available. */
 export function restoreToken(): boolean {
   if (signedOut) return false;
+  // A live identity takes precedence: persisting a fresh sign-in may have failed,
+  // leaving an older token or expiry in storage.
+  if (token !== null) return true;
   const store = storage();
   if (!store) return false;
   try {

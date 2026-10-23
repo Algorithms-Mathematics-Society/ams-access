@@ -15,7 +15,9 @@ import { sortHomeContests } from "./home-contest-presentation";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
 
 const contestColors = {
-  dot: "var(--color-success)", bg: "var(--color-success-muted)", border: "var(--color-success)",
+  dot: "var(--color-success)",
+  bg: "var(--color-success-muted)",
+  border: "var(--color-success)",
 };
 
 export const ContestsPanel = memo(function ContestsPanel({
@@ -105,11 +107,11 @@ export const ContestsPanel = memo(function ContestsPanel({
           backgroundColor: "var(--color-background-body)",
         }}
       />
-      {error && visible.length > 0 && (
+      {error && contests.length > 0 && (
         <Banner
           status="error"
           title={error}
-          description="Use Refresh above to try again."
+          description="Showing the last available contests. Use Refresh above to try again."
         />
       )}
       {loading ? (
@@ -126,11 +128,15 @@ export const ContestsPanel = memo(function ContestsPanel({
           </VStack>
         </VStack>
       ) : visible.length ? (
-        <List density="spacious" className="dashboard-contest-list" style={{
-          border: "var(--border-width) solid var(--color-border)",
-          borderRadius: "var(--radius-container)",
-          background: "var(--color-background-surface)",
-        }}>
+        <List
+          density="spacious"
+          className="dashboard-contest-list"
+          style={{
+            border: "var(--border-width) solid var(--color-border)",
+            borderRadius: "var(--radius-container)",
+            background: "var(--color-background-surface)",
+          }}
+        >
           {visible.map((c) => (
             <ActiveContestCard
               key={c.id}
@@ -143,7 +149,7 @@ export const ContestsPanel = memo(function ContestsPanel({
             />
           ))}
         </List>
-      ) : error ? (
+      ) : error && contests.length === 0 ? (
         <Banner
           status="error"
           title="Contests unavailable"

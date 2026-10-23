@@ -14,7 +14,7 @@
 }
 
 .logo {
-  width: calc(var(--spacing-10) * 5);
+  width: calc(var(--spacing-10) * 4.5);
   aspect-ratio: 351 / 82;
   mask: url(/brand/access-logo.svg) center / contain no-repeat;
   -webkit-mask: url(/brand/access-logo.svg) center / contain no-repeat;

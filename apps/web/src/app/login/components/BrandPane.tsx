@@ -37,7 +37,6 @@ export function BrandPane() {
           <Heading level={2} id="login-preparation-heading">
             Before your contest
           </Heading>
-          <Text color="secondary">A few steps to get your workspace ready.</Text>
         </VStack>
         <List
           hasDividers

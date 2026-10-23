@@ -1,3 +1,30 @@
+# AMS Access 4.2.0
+
+## Sign-in and recovery
+
+- Keep startup feedback visible while checking the app version and saved sign-in.
+- Explain the handle suffix, focus missing credentials, and keep optional metadata storage failures from blocking sign-in.
+- Preserve a fresh sign-in when older credentials remain in storage after a failed write.
+- Keep cached contest notices visible during search and report unavailable recovery data clearly.
+
+## Assessment responsiveness
+
+- Prevent obsolete requests from restoring invalidated cache entries or overwriting another session's submissions.
+- Serialize submission refreshes and retain selected testcase results across equivalent updates.
+- Cover response-body loading with the session-creation request deadline.
+- Avoid repeated array copying when grouping attempts and repeated filtering when displaying them.
+
+## Help and presentation
+
+- Preserve pending help requests and receipts across closing and reopening, validate email, and distinguish unconfirmed delivery from rejection.
+- Balance the header logo and replace redundant copy with clearer next actions.
+
+## Validation
+
+793 frontend tests passed, along with production TypeScript validation, static export and size budgets. Isolated browser checks covered both themes and narrow/desktop layouts. These checks do not certify physical devices or live assessments; release CI validates platform builds separately.
+
+---
+
 # AMS Access 4.1.0
 
 ## macOS kiosk
