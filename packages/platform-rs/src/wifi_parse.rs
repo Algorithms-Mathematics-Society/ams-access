@@ -14,7 +14,7 @@ use crate::WifiNetwork;
 /// one row per name.
 pub fn tidy(mut rows: Vec<WifiNetwork>, current: Option<&str>) -> Vec<WifiNetwork> {
     rows.retain(|n| !n.ssid.trim().is_empty());
-    rows.sort_by(|a, b| b.signal.unwrap_or(0).cmp(&a.signal.unwrap_or(0)));
+    rows.sort_by_key(|n| std::cmp::Reverse(n.signal.unwrap_or(0)));
     let mut seen: Vec<WifiNetwork> = Vec::new();
     for mut row in rows {
         row.current = current.is_some_and(|c| c == row.ssid);
@@ -29,7 +29,7 @@ pub fn tidy(mut rows: Vec<WifiNetwork>, current: Option<&str>) -> Vec<WifiNetwor
         seen.push(row);
     }
     // The joined network first, then by strength.
-    seen.sort_by(|a, b| b.current.cmp(&a.current).then(b.signal.cmp(&a.signal)));
+    seen.sort_by_key(|n| (std::cmp::Reverse(n.current), std::cmp::Reverse(n.signal)));
     seen
 }
 
@@ -180,9 +180,24 @@ mod tests {
     #[test]
     fn duplicates_across_bands_collapse_to_one_row_keeping_the_best_signal() {
         let rows = vec![
-            WifiNetwork { ssid: "Campus".into(), signal: Some(40), secured: false, current: false },
-            WifiNetwork { ssid: "Campus".into(), signal: Some(75), secured: true, current: false },
-            WifiNetwork { ssid: "Other".into(), signal: Some(90), secured: true, current: false },
+            WifiNetwork {
+                ssid: "Campus".into(),
+                signal: Some(40),
+                secured: false,
+                current: false,
+            },
+            WifiNetwork {
+                ssid: "Campus".into(),
+                signal: Some(75),
+                secured: true,
+                current: false,
+            },
+            WifiNetwork {
+                ssid: "Other".into(),
+                signal: Some(90),
+                secured: true,
+                current: false,
+            },
         ];
         let tidied = tidy(rows, Some("Campus"));
         assert_eq!(tidied.len(), 2);
@@ -195,8 +210,18 @@ mod tests {
     #[test]
     fn blank_ssids_are_dropped() {
         let rows = vec![
-            WifiNetwork { ssid: "  ".into(), signal: Some(80), secured: true, current: false },
-            WifiNetwork { ssid: "Real".into(), signal: Some(10), secured: true, current: false },
+            WifiNetwork {
+                ssid: "  ".into(),
+                signal: Some(80),
+                secured: true,
+                current: false,
+            },
+            WifiNetwork {
+                ssid: "Real".into(),
+                signal: Some(10),
+                secured: true,
+                current: false,
+            },
         ];
         assert_eq!(tidy(rows, None).len(), 1);
     }

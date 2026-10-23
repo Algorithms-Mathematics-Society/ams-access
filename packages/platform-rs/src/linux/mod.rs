@@ -2909,7 +2909,14 @@ mod review_regression_tests {
 /// What wireless networks this machine can see.
 pub fn wifi_scan() -> crate::WifiScan {
     let Ok(output) = std::process::Command::new("nmcli")
-        .args(["-t", "-f", "ACTIVE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list"])
+        .args([
+            "-t",
+            "-f",
+            "ACTIVE,SSID,SIGNAL,SECURITY",
+            "dev",
+            "wifi",
+            "list",
+        ])
         .output()
     else {
         return crate::WifiScan::default();
