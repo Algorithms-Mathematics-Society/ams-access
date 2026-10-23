@@ -66,6 +66,16 @@ export function WifiControl({ online }: { online: boolean }) {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Which way the menu opens, and how tall it may be.
+  //
+  // It was always dropped downward at a fixed height, which is wrong in the
+  // two places it actually gets used: in the offline dialog the trigger sits
+  // near the bottom, so the list ran off the viewport and the networks could
+  // not be reached at all. Measured from the trigger each time it opens.
+  const [menu, setMenu] = useState<{ up: boolean; maxHeight: number }>({
+    up: false,
+    maxHeight: 320,
+  });
 
   const refresh = useCallback(async () => {
     try {
@@ -77,10 +87,36 @@ export function WifiControl({ online }: { online: boolean }) {
   }, []);
 
   useEffect(() => {
+    // One scan on mount, to learn whether this machine can list networks at
+    // all -- that decides whether the button appears.
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    // Rescan only while the menu is open or the connection is down. Every
+    // scan spawns a subprocess, and polling one every twenty seconds for a
+    // two-hour paper is several hundred of them per candidate for a list
+    // nobody is looking at.
+    if (!open && online) return;
     const id = window.setInterval(() => void refresh(), REFRESH_MS);
     return () => window.clearInterval(id);
-  }, [refresh]);
+  }, [open, online, refresh]);
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const margin = 12;
+      const below = window.innerHeight - rect.bottom - margin;
+      const above = rect.top - margin;
+      const up = below < 220 && above > below;
+      setMenu({ up, maxHeight: Math.max(160, Math.min(360, up ? above : below)) });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [open]);
 
   // Close on Escape and on a click outside, the same as the camera picker.
   useEffect(() => {
@@ -157,11 +193,14 @@ export function WifiControl({ online }: { online: boolean }) {
           gap={3}
           style={{
             position: "absolute",
-            top: "calc(100% + var(--spacing-2))",
+            ...(menu.up
+              ? { bottom: "calc(100% + var(--spacing-2))" }
+              : { top: "calc(100% + var(--spacing-2))" }),
             right: 0,
             zIndex: 1200,
             width: "calc(var(--spacing-10) * 7)",
-            maxHeight: "calc(var(--spacing-10) * 9)",
+            maxWidth: "calc(100vw - var(--spacing-8))",
+            maxHeight: `${menu.maxHeight}px`,
             overflowY: "auto",
             padding: "var(--spacing-3)",
             background: "var(--color-background-card)",

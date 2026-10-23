@@ -1035,23 +1035,38 @@ fn get_battery_status() -> Option<platform_rs::BatteryStatus> {
 /// menu: the kiosk hides the menu bar and the window cannot be moved. Until
 /// now the only way back onto a network was leaving the exam, so this brings
 /// the picker inside it.
+///
+/// Async and off the main thread, because every platform's implementation
+/// spawns a subprocess -- `nmcli`, `netsh`, `networksetup` -- and a scan can
+/// take seconds. A synchronous `#[tauri::command]` runs on the main thread,
+/// which froze the whole exam UI while it ran: the mouse stuck and typing
+/// stalled every time this polled.
 #[tauri::command]
-fn scan_wifi() -> platform_rs::WifiScan {
-    platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default())
+async fn scan_wifi() -> platform_rs::WifiScan {
+    tauri::async_runtime::spawn_blocking(
+        || platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default()),
+    )
+    .await
+    .unwrap_or_default()
 }
 
 /// Join a wireless network. `password` is None or empty for an open one.
+/// Joining takes longer than scanning: the OS associates, gets a lease and
+/// may prompt. Off the main thread for the same reason.
 #[tauri::command]
-fn connect_wifi(ssid: String, password: Option<String>) -> Result<(), String> {
+async fn connect_wifi(ssid: String, password: Option<String>) -> Result<(), String> {
     if ssid.trim().is_empty() {
         return Err("Choose a network first.".into());
     }
     let ssid = ssid.trim().to_string();
-    let password = password.clone();
-    platform_dispatch!(
-        wifi_connect(&ssid, password.as_deref()),
-        else Err("Changing network is not supported on this system.".to_string())
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        platform_dispatch!(
+            wifi_connect(&ssid, password.as_deref()),
+            else Err("Changing network is not supported on this system.".to_string())
+        )
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("Network change did not complete: {error}")))
 }
 
 /// What the last macOS scan found, kept so the readiness report can name the

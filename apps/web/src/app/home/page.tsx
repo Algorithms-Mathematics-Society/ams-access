@@ -534,7 +534,24 @@ export default function HomePage() {
     }
   }
 
-  async function refreshResumeRequest(session: ActiveSession, isCancelled = () => false) {
+  /**
+   * Poll the resume request.
+   *
+   * `consume` is false for the background poller and true only when the
+   * candidate pressed Resume. An approved grant used to be consumed the
+   * moment the poller noticed it, which routed straight back into
+   * onboarding: leaving a contest put you on /home, the poller saw
+   * APPROVED, and pushed you into entry again. There was no way out of
+   * that from inside the app, Ctrl+Shift+Q included, because the loop was
+   * here and not in the kiosk.
+   *
+   * Approval now means re-entry is *available*, not that it happens.
+   */
+  async function refreshResumeRequest(
+    session: ActiveSession,
+    isCancelled = () => false,
+    consume = false
+  ) {
     if (!session.id || resumePollInFlightRef.current || resumeConsumeInFlightRef.current) return;
     resumePollInFlightRef.current = true;
     const isStale = () =>
@@ -569,7 +586,12 @@ export default function HomePage() {
         setResumeStatus("Resume request expired. Submit it again to rejoin.");
         setResumeBusy(false);
       } else if (requestStatus === "APPROVED") {
-        await consumeApprovedResume(nextSession);
+        if (consume) {
+          await consumeApprovedResume(nextSession);
+        } else {
+          setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
+          setResumeBusy(false);
+        }
       }
     } catch {
       if (!isStale()) setResumeStatus("Waiting for organizer approval.");
@@ -805,7 +827,8 @@ export default function HomePage() {
       if (!verifiedSession?.contest_id) return;
       const requestStatus = String(verifiedSession.resume_request_status ?? "").toUpperCase();
       if (requestStatus === "PENDING" || requestStatus === "APPROVED") {
-        await refreshResumeRequest(verifiedSession);
+        // Pressed by the candidate, so an approved grant is acted on here.
+        await refreshResumeRequest(verifiedSession, () => false, true);
         return;
       }
       setPreflightContestId(verifiedSession.contest_id);
