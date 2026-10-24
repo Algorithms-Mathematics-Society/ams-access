@@ -1,3 +1,21 @@
+# AMS Access 4.6.0
+
+## Contest submission and recovery
+
+- Bind submission retries to the exact answer that failed, and prevent finishing a contest while a submission is pending.
+- Preserve recovery after temporary verification or finish failures, with explicit retry actions.
+- Keep the reconnect Wi-Fi picker inside the offline dialog so its networks remain reachable.
+
+## Settings
+
+- Show the installed app version in Settings.
+
+## Validation scope
+
+Includes both commits from `fix/contest-flow-recovery-settings-version`. Regression tests cover submission retries, contest completion and recovery. Platform installers are built and checked by the release workflow; physical-device validation is unchanged from 4.5.0.
+
+---
+
 # AMS Access 4.5.0
 
 **Everyone on 4.4.0 should install this.** A minor release rather than a patch, because the update prompt compares major and minor only: a 4.4.1 would have reached nobody.
