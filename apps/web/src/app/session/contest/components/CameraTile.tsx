@@ -135,8 +135,9 @@ export function CameraTile({
          * infrared sensor shows a black tile, and the candidate's only
          * options were to sit with it or abandon the sitting. Lots of people
          * hit this. The list is read when it is opened, so a webcam plugged
-         * in mid-exam appears without a reload. */}
-        {onPickCamera && cameras.length > 1 && (
+         * in mid-exam appears without a reload. Shown for a single camera
+         * too, so the control is always where the candidate expects it. */}
+        {onPickCamera && cameras.length > 0 && (
           <Button
             type="button"
             label="Change camera"
