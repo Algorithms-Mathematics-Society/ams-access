@@ -231,11 +231,27 @@ do not become authentication errors; inaccessible recovery data remains an
 explicit warning. Cached contest search misses retain their stale-data notice
 and Clear search action.
 
-Help requests keep the original summary, contact and receipt across closing and
-reopening. Send another request starts a new composition after acknowledgement.
-Email uses native validation; an unacknowledged request is described as delivery
-not confirmed, without automatic resubmission. Draft text is retained only in the
-mounted dialog, not promised as durable storage.
+Help opens a private support conversation before or after login. The opening
+form asks for email, phone, name and the issue, in that order. Contact details
+are self-reported, not proof of account identity. The summary and issue become
+the first message, and authorized organizers reply through the organization-wide
+Support inbox rather than a contest-only incident view.
+
+Conversation capabilities and pending request/message identifiers use this
+window's session storage so closing the dialog, navigating and reloading can
+resume the same conversation. A full window close ends local recovery; confirmed
+messages remain on the server. Storage failures show a warning and preserve the
+mounted conversation in memory. An unconfirmed send retries with its original
+identifier. Replies refresh every four seconds while open and visible; errors
+retain the last history. Resolved conversations remain readable. Forget chat /
+new request removes this window's access to the previous conversation.
+
+During an assessment, Help renders the same chat inside the existing
+ContestOverlay and focus trap. Mandatory security, network and expiry overlays
+suspend it; chat does not pause the exam clock or remount the workspace. The
+existing device incident report with diagnostics remains reachable from chat.
+See [participant support](../../SUPPORT.md) for rollout and
+validation limits.
 
 Session-creation request deadlines cover response-body consumption. Submission
 history refreshes are serialized within a session, and equivalent testcase

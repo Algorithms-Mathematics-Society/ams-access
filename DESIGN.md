@@ -165,3 +165,10 @@ security/network and expiry flows. Keep the workspace mounted and background
 controls inert, with focus restored only on ordinary dismissal. Reference content
 is bounded plain text from the existing authenticated contest payload, with a
 fast, reduced-motion-aware opening transition and no network work on open.
+
+Participant support reuses the shared dialog on login/home and ContestOverlay
+inside an assessment. Use labeled email, phone, name and issue fields, plain-text
+messages with sender and local timestamp, explicit delivery/reconnect feedback,
+and readable resolved history. Keep pending retries tied to their original
+identifiers. Support must yield to mandatory overlays without changing exam
+state. The organization portal owns the separate staff inbox.
