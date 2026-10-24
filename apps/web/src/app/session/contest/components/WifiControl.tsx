@@ -57,7 +57,7 @@ function devScan(): WifiScan | null {
   };
 }
 
-export function WifiControl({ online }: { online: boolean }) {
+export function WifiControl({ online, inline = false }: { online: boolean; inline?: boolean }) {
   const [scan, setScan] = useState<WifiScan | null>(null);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<WifiNetwork | null>(null);
@@ -103,7 +103,7 @@ export function WifiControl({ online }: { online: boolean }) {
   }, [open, online, refresh]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     const place = () => {
       const rect = rootRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -116,7 +116,7 @@ export function WifiControl({ online }: { online: boolean }) {
     place();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
-  }, [open]);
+  }, [open, inline]);
 
   // Close on Escape and on a click outside, the same as the camera picker.
   useEffect(() => {
@@ -166,11 +166,20 @@ export function WifiControl({ online }: { online: boolean }) {
   const label = scan.current ? `Network: ${scan.current}` : "Not connected to wifi";
 
   return (
-    <div ref={rootRef} style={{ position: "relative", flexShrink: 0 }}>
+    <VStack
+      ref={rootRef}
+      gap={2}
+      style={{
+        position: "relative",
+        flexShrink: 0,
+        minWidth: 0,
+        width: inline ? "100%" : undefined,
+      }}
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={label}
+        aria-label={inline ? `Change network. ${label}` : label}
         aria-expanded={open}
         title={label}
         style={{
@@ -186,25 +195,41 @@ export function WifiControl({ online }: { online: boolean }) {
         }}
       >
         <Icon size={16} aria-hidden="true" />
+        {inline && (
+          <Text type="supporting" color="secondary">
+            Change network
+          </Text>
+        )}
       </button>
 
       {open && (
         <VStack
           gap={3}
           style={{
-            position: "absolute",
-            ...(menu.up
-              ? { bottom: "calc(100% + var(--spacing-2))" }
-              : { top: "calc(100% + var(--spacing-2))" }),
-            right: 0,
-            zIndex: 1200,
-            width: "calc(var(--spacing-10) * 7)",
-            maxWidth: "calc(100vw - var(--spacing-8))",
-            maxHeight: `${menu.maxHeight}px`,
+            ...(inline
+              ? {
+                  position: "relative" as const,
+                  width: "100%",
+                  maxHeight: "calc(var(--spacing-10) * 8)",
+                }
+              : {
+                  position: "absolute" as const,
+                  ...(menu.up
+                    ? { bottom: "calc(100% + var(--spacing-2))" }
+                    : { top: "calc(100% + var(--spacing-2))" }),
+                  right: 0,
+                  zIndex: 1200,
+                  width: "calc(var(--spacing-10) * 7)",
+                  maxWidth: "calc(100vw - var(--spacing-8))",
+                  maxHeight: `${menu.maxHeight}px`,
+                }),
+            minWidth: 0,
+            flexShrink: 0,
+            boxSizing: "border-box",
             overflowY: "auto",
             padding: "var(--spacing-3)",
             background: "var(--color-background-card)",
-            border: "1px solid var(--color-border-subtle)",
+            border: "var(--border-width) solid var(--color-border)",
             borderRadius: "var(--radius-container)",
             boxShadow: "var(--shadow-high)",
           }}
@@ -264,7 +289,11 @@ export function WifiControl({ online }: { online: boolean }) {
                   textAlign: "left",
                 }}
               >
-                <Text color={network.current ? "primary" : "secondary"}>
+                <Text
+                  color={network.current ? "primary" : "secondary"}
+                  wordBreak="break-word"
+                  style={{ minWidth: 0, overflowWrap: "anywhere", flex: 1 }}
+                >
                   {network.ssid}
                   {network.current ? " · connected" : ""}
                 </Text>
@@ -295,7 +324,7 @@ export function WifiControl({ online }: { online: boolean }) {
                       width: "100%",
                       padding: "var(--spacing-2)",
                       borderRadius: "var(--radius-control)",
-                      border: "1px solid var(--color-border-subtle)",
+                      border: "var(--border-width) solid var(--color-border)",
                       background: "var(--color-background-page)",
                       color: "var(--color-text-primary)",
                     }}
@@ -333,6 +362,6 @@ export function WifiControl({ online }: { online: boolean }) {
           )}
         </VStack>
       )}
-    </div>
+    </VStack>
   );
 }

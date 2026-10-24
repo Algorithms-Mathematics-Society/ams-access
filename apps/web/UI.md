@@ -285,3 +285,7 @@ and source snapshot. Finish waits for an outstanding solution request to settle,
 not for judging. Unconfirmed finishes release device controls while retaining
 session recovery and offering Retry finish. Home keeps recovery data through
 transient verification failures and offers Retry verification.
+
+The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
+so network names and password controls stay inside the dialog at narrow sizes.
+The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.

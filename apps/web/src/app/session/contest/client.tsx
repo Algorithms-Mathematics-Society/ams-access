@@ -4152,13 +4152,8 @@ export default function ContestPageClient() {
               network, and on macOS the system wifi menu is unreachable: the
               kiosk hides the menu bar and the window cannot be moved. So the
               control comes to where the problem is stated. */}
-          <HStack gap={3} align="center" justify="between">
-            <HStack gap={2} align="center">
-              <Text type="supporting" color="secondary">
-                Change network
-              </Text>
-              <WifiControl online={false} />
-            </HStack>
+          <WifiControl online={false} inline />
+          <HStack gap={3} justify="end">
             <Button label="Retry now" variant="secondary" onClick={() => retryBeatRef.current()} />
           </HStack>
           {offlineTooLong && (
