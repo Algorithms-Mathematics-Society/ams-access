@@ -10,12 +10,14 @@ type ResumePayload = {
   detail: string;
   duration_ms: number;
   ever_locked: boolean;
+  payload?: { slept_secs?: number };
 };
 
 /**
  * Non-blocking toast shown when the exam window regains foreground after a
  * focus-loss / lock episode. Informational only — no input capture, no action.
- * Reacts to the Windows-only `focus_resumed` event; inert on macOS/Linux.
+ * Reacts to the Windows-only `focus_resumed` event and to macOS
+ * `system_woke`, after the Mac slept mid-exam (lid closed, power key).
  */
 /** How long the toast stays up once the window is back in front. */
 const VISIBLE_MS = 8000;
@@ -36,6 +38,15 @@ export function KioskBanner() {
     let cancelled = false;
 
     listen<ResumePayload>("lockdown-event", (p) => {
+      if (p?.kind === "system_woke") {
+        const mins = Math.round((p.payload?.slept_secs ?? 0) / 60);
+        const span = mins < 1 ? "less than a minute" : `${mins} minute${mins === 1 ? "" : "s"}`;
+        setToast({
+          text: `Your computer was asleep for ${span} — logged`,
+          expiresAt: Date.now() + VISIBLE_MS,
+        });
+        return;
+      }
       if (p?.kind !== "focus_resumed") return;
       const secs = Math.round((p.duration_ms ?? 0) / 1000);
       setToast({

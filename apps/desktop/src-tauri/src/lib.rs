@@ -760,7 +760,10 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
             }
             // Existing destination, bearer authentication, TLS and event JSON
             // are unchanged. Both endpoint and batch retain the same binding.
-            let url = format!("{}/sessions/{}/events", config.api_url, config.session_id);
+            let url = format!(
+                "{}/participant/sessions/{}/events",
+                config.api_url, config.session_id
+            );
             let delivered = if batch.events.is_empty() {
                 // Only preserved quarantine bytes moved the cursor; no server
                 // event is falsely acknowledged and no empty POST is needed.
@@ -3980,6 +3983,36 @@ pub fn run() {
                         let _ = handle.emit("lockdown-restore-status", lockdown_restore_status());
                     }
                 });
+
+                // Sleep during an exam (lid closed, power key, Apple menu) is a
+                // violation; the wake after it is a notice with the time
+                // asleep, which the contest shows. Called on the main thread
+                // while the system waits to sleep: the network is about to go,
+                // so hold sleep briefly until the record is on disk, and the
+                // event stream uploads it after wake.
+                let handle = app.handle().clone();
+                platform_rs::macos::set_power_event_callback(move |kind, detail, payload| {
+                    let sleeping = kind == "system_sleep";
+                    if sleeping {
+                        record_violation(Some(&handle), kind, detail);
+                    }
+                    let mut proctoring = payload.clone();
+                    proctoring["source"] = serde_json::json!("platform_power");
+                    record_proctoring_event(Some(&handle), kind, detail, proctoring);
+                    let _ = handle.emit(
+                        "lockdown-event",
+                        serde_json::json!({ "kind": kind, "detail": detail, "payload": payload }),
+                    );
+                    if sleeping {
+                        if let Some(Ok(recorder)) = EVENT_RECORDER.get() {
+                            let deadline = Instant::now() + Duration::from_secs(2);
+                            while recorder.pending() > 0 && Instant::now() < deadline {
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                        }
+                    }
+                });
+                platform_rs::macos::install_power_observers();
             }
             // Linux: sink for native lockdown events (the X11 focus-loss
             // watchdog). Mirrors the macOS registration — persist to the

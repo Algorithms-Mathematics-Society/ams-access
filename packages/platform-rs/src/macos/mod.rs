@@ -19,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod displays;
 mod kiosk_window;
+mod power;
 mod remote_access;
 mod system_settings;
 mod watchdog;
@@ -28,6 +29,7 @@ pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
     top_safe_inset, wait_native_fullscreen_exit,
 };
+pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
 
