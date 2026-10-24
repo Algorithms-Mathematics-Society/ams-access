@@ -17,6 +17,7 @@ import { getContest, listMySubmissions, ProctorApiError } from "@/lib/proctor-ap
 import { toAttemptRecords, type AttemptRecord } from "@/app/session/contest/attempt-adapter";
 import { partialCreditZeroed } from "@/app/session/contest/family-summary";
 import { verdictColor, verdictLabel, isTerminalVerdict } from "@/lib/verdict";
+import { BackToHomeButton } from "@/components/BackToHomeButton";
 import { ResultsLoading } from "./components/ResultsLoading";
 
 type ProblemRow = { label: string; title: string; attempts: AttemptRecord[] };
@@ -145,7 +146,7 @@ function ResultsView({ contestId }: { contestId: string }) {
               final contest score.
             </Text>
           </VStack>
-          <Button label="Back to Home" variant="secondary" onClick={() => router.push("/home")} />
+          <BackToHomeButton />
         </HStack>
         {error && (
           <Banner status="error" title="Submissions could not be updated" description={error} />
