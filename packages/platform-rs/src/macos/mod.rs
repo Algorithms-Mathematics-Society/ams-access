@@ -73,9 +73,15 @@ pub fn battery_status() -> Option<crate::BatteryStatus> {
 const RESTRICTED: &[&str] = &[
     "obs",
     "obs64",
-    "zoom.us",
-    "ZoomOpener",
-    "zoom",
+    // Zoom is deliberately absent.
+    //
+    // It leaves helper processes that start and stop on their own, so a
+    // candidate who never opened Zoom produced a started/resolved pair every
+    // few seconds. One sitting filled the staff help queue with 200 of them,
+    // which is how a queue stops being read and a real request gets missed.
+    // Zoom *screen sharing* is the thing worth catching and is still caught
+    // separately (`CptHost` in macos/remote_access.rs), because that one
+    // means somebody else can see the paper.
     "TeamViewer",
     "TeamViewerAgent",
     "AnyDesk",
