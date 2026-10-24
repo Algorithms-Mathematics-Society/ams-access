@@ -2037,9 +2037,14 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
         let _owner = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Everything a lockdown can leave behind, not only the saved desktop
+        // settings: the keyboard tap, kiosk presentation, window, caffeinate
+        // and the pf rules. Whatever is still changed is in the status below.
         #[cfg(target_os = "macos")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
-            let _ = platform_rs::macos::retry_restore();
+            let mut owner = _owner;
+            let _ = owner.stop(&mut DesktopOperations::new(app, false));
+            let _ = platform_rs::macos::disable_network_lockdown();
         }
         #[cfg(target_os = "windows")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {

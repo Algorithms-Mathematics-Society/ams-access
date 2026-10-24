@@ -344,6 +344,8 @@ const VK_V: i64 = 9;
 const VK_X: i64 = 7;
 const VK_E: i64 = 14;
 const VK_N: i64 = 45;
+// Globe / fn. A modifier: it arrives as a flags change, not a key-down.
+const VK_FN: i64 = 63;
 // Ctrl+1..9 switch to Desktop N.
 const DIGIT_KEYS: [i64; 9] = [18, 19, 20, 21, 23, 22, 26, 28, 25];
 // Bare F1–F20.
@@ -487,7 +489,11 @@ unsafe extern "C" fn kb_tap_callback(
 /// no locking — so it is safe to run on the tap's run-loop thread.
 #[allow(non_upper_case_globals)]
 unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
-    if !INTERCEPT_ACTIVE.load(Ordering::Relaxed) {
+    // Shortcuts are blocked only while a test lockdown is engaged. Onboarding
+    // starts the tap early to check Accessibility, and a candidate who left
+    // onboarding kept a tap that swallowed Cmd+Q and the rest with no test
+    // running. Outside a lockdown the tap passes everything through.
+    if !INTERCEPT_ACTIVE.load(Ordering::Relaxed) || !LOCKDOWN_ACTIVE.load(Ordering::Relaxed) {
         return false;
     }
     // Layer 2: swallow 3/4-finger swipe and gesture events so WindowServer
@@ -497,8 +503,20 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
     }
     // Media, brightness, volume and power keys. All of them, rather than
     // decoding the subtype: the callback must stay cheap and lock-free.
+    // Except with Control held: Control+Command+Power (restart) and
+    // Control+Option+Command+Power (shut down) are the way out of an exam
+    // that cannot reach the server. Both end the app through its restoring
+    // exit (the quit request or SIGTERM), never a hard power-off.
     if event_type == CG_EVENT_SYSTEM_DEFINED {
-        return MEDIA_KEYS_BLOCKED.load(Ordering::Relaxed);
+        return MEDIA_KEYS_BLOCKED.load(Ordering::Relaxed)
+            && CGEventGetFlags(event) & FLAG_CTRL == 0;
+    }
+    // The Globe (fn) key on its own: emoji picker, dictation or input source,
+    // whichever the candidate chose. It arrives as a modifier change, not a
+    // key-down, so it is matched here rather than in should_block_key.
+    if event_type == CG_EVENT_FLAGS_CHANGED {
+        return FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed)
+            && CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE) == VK_FN;
     }
     if event_type != CG_EVENT_KEY_DOWN && event_type != CG_EVENT_KEY_UP {
         return false;
@@ -1273,16 +1291,46 @@ fn spawn_space_watchdog() {
         if !lockdown_active() {
             break;
         }
+        if lockdown_config().disable_siri {
+            quit_siri();
+        }
         // Dispatches to the main thread behind an exception guard.
         refocus_our_app();
     });
 }
 
+/// The Siri panel. Matched by full path: the basename lookup skips anything
+/// under /System so a restricted-app name never hits an OS component.
+const SIRI_UI: &str = "/System/Library/CoreServices/Siri.app/Contents/MacOS/Siri";
+
+/// Siri is kept closed for the test instead of switched off in its saved
+/// settings, which would outlive a power cut. The tap already drops its
+/// keyboard triggers; this ends a voice-invoked Siri within the 2 s poll,
+/// and the focus observers record that it came up.
+fn quit_siri() {
+    let Ok(output) = Command::new("/bin/ps")
+        .args(["-axo", "pid=,comm="])
+        .bounded_output()
+    else {
+        return;
+    };
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((pid, comm)) = line.trim_start().split_once(char::is_whitespace) else {
+            continue;
+        };
+        if comm.trim() == SIRI_UI {
+            let _ = Command::new("/bin/kill")
+                .args(["-TERM", pid])
+                .bounded_output();
+        }
+    }
+}
+
 /// Engage the full macOS lockdown for a contest.
 ///
-/// Order matters. Every desktop preference is snapshotted to disk before the
-/// first one changes, and the watchdog process is running before anything a
-/// crash could strand. The keyboard tap is what needs Accessibility; nothing
+/// Order matters. The lockdown is recorded on disk and the watchdog process
+/// is running before anything a crash could strand. No desktop preference is
+/// changed: everything below ends with this process. The keyboard tap is what needs Accessibility; nothing
 /// else depends on it, so the rest engages even when it is refused and the
 /// return value reports only the tap (the policy decides whether that blocks).
 pub fn lock_desktop() -> bool {
@@ -1316,31 +1364,23 @@ pub fn lock_desktop() -> bool {
     // retry that is already waiting for the snapshot lock re-checks this
     // flag once it gets the lock, and must see the new lockdown then.
     LOCKDOWN_ACTIVE.store(true, Ordering::SeqCst);
-    // Err means the snapshot could not be persisted, and then nothing was
-    // changed: refusing is the only way to keep the restore promise.
-    let unapplied = match system_settings::engage(&config, caffeinate) {
-        Ok(unapplied) => unapplied,
-        Err(error) => {
-            LOCKDOWN_ACTIVE.store(false, Ordering::SeqCst);
-            // Refused: nothing will ever reap the caffeinate spawned above.
-            if let Ok(mut pid_guard) = caffeinate_pid().lock() {
-                if let Some(pid) = pid_guard.take() {
-                    kill_if_caffeinate(pid);
-                }
+    // Err means the snapshot could not be persisted, or an older release's
+    // changed settings could not be put back: refuse rather than run an exam
+    // the watchdog cannot recover.
+    if let Err(error) = system_settings::engage(caffeinate) {
+        LOCKDOWN_ACTIVE.store(false, Ordering::SeqCst);
+        // Refused: nothing will ever reap the caffeinate spawned above.
+        if let Ok(mut pid_guard) = caffeinate_pid().lock() {
+            if let Some(pid) = pid_guard.take() {
+                kill_if_caffeinate(pid);
             }
-            crate::process_runner::record_failure(error);
-            return false;
         }
-    };
+        crate::process_runner::record_failure(error);
+        return false;
+    }
     watchdog::spawn();
-    if !unapplied.is_empty() {
-        emit_lockdown_notice(
-            "lockdown_settings_not_applied",
-            &format!(
-                "These desktop settings could not be changed; keyboard blocking still covers their shortcuts: {}",
-                unapplied.join(", ")
-            ),
-        );
+    if config.disable_siri {
+        quit_siri();
     }
 
     let result = enable_keyboard_intercept();

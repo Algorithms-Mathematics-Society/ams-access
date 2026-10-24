@@ -1,7 +1,7 @@
 //! Kiosk presentation for the exam window: the app-wide presentation options
-//! that hide the Dock and menu bar and switch off process switching, force
-//! quit and session termination; the window's level and Spaces behaviour; and
-//! the focus observers that record whatever still gets past all of that.
+//! that hide the Dock and menu bar and switch off process switching and force
+//! quit; the window's level and Spaces behaviour; and the focus observers that
+//! record whatever still gets past all of that.
 //!
 //! All of it is process-local and dies with the app, so a crash needs no
 //! recovery; only the normal exit path has to put it back.
@@ -31,18 +31,23 @@ const DISABLE_SESSION_TERMINATION: usize = 1 << 7;
 const DISABLE_HIDE_APPLICATION: usize = 1 << 8;
 const FULL_SCREEN: usize = 1 << 10;
 
+// Session termination stays enabled: with it disabled the power key, Restart
+// and Shut Down did nothing, so a candidate stuck on an exam that could not
+// reach the server had only a hard power-off left, which skips the restore.
+// A restart or shutdown quits the app normally, and its exit path restores
+// every setting the lockdown changed.
 const KIOSK_OPTIONS: usize = HIDE_DOCK
     | HIDE_MENU_BAR
     | DISABLE_APPLE_MENU
     | DISABLE_PROCESS_SWITCHING
     | DISABLE_FORCE_QUIT
-    | DISABLE_SESSION_TERMINATION
     | DISABLE_HIDE_APPLICATION;
 // Fallbacks if AppKit rejects the full set on some release.
 const REDUCED_OPTIONS: usize =
     HIDE_DOCK | HIDE_MENU_BAR | DISABLE_PROCESS_SWITCHING | DISABLE_FORCE_QUIT;
 const MINIMAL_OPTIONS: usize = HIDE_DOCK | HIDE_MENU_BAR;
-// Bits only kiosk mode sets; nothing else in the app uses them.
+// Bits only kiosk mode sets; nothing else in the app uses them. Session
+// termination is still cleared so options saved by an older release go too.
 const KIOSK_ONLY: usize = DISABLE_APPLE_MENU
     | DISABLE_PROCESS_SWITCHING
     | DISABLE_FORCE_QUIT
@@ -170,9 +175,8 @@ fn set_presentation(app: *mut AnyObject, options: usize) -> bool {
 
 // ── Kiosk presentation ────────────────────────────────────────────────────────
 
-/// Hide the Dock and menu bar, disable process switching, force quit, session
-/// termination, Hide and the Apple menu, and pin the exam window above other
-/// windows on every Space.
+/// Hide the Dock and menu bar, disable process switching, force quit, Hide and
+/// the Apple menu, and pin the exam window above other windows on every Space.
 ///
 /// Partial success applies what it can and reports the rest as an error for
 /// the caller to record; the keyboard tap remains the backstop.
