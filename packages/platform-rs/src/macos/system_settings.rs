@@ -1,17 +1,23 @@
-//! Desktop preferences a lockdown changes, and their guaranteed restore.
+//! Desktop preferences a lockdown used to change, and their guaranteed restore.
 //!
-//! Every original value is read and published to disk before the first
-//! change — including "this key did not exist", so restore deletes it rather
-//! than writing a guessed default. The snapshot is removed only after every
-//! value has been written back AND read back. Whatever survives a crash, a
-//! force quit or a restart is restored by the watchdog process, the login
-//! agent, or the next launch, whichever runs first.
+//! A lockdown no longer writes any desktop preference. A saved preference
+//! survives a power cut, and with AMS Access blocked in Login Items nothing
+//! of ours runs at the next login to put it back. Shortcuts, gestures, hot
+//! corners, Siri and Writing Tools are blocked by the running app instead
+//! (keyboard tap, kiosk presentation, refocus, Siri watch, WebKit setting),
+//! all of which end with the process.
+//!
+//! The snapshot is still written, with no preferences in it: it binds the
+//! watchdog to this lockdown (the watchdog lifts the network rules after a
+//! crash) and records caffeinate. Snapshots from older releases may still
+//! hold changed preferences; those are written back and read back before the
+//! snapshot is removed, by the watchdog, an old login agent, the next launch
+//! or Restore system settings, whichever runs first.
 //!
 //! Absent-key reads are ordinary here, so every command uses `bounded_output`:
 //! a nonzero `defaults` exit must never be recorded as a readiness failure.
 
 use crate::process_runner::CommandDeadlineExt;
-use core_rs::exam::LockdownConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,58 +32,7 @@ const KILLALL: &str = "/usr/bin/killall";
 const ACTIVATE_SETTINGS: &str =
     "/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings";
 
-const TRACKPADS: [&str; 2] = [
-    "com.apple.AppleMultitouchTrackpad",
-    "com.apple.driver.AppleBluetoothMultitouch.trackpad",
-];
-const TRACKPAD_GESTURES: [&str; 7] = [
-    "TrackpadThreeFingerHorizSwipeGesture",
-    "TrackpadThreeFingerVertSwipeGesture",
-    "TrackpadFourFingerHorizSwipeGesture",
-    "TrackpadFourFingerVertSwipeGesture",
-    "TrackpadFourFingerPinchGesture",
-    "TrackpadFiveFingerPinchGesture",
-    "TrackpadTwoFingerFromRightEdgeSwipeGesture",
-];
-const MOUSE: &str = "com.apple.driver.AppleBluetoothMultitouch.mouse";
-const MOUSE_GESTURES: [&str; 2] = [
-    "MouseTwoFingerHorizSwipeGesture",
-    "MouseTwoFingerDoubleTapGesture",
-];
-const GLOBAL: &str = "NSGlobalDomain";
-// What System Settings itself writes for the trackpad, per host.
-const GLOBAL_TRACKPAD_GESTURES: [&str; 7] = [
-    "com.apple.trackpad.threeFingerHorizSwipeGesture",
-    "com.apple.trackpad.threeFingerVertSwipeGesture",
-    "com.apple.trackpad.fourFingerHorizSwipeGesture",
-    "com.apple.trackpad.fourFingerVertSwipeGesture",
-    "com.apple.trackpad.fourFingerPinchSwipeGesture",
-    "com.apple.trackpad.fiveFingerPinchSwipeGesture",
-    "com.apple.trackpad.twoFingerFromRightEdgeSwipeGesture",
-];
-const DOCK: &str = "com.apple.dock";
-const DOCK_GESTURES: [&str; 4] = [
-    "showMissionControlGestureEnabled",
-    "showAppExposeGestureEnabled",
-    "showDesktopGestureEnabled",
-    "showLaunchpadGestureEnabled",
-];
-const HOT_CORNERS: [&str; 4] = [
-    "wvous-tl-corner",
-    "wvous-tr-corner",
-    "wvous-bl-corner",
-    "wvous-br-corner",
-];
-const HOT_CORNER_MODIFIERS: [&str; 4] = [
-    "wvous-tl-modifier",
-    "wvous-tr-modifier",
-    "wvous-bl-modifier",
-    "wvous-br-modifier",
-];
-
-// Keyboard shortcuts (Spotlight, screenshots, Mission Control, Spaces) are
-// not changed here: the keyboard tap drops them before the system sees them.
-// Disabling them in com.apple.symbolichotkeys could not be undone reliably —
+// Keyboard shortcuts are not changed in com.apple.symbolichotkeys either:
 // re-importing a domain that never listed a shortcut leaves the hotkey server
 // holding it disabled until the next login.
 
@@ -156,189 +111,6 @@ enum Guard {
         pid: u32,
         created_at_ms: u64,
     },
-}
-
-/// One planned scalar change.
-///
-/// `key` is owned rather than `&'static str` because Apple Intelligence's
-/// opt-in key is a per-machine numeric id discovered at runtime, not a
-/// constant like every other key here.
-struct Change {
-    domain: &'static str,
-    key: String,
-    current_host: bool,
-    value: Value,
-    label: &'static str,
-}
-
-fn change(
-    domain: &'static str,
-    key: &str,
-    current_host: bool,
-    value: Value,
-    label: &'static str,
-) -> Change {
-    Change {
-        domain,
-        key: key.to_string(),
-        current_host,
-        value,
-        label,
-    }
-}
-
-/// The domain holding the Apple Intelligence opt-in.
-const CLOUD_OPT_IN: &str = "com.apple.CloudSubscriptionFeatures.optIn";
-
-/// The opt-in keys present on this machine.
-///
-/// The real toggle is keyed by a numeric patch id that differs per machine
-/// and per macOS build, so it cannot be a constant: the domain is listed and
-/// every all-digits key taken. `auto_opt_in` is stable and always included,
-/// since leaving it set re-enables the feature on its own.
-///
-/// An empty result means the domain does not exist, which is the normal
-/// state on a Mac that never had Apple Intelligence -- nothing to turn off.
-fn apple_intelligence_keys() -> Vec<String> {
-    let mut keys = vec!["auto_opt_in".to_string()];
-    let Ok(output) = defaults(false).args(["read", CLOUD_OPT_IN]).output() else {
-        return keys;
-    };
-    if !output.status.success() {
-        return keys;
-    }
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        // Lines look like `    545129924 = 1;`
-        let Some((left, _)) = line.split_once('=') else {
-            continue;
-        };
-        let token = left.trim().trim_matches('"').trim();
-        if !token.is_empty() && token.chars().all(|c| c.is_ascii_digit()) {
-            keys.push(token.to_string());
-        }
-    }
-    keys
-}
-
-/// What this contest's config asks to change, and which services must reload.
-fn plan(config: &LockdownConfig) -> (Vec<Change>, Reload) {
-    let mut changes = Vec::new();
-    let mut reload = Reload::default();
-    if config.disable_gestures {
-        for domain in TRACKPADS {
-            for key in TRACKPAD_GESTURES {
-                changes.push(change(
-                    domain,
-                    key,
-                    false,
-                    Value::Integer(0),
-                    "Trackpad gestures",
-                ));
-            }
-        }
-        for key in MOUSE_GESTURES {
-            changes.push(change(
-                MOUSE,
-                key,
-                false,
-                Value::Integer(0),
-                "Magic Mouse gestures",
-            ));
-        }
-        for key in GLOBAL_TRACKPAD_GESTURES {
-            changes.push(change(
-                GLOBAL,
-                key,
-                true,
-                Value::Integer(0),
-                "Trackpad gestures",
-            ));
-        }
-        for key in [
-            "AppleEnableSwipeNavigateWithScrolls",
-            "AppleEnableMouseSwipeNavigateWithScrolls",
-        ] {
-            changes.push(change(
-                GLOBAL,
-                key,
-                false,
-                Value::Boolean(false),
-                "Swipe between pages",
-            ));
-        }
-        for key in DOCK_GESTURES {
-            changes.push(change(
-                DOCK,
-                key,
-                false,
-                Value::Boolean(false),
-                "Dock gestures",
-            ));
-        }
-        reload.dock = true;
-    }
-    if config.disable_mission_control {
-        changes.push(change(
-            DOCK,
-            "mcx-expose-disabled",
-            false,
-            Value::Boolean(true),
-            "Mission Control",
-        ));
-        reload.dock = true;
-    }
-    if config.disable_hot_corners {
-        for key in HOT_CORNERS {
-            changes.push(change(DOCK, key, false, Value::Integer(1), "Hot corners"));
-        }
-        for key in HOT_CORNER_MODIFIERS {
-            changes.push(change(DOCK, key, false, Value::Integer(0), "Hot corners"));
-        }
-        reload.dock = true;
-    }
-    if config.disable_siri {
-        changes.push(change(
-            "com.apple.assistant.support",
-            "Assistant Enabled",
-            false,
-            Value::Boolean(false),
-            "Siri",
-        ));
-        changes.push(change(
-            "com.apple.Siri",
-            "VoiceTriggerUserEnabled",
-            false,
-            Value::Boolean(false),
-            "Siri",
-        ));
-        reload.siri = true;
-    }
-    if config.disable_apple_intelligence {
-        // Writing Tools rewrite and proofread in any standard text field and
-        // the Siri handoff answers from ChatGPT; neither is covered by
-        // turning off Siri's voice trigger, which is what `disable_siri`
-        // does. Restored from the snapshot on exit like everything else, so
-        // a candidate who had it on gets it back.
-        for key in apple_intelligence_keys() {
-            changes.push(change(
-                CLOUD_OPT_IN,
-                &key,
-                false,
-                Value::Boolean(false),
-                "Apple Intelligence",
-            ));
-        }
-    }
-    if config.block_function_keys {
-        changes.push(change(
-            "com.apple.HIToolbox",
-            "AppleFnUsageType",
-            false,
-            Value::Integer(0),
-            "Globe (fn) key action",
-        ));
-    }
-    (changes, reload)
 }
 
 // ── defaults(1) wrappers ─────────────────────────────────────────────────────
@@ -456,18 +228,13 @@ fn value_matches(domain: &str, key: &str, current_host: bool, expected: Option<&
 
 /// Make written preferences take effect. cfprefsd first, so every reader —
 /// including the restarted Dock — starts from what is on disk.
-fn reload_services(reload: &Reload, applying: bool) {
+fn reload_services(reload: &Reload) {
     let _ = Command::new(KILLALL).arg("cfprefsd").bounded_output();
     if reload.dock {
         // Restarting the Dock alone left three-finger swipes off after the
         // exam: the values on disk were back, the running session was not.
         let _ = Command::new(ACTIVATE_SETTINGS).arg("-u").bounded_output();
         let _ = Command::new(KILLALL).arg("Dock").bounded_output();
-    }
-    // Siri relaunches on demand, so only a running one needs to be stopped
-    // for the disabled setting to hold.
-    if reload.siri && applying {
-        let _ = Command::new(KILLALL).arg("Siri").bounded_output();
     }
 }
 
@@ -640,57 +407,8 @@ pub(super) fn owner_alive_elsewhere() -> bool {
 
 // ── Login agent ──────────────────────────────────────────────────────────────
 
-fn xml_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// Restores at the next login if the Mac restarts or loses power mid-exam,
-/// even if the student never opens the app again. Best effort: the watchdog
-/// and the on-launch recovery cover every other path.
-fn install_login_agent() {
-    let (Ok(exe), Some(path)) = (std::env::current_exe(), login_agent_path()) else {
-        return;
-    };
-    let exe = exe.to_string_lossy().into_owned();
-    // A translocated app runs from a random path that is gone after reboot.
-    if exe.contains("/AppTranslocation/") {
-        return;
-    }
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>{LOGIN_AGENT_LABEL}</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>{}</string>
-		<string>{LOGIN_RESTORE_FLAG}</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>LimitLoadToSessionType</key>
-	<string>Aqua</string>
-</dict>
-</plist>
-"#,
-        xml_escape(&exe)
-    );
-    // Rewriting an identical agent makes macOS announce a new background
-    // item on every exam.
-    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == plist) {
-        return;
-    }
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&path, plist);
-}
-
+/// Agents installed by older releases restore their snapshot at login and
+/// remove themselves; this removes one once its snapshot is gone.
 pub(super) fn remove_login_agent() {
     if let Some(path) = login_agent_path() {
         let _ = std::fs::remove_file(path);
@@ -724,15 +442,13 @@ fn fix_command(pref: &SavedPref) -> String {
     format!("{restore}; killall cfprefsd; killall Dock")
 }
 
-pub(super) fn engage(
-    config: &LockdownConfig,
-    caffeinate_pid: Option<u32>,
-) -> Result<Vec<String>, String> {
+pub(super) fn engage(caffeinate_pid: Option<u32>) -> Result<(), String> {
     // Another running instance owns the snapshot: that is an exam in
     // progress, and restoring it would unlock that exam.
     if owner_alive_elsewhere() {
         return Err("Another AMS Access window is already running an exam".into());
     }
+    // Settings an older release changed are put back before a new exam.
     if pending() {
         if let RestoreOutcome::Failed(items) = restore() {
             return Err(format!(
@@ -750,67 +466,18 @@ pub(super) fn engage(
     if pending() {
         return Err("Previous desktop settings still need restoration".into());
     }
-
-    let (changes, reload) = plan(config);
-    let mut prefs: Vec<SavedPref> = Vec::new();
-    let mut skipped = Vec::new();
-    let mut planned: Vec<&Change> = Vec::new();
-    for item in &changes {
-        // Each key is snapshotted once, even when two groups touch it.
-        if prefs.iter().any(|pref| {
-            pref.domain == item.domain
-                && pref.key == item.key
-                && pref.current_host == item.current_host
-        }) {
-            continue;
-        }
-        match read_value(item.domain, &item.key, item.current_host) {
-            Ok(original) => {
-                prefs.push(SavedPref {
-                    domain: item.domain.to_string(),
-                    key: item.key.clone(),
-                    current_host: item.current_host,
-                    label: item.label.to_string(),
-                    original,
-                });
-                planned.push(item);
-            }
-            // No faithful original, so this key is never touched.
-            Err(_) => skipped.push(item.label.to_string()),
-        }
-    }
-
     let snapshot = Snapshot {
         version: 1,
         active: true,
         owner_pid: std::process::id(),
         created_at_ms: now_ms(),
-        prefs,
-        reload,
+        prefs: Vec::new(),
+        reload: Reload::default(),
         caffeinate_pid,
         unrestored: Vec::new(),
     };
-    // Nothing has changed yet: a failure here leaves the desktop untouched.
     store(&path, &snapshot)
-        .map_err(|error| format!("Could not preserve original desktop settings: {error}"))?;
-    install_login_agent();
-
-    let mut unapplied = skipped;
-    for item in &planned {
-        if !write_value(item.domain, &item.key, item.current_host, &item.value) {
-            unapplied.push(item.label.to_string());
-        }
-    }
-    reload_services(&snapshot.reload, true);
-    for item in &planned {
-        if !value_matches(item.domain, &item.key, item.current_host, Some(&item.value))
-            && !unapplied.iter().any(|label| label == item.label)
-        {
-            unapplied.push(item.label.to_string());
-        }
-    }
-    unapplied.dedup();
-    Ok(unapplied)
+        .map_err(|error| format!("Could not record the lockdown for crash recovery: {error}"))
 }
 
 // ── Restore ──────────────────────────────────────────────────────────────────
@@ -883,7 +550,10 @@ fn restore_guarded(guard: Guard) -> RestoreOutcome {
     for pref in snapshot.prefs.iter().rev() {
         let _ = restore_one(pref);
     }
-    reload_services(&snapshot.reload, false);
+    // A current snapshot changed nothing, so there is nothing to reload.
+    if !snapshot.prefs.is_empty() {
+        reload_services(&snapshot.reload);
+    }
     let mut failed: Vec<&SavedPref> = snapshot
         .prefs
         .iter()
@@ -894,7 +564,7 @@ fn restore_guarded(guard: Guard) -> RestoreOutcome {
         for pref in &failed {
             let _ = restore_one(pref);
         }
-        reload_services(&snapshot.reload, false);
+        reload_services(&snapshot.reload);
         failed.retain(|pref| !verify_one(pref));
     }
 
