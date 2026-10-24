@@ -46,5 +46,13 @@ webkit2gtk = { version = "2.0", features = ["v2_22"] }
 webview2-com = "0.38"
 windows-core = "0.61"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The exam window's WebKit configuration (Writing Tools off). Same versions
+# tauri already pins, so this adds no new transitive deps.
+objc2 = "0.6"
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "WKWebViewConfiguration",
+] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

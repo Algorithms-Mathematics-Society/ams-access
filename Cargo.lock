@@ -54,6 +54,8 @@ dependencies = [
  "hex",
  "httpdate",
  "image",
+ "objc2",
+ "objc2-web-kit",
  "platform-rs",
  "reqwest",
  "serde",

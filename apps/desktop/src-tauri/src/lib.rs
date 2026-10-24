@@ -3587,6 +3587,36 @@ fn finish_shutdown() {
     });
 }
 
+/// WebKit's own right-click menu offers Writing Tools (Proofread, Rewrite),
+/// Look Up, Translate, Search with Google, Share and Services: AI help, a
+/// browser and other apps one click away from the exam. Only the native menu
+/// is suppressed; in-page menus still receive the event.
+#[cfg(target_os = "macos")]
+const BLOCK_NATIVE_CONTEXT_MENU: &str =
+    "document.addEventListener('contextmenu', (event) => event.preventDefault(), true);";
+
+/// The exam window's WebKit configuration, with Apple Intelligence Writing
+/// Tools off. That also removes the floating Writing Tools button on selected
+/// text, which no page script can reach. Restoring the system opt-in (see
+/// `disable_apple_intelligence`) does not touch this: it is ours alone.
+#[cfg(target_os = "macos")]
+fn macos_webview_configuration(
+) -> Result<objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>, std::io::Error> {
+    use objc2::{msg_send, sel, MainThreadMarker};
+    // NSWritingToolsBehaviorNone.
+    const WRITING_TOOLS_NONE: isize = -1;
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| std::io::Error::other("Window setup is off the main thread"))?;
+    let config = unsafe { objc2_web_kit::WKWebViewConfiguration::new(mtm) };
+    // macOS 15 and later; earlier releases have no Writing Tools to turn off.
+    let supported: bool =
+        unsafe { msg_send![&*config, respondsToSelector: sel!(setWritingToolsBehavior:)] };
+    if supported {
+        let _: () = unsafe { msg_send![&*config, setWritingToolsBehavior: WRITING_TOOLS_NONE] };
+    }
+    Ok(config)
+}
+
 /// The helper processes that share this binary: the macOS lockdown watchdog
 /// (restores the desktop if the app dies) and the login-time restore agent.
 /// Returns the exit code when this process is one of them; `None` means start
@@ -3829,6 +3859,25 @@ pub fn run() {
             // Organizer event stream: tail the violation/proctoring spool and
             // upload once the frontend arms it with a session id.
             spawn_event_sync_task(app.handle().clone());
+
+            // tauri.macos.conf.json declares the window with `create: false`:
+            // Writing Tools can only be switched off in the WebKit
+            // configuration, which must exist before the webview does.
+            #[cfg(target_os = "macos")]
+            {
+                let config = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|window| window.label == "main")
+                    .cloned()
+                    .ok_or_else(|| std::io::Error::other("Main window configuration missing"))?;
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                    .with_webview_configuration(macos_webview_configuration()?)
+                    .initialization_script(BLOCK_NATIVE_CONTEXT_MENU)
+                    .build()?;
+            }
 
             #[cfg(target_os = "linux")]
             {
