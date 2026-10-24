@@ -1905,6 +1905,31 @@ pub fn set_exam_foreground(exam_hwnd: isize) {
 }
 
 #[cfg(test)]
+mod hidden_command_tests {
+    use super::{hidden_command, CommandDeadlineExt};
+
+    #[test]
+    fn console_helpers_have_no_console_window() {
+        let output = hidden_command("powershell.exe")
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r#"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class ConsoleProbe { [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); }'; [ConsoleProbe]::GetConsoleWindow().ToInt64()"#,
+            ])
+            .bounded_output_with_timeout(std::time::Duration::from_secs(30))
+            .expect("console probe must finish");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
+}
+
+#[cfg(test)]
 mod display_tests {
     use super::resolve_monitor_count;
 
@@ -1998,7 +2023,7 @@ mod firewall_inventory_query_tests {
 
 /// The SSID currently joined, if any.
 fn current_ssid() -> Option<String> {
-    let output = std::process::Command::new("netsh")
+    let output = hidden_command("netsh")
         .args(["wlan", "show", "interfaces"])
         .output()
         .ok()?;
@@ -2017,7 +2042,7 @@ fn current_ssid() -> Option<String> {
 
 /// What wireless networks this machine can see.
 pub fn wifi_scan() -> crate::WifiScan {
-    let Ok(output) = std::process::Command::new("netsh")
+    let Ok(output) = hidden_command("netsh")
         .args(["wlan", "show", "networks", "mode=bssid"])
         .output()
     else {
@@ -2048,7 +2073,7 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
         let xml = profile_xml(ssid, secret);
         let path = std::env::temp_dir().join(format!("ams-wifi-{}.xml", std::process::id()));
         std::fs::write(&path, xml).map_err(|e| format!("Could not stage the profile: {e}"))?;
-        let added = std::process::Command::new("netsh")
+        let added = hidden_command("netsh")
             .args(["wlan", "add", "profile"])
             .arg(format!("filename={}", path.display()))
             .arg("user=current")
@@ -2066,7 +2091,7 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
             Err(error) => return Err(format!("Could not run netsh: {error}")),
         }
     }
-    match std::process::Command::new("netsh")
+    match hidden_command("netsh")
         .args(["wlan", "connect"])
         .arg(format!("name={ssid}"))
         .arg(format!("ssid={ssid}"))

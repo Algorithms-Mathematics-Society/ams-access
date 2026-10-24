@@ -1,3 +1,16 @@
+# AMS Access 4.6.1
+
+## Windows focus warning hotfix
+
+- Run Wi-Fi scan and connection helpers without creating console windows that can steal focus and incorrectly trigger the left-the-exam-window warning.
+- Preserve Wi-Fi behavior and focus-loss detection when another application takes foreground.
+
+## Validation scope
+
+Adds a Windows console-window regression check and retains the existing kiosk decision tests. Native installer validation runs in release CI; physical-device reproduction has not been repeated locally.
+
+---
+
 # AMS Access 4.6.0
 
 ## Contest submission and recovery
