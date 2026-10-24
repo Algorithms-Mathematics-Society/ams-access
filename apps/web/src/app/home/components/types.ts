@@ -150,7 +150,13 @@ export type ActiveSession = {
   resume_request_review_note?: string | null;
 };
 
-export type ResumeVerificationState = "none" | "unverified" | "checking" | "verified" | "invalid";
+export type ResumeVerificationState =
+  | "none"
+  | "unverified"
+  | "checking"
+  | "verified"
+  | "retryable"
+  | "invalid";
 
 export type ContestantReadinessStatus =
   | "checking"

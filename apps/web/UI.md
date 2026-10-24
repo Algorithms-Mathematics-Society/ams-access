@@ -275,3 +275,13 @@ malformed data does not prevent contest entry. Draft content is never requested.
 The snapshot stays fixed until the next contest load. Timed-contest publication
 is frozen at contest start on the server. Native overlay/lockdown acceptance still
 requires testing in a packaged build; browser checks do not certify OS behavior.
+
+Settings shows the installed AMS Access version above its section tabs, using native
+app metadata rather than the latest server release. Browser previews or unavailable
+native metadata show “Version unavailable.”
+
+Submission retries keep their key only for the exact session, problem, language,
+and source snapshot. Finish waits for an outstanding solution request to settle,
+not for judging. Unconfirmed finishes release device controls while retaining
+session recovery and offering Retry finish. Home keeps recovery data through
+transient verification failures and offers Retry verification.

@@ -16,6 +16,7 @@ import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import {
   type ContestSummary,
+  ProctorApiError,
   consumeResume,
   getSession,
   latestResumeRequest,
@@ -647,18 +648,17 @@ export default function HomePage() {
       let live;
       try {
         live = await getSession(session.id);
-      } catch {
-        // A 404 is the normal answer for someone else's session as well as a
-        // deleted one — the API deliberately does not distinguish them.
-        clearStoredActiveSession("Stored active session could not be verified.");
-        appendSecurityEvent("SESSION: Active session validation failed", "error");
-        return null;
+      } catch (error) {
+        // Only an authoritative not-found response invalidates recovery. A
+        // timeout, outage or expired sign-in says nothing about this session.
+        if (error instanceof ProctorApiError && error.status === 404) {
+          clearStoredActiveSession("Stored active session was not found.");
+          appendSecurityEvent("SESSION: Active session validation failed", "error");
+          return null;
+        }
+        throw error;
       }
 
-      // The stored resume request, if any, is fetched separately now: the
-      // session response is about the session, and folding a review decision
-      // into it made two different lifecycles share one payload.
-      const pending = await latestResumeRequest(session.id).catch(() => null);
       const data: Partial<ActiveSession> & {
         contest_id?: string;
         status?: string;
@@ -675,15 +675,6 @@ export default function HomePage() {
         contest_id: live.contest_uid,
         status: live.status,
         ended_at: live.ended_at,
-        resume_request_status: pending?.status,
-        resume_request: pending
-          ? {
-              id: pending.uid,
-              status: pending.status,
-              requested_at: pending.created_at,
-              review_note: pending.review_note,
-            }
-          : null,
       };
       const contestId = data.contest_id;
       if (!contestId || (session.contest_id && contestId !== session.contest_id)) {
@@ -716,6 +707,19 @@ export default function HomePage() {
         }
       }
 
+      // Check the authoritative session first: an unavailable approval
+      // endpoint must not keep a completed or mismatched session recoverable.
+      const pending = await latestResumeRequest(session.id);
+      data.resume_request_status = pending?.status;
+      data.resume_request = pending
+        ? {
+            id: pending.uid,
+            status: pending.status,
+            requested_at: pending.created_at,
+            review_note: pending.review_note,
+          }
+        : null;
+
       const verifiedSession: ActiveSession = {
         ...session,
         ...data,
@@ -745,9 +749,19 @@ export default function HomePage() {
       setResumeVerification("verified");
       appendSecurityEvent("SESSION: Active session verified for contest " + contestId);
       return withResume;
-    } catch {
-      clearStoredActiveSession("Stored active session could not be verified.");
-      appendSecurityEvent("SESSION: Active session validation failed");
+    } catch (error) {
+      // Retain both the saved record and its approval state until the server
+      // confirms them. Retry is explicit, so an outage cannot cause a loop.
+      setResumeVerification("retryable");
+      setResumeStatus(
+        error instanceof ProctorApiError && error.status === 401
+          ? "Your sign-in could not be verified. Saved session retained. Retry verification; if it still fails, ask an invigilator for help rejoining."
+          : "Your saved session could not be verified. It is still saved on this device. Check your connection and retry verification."
+      );
+      appendSecurityEvent(
+        "SESSION: Active session verification interrupted; recovery retained",
+        "warn"
+      );
       return null;
     } finally {
       if (mode === "resume") setResumeBusy(false);
@@ -802,14 +816,19 @@ export default function HomePage() {
   }, [activeSession, resumeVerification, identityHydrated]);
 
   useEffect(() => {
-    if (!activeSession?.id) return;
+    if (!activeSession?.id || resumeVerification !== "verified") return;
     const requestStatus = String(activeSession.resume_request_status ?? "").toUpperCase();
     if (requestStatus !== "PENDING" && requestStatus !== "APPROVED") return;
     return startResumePolling((isCancelled) => {
       const current = activeSessionRef.current;
       if (current) return refreshResumeRequestRef.current(current, isCancelled);
     });
-  }, [activeSession?.id, activeSession?.resume_request_id, activeSession?.resume_request_status]);
+  }, [
+    activeSession?.id,
+    activeSession?.resume_request_id,
+    activeSession?.resume_request_status,
+    resumeVerification,
+  ]);
 
   async function handleResumeActiveSession() {
     setResumeStatus(null);
@@ -896,8 +915,9 @@ export default function HomePage() {
   // Match the existing resume guards; keep position stable while the action runs.
   const prioritizeRecovery = Boolean(
     activeSession &&
-    resumeVerification === "verified" &&
-    String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING"
+    (resumeVerification === "retryable" ||
+      (resumeVerification === "verified" &&
+        String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING"))
   );
   const contestsPanel = (
     <ContestsPanel

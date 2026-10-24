@@ -463,11 +463,16 @@ export default function ContestPageClient() {
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
   const submitInFlightRef = useRef(false);
-  // Survives a failed attempt so the retry is recognised as the same click.
-  const submitKeyRef = useRef<string | null>(null);
-  // Guards the exit/teardown path so a manual "Submit & Exit" and the timer-driven
-  // expiry can't both run (double unlock / double /submit). Never reset: once exit
-  // begins the candidate is leaving.
+  // Retain an unacknowledged request only for retries of its exact payload.
+  const submitKeyRef = useRef<{
+    sessionId: string;
+    problemLabel: string;
+    language: string;
+    source: string;
+    idempotencyKey: string;
+  } | null>(null);
+  // Guards finish/teardown against duplicate clicks and submissions during exit.
+  // Failed acknowledgements reset it so the candidate can explicitly retry.
   const exitInFlightRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Non-blocking warning surfaced after the candidate has been unlocked/exited but
@@ -1849,7 +1854,7 @@ export default function ContestPageClient() {
     }
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
-    if (submitInFlightRef.current) return;
+    if (submitInFlightRef.current || exitInFlightRef.current) return;
     submitInFlightRef.current = true;
 
     setIsSubmitting(true);
@@ -1861,18 +1866,31 @@ export default function ContestPageClient() {
         source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
         language: toLanguageId(selectedLanguage),
       };
-      // One key per click, held across retries of that click. The in-flight
-      // guard above stops a double-click; this stops the other duplicate --
-      // a submit the server accepted and then could not acknowledge before
-      // the client gave up, which the candidate reasonably sends again.
-      if (!submitKeyRef.current) submitKeyRef.current = newIdempotencyKey();
+      const previousRequest = submitKeyRef.current;
+      if (
+        !previousRequest ||
+        previousRequest.sessionId !== sessionId ||
+        previousRequest.problemLabel !== qId ||
+        previousRequest.language !== submittedSource.language ||
+        previousRequest.source !== submittedSource.source
+      ) {
+        submitKeyRef.current = {
+          sessionId,
+          problemLabel: qId,
+          ...submittedSource,
+          idempotencyKey: newIdempotencyKey(),
+        };
+      }
+      // A lost response must not make changed code (or another problem) reuse
+      // the original attempt. Send the same snapshot used to select the key.
+      const request = submitKeyRef.current!;
       let created;
       try {
-        created = await submitSolution(sessionId, {
-          problemLabel: qId,
-          language: toLanguageId(selectedLanguage),
-          source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-          idempotencyKey: submitKeyRef.current,
+        created = await submitSolution(request.sessionId, {
+          problemLabel: request.problemLabel,
+          language: request.language,
+          source: request.source,
+          idempotencyKey: request.idempotencyKey,
         });
       } catch (caught) {
         if (caught instanceof ProctorApiError) {
@@ -1889,13 +1907,16 @@ export default function ContestPageClient() {
       // attempt and must not be deduplicated against this.
       submitKeyRef.current = null;
       setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
-      await fetchSubmissions();
     } catch (err: any) {
       setSubmissionError(err.message || "An unexpected error occurred.");
+      return;
     } finally {
       setIsSubmitting(false);
       submitInFlightRef.current = false;
     }
+    // Acceptance is complete; history refresh must not block Finish or hold
+    // the POST guard, and its completion must not clear a newer request.
+    await fetchSubmissions();
   }
 
   // Exit teardown: release every OS-level lock and stop proctoring. This MUST run
@@ -2045,6 +2066,13 @@ export default function ContestPageClient() {
   // Retry is bounded; teardown still runs on failure so nobody is trapped.
   async function handleSubmitConfirmed() {
     if (exitInFlightRef.current) return;
+    // Check the ref as well as disabling the button: React may not have rendered
+    // the submitting state yet when a second action arrives. Judging can continue
+    // after acceptance; only the outstanding submission request blocks finish.
+    if (submitInFlightRef.current) {
+      setSubmitError("Wait for your solution submission to finish before exiting.");
+      return;
+    }
     exitInFlightRef.current = true;
     setSubmitConfirm(false);
     setShowSupportModal(false);
@@ -2077,8 +2105,11 @@ export default function ContestPageClient() {
         "The latest draft could not be saved on this device. Previously acknowledged submissions are separate from draft saves."
       );
     try {
-      await runExitTeardown();
+      await runExitTeardown(!receipt.confirmed);
     } finally {
+      // Keep the workspace locked, but allow an explicit bounded finish retry.
+      // An unconfirmed request must retain Home's Resume recovery record.
+      if (!receipt.confirmed) exitInFlightRef.current = false;
       setTimeUpState(receipt.confirmed ? "submitted" : "error");
     }
   }
@@ -3839,6 +3870,7 @@ export default function ContestPageClient() {
           submitError={submitError}
           setSubmitError={setSubmitError}
           handleSubmitConfirmed={handleSubmitConfirmed}
+          submissionPending={isSubmitting}
           timeUpState={timeUpState}
           finishHistoryStatus={submissionHistoryStatus}
           finishQuestions={questions.map((q) => ({
@@ -4283,7 +4315,7 @@ export default function ContestPageClient() {
               <Banner
                 status="warning"
                 title="Server acknowledgement missing"
-                description="The connection failed or the server did not acknowledge the finish request. This screen will not keep retrying after you leave."
+                description="The connection failed or the server did not acknowledge the finish request. You can retry now. Session recovery is kept if you return home; this screen will not keep retrying after you leave."
               />
               <Text color="secondary">
                 {finalDraftSaved
@@ -4315,6 +4347,9 @@ export default function ContestPageClient() {
           )}
           {timeUpState !== "submitting" && (
             <HStack gap={3} wrap="wrap">
+              {timeUpState === "error" && (
+                <Button label="Retry finish" variant="primary" onClick={handleSubmitConfirmed} />
+              )}
               <Button
                 label="Back to home"
                 variant="secondary"

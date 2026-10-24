@@ -31,17 +31,21 @@ export function SessionActionsPanel({
   const [helpOpen, setHelpOpen] = useState(false);
   const resumeFailed =
     !!resumeStatus && /rejected|expired|failed|not found|mismatch|could not/i.test(resumeStatus);
+  const resumeRetryable = resumeVerification === "retryable";
   const resumeVerified = resumeVerification === "verified";
   const resumeChecking = resumeVerification === "checking" || resumeVerification === "unverified";
   const resumeRequestPending =
     String(activeSession?.resume_request_status ?? "").toUpperCase() === "PENDING";
-  const resumeAvailable = Boolean(activeSession && resumeVerified);
-  const resumeButtonDisabled = resumeBusy || resumeRequestPending || !resumeAvailable;
-  const resumeButtonLabel = resumeRequestPending
-    ? "Awaiting Approval"
-    : resumeBusy || resumeChecking
-      ? "Validating..."
-      : "Resume Active Session";
+  const resumeAvailable = Boolean(activeSession && (resumeVerified || resumeRetryable));
+  const resumeButtonDisabled =
+    resumeBusy || resumeChecking || (resumeRequestPending && !resumeRetryable) || !resumeAvailable;
+  const resumeButtonLabel = resumeRetryable
+    ? "Retry verification"
+    : resumeRequestPending
+      ? "Awaiting Approval"
+      : resumeBusy || resumeChecking
+        ? "Validating..."
+        : "Resume Active Session";
 
   const hasQuietEmptyState =
     !activeSession && !resumeBusy && !resumeChecking && !sessionsError && !resumeStatus;
@@ -136,24 +140,27 @@ export function SessionActionsPanel({
           {resumeFailed && <Button label="Get help rejoining" onClick={() => setHelpOpen(true)} />}
         </HStack>
       </HStack>
-      {resumeStatus && (
-        /verified/i.test(resumeStatus) &&
+      {resumeStatus &&
+        (/verified/i.test(resumeStatus) &&
         !/failed|not found|expired|mismatch|could not/i.test(resumeStatus) ? (
-          <Text type="supporting" role="status">{resumeStatus}</Text>
-        ) : <InlineAlert
-          theme={theme}
-          tone={
-            /verified/i.test(resumeStatus) &&
-            !/failed|not found|expired|mismatch|could not/i.test(resumeStatus)
-              ? "success"
-              : /validat/i.test(resumeStatus)
-                ? "accent"
-                : "danger"
-          }
-        >
-          {resumeStatus}
-        </InlineAlert>
-      )}
+          <Text type="supporting" role="status">
+            {resumeStatus}
+          </Text>
+        ) : (
+          <InlineAlert
+            theme={theme}
+            tone={
+              /verified/i.test(resumeStatus) &&
+              !/failed|not found|expired|mismatch|could not/i.test(resumeStatus)
+                ? "success"
+                : /validat/i.test(resumeStatus)
+                  ? "accent"
+                  : "danger"
+            }
+          >
+            {resumeStatus}
+          </InlineAlert>
+        ))}
 
       <HelpRequestModal
         open={helpOpen}

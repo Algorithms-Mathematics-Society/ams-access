@@ -22,6 +22,7 @@ import { createMediaRequestOwner } from "./media-availability";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { startCameraPreview } from "@/lib/camera-readiness";
 import { useCameraDevices } from "@/lib/use-camera-devices";
+import { useAppVersion } from "@/lib/use-app-version";
 import { watchCameraFrameProgress } from "@/lib/camera-frame-progress";
 
 const settingsTabs = [
@@ -48,6 +49,7 @@ export const SettingsPanel = memo(function SettingsPanel({
   telemetry: TelemetryQueryState;
   refreshTelemetry: (force?: boolean, source?: string) => Promise<void>;
 }) {
+  const { version } = useAppVersion();
   const [activeTab, setActiveTab] = useState<"hardware" | "permissions" | "security" | "about">(
     "hardware"
   );
@@ -346,6 +348,9 @@ export const SettingsPanel = memo(function SettingsPanel({
 
   return (
     <VStack gap={6} data-testid="settings-panel" style={{ minWidth: 0 }}>
+      <Text type="supporting">
+        AMS Access · {version ? `Version ${version}` : "Version unavailable"}
+      </Text>
       <TabList
         role="tablist"
         aria-label="Settings sections"

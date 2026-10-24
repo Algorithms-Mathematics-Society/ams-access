@@ -31,6 +31,7 @@ export interface TopBarProps {
   submitError: string | null;
   setSubmitError: Dispatch<SetStateAction<string | null>>;
   handleSubmitConfirmed: () => void | Promise<void>;
+  submissionPending?: boolean;
   timeUpState: "idle" | "submitting" | "submitted" | "error";
   finishQuestions: FinishQuestionReview[];
   finishHistoryStatus?: "loading" | "available" | "unavailable" | "stale";
@@ -55,6 +56,7 @@ export function TopBar({
   submitError,
   setSubmitError,
   handleSubmitConfirmed,
+  submissionPending = false,
   timeUpState,
   finishQuestions,
   finishHistoryStatus = "available",
@@ -321,6 +323,11 @@ export function TopBar({
                 attempts, not necessarily your current code.
               </Text>
             </VStack>
+            {submissionPending && (
+              <Text role="status" color="secondary">
+                Waiting for your solution submission to finish before you can exit.
+              </Text>
+            )}
             {submitError && (
               <Text role="alert" style={{ color: "var(--color-text-red)" }}>
                 {submitError}
@@ -337,6 +344,7 @@ export function TopBar({
                 label="Finish and exit"
                 variant="destructive"
                 onClick={handleSubmitConfirmed}
+                isDisabled={submissionPending}
               />
             </HStack>
           </ContestOverlay>
