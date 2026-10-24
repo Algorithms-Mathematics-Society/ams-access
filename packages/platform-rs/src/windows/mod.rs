@@ -521,6 +521,12 @@ pub fn battery_status() -> Option<crate::BatteryStatus> {
     (status.BatteryLifePercent <= 100).then_some(crate::BatteryStatus {
         percentage: status.BatteryLifePercent,
         charging: status.ACLineStatus == 1,
+        // 0 offline, 1 online, 255 unknown.
+        plugged_in: match status.ACLineStatus {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        },
     })
 }
 

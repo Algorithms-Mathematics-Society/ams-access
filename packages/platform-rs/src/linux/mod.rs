@@ -30,6 +30,11 @@ pub fn battery_status() -> Option<crate::BatteryStatus> {
         return Some(crate::BatteryStatus {
             percentage,
             charging: matches!(state.trim(), "Charging" | "Full"),
+            plugged_in: match state.trim() {
+                "Charging" | "Full" | "Not charging" => Some(true),
+                "Discharging" => Some(false),
+                _ => None,
+            },
         });
     }
     None

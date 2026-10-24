@@ -7,6 +7,10 @@ pub mod process_runner;
 pub struct BatteryStatus {
     pub percentage: u8,
     pub charging: bool,
+    /// On external power, whether or not the battery is taking charge (a full
+    /// battery on AC is plugged in but not charging). None where the OS cannot
+    /// say; the UI then falls back to `charging`.
+    pub plugged_in: Option<bool>,
 }
 
 /// One wireless network the machine can see.
