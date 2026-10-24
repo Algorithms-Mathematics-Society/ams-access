@@ -102,6 +102,7 @@ import { nextPresenceEvidenceDelay, presenceUnavailableEvent } from "./presence-
 import { TopBar } from "./components/TopBar";
 import { WifiControl } from "./components/WifiControl";
 import { QuestionRail } from "./components/QuestionRail";
+import { ReferencePanel } from "./components/ReferencePanel";
 import { ProblemPane } from "./components/ProblemPane";
 import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -548,6 +549,10 @@ export default function ContestPageClient() {
   >([]);
   const supportInFlightRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // The offline C++ reference, shown over the workspace rather than in place
+  // of it: swapping it in would unmount the editor, and an unmounted
+  // CodeMirror is unsaved code waiting to be lost.
+  const [referenceOpen, setReferenceOpen] = useState(false);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
   const [cameraCollapsed, setCameraCollapsed] = useState(true);
@@ -3966,6 +3971,8 @@ export default function ContestPageClient() {
             cameraPreviewAvailable={Boolean(cameraStream ?? cameraError)}
             cameraPreviewVisible={!cameraCollapsed && Boolean(cameraStream ?? cameraError)}
             onToggleCameraPreview={() => setCameraCollapsed((collapsed) => !collapsed)}
+            referenceOpen={referenceOpen}
+            onToggleReference={() => setReferenceOpen((open) => !open)}
           />
           <ProblemPane
             markedQuestionIds={markedQuestionIds}
@@ -4148,6 +4155,21 @@ export default function ContestPageClient() {
             micEnabled={micEnabled}
             handleToggleMedia={handleToggleMedia}
           />
+          {referenceOpen && (
+            <VStack
+              gap={0}
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 6,
+                background: "var(--color-background-body)",
+                minHeight: 0,
+                minWidth: 0,
+              }}
+            >
+              <ReferencePanel onClose={() => setReferenceOpen(false)} />
+            </VStack>
+          )}
         </HStack>
         <FooterTrustStrip
           proctoringOk={proctoringOk}

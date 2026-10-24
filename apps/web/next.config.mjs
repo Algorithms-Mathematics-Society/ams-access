@@ -31,6 +31,25 @@ const nextConfig = {
   },
   // Disable server features — Tauri loads static files
   trailingSlash: true,
+  // The packed cppreference book is stored brotli-compressed and is NOT
+  // decoded by any code we ship: the browser inflates it in its network layer
+  // because the response says so. That is what keeps a 336 MB reference down
+  // to 8 MB with no decoder in the bundle.
+  //
+  // `output: "export"` ignores headers, so this serves `next dev` only. The
+  // production path is Tauri's asset protocol, which must set the same header
+  // for the blocks; until it does, the Reference tab works in dev only.
+  async headers() {
+    return [
+      {
+        source: "/cppref/:block*.br",
+        headers: [
+          { key: "Content-Encoding", value: "br" },
+          { key: "Content-Type", value: "text/html; charset=utf-8" },
+        ],
+      },
+    ];
+  },
   webpack: (config, { isServer, dev }) => {
     // Large cache-pack buffers exhaust memory on constrained development machines.
     if (dev) config.cache = false;

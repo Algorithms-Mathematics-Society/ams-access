@@ -1,5 +1,5 @@
 import { memo, type Dispatch, type SetStateAction } from "react";
-import { Bookmark, Camera, ChevronLeft, ChevronRight } from "lucide-react";
+import { BookOpen, Bookmark, Camera, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -28,6 +28,9 @@ export interface QuestionRailProps {
   cameraPreviewAvailable: boolean;
   cameraPreviewVisible: boolean;
   onToggleCameraPreview: () => void;
+  /** Whether the full-screen C++ reference is showing instead of the split view. */
+  referenceOpen: boolean;
+  onToggleReference: () => void;
 }
 
 export const QuestionRail = memo(function QuestionRail({
@@ -42,6 +45,8 @@ export const QuestionRail = memo(function QuestionRail({
   cameraPreviewAvailable,
   cameraPreviewVisible,
   onToggleCameraPreview,
+  referenceOpen,
+  onToggleReference,
 }: QuestionRailProps) {
   const markedCount = questions.filter((question) =>
     markedQuestionIds.includes(question.id)
@@ -89,6 +94,52 @@ export const QuestionRail = memo(function QuestionRail({
           icon={sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
+      </HStack>
+      {/* Above the question list, not below it: the camera preview is
+          `position: absolute; bottom: 0` over this rail at z-index 50, so
+          anything at the rail's foot renders underneath it and is invisible.
+          Leading the list also reads better -- it is a destination, like a
+          question, not a footer control. */}
+      <HStack padding={sidebarCollapsed ? 0 : 2} style={{ flexShrink: 0, paddingTop: 0 }}>
+        <Button
+          label="C++ reference"
+          variant={referenceOpen ? "primary" : "secondary"}
+          size="sm"
+          onClick={onToggleReference}
+          aria-pressed={referenceOpen}
+          style={{
+            width: "100%",
+            height: "var(--spacing-10)",
+            padding: sidebarCollapsed ? 0 : "var(--spacing-2)",
+            justifyContent: sidebarCollapsed ? "center" : "start",
+          }}
+        >
+          {sidebarCollapsed ? (
+            <HStack gap={0} align="center" justify="center" style={{ flexShrink: 0 }}>
+              <BookOpen size={16} aria-hidden="true" />
+            </HStack>
+          ) : (
+            <HStack gap={2} align="center" style={{ width: "100%", minWidth: 0 }}>
+              <HStack
+                gap={0}
+                align="center"
+                justify="center"
+                style={{
+                  flexShrink: 0,
+                  width: "var(--spacing-8)",
+                  height: "var(--spacing-8)",
+                  borderRadius: "var(--radius-element)",
+                  background: "var(--color-background-body)",
+                }}
+              >
+                <BookOpen size={14} aria-hidden="true" />
+              </HStack>
+              <Text type="label" maxLines={1} hasTruncateTooltip={false}>
+                Reference
+              </Text>
+            </HStack>
+          )}
+        </Button>
       </HStack>
       <VStack
         as="nav"
