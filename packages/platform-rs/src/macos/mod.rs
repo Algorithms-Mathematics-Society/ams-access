@@ -40,9 +40,29 @@ pub fn battery_status() -> Option<crate::BatteryStatus> {
         .parse::<u8>()
         .ok()?
         .min(100);
+    // The state is the field after the percentage: `54%; discharging; 5:54
+    // remaining`. It is compared whole, never searched for: "discharging"
+    // contains "charging", and a substring test reported a Mac on battery as
+    // charging. Other states are "charging", "finishing charge", "charged"
+    // and "AC attached" (plugged in but holding, e.g. optimised charging).
+    let state = text
+        .lines()
+        .find_map(|line| line.split_once("%;"))
+        .and_then(|(_, rest)| rest.split(';').next())
+        .map(str::trim)
+        .unwrap_or_default();
+    let charging = matches!(state, "charging" | "finishing charge");
+    // The header names the source: `Now drawing from 'AC Power'` (or
+    // 'Battery Power' / 'UPS Power'). Without it, fall back on the state.
+    let plugged_in = if text.contains("'Battery Power'") {
+        false
+    } else {
+        text.contains("'AC Power'") || charging || matches!(state, "charged" | "AC attached")
+    };
     Some(crate::BatteryStatus {
         percentage,
-        charging: text.contains("AC Power") || text.contains("charging"),
+        charging,
+        plugged_in: Some(plugged_in),
     })
 }
 

@@ -13,6 +13,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessLogo, AccessMark } from "@/components/AccessLogo";
+import { BatteryStatus } from "@/app/session/contest/components/BatteryStatus";
 
 type Destination = "overview" | "settings" | "diagnostics";
 const destinations = [
@@ -120,6 +121,9 @@ function DashboardTopActions({
   const label = signingOut ? "Signing out..." : "Sign out";
   return (
     <HStack gap={2} align="center">
+      {/* Home is where a candidate checks the machine before a contest, so
+          the charge belongs here as well as in setup and the exam bar. */}
+      <BatteryStatus />
       <ThemeToggle />
       <Button
         label={label}
