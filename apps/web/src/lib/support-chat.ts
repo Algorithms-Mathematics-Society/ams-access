@@ -72,6 +72,39 @@ export function parseSupportReceipt(value: string | null): SupportReceipt | null
   }
 }
 
+/** An acknowledgement owns only the capability and exact saved operation it sent. */
+export function matchesSupportOperation(
+  current: SupportReceipt | null,
+  expected: SupportReceipt
+): boolean {
+  if (
+    current?.access.uid !== expected.access.uid ||
+    current?.access.token !== expected.access.token
+  )
+    return false;
+  if (expected.pendingStart) {
+    const saved = current.pendingStart;
+    const sent = expected.pendingStart;
+    return Boolean(
+      saved &&
+      saved.uid === sent.uid &&
+      saved.token === sent.token &&
+      saved.email === sent.email &&
+      saved.phone === sent.phone &&
+      saved.name === sent.name &&
+      saved.body === sent.body &&
+      saved.category === sent.category &&
+      saved.organization === sent.organization
+    );
+  }
+  return Boolean(
+    expected.pendingMessage &&
+    current.pendingMessage &&
+    current.pendingMessage.uid === expected.pendingMessage.uid &&
+    current.pendingMessage.body === expected.pendingMessage.body
+  );
+}
+
 export function mergeSupportMessages(
   current: SupportMessage[],
   incoming: SupportMessage[]
@@ -102,10 +135,12 @@ export async function supportRequest<T>(
     const data = await response.json();
     if (!response.ok) {
       const detail =
-        typeof data.detail === "string" ? data.detail : "Check your contact details and retry.";
-      throw new Error(
-        response.status === 429 ? "Too many requests. Wait a minute and retry." : detail
-      );
+        typeof data.detail === "string" && data.detail.trim()
+          ? data.detail
+          : response.status === 429
+            ? "Too many requests. Retry later."
+            : "Check your contact details and retry.";
+      throw new Error(detail);
     }
     return data as T;
   } catch (error) {

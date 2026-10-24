@@ -121,19 +121,36 @@ for (const failure of ["network", "timeout", "body-timeout"])
 
 test("server validation and rate limits expose actionable errors", async (t) => {
   let status = 400;
+  let detail = "Enter the organization code provided by your organizer.";
   t.mock.method(globalThis, "fetch", async () => ({
     ok: false,
     status,
-    json: async () => ({ detail: "Enter the organization code provided by your organizer." }),
+    json: async () => ({ detail }),
   }));
   await assert.rejects(
     supportRequest("https://example.test", "/support/conversations"),
     /organization code/
   );
   status = 429;
+  detail = "Support request limit reached. Contact an invigilator or retry later.";
   await assert.rejects(
     supportRequest("https://example.test", "/support/conversations"),
+    /retry later/
+  );
+  detail = "Too many messages. Wait a minute and retry.";
+  await assert.rejects(
+    supportRequest(
+      "https://example.test",
+      `/support/conversations/${access.uid}/messages`,
+      access,
+      {}
+    ),
     /Wait a minute/
+  );
+  detail = "";
+  await assert.rejects(
+    supportRequest("https://example.test", "/support/conversations"),
+    /Retry later/
   );
 });
 

@@ -26,9 +26,15 @@ The participant's session-storage receipt survives dialog closure, navigation
 and reload in that window. It is removed by **Forget chat / new request**, or
 when the browser/app window's storage session ends. This is not cross-device or
 email-based recovery. Confirmed conversations remain on the server. If storage
-is blocked, a warning explains that only the mounted in-memory access remains.
+is blocked, access remains only in the mounted chat; navigating away, reloading
+or closing it may lose access, as its warning explains.
 Support requests and messages retain their UUID when retrying an uncertain send.
 The API rejects conflicting reuse and serializes sends and issue resolution.
+Late acknowledgements clear only their own saved operation, preserving newer
+conversations and pending messages opened from another help surface. Resolved
+threads keep unconfirmed messages visible for retry: committed messages can be
+acknowledged; an uncommitted message requires staff to reopen the issue or a new
+request.
 
 During an assessment, chat uses the existing ordinary ContestOverlay, yields to
 mandatory security/network/expiry overlays and preserves the editor and exam

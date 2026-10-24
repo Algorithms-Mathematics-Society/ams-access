@@ -241,9 +241,12 @@ Conversation capabilities and pending request/message identifiers use this
 window's session storage so closing the dialog, navigating and reloading can
 resume the same conversation. A full window close ends local recovery; confirmed
 messages remain on the server. Storage failures show a warning and preserve the
-mounted conversation in memory. An unconfirmed send retries with its original
+mounted conversation in memory; leaving the page, reloading or closing that chat
+may lose access. An unconfirmed send retries with its original
 identifier. Replies refresh every four seconds while open and visible; errors
-retain the last history. Resolved conversations remain readable. Forget chat /
+retain the last history. Resolved conversations remain readable and keep any
+unconfirmed message visible for acknowledgement retry. Late responses preserve
+newer conversations and pending messages from other help surfaces. Forget chat /
 new request removes this window's access to the previous conversation.
 
 During an assessment, Help renders the same chat inside the existing

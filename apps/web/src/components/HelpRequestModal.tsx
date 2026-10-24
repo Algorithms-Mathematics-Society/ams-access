@@ -12,6 +12,7 @@ import { resolveApiBase } from "@/lib/api-base";
 import {
   SUPPORT_STORAGE_KEY,
   mergeSupportMessages,
+  matchesSupportOperation,
   newSupportAccess,
   parseSupportReceipt,
   supportRequest,
@@ -72,6 +73,30 @@ export function HelpRequestModal({
       storageFailed.current = true;
       setStorageWarning(true);
     }
+  }
+
+  function acknowledge(expected: SupportReceipt): boolean {
+    const next = { access: expected.access };
+    // Another mounted help surface may have started a new chat or queued a
+    // later message while this request was awaiting its response. Neither
+    // that recovery record nor an adopted local conversation belongs to it.
+    const ownsLocalOperation = matchesSupportOperation(receiptRef.current, expected);
+    if (ownsLocalOperation) {
+      receiptRef.current = next;
+      setReceipt(next);
+    }
+    if (!storageFailed.current) {
+      try {
+        const latest = parseSupportReceipt(sessionStorage.getItem(SUPPORT_STORAGE_KEY));
+        if (matchesSupportOperation(latest, expected)) {
+          sessionStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(next));
+        }
+      } catch {
+        storageFailed.current = true;
+        setStorageWarning(true);
+      }
+    }
+    return ownsLocalOperation;
   }
 
   useEffect(() => {
@@ -187,6 +212,7 @@ export function HelpRequestModal({
     inFlight.current = true;
     setBusy(true);
     setError("");
+    let operation: SupportReceipt | null = null;
     try {
       let current = receiptRef.current;
       if (!current || current.pendingStart) {
@@ -206,6 +232,7 @@ export function HelpRequestModal({
           };
           save(current);
         }
+        operation = current;
         const ack = await supportRequest<{ uid: string }>(
           API_URL,
           "/support/conversations",
@@ -214,11 +241,12 @@ export function HelpRequestModal({
         );
         if (ack.uid !== current.access.uid)
           throw new Error("The server did not confirm this request. Retry safely.");
-        save({ access: current.access });
+        acknowledge(operation);
       } else {
         const message = current.pendingMessage ?? { uid: crypto.randomUUID(), body: draft.trim() };
         if (!message.body) return;
-        save({ ...current, pendingMessage: message });
+        operation = { ...current, pendingMessage: message };
+        save(operation);
         const ack = await supportRequest<{ uid: string }>(
           API_URL,
           `/support/conversations/${current.access.uid}/messages`,
@@ -227,12 +255,13 @@ export function HelpRequestModal({
         );
         if (ack.uid !== message.uid)
           throw new Error("The server did not confirm this message. Retry safely.");
-        save({ access: current.access });
-        setDraft("");
+        if (acknowledge(operation)) setDraft("");
       }
       setRefresh((n) => n + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to send. Retry safely.");
+      if (!operation || matchesSupportOperation(receiptRef.current, operation)) {
+        setError(e instanceof Error ? e.message : "Unable to send. Retry safely.");
+      }
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -258,8 +287,8 @@ export function HelpRequestModal({
       {storageWarning && (
         <Banner
           status="warning"
-          title="Keep this window open"
-          description="Conversation recovery is unavailable on this device. Closing this window may lose access to the chat."
+          title="Keep this chat open"
+          description="Conversation recovery is unavailable on this device. Navigating away, reloading or closing this chat may lose access."
         />
       )}
       {!ready ? (
@@ -427,13 +456,14 @@ export function HelpRequestModal({
               </VStack>
             ))}
           </VStack>
-          {thread?.status === "resolved" ? (
+          {thread?.status === "resolved" && (
             <Banner
               status="success"
               title="Issue resolved"
               description="You can still read this conversation. Start a new request if you need more help."
             />
-          ) : (
+          )}
+          {(thread?.status !== "resolved" || receipt.pendingMessage) && (
             <form onSubmit={(e) => void submit(e)}>
               <VStack gap={3}>
                 <TextArea

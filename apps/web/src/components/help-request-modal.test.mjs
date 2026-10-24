@@ -5,6 +5,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import {
   mergeSupportMessages,
+  matchesSupportOperation,
   parseSupportReceipt,
   SUPPORT_STORAGE_KEY,
 } from "../lib/support-chat.ts";
@@ -41,14 +42,15 @@ const flush = async () => {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 };
 
-function harness({ stored, storageFails = false } = {}) {
+function harness({ stored, storageFails = false, sharedStorage, newAccess = ACCESS } = {}) {
   const states = [],
     refs = [],
     effects = [],
     requests = [],
     timers = new Map(),
     listeners = new Map();
-  const storage = new Map(stored ? [[SUPPORT_STORAGE_KEY, JSON.stringify(stored)]] : []);
+  const storage =
+    sharedStorage ?? new Map(stored ? [[SUPPORT_STORAGE_KEY, JSON.stringify(stored)]] : []);
   let stateIndex = 0,
     refIndex = 0,
     effectIndex = 0,
@@ -115,8 +117,9 @@ function harness({ stored, storageFails = false } = {}) {
         return {
           SUPPORT_STORAGE_KEY,
           mergeSupportMessages,
+          matchesSupportOperation,
           parseSupportReceipt,
-          newSupportAccess: () => ({ ...ACCESS }),
+          newSupportAccess: () => ({ ...newAccess }),
           supportRequest: (base, path, access, body) =>
             new Promise((resolve, reject) =>
               requests.push({ base, path, access, body, resolve, reject })
@@ -471,5 +474,135 @@ test("malformed or nonadvancing history stops pagination and preserves visible m
   h.render();
   assert.match(h.text(), /response was incomplete/);
   assert.match(h.text(), /I can help/);
+  h.unmount();
+});
+
+const NEW_ACCESS = { uid: "44444444-4444-4444-8444-444444444444", token: "b".repeat(64) };
+const NEXT_MESSAGE_UID = "55555555-5555-4555-8555-555555555555";
+
+test("late creation acknowledgement cannot replace a newer help surface's conversation", async () => {
+  const sharedStorage = new Map();
+  const a = harness({ sharedStorage });
+  contact(a);
+  a.send();
+  const late = a.requests[0];
+  a.render({ open: false });
+  const b = harness({ sharedStorage, newAccess: NEW_ACCESS });
+  b.click("Start a new request");
+  contact(b);
+  b.send();
+  assert.equal(b.receipt().access.uid, NEW_ACCESS.uid);
+  late.resolve({ uid: ACCESS.uid });
+  await flush();
+  a.render();
+  assert.equal(b.receipt().access.uid, NEW_ACCESS.uid);
+  assert.ok(b.receipt().pendingStart);
+  a.unmount();
+  b.unmount();
+});
+
+test("late message acknowledgement cannot replace an adopted conversation or its pending creation", async () => {
+  const sharedStorage = new Map([[SUPPORT_STORAGE_KEY, JSON.stringify({ access: ACCESS })]]);
+  const a = harness({ sharedStorage });
+  await active(a);
+  a.field("Message", "Old message");
+  a.send();
+  const late = a.requests.at(-1);
+  a.render({ open: false });
+  const b = harness({ sharedStorage, newAccess: NEW_ACCESS });
+  await active(b);
+  b.click("Forget chat / new request");
+  contact(b);
+  b.send();
+  a.render({ open: true });
+  late.resolve({ uid: MESSAGE_UID });
+  await flush();
+  a.render();
+  assert.equal(a.receipt().access.uid, NEW_ACCESS.uid);
+  assert.equal(a.all("TextInput").length, 4, "the adopted pending creation stays displayed");
+  assert.ok(a.receipt().pendingStart);
+  a.unmount();
+  b.unmount();
+});
+
+test("late duplicate acknowledgement preserves a newer pending message on the same conversation", async () => {
+  const sharedStorage = new Map([[SUPPORT_STORAGE_KEY, JSON.stringify({ access: ACCESS })]]);
+  const a = harness({ sharedStorage });
+  await active(a);
+  a.field("Message", "First message");
+  a.send();
+  const late = a.requests.at(-1);
+  a.render({ open: false });
+  const b = harness({ sharedStorage });
+  await active(b);
+  b.send();
+  b.requests.at(-1).resolve({ uid: MESSAGE_UID });
+  await flush();
+  b.render();
+  await active(b);
+  b.context.crypto.randomUUID = () => NEXT_MESSAGE_UID;
+  b.field("Message", "Second message");
+  b.send();
+  late.resolve({ uid: MESSAGE_UID });
+  await flush();
+  a.render();
+  assert.equal(b.receipt().pendingMessage.uid, NEXT_MESSAGE_UID);
+  assert.equal(b.receipt().pendingMessage.body, "Second message");
+  a.unmount();
+  b.unmount();
+});
+
+test("a late failure does not attach the old request's error to an adopted conversation", async () => {
+  const h = harness({ stored: { access: ACCESS } });
+  await active(h);
+  h.field("Message", "Old message");
+  h.send();
+  const late = h.requests.at(-1);
+  h.render({ open: false });
+  h.storage.set(SUPPORT_STORAGE_KEY, JSON.stringify({ access: NEW_ACCESS }));
+  h.render({ open: true });
+  h.requests.at(-1).resolve(history([], { uid: NEW_ACCESS.uid }));
+  await flush();
+  h.render();
+  late.reject(new Error("Old conversation failed"));
+  await flush();
+  h.render();
+  assert.doesNotMatch(h.text(), /Old conversation failed/);
+  assert.equal(h.receipt().access.uid, NEW_ACCESS.uid);
+  h.unmount();
+});
+
+test("resolved conversation retains an unconfirmed message and can acknowledge a committed retry", async () => {
+  const pendingMessage = { uid: MESSAGE_UID, body: "My login is still broken" };
+  const h = harness({ stored: { access: ACCESS, pendingMessage } });
+  h.requests[0].resolve(history([], { status: "resolved" }));
+  await flush();
+  h.render();
+  assert.match(h.text(), /Issue resolved/);
+  assert.equal(h.all("TextArea")[0].props.value, pendingMessage.body);
+  assert.match(h.text(), /Awaiting confirmation/);
+  h.send();
+  assert.equal(h.requests.at(-1).body.uid, MESSAGE_UID);
+  h.requests.at(-1).resolve({ uid: MESSAGE_UID });
+  await flush();
+  h.render();
+  assert.equal(h.receipt().pendingMessage, undefined);
+  assert.equal(h.all("form").length, 0);
+  h.unmount();
+});
+
+test("resolved conversation keeps an uncommitted retry and its rejection visible", async () => {
+  const pendingMessage = { uid: MESSAGE_UID, body: "My latest issue" };
+  const h = harness({ stored: { access: ACCESS, pendingMessage } });
+  h.requests[0].resolve(history([], { status: "resolved" }));
+  await flush();
+  h.render();
+  h.send();
+  h.requests.at(-1).reject(new Error("Issue resolved. Ask staff to reopen it."));
+  await flush();
+  h.render();
+  assert.equal(h.receipt().pendingMessage.body, pendingMessage.body);
+  assert.match(h.text(), /Ask staff to reopen/);
+  assert.equal(h.all("TextArea")[0].props.value, pendingMessage.body);
   h.unmount();
 });
