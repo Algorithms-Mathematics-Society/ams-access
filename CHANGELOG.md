@@ -1,3 +1,13 @@
+# AMS Access 4.7.0
+
+Identical to 4.6.1 in behaviour. It is a minor release because the update prompt compares major and minor only: 4.6.1 was a patch, so nobody running 4.6.0 would ever have been told to install it, and the focus fix below is one everybody sitting an exam needs.
+
+## Carried from 4.6.1
+
+- Wi-Fi helpers no longer steal exam focus on Windows. `netsh` ran as a console program, so each scan flashed a console window and took the foreground; the watchdog read that as the candidate leaving, and the exam showed "You left the exam window" repeatedly to people sitting still. Every console helper is now spawned with `CREATE_NO_WINDOW`.
+
+---
+
 # AMS Access 4.6.1
 
 ## Windows focus warning hotfix
