@@ -33,7 +33,7 @@ import {
   useMemo,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { invoke, type RestoreStatus } from "@ams/api-client";
+import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
 import {
@@ -2513,13 +2513,58 @@ export default function ContestPageClient() {
 
   // Arm the native event-stream uploader: the Rust side tails the local
   // violation/proctoring spool and ships batches to
-  // POST /sessions/:id/events with retry/backoff once it knows the session.
+  // POST /participant/sessions/:id/events with retry/backoff once it knows the session.
   useEffect(() => {
     if (!sessionId || redirectInFlightRef.current || pendingRedirect) return;
     void window.__TAURI__?.core
       .invoke("configure_event_stream", { apiUrl: API_URL, sessionId, token: participantToken() })
       .catch(() => {});
   }, [sessionId]);
+
+  // The Mac slept mid-exam (lid closed, power key, Apple menu). Raised as an
+  // incident, like a media toggle, so it reaches the organizer's incident
+  // list. Sent on wake: at sleep the network is already going. Wi-Fi takes a
+  // few seconds to rejoin after wake, so retry until it lands.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    const unlisten = listen<{ kind: string; detail: string; payload?: { slept_secs?: number } }>(
+      "lockdown-event",
+      (event) => {
+        if (event?.kind !== "system_woke") return;
+        const sleptSecs = event.payload?.slept_secs ?? 0;
+        const body = {
+          category: "system_sleep",
+          message: `Mac went to sleep during the exam (lid closed or sleep) and was asleep for ${sleptSecs}s`,
+          diagnostics: {
+            timestamp: new Date().toISOString(),
+            contest_id: contestId,
+            session_id: sessionId,
+            slept_secs: sleptSecs,
+          },
+          contact: "",
+          contest_uid: contestId,
+        };
+        void (async () => {
+          for (let attempt = 0; attempt < 12 && !cancelled; attempt++) {
+            const sent = await postJsonKeepalive(
+              `${API_URL}/participant/sessions/${sessionId}/incidents`,
+              body,
+              { headers: authHeaders() }
+            )
+              .then((response) => response.ok)
+              .catch(() => false);
+            if (sent) return;
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+        })();
+      }
+    );
+    return () => {
+      cancelled = true;
+      void unlisten.then((stop) => stop());
+    };
+  }, [sessionId, contestId]);
 
   // A camera-less advisory entry must leave evidence rather than creating a
   // silent hole in the invigilation timeline. This loop only records that a
