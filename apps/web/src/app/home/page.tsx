@@ -153,6 +153,7 @@ export default function HomePage() {
   const resumeInFlightRef = useRef(false);
   const resumeConsumeInFlightRef = useRef(false);
   const resumePollInFlightRef = useRef(false);
+  const resumeRequestInFlightRef = useRef(false);
   // Invalidate responses that started before sign-out or this Home visit ended.
   const recoveryEpochRef = useRef(0);
   const scanGenerationRef = useRef(0);
@@ -611,7 +612,8 @@ export default function HomePage() {
   refreshResumeRequestRef.current = refreshResumeRequest;
 
   async function submitResumeRequest(session: ActiveSession) {
-    if (!session.id) return;
+    if (!session.id || resumeRequestInFlightRef.current) return;
+    resumeRequestInFlightRef.current = true;
     const epoch = recoveryEpochRef.current;
     setResumeBusy(true);
     setResumeStatus("Requesting organizer approval...");
@@ -637,6 +639,8 @@ export default function HomePage() {
         setResumeStatus("Could not request organizer approval.");
         setResumeBusy(false);
       }
+    } finally {
+      resumeRequestInFlightRef.current = false;
     }
   }
 

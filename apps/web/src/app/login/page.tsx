@@ -44,6 +44,7 @@ export default function LoginPage() {
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const homePrefetched = useRef(false);
+  const loginInFlightRef = useRef(false);
   const cooldownUntil = useRef(0);
   const coolingDown = cooldownSeconds > 0;
   useEffect(() => {
@@ -63,7 +64,7 @@ export default function LoginPage() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (loading || performance.now() < cooldownUntil.current) return;
+    if (loading || loginInFlightRef.current || performance.now() < cooldownUntil.current) return;
     setError(null);
     setDiagnostic(null);
     setInvalidField(null);
@@ -79,6 +80,9 @@ export default function LoginPage() {
       input?.focus();
       return;
     }
+    // State updates are not synchronous: a second submit can run before the
+    // button rerenders. Own this attempt immediately, through navigation.
+    loginInFlightRef.current = true;
     setLoading(true);
 
     try {
@@ -105,6 +109,7 @@ export default function LoginPage() {
 
       router.push("/home");
     } catch (caught) {
+      loginInFlightRef.current = false;
       setLoading(false);
       if (!(caught instanceof ProctorApiError)) {
         setError("Something went wrong signing in. Try again, or ask an invigilator.");

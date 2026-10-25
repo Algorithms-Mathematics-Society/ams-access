@@ -30,6 +30,7 @@ function harness({
   failKey,
   failure,
   loading = false,
+  request,
 } = {}) {
   const state = {},
     calls = [],
@@ -40,6 +41,7 @@ function harness({
     loginId,
     password,
     loading,
+    loginInFlightRef: { current: false },
     performance: { now: () => 0 },
     cooldownUntil: { current: 0 },
     ProctorApiError,
@@ -60,6 +62,7 @@ function harness({
     },
     studentLogin: async (...args) => {
       calls.push(args);
+      if (request) return request(...args);
       if (failure) throw failure;
       return { user: { display_name: "Candidate" }, contest: { uid: "contest", title: "Contest" } };
     },
@@ -132,6 +135,33 @@ test("nonempty password is passed unchanged and server rejection remains authori
   assert.equal(h.state.invalidField, null);
   assert.equal(h.state.loading, false);
   assert.deepEqual(h.routes, []);
+});
+test("a rapid keyboard/click burst sends only one pending sign-in request", async () => {
+  let reject;
+  const h = harness({
+    request: () =>
+      new Promise((_resolve, fail) => {
+        reject = fail;
+      }),
+  });
+  const pending = h.submit();
+  const burst = Array.from({ length: 1000 }, () => h.submit());
+  assert.equal(h.calls.length, 1);
+  reject(new ProctorApiError("Busy", 503));
+  await pending;
+  await Promise.all(burst);
+  const retry = h.submit();
+  assert.equal(h.calls.length, 2, "a settled failure permits an explicit retry");
+  reject(new ProctorApiError("Busy", 503));
+  await retry;
+});
+
+test("successful sign-in stays owned until navigation even without a React rerender", async () => {
+  const h = harness();
+  await h.submit();
+  await h.submit();
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.routes, ["/home"]);
 });
 test("loading prevents duplicate sign-in and network error is not field invalidity", async () => {
   const busy = harness({ loading: true });

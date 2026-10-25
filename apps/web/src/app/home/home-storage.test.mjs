@@ -4,6 +4,77 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
+const requestStart = source.indexOf("  async function submitResumeRequest(");
+const requestEnd = source.indexOf("\n  async function validateStoredActiveSession(", requestStart);
+assert.ok(requestStart >= 0 && requestEnd > requestStart);
+const requestCode = ts.transpileModule(source.slice(requestStart, requestEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
+function approvalRequestHarness() {
+  const calls = [],
+    writes = [],
+    states = [];
+  let resolve, reject;
+  const context = {
+    resumeRequestInFlightRef: { current: false },
+    recoveryEpochRef: { current: 0 },
+    recoveryCurrent: (_id, epoch) => epoch === context.recoveryEpochRef.current,
+    setResumeBusy() {},
+    setResumeStatus: (status) => states.push(status),
+    appendSecurityEvent() {},
+    getOrCreateDeviceId: () => "synthetic-device",
+    requestResume: (id) => {
+      calls.push(id);
+      return new Promise((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+    },
+    mergeResumeRequestIntoSession: (session, request) => ({
+      ...session,
+      resume_request_id: request.id,
+    }),
+    ACTIVE_SESSION_KEY: "session",
+    localStorage: { setItem: (...args) => writes.push(args) },
+    setActiveSession: (session) => states.push(session),
+  };
+  vm.runInNewContext(requestCode, context);
+  return {
+    calls,
+    writes,
+    states,
+    context,
+    submit: () => context.submitResumeRequest({ id: "A", contest_id: "contest" }),
+    complete: () => resolve({ uid: "request", status: "PENDING" }),
+    fail: () => reject(new Error("offline")),
+  };
+}
+
+test("rapid approval-request retries send one mutation and permit retry after failure", async () => {
+  const h = approvalRequestHarness();
+  const first = h.submit();
+  const burst = Array.from({ length: 1000 }, () => h.submit());
+  assert.equal(h.calls.length, 1);
+  h.fail();
+  await first;
+  await Promise.all(burst);
+  const retry = h.submit();
+  assert.equal(h.calls.length, 2);
+  h.complete();
+  await retry;
+  assert.equal(h.writes.length, 1);
+});
+
+test("approval response arriving after sign-out cannot publish state or keep the guard locked", async () => {
+  const h = approvalRequestHarness();
+  const pending = h.submit();
+  h.context.recoveryEpochRef.current++;
+  h.complete();
+  await pending;
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.context.resumeRequestInFlightRef.current, false);
+});
 const start = source.lastIndexOf(
   "  useEffect(() => {",
   source.indexOf("    // The token outlives the page:")
