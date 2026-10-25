@@ -55,6 +55,7 @@ function harness(path) {
     require(name) {
       if (name === "react") return react;
       if (name === "./abort-timeout") return {};
+      if (name === "./client-version") return { CLIENT_VERSION: "test" };
       throw new Error(`Unexpected dependency: ${name}`);
     },
   };

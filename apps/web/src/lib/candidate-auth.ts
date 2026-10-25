@@ -16,6 +16,7 @@
  * resolve the alias, and this module has to stay testable.
  */
 
+import { CLIENT_VERSION } from "./client-version.ts";
 import { currentToken } from "./proctor-api.ts";
 
 // Inline rather than imported from `constants/storage-keys` for the same
@@ -50,14 +51,15 @@ export function participantToken(): string | null {
 /**
  * Header map for authenticated fetch calls.
  *
+ * - `X-AMS-Client-Version` always, so the server's version gate sees this build.
  * - `X-Device-Id` always, so the backend can bind and validate the machine.
  * - `Authorization: Bearer <token>` when a participant is signed in.
- * - Neither on the server; the caller merges its own headers over the top.
+ * - Only the version on the server; the caller merges its own headers over the top.
  */
 export function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const token = participantToken();
   const deviceId = getDeviceId();
-  const base: Record<string, string> = {};
+  const base: Record<string, string> = { "X-AMS-Client-Version": CLIENT_VERSION };
   if (token) base["Authorization"] = `Bearer ${token}`;
   if (deviceId) base["X-Device-Id"] = deviceId;
   return { ...base, ...extra };

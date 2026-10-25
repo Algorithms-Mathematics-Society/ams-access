@@ -92,6 +92,15 @@ test("no Authorization when nobody is signed in", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(headers, "Authorization"), false);
 });
 
+test("every header map names the client version, signed in or not", () => {
+  assert.equal(
+    authHeaders()["X-AMS-Client-Version"],
+    process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0"
+  );
+  setToken("versioned");
+  assert.ok(authHeaders()["X-AMS-Client-Version"]);
+});
+
 test("signing out drops the Authorization header", () => {
   setToken("temporary");
   setToken(null);

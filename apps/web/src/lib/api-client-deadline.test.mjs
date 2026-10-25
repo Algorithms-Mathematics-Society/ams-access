@@ -26,7 +26,7 @@ function harness(respond) {
       requests.push(init);
       return respond(init.signal, requests.length);
     },
-    require: () => ({}),
+    require: (name) => (name === "./client-version" ? { CLIENT_VERSION: "9.9.9" } : {}),
   };
   vm.runInNewContext(outputText, context);
   return {
@@ -102,6 +102,19 @@ test("successful body clears timer only after consumption", async () => {
   finish({ accepted: true });
   assert.deepEqual(await pending, { accepted: true });
   assert.equal(h.timers.size, 0);
+});
+
+test("every request carries the client version beside the caller's headers", async () => {
+  const h = harness(() => ({ ok: true, json: async () => ({}) }));
+  await h.fetchJson("/versioned", { headers: { Authorization: "Bearer t" } }, { retries: 0 });
+  // Spread into this realm: the vm's objects have another Object prototype.
+  assert.deepEqual(
+    { ...h.requests[0].headers },
+    {
+      "X-AMS-Client-Version": "9.9.9",
+      Authorization: "Bearer t",
+    }
+  );
 });
 
 test("malformed JSON clears deadline and preserves parse failure", async () => {
