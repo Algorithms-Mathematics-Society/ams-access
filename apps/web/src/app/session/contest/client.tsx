@@ -2101,13 +2101,26 @@ export default function ContestPageClient() {
     const receipt = sessionId
       ? await requestFinish({
           save: handleSave,
-          finish: () =>
-            postJsonKeepalive(
-              `${API_URL}/participant/sessions/${sessionId}/finish`,
-              undefined,
-              { headers: authHeaders() },
-              { timeoutMs: 10000 }
-            ),
+          finish: async () => {
+            const controller = new AbortController();
+            try {
+              return await withTimeout(
+                (async () => {
+                  const response = await postJsonKeepalive(
+                    `${API_URL}/participant/sessions/${sessionId}/finish`,
+                    undefined,
+                    { headers: authHeaders(), signal: controller.signal }
+                  );
+                  const errorBody = response.ok ? null : await response.json().catch(() => null);
+                  return { ok: response.ok, json: async () => errorBody };
+                })(),
+                10000,
+                "Finish response timed out"
+              );
+            } finally {
+              controller.abort();
+            }
+          },
           wait: (attempt) =>
             new Promise<void>((resolve) =>
               setTimeout(
