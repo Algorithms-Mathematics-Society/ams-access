@@ -157,7 +157,6 @@ export function SessionReadinessModal({
   }, [contestId, entryWindowRefreshIndex, sessionType]);
 
   const score = calculateReadinessScore(readiness);
-  const requiredReportChecks = activeReport?.required_checks ?? [];
   const context = useMemo(
     () =>
       deriveContestantReadiness({
@@ -204,10 +203,13 @@ export function SessionReadinessModal({
             }
           : { color: c.accentText, bg: c.accentLight, border: c.accentBorder };
 
-  const requiredPolicyChecks = requiredReportChecks;
-  const requiredChecksPassed =
-    !!activeReport &&
-    requiredPolicyChecks.every((check) => check.outcome === "pass" && !check.blocking);
+  // A blocking probe that could not conclude (timed out, device checks busy,
+  // clock skew not measurable) is fixed by running it again, not in Settings.
+  const rescanFixesBlock =
+    activeReport?.decision === "blocked" &&
+    activeReport.checks
+      .filter((check) => check.blocking)
+      .every((check) => check.outcome === "unknown");
 
   // Readiness is evaluated natively, so running the client in a browser
   // produces no report at all and entry could never be offered — which made
@@ -223,9 +225,11 @@ export function SessionReadinessModal({
   // It is deliberately loud. A session entered this way is unproctored, and
   // the modal says so rather than looking like a normal pass.
   const unproctoredDevSession = !hasNativeBridge();
+  // The native decision, not a stricter "every required check passed": that
+  // turned away candidates the policy had already allowed with warnings.
   const policyAllowsProceed = unproctoredDevSession
     ? true
-    : !!activeReport && activeReport.decision !== "blocked" && requiredChecksPassed;
+    : !!activeReport && activeReport.decision !== "blocked";
   const entryWindowAllowed = entryWindow.status === "allowed";
   const canProceed = scanStatus === "done" && entryWindowAllowed && policyAllowsProceed;
   const primaryActionLabel = canProceed
@@ -234,9 +238,11 @@ export function SessionReadinessModal({
       : "Enter contest"
     : scanStatus === "scanning"
       ? "Checking..."
-      : context.status === "needs_action" || context.status === "advisory_warning"
-        ? "Open settings"
-        : "Back to contests";
+      : context.status === "needs_action" && rescanFixesBlock
+        ? "Run checks again"
+        : context.status === "needs_action" || context.status === "advisory_warning"
+          ? "Open settings"
+          : "Back to contests";
   const requiredPreflightItems = activeReport
     ? activeReport.required_checks.map((check) => toPreflightPolicyItem(check, "required"))
     : [
@@ -616,6 +622,15 @@ export function SessionReadinessModal({
               <Button theme={theme} variant="primary" disabled>
                 {primaryActionLabel}
               </Button>
+            ) : primaryActionLabel === "Run checks again" ? (
+              <Button
+                theme={theme}
+                variant="primary"
+                onClick={handleRescan}
+                disabled={isRescanning}
+              >
+                {primaryActionLabel}
+              </Button>
             ) : context.status === "needs_action" || context.status === "advisory_warning" ? (
               <Button theme={theme} variant="primary" onClick={onSettingsRedirect}>
                 {primaryActionLabel}
@@ -626,7 +641,7 @@ export function SessionReadinessModal({
               </Button>
             )}
             {/* §3 — Secondary buttons: flat muted text, no border/bg */}
-            {scanStatus !== "scanning" && (
+            {scanStatus !== "scanning" && primaryActionLabel !== "Run checks again" && (
               <Button
                 theme={theme}
                 variant="secondary"

@@ -823,3 +823,34 @@ export async function consumeResume(sessionUid: string): Promise<ProctorSession>
     {}
   );
 }
+
+/** Anchor the clock from the contest list, and say whether it could.
+ *
+ * `request` reads `server_time` off the response body, and this body is an
+ * array, so a copy carried by each item never reaches it. Today's server
+ * sends none at all, which is why the caller has a fallback. */
+export function noteListServerTime(items: readonly object[]): boolean {
+  const iso = (items[0] as { server_time?: string } | undefined)?.server_time;
+  noteServerTime(iso);
+  return Boolean(iso && !Number.isNaN(Date.parse(iso)));
+}
+
+/** This participant's most recent session for a contest, or null when the
+ * server has none. Results use it when this device kept no record (another
+ * Mac, or after sign-out). A server without the route answers 404 or 405,
+ * which means the same thing to the caller. */
+export async function getMyContestSession(contestUid: string): Promise<{
+  uid: string;
+  status: SessionStatus;
+  started_at: string | null;
+  ended_at: string | null;
+} | null> {
+  try {
+    return await request("GET", `/participant/contests/${encodeURIComponent(contestUid)}/session`);
+  } catch (error) {
+    if (error instanceof ProctorApiError && (error.status === 404 || error.status === 405)) {
+      return null;
+    }
+    throw error;
+  }
+}
