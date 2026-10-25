@@ -31,3 +31,19 @@ export function attemptLimitError(
   }
   return null;
 }
+
+/** ams-api's run rate limits: one run per problem every 10 s (COOLDOWN), and
+ * 30 runs per 5 minutes across the contest (RUN_LIMIT). */
+export const RUN_BURST_LIMIT = 30;
+export const RUN_BURST_WINDOW_MINUTES = 5;
+
+/** The Run cooldown line, for `secondsLeft` of the server's `retry_after`. */
+export function runCooldownMessage(code: string, secondsLeft: number): string {
+  const s = Math.max(0, Math.ceil(secondsLeft));
+  const time = s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : `${s}s`;
+  // RUN_LIMIT's retry_after is the whole window, so this is an upper bound.
+  if (code === "RUN_LIMIT") {
+    return `Run limit reached (${RUN_BURST_LIMIT} runs per ${RUN_BURST_WINDOW_MINUTES} minutes). You can run again within ${time}.`;
+  }
+  return `Please wait ${time} before running again.`;
+}

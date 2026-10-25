@@ -135,7 +135,7 @@ import {
   write as writeAnswerBuffer,
 } from "./answer-buffer";
 import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss";
-import { attemptLimitError } from "./attempt-limits";
+import { attemptLimitError, runCooldownMessage } from "./attempt-limits";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   connectionLevel,
@@ -1702,12 +1702,22 @@ export default function ContestPageClient() {
       if (runVisit !== runVisitRef.current) return;
       setIsRunning(false);
       if (caught instanceof ProctorApiError && caught.status === 429) {
-        const wait = caught.retryAfterSeconds;
-        patchRun(mode, {
-          error: wait
-            ? `Please wait ~${wait}s before running again.`
-            : "Please wait a few seconds before running again.",
-        });
+        // A live countdown: "Please wait ~300s" was a number to do sums with.
+        // Stops when the candidate runs again or switches problem.
+        const until = Date.now() + (caught.retryAfterSeconds || 5) * 1000;
+        const code = caught.code;
+        const tick = () => {
+          const left = (until - Date.now()) / 1000;
+          if (runVisit !== runVisitRef.current) return clearInterval(timer);
+          if (left <= 0) {
+            clearInterval(timer);
+            patchRun(mode, { error: null });
+            return;
+          }
+          patchRun(mode, { error: runCooldownMessage(code, left) });
+        };
+        const timer = setInterval(tick, 1000);
+        tick();
       } else if (caught instanceof ProctorApiError && caught.status === 503) {
         patchRun(mode, { error: "The judge is temporarily unavailable. Try Run again shortly." });
       } else if (caught instanceof ProctorApiError && caught.status >= 400) {

@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { MAX_CASE_CHARS, MAX_SOURCE_CHARS, attemptLimitError } from "./attempt-limits.ts";
+import {
+  MAX_CASE_CHARS,
+  MAX_SOURCE_CHARS,
+  attemptLimitError,
+  runCooldownMessage,
+} from "./attempt-limits.ts";
 
 test("code within the limits passes", () => {
   assert.equal(attemptLimitError("int main() {}"), null);
@@ -26,4 +31,14 @@ test("an oversized custom input or expected output is refused", () => {
   const big = "x".repeat(MAX_CASE_CHARS + 1);
   assert.match(attemptLimitError("code", [{ input: big }]), /per case/);
   assert.match(attemptLimitError("code", [{ input: "1", expected: big }]), /per case/);
+});
+
+test("the run cooldown counts down and names the burst limit", () => {
+  assert.equal(
+    runCooldownMessage("RUN_LIMIT", 300),
+    "Run limit reached (30 runs per 5 minutes). You can run again within 5:00."
+  );
+  assert.match(runCooldownMessage("RUN_LIMIT", 61), /within 1:01\./);
+  assert.equal(runCooldownMessage("COOLDOWN", 7), "Please wait 7s before running again.");
+  assert.equal(runCooldownMessage("COOLDOWN", 0.2), "Please wait 1s before running again.");
 });
