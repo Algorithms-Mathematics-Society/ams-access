@@ -1997,6 +1997,20 @@ fn relaunch_as_admin(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Set on a relaunched process. Tauri starts it just before this one exits,
+/// so on macOS it waits for the instance lock instead of taking the old
+/// process for a second instance and quitting.
+const RELAUNCH_ENV: &str = "AMS_ACCESS_RELAUNCHED";
+
+/// Quit and start AMS Access again, e.g. so a permission macOS grants only to
+/// new processes takes effect. The web side releases lockdown first; the
+/// normal exit path (window teardown, finish_shutdown) still runs.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    std::env::set_var(RELAUNCH_ENV, "1");
+    app.request_restart();
+}
+
 /// Deep-link into the OS privacy settings page for `section`. Windows opens
 /// the matching ms-settings page ("camera" / "microphone"). macOS opens the
 /// System Settings pane: "accessibility", "input_monitoring",
@@ -3730,7 +3744,13 @@ pub fn run() {
     // On macOS a second launch brings the first forward and exits without
     // touching its lockdown.
     #[cfg(target_os = "macos")]
-    let _macos_instance = match platform_rs::macos::instance::acquire(Duration::ZERO) {
+    let _macos_instance = match platform_rs::macos::instance::acquire(
+        if std::env::var_os(RELAUNCH_ENV).is_some() {
+            Duration::from_secs(10)
+        } else {
+            Duration::ZERO
+        },
+    ) {
         Ok(owner) => owner,
         Err(platform_rs::macos::instance::Refused::Running(pid)) => {
             eprintln!("AMS Access is already running; leaving it in charge");
@@ -3917,6 +3937,7 @@ pub fn run() {
             open_accessibility_settings,
             is_process_elevated,
             relaunch_as_admin,
+            relaunch_app,
             open_privacy_settings,
             check_screen_sharing,
             get_screen_capture_permitted_apps,
