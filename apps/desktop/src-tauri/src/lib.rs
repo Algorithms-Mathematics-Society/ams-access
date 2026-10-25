@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future as _;
+#[cfg(not(target_os = "macos"))]
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1271,7 +1272,7 @@ fn enrich_report(report: &mut ReadinessReport, device_state: &DeviceState) {
             .map(|_| cache.displays.describe());
         let remote_detail = device_state
             .rdp_server
-            .filter(|found| *found == !cache.remote_tools.is_empty())
+            .filter(|found| *found != cache.remote_tools.is_empty())
             .map(|found| {
                 if found {
                     // Built-in services are not apps to quit; they are switches
@@ -2940,7 +2941,22 @@ async fn enable_network_lockdown(
         .await
         .map_err(|error| error.to_string())?
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        // Resolvers are included and the API host is re-resolved while the
+        // lockdown is live; see platform_rs::macos::allowlist.
+        tauri::async_runtime::spawn_blocking(move || {
+            let ips = platform_rs::macos::resolve_allowlist(&allowed_domains);
+            if ips.is_empty() {
+                return Err("Could not resolve any allowed domains to IPs".to_string());
+            }
+            platform_rs::macos::enable_and_follow(&allowed_domains, &ips).map(|_| true)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         // A build that never asked for elevation cannot raise a firewall, so say
         // so instead of resolving every allowlist host and then handing netsh a

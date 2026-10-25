@@ -17,6 +17,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+mod allowlist;
 mod displays;
 mod kiosk_window;
 mod power;
@@ -24,6 +25,7 @@ mod remote_access;
 mod system_settings;
 mod watchdog;
 
+pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
 pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
@@ -1837,6 +1839,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 
 /// Lift the network lockdown via the privileged helper.
 pub fn disable_network_lockdown() -> Result<(), String> {
+    allowlist::forget();
     if !network_helper_running() {
         // pf rules outlive the helper, so an unreachable helper only means
         // "nothing to flush" when no lockdown was recorded this boot.
