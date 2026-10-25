@@ -28,6 +28,23 @@ const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
 // connection surfaces rather than hanging the UI.
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+/**
+ * Entry is allowed to be slow. It must not be allowed to look broken.
+ *
+ * Opening a session is the one request that queues behind everybody else:
+ * a thousand candidates pressing Enter at the same second were measured at
+ * 11s on average and 27s at the worst, because every sync route holds a
+ * pooled connection for its whole request. At the 20s default the client
+ * aborted first and showed "Unable to load contest. Check connection and
+ * retry." -- a connection error for a server that was working and about to
+ * answer. The candidate then retried, which added load to the queue that
+ * was already the problem.
+ *
+ * Sized above the measured worst case with room to spare. The waiting is
+ * made honest in the UI rather than hidden: see the boot screen's phases.
+ */
+const ENTRY_TIMEOUT_MS = 75_000;
+
 function retryAfterSeconds(headers: Headers): number {
   const value = headers.get("Retry-After")?.trim();
   if (!value) return 0;
@@ -547,16 +564,26 @@ export async function startSession(input: {
   osName?: string;
   appVersion?: string;
 }): Promise<ProctorSession> {
-  return request<ProctorSession>("POST", "/participant/sessions", {
-    contest_uid: input.contestUid,
-    device_fingerprint: input.deviceFingerprint ?? "",
-    os_name: input.osName ?? "",
-    app_version: input.appVersion ?? "",
-  });
+  return request<ProctorSession>(
+    "POST",
+    "/participant/sessions",
+    {
+      contest_uid: input.contestUid,
+      device_fingerprint: input.deviceFingerprint ?? "",
+      os_name: input.osName ?? "",
+      app_version: input.appVersion ?? "",
+    },
+    ENTRY_TIMEOUT_MS
+  );
 }
 
 export async function getSession(sessionUid: string): Promise<ProctorSession> {
-  return request<ProctorSession>("GET", `/participant/sessions/${encodeURIComponent(sessionUid)}`);
+  return request<ProctorSession>(
+    "GET",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}`,
+    undefined,
+    ENTRY_TIMEOUT_MS
+  );
 }
 
 /** Liveness, and a clock resync. Also how the app learns it was terminated. */
@@ -651,7 +678,9 @@ export async function getContest(
   const query = options.includeReference === false ? "?include_reference=false" : "";
   return request<ContestIndex>(
     "GET",
-    `/participant/contests/${encodeURIComponent(contestUid)}${query}`
+    `/participant/contests/${encodeURIComponent(contestUid)}${query}`,
+    undefined,
+    ENTRY_TIMEOUT_MS
   );
 }
 
@@ -676,7 +705,9 @@ export async function getPublishedReferenceSheet(
 export async function getProblem(contestUid: string, label: string): Promise<ProblemProjection> {
   const body = await request<{ problem: ProblemProjection }>(
     "GET",
-    `/participant/contests/${encodeURIComponent(contestUid)}/problems/${encodeURIComponent(label)}`
+    `/participant/contests/${encodeURIComponent(contestUid)}/problems/${encodeURIComponent(label)}`,
+    undefined,
+    ENTRY_TIMEOUT_MS
   );
   return body.problem;
 }

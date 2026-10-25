@@ -94,7 +94,7 @@ import {
 } from "./components/language";
 import { type Question, type ContestMeta } from "./components/questions";
 import { useFocusTrap } from "./components/hooks";
-import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
+import { BootScreen, ContestLoadErrorScreen, entryWaitPhase } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
 import { KioskBanner } from "./components/KioskBanner";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
@@ -436,6 +436,18 @@ export default function ContestPageClient() {
   // Same reason: recheckRun must re-poll the kind that actually timed out.
   const runModeRef = useRef<"all" | "custom">("all");
   const [loading, setLoading] = useState(true);
+  // How long entry has been waiting, so the boot screen can say something
+  // true about it. Ticks only while `loading` holds, and stops the moment
+  // the workspace mounts -- a timer left running behind the contest would
+  // re-render the editor every second for nothing.
+  const [bootWaitedMs, setBootWaitedMs] = useState(0);
+
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setBootWaitedMs(Date.now() - startedAt), 1_000);
+    return () => clearInterval(timer);
+  }, [loading]);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Bumped to re-run the load effect: by the backoff timer, or by Retry.
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -4080,7 +4092,8 @@ export default function ContestPageClient() {
   }
 
   if (loading) {
-    return <BootScreen label="Loading contest..." />;
+    const phase = entryWaitPhase(bootWaitedMs);
+    return <BootScreen label={phase.label} detail={phase.detail} />;
   }
 
   if (loadError) {
