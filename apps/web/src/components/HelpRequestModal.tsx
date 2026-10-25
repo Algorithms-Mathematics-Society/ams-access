@@ -29,7 +29,7 @@ type HelpRequestModalProps = {
   sessionId?: string | null;
   /** Optional: the contest the candidate is trying to enter. */
   contestId?: string | null;
-  /** Optional: pre-fill the email field (e.g. what the candidate typed on login). */
+  /** Optional: pre-fill the contact field. */
   defaultEmail?: string;
 };
 
@@ -48,14 +48,13 @@ export function HelpRequestModal({
   contestId,
   defaultEmail,
 }: HelpRequestModalProps) {
-  // Blank unless the caller supplies one. Candidates sign in with a printed
-  // slip and the platform has no address for them — pre-filling a guess would
-  // send the reply nowhere.
+  // Optional and blank unless the caller supplies one. Candidates sign in with
+  // a printed slip and may have no address to give; the invigilator already
+  // knows their seat and session, so a reply route is a bonus, not a gate.
   const [email, setEmail] = useState(defaultEmail ?? "");
   const [note, setNote] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [reference, setReference] = useState<string | null>(null);
-  const [emailError, setEmailError] = useState<string | null>(null);
   const [deliveryError, setDeliveryError] = useState<"rejected" | "unconfirmed" | null>(null);
   const [request, setRequest] = useState<{ summary: string; email: string; note: string } | null>(
     null
@@ -72,7 +71,6 @@ export function HelpRequestModal({
     if (!authenticated || inFlight.current || state === "sent") return;
     if (!event.currentTarget.reportValidity()) return;
     inFlight.current = true;
-    setEmailError(null);
     setDeliveryError(null);
     setRequest({ summary, email: email.trim(), note: note.trim() });
     setState("sending");
@@ -120,7 +118,6 @@ export function HelpRequestModal({
     setReference(null);
     setRequest(null);
     setNote("");
-    setEmailError(null);
     setDeliveryError(null);
   }
 
@@ -140,7 +137,7 @@ export function HelpRequestModal({
           </Text>
           <Text>{request?.summary}</Text>
           {request?.note && <Text color="secondary">{request.note}</Text>}
-          <Text type="supporting">Contact: {request?.email}</Text>
+          {request?.email && <Text type="supporting">Contact: {request.email}</Text>}
           {reference && (
             <MetadataList>
               <MetadataListItem label="Reference">
@@ -170,34 +167,15 @@ export function HelpRequestModal({
               </HStack>
             </>
           ) : (
-            <form
-              onSubmit={(event) => void submit(event)}
-              onInvalidCapture={(event) => {
-                const input = event.target as HTMLInputElement;
-                setEmailError(
-                  input.validity.valueMissing
-                    ? "Enter an email address so your organizer can reply."
-                    : "Enter a valid email address, such as you@institution.edu."
-                );
-              }}
-            >
+            <form onSubmit={(event) => void submit(event)}>
               <VStack gap={5}>
                 <TextInput
-                  label="Your email"
-                  type="email"
+                  label="Email or phone"
+                  isOptional
                   value={email}
-                  onChange={(value) => {
-                    setEmail(value);
-                    setEmailError(null);
-                  }}
-                  // Astryx isRequired supplies aria-required, but not native required.
-                  ref={(input) => {
-                    if (input) input.required = true;
-                  }}
-                  status={emailError ? { type: "error", message: emailError } : undefined}
+                  onChange={setEmail}
                   isDisabled={state === "sending"}
-                  placeholder="you@institution.edu"
-                  isRequired
+                  placeholder="So your organizer can reply"
                 />
                 <TextArea
                   label="What happened?"
@@ -232,7 +210,7 @@ export function HelpRequestModal({
                       }
                     />
                     <Text type="supporting">
-                      Last attempt: {request?.summary} · {request?.email}
+                      Last attempt: {[request?.summary, request?.email].filter(Boolean).join(" · ")}
                     </Text>
                   </VStack>
                 )}

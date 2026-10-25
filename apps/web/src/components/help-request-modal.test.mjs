@@ -137,25 +137,19 @@ function draft(h) {
   h.field("TextArea", "Preview is blank");
 }
 
-test("native required/email validation blocks dispatch and shows specific field errors", () => {
+test("contact is optional: a request without one is sent and its receipt omits it", async () => {
   const h = harness();
   const field = h.all("TextInput")[0];
-  const input = {};
-  field.props.ref(input);
-  assert.equal(input.required, true);
-  assert.equal(field.props.type, "email");
-  for (const missing of [true, false]) {
-    h.all("form")[0].props.onInvalidCapture({ target: { validity: { valueMissing: missing } } });
-    h.send(false);
-    h.render();
-    assert.match(
-      h.all("TextInput")[0].props.status.message,
-      missing ? /Enter an email/ : /valid email/
-    );
-    assert.equal(h.requests.length, 0);
-  }
-  h.field("TextInput", "candidate@example.test");
-  assert.equal(h.all("TextInput")[0].props.status, undefined);
+  assert.equal(field.props.isOptional, true);
+  assert.equal(field.props.isRequired, undefined);
+  h.send();
+  assert.equal(h.requests.length, 1);
+  assert.equal(JSON.parse(h.requests[0].init.body).contact, "");
+  h.requests[0].resolve(receipt("REF-A"));
+  await flush();
+  h.render();
+  assert.match(h.text(), /REF-A/);
+  assert.doesNotMatch(h.text(), /Contact:/);
 });
 
 test("pending close/reopen preserves request ownership and duplicate-click guard", async () => {
