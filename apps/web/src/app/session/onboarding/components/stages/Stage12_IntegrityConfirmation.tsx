@@ -178,9 +178,8 @@ const WARNING_GUIDANCE: Record<number, string> = {
   1: "Full-screen setup needs attention. Keep this app in the foreground. Your contest’s required screen controls are checked again before entry.",
   3: "Keyboard controls need attention. Check your system permissions or ask an invigilator. Required keyboard controls are verified before entry.",
   5: "The application check reported a warning. Close other apps before entry and ask an invigilator if you need help.",
-  6: "Virtualization was detected. Ask your invigilator whether this device is permitted. Continuing does not bypass contest entry requirements.",
-  8: "The face scan used the invigilator review option. Ask an invigilator for help if you need to confirm your setup.",
-  9: "Presence could not be confirmed cleanly. Stay alone in the camera frame with your face clearly visible, and ask an invigilator if needed.",
-  10: "Microphone access was unavailable. Check microphone permissions and close other apps using it. Ask your invigilator if access remains unavailable.",
-  11: "The connection or network controls reported a warning. Check your connection and ask an invigilator for help with any system permission request. Required network controls are verified before entry.",
+  7: "The face scan used the invigilator review option. Ask an invigilator for help if you need to confirm your setup.",
+  8: "Presence could not be confirmed cleanly. Stay alone in the camera frame with your face clearly visible, and ask an invigilator if needed.",
+  9: "Microphone access was unavailable. Check microphone permissions and close other apps using it. Ask your invigilator if access remains unavailable.",
+  10: "The connection or network controls reported a warning. Check your connection and ask an invigilator for help with any system permission request. Required network controls are verified before entry.",
 };

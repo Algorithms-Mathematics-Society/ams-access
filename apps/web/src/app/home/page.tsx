@@ -161,7 +161,6 @@ export default function HomePage() {
     networkLockdown: "checking",
     keyboard: "checking",
     restrictedApps: "checking",
-    vm: "checking",
     platform: "checking",
   });
   const [readinessReport, setReadinessReport] = useState<
@@ -233,7 +232,6 @@ export default function HomePage() {
           platform: telemetry.platform ?? null,
           env: telemetry.env ?? null,
           processes: telemetry.processes ?? null,
-          virt: telemetry.virt ?? null,
           network: telemetry.network ?? null,
           // Carried separately from `error`: the scan as a whole succeeded,
           // and these name the individual probes that did not.
@@ -272,7 +270,6 @@ export default function HomePage() {
           platform: r.platform === "checking" ? (supported ? "ok" : "fail") : r.platform,
           keyboard: r.keyboard === "checking" ? (supported ? "ok" : "fail") : r.keyboard,
           restrictedApps: snapshot.processes?.clean ? "ok" : flagged(r.restrictedApps),
-          vm: snapshot.virt && !snapshot.virt.detected ? "ok" : flagged(r.vm),
           network: snapshot.network ? (snapshot.network.reachable ? "ok" : "warn") : "unavailable",
         }));
         appendSecurityEvent(
@@ -379,7 +376,6 @@ export default function HomePage() {
         networkLockdown: "checking",
         keyboard: "checking",
         restrictedApps: "checking",
-        vm: "checking",
         platform: "checking",
       });
       appendSecurityEvent("READINESS: Local integrity scan started");
@@ -482,7 +478,6 @@ export default function HomePage() {
         networkLockdown: "unavailable",
         keyboard: native,
         restrictedApps: native,
-        vm: native,
         platform: native,
       });
       appendSecurityEvent("READINESS: Local integrity scan failed", "error");
@@ -538,8 +533,7 @@ export default function HomePage() {
   /**
    * Poll the resume request.
    *
-   * `consume` is false for the background poller and true only when the
-   * candidate pressed Resume. An approved grant used to be consumed the
+   * Only the explicit Resume action consumes approval. An approved grant used to be consumed the
    * moment the poller noticed it, which routed straight back into
    * onboarding: leaving a contest put you on /home, the poller saw
    * APPROVED, and pushed you into entry again. There was no way out of
@@ -548,15 +542,13 @@ export default function HomePage() {
    *
    * Approval now means re-entry is *available*, not that it happens.
    */
-  async function refreshResumeRequest(
-    session: ActiveSession,
-    isCancelled = () => false,
-    consume = false
-  ) {
+  async function refreshResumeRequest(session: ActiveSession, isCancelled = () => false) {
     if (!session.id || resumePollInFlightRef.current || resumeConsumeInFlightRef.current) return;
     resumePollInFlightRef.current = true;
     const isStale = () =>
       isCancelled() ||
+      resumeInFlightRef.current ||
+      resumeConsumeInFlightRef.current ||
       activeSessionRef.current?.id !== session.id ||
       activeSessionRef.current?.resume_request_id !== session.resume_request_id ||
       activeSessionRef.current?.resume_request_status !== session.resume_request_status;
@@ -587,12 +579,8 @@ export default function HomePage() {
         setResumeStatus("Resume request expired. Submit it again to rejoin.");
         setResumeBusy(false);
       } else if (requestStatus === "APPROVED") {
-        if (consume) {
-          await consumeApprovedResume(nextSession);
-        } else {
-          setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
-          setResumeBusy(false);
-        }
+        setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
+        setResumeBusy(false);
       }
     } catch {
       if (!isStale()) setResumeStatus("Waiting for organizer approval.");
@@ -845,11 +833,12 @@ export default function HomePage() {
       const verifiedSession = await validateStoredActiveSession(activeSession, "resume");
       if (!verifiedSession?.contest_id) return;
       const requestStatus = String(verifiedSession.resume_request_status ?? "").toUpperCase();
-      if (requestStatus === "PENDING" || requestStatus === "APPROVED") {
-        // Pressed by the candidate, so an approved grant is acted on here.
-        await refreshResumeRequest(verifiedSession, () => false, true);
+      if (requestStatus === "APPROVED") {
+        // Validation already fetched the approval; a background poll must not drop this click.
+        await consumeApprovedResume(verifiedSession);
         return;
       }
+      if (requestStatus === "PENDING") return;
       setPreflightContestId(verifiedSession.contest_id);
       setPreflightSessionType("resume");
     } finally {

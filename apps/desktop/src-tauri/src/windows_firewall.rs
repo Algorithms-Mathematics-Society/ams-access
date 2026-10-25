@@ -15,6 +15,7 @@ struct PolicyHealth {
     generation: AtomicU64,
     requested: AtomicBool,
     healthy: AtomicBool,
+    recovery_pending: AtomicBool,
 }
 
 impl PolicyHealth {
@@ -23,6 +24,7 @@ impl PolicyHealth {
             generation: AtomicU64::new(0),
             requested: AtomicBool::new(false),
             healthy: AtomicBool::new(false),
+            recovery_pending: AtomicBool::new(false),
         }
     }
 
@@ -44,7 +46,16 @@ impl PolicyHealth {
     fn disabled(&self) {
         self.requested.store(false, Ordering::SeqCst);
         self.healthy.store(false, Ordering::SeqCst);
+        self.recovery_pending.store(false, Ordering::SeqCst);
         self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn cleanup_failed(&self) {
+        self.recovery_pending.store(true, Ordering::SeqCst);
+    }
+
+    fn recovery_needed(&self, build_expects_firewall: bool) -> bool {
+        build_expects_firewall || self.recovery_pending.load(Ordering::SeqCst)
     }
 
     fn observe(&self, generation: u64, healthy: bool) -> Option<bool> {
@@ -57,6 +68,20 @@ impl PolicyHealth {
 
 pub fn protection_ready() -> bool {
     HEALTH.protection_ready()
+}
+
+pub fn recovery_pending() -> bool {
+    HEALTH.recovery_pending.load(Ordering::SeqCst)
+}
+
+pub fn recovery_needed(build_expects_firewall: bool) -> bool {
+    HEALTH.recovery_needed(build_expects_firewall)
+}
+
+pub fn note_startup_cleanup(result: &Result<(), String>) {
+    if result.is_err() {
+        HEALTH.cleanup_failed();
+    }
 }
 
 async fn verify(app: &tauri::AppHandle, runtime: &VerifiedRuntime) -> Result<(), String> {
@@ -130,6 +155,8 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
         if policy.is_none() {
             *policy = Some(runtime);
         }
+        // Install errors include failed rollback; require verified cleanup before clearing recovery.
+        HEALTH.cleanup_failed();
         return Err(error);
     }
     // Process creation during installation must not produce a false success.
@@ -140,6 +167,7 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
                 .map_err(|error| error.to_string())?;
         if let Err(cleanup) = cleanup {
             *policy = Some(runtime); // Keep identity pins until recovery succeeds.
+            HEALTH.cleanup_failed();
             return Err(format!("{error}; rollback failed: {cleanup}"));
         }
         return Err(error);
@@ -187,14 +215,21 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
     Ok(true)
 }
 
-pub async fn disable() -> Result<bool, String> {
-    let mut policy = POLICY.lock().await;
-    tauri::async_runtime::spawn_blocking(platform_rs::windows::disable_network_lockdown)
-        .await
-        .map_err(|error| error.to_string())??;
+pub fn disable_blocking() -> Result<bool, String> {
+    let mut policy = POLICY.blocking_lock();
+    if let Err(error) = platform_rs::windows::disable_network_lockdown() {
+        HEALTH.cleanup_failed();
+        return Err(error);
+    }
     *policy = None;
     HEALTH.disabled();
     Ok(true)
+}
+
+pub async fn disable() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(disable_blocking)
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
@@ -227,5 +262,34 @@ mod tests {
         assert!(!health.protection_ready());
         assert_eq!(health.observe(retry, true), Some(false));
         assert!(health.protection_ready());
+    }
+
+    #[test]
+    fn failed_cleanup_remains_pending_until_verified_disable() {
+        let health = PolicyHealth::new();
+        assert!(!health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+        health.cleanup_failed();
+        assert!(health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+        health.installed();
+        assert!(health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+        health.disabled();
+        assert!(!health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn ordinary_build_retries_only_when_prior_cleanup_failed() {
+        let health = PolicyHealth::new();
+        assert!(!health.recovery_needed(false));
+        assert!(health.recovery_needed(true));
+        health.cleanup_failed();
+        assert!(health.recovery_needed(false));
     }
 }

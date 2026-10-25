@@ -16,11 +16,13 @@ import {
   renameSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "fs";
 import { createHash } from "crypto";
 import { get } from "https";
 import { dirname, join, relative } from "path";
 import { fileURLToPath } from "url";
+import { patchMediaPipeLogging } from "./mediapipe-logging.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -42,8 +44,7 @@ const OBJECT_MODEL_URL =
 // Pinned, as setup-blazeface-model.mjs pins its two files. This lands inside
 // an exam binary; it is not something to take on trust from a CDN at build
 // time.
-const OBJECT_MODEL_SHA256 =
-  "0720bf247bd76e6594ea28fa9c6f7c5242be774818997dbbeffc4da460c723bb";
+const OBJECT_MODEL_SHA256 = "0720bf247bd76e6594ea28fa9c6f7c5242be774818997dbbeffc4da460c723bb";
 
 // Only the SIMD build is shipped. The directory also carries an ES-module
 // variant and a nosimd fallback, 33 MB in total, and every byte lands in the
@@ -112,6 +113,16 @@ function copyWasm() {
     if (!WASM_KEEP.has(f)) continue;
     const src = join(wasmSrc, f);
     const dest = join(wasmDest, f);
+    if (f.endsWith(".js")) {
+      const patched = patchMediaPipeLogging(readFileSync(src, "utf8"));
+      if (existsSync(dest) && readFileSync(dest, "utf8") === patched) {
+        skipped++;
+      } else {
+        writeFileSync(dest, patched);
+        copied++;
+      }
+      continue;
+    }
     if (sameFile(src, dest)) {
       skipped++;
       continue;

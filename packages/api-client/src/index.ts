@@ -58,7 +58,6 @@ export type CheckKind =
   | "clock_integrity"
   | "keyboard_lockdown"
   | "restricted_apps"
-  | "virtualization"
   | "platform"
   | "external_display"
   | "remote_server";
@@ -77,7 +76,6 @@ export type FailureReasonCode =
   | "network_helper_unavailable"
   | "keyboard_lockdown_unavailable"
   | "restricted_application_detected"
-  | "virtualization_detected"
   | "unsupported_platform"
   // This platform has no such probe at all. Distinct from
   // "probe_unavailable" (ran, could not conclude): there is nothing to retry,
@@ -147,12 +145,6 @@ export type ProcessScanResult = {
   advisory?: string[];
 };
 
-export type VirtDetectionResult = {
-  detected: boolean;
-  platform: string | null;
-  confidence: string;
-};
-
 export type DeviceState = {
   platform: string | null;
   camera_available: boolean | null;
@@ -160,7 +152,6 @@ export type DeviceState = {
   network: NetworkCheckResult | null;
   keyboard: KeyboardInterceptResult | null;
   restricted_processes: ProcessScanResult | null;
-  virtualization: VirtDetectionResult | null;
   /** Linux only: whether the privileged egress-lockdown helper is installed and
    *  reachable. Flows opaquely back into evaluate_session_readiness; `Some(false)`
    *  hard-blocks a strict contest. `null`/absent on other platforms (inert). */
@@ -228,7 +219,6 @@ const POLICY_CHECKS: CheckKind[] = [
   "device_id",
   "platform",
   "restricted_apps",
-  "virtualization",
   "keyboard_lockdown",
   "network",
   "network_lockdown",
@@ -438,7 +428,6 @@ export function browserDeviceState(options: {
     network: null,
     keyboard: null,
     restricted_processes: null,
-    virtualization: null,
     network_helper_ready: null,
   };
 }
