@@ -12,10 +12,18 @@
  * noise, and noise is how a prompt that matters gets dismissed without being
  * read. 3.1.2 to 3.1.9 says nothing. 3.1.2 to 3.2.0 is worth a sentence.
  *
+ * **Only `minimum` blocks.** `latest` is advisory -- the server says so -- and
+ * an organizer publishing a release the night before must not lock every
+ * candidate still on the old build out of the exam. A newer `latest` is a
+ * notice to install after the exam; only a build the server would refuse
+ * with 426 anyway is stopped here.
+ *
  * Failure is silence. A candidate about to sit an exam must never be stopped
  * by a version check that could not reach the server -- the thing this
  * prevents is a worse contest morning, not a safety property.
  */
+
+export const DEFAULT_DOWNLOAD_URL = "https://amsaccess.com/download";
 
 export type ClientVersionInfo = {
   minimum: string;
@@ -48,6 +56,24 @@ export function minorUpgradeAvailable(current: string, latest: string): boolean 
 }
 
 /**
+ * Whether `current` is older than `minimum`, the build the server refuses.
+ *
+ * Mirrors `is_supported` in ams-api's api/client_version.py, including that a
+ * pre-release of the minimum is below it. Unlike the server, an unparseable
+ * version on either side is *not* below: silence, as above.
+ */
+export function belowMinimum(current: string, minimum: string): boolean {
+  const parse = (raw: string) => /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec((raw ?? "").trim());
+  const here = parse(current);
+  const floor = parse(minimum);
+  if (!here || !floor) return false;
+  for (let i = 1; i <= 3; i++) {
+    if (Number(here[i]) !== Number(floor[i])) return Number(here[i]) < Number(floor[i]);
+  }
+  return Boolean(here[4]) && !floor[4];
+}
+
+/**
  * Ask the server what it publishes.
  *
  * Its own fetch rather than the shared `request()` helper: that one attaches
@@ -74,7 +100,7 @@ export async function fetchClientVersion(
       download_url:
         typeof body.download_url === "string" && body.download_url
           ? body.download_url
-          : "https://amsaccess.com/download",
+          : DEFAULT_DOWNLOAD_URL,
     };
   } catch {
     // Offline, blocked, slow, or a server that does not serve this yet.
