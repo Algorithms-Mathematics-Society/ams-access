@@ -1,5 +1,5 @@
-import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
+import { LegalBackLink } from "./legal-back-link";
 
 type LegalSection = {
   title: string;
@@ -42,7 +42,13 @@ function slugifySectionTitle(title: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-export function LegalPage({ eyebrow, title, description, effectiveDate, sections }: LegalPageProps) {
+export function LegalPage({
+  eyebrow,
+  title,
+  description,
+  effectiveDate,
+  sections,
+}: LegalPageProps) {
   const c = getLegalThemeColors();
   const mutedStyle: CSSProperties = {
     color: c.muted,
@@ -71,8 +77,7 @@ export function LegalPage({ eyebrow, title, description, effectiveDate, sections
             marginBottom: "24px",
           }}
         >
-          <Link
-            href="/"
+          <LegalBackLink
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -84,7 +89,7 @@ export function LegalPage({ eyebrow, title, description, effectiveDate, sections
           >
             <span aria-hidden="true">{"<"}</span>
             Back to Access
-          </Link>
+          </LegalBackLink>
         </div>
 
         <article
