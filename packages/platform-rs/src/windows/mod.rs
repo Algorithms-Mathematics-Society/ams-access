@@ -1,7 +1,5 @@
 use crate::process_runner::{Budget, CommandDeadlineExt};
-use core_rs::exam::{
-    CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult,
-};
+use core_rs::exam::{CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult};
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -492,16 +490,6 @@ fn reg_dword_nonzero(key: &str, value: &str) -> bool {
         return u64::from_str_radix(part, 16).unwrap_or(0) != 0;
     }
     false
-}
-
-fn reg_key_exists(key: &str) -> bool {
-    hidden_command("reg")
-        .args(["query", key])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .bounded_status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 // ── Sleep prevention ──────────────────────────────────────────────────────────

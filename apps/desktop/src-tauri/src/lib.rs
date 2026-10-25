@@ -1,4 +1,5 @@
 mod blocking_probe;
+mod cppref;
 mod event_recorder;
 mod event_store;
 #[cfg(any(target_os = "linux", test))]
@@ -11,6 +12,7 @@ mod lockdown_lifecycle;
 #[cfg(target_os = "linux")]
 static LINUX_NETWORK: linux_network::Coordinator = linux_network::Coordinator::new();
 mod network_probe;
+mod reference_navigation;
 mod shutdown;
 #[cfg(target_os = "windows")]
 mod windows_firewall;
@@ -1507,35 +1509,67 @@ fn native_scan_processes() -> ProcessScanResult {
 /// Only https, and only the hosts that serve the client. A command that
 /// takes an arbitrary string from the web layer and hands it to the shell is
 /// a way out of the lockdown, so this one does not.
-#[tauri::command]
-async fn open_external_url(url: String) -> Result<(), String> {
-    let parsed = url.trim();
-    if !parsed.starts_with("https://") {
-        return Err("only https URLs may be opened".into());
-    }
-    let host = parsed
-        .trim_start_matches("https://")
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let allowed = host == "amsaccess.com" || host.ends_with(".amsaccess.com");
-    if !allowed {
+fn validated_external_url(input: &str) -> Result<tauri::Url, String> {
+    let url = tauri::Url::parse(input.trim()).map_err(|_| "invalid URL".to_string())?;
+    let host = url.host_str().unwrap_or_default();
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || !(host == "amsaccess.com" || host.ends_with(".amsaccess.com"))
+    {
         return Err(format!("refusing to open {host}"));
     }
+    Ok(url)
+}
+
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), String> {
+    if LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        return Err("external URLs are unavailable during an active exam".into());
+    }
+    let parsed = validated_external_url(&url)?;
 
     #[cfg(target_os = "linux")]
-    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![parsed]);
+    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![parsed.as_str()]);
     #[cfg(target_os = "macos")]
-    let (program, args): (&str, Vec<&str>) = ("open", vec![parsed]);
+    let (program, args): (&str, Vec<&str>) = ("open", vec![parsed.as_str()]);
     #[cfg(target_os = "windows")]
-    let (program, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", parsed]);
+    let (program, args): (&str, Vec<&str>) = ("explorer.exe", vec![parsed.as_str()]);
 
     std::process::Command::new(program)
         .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("could not open browser: {error}"))
+}
+
+#[cfg(test)]
+mod external_url_tests {
+    use super::validated_external_url;
+
+    #[test]
+    fn external_url_validation_uses_canonical_https_hosts() {
+        for allowed in [
+            "https://amsaccess.com/download",
+            "https://www.amsaccess.com/download",
+            "  https://updates.amsaccess.com/client?channel=stable  ",
+        ] {
+            assert!(validated_external_url(allowed).is_ok(), "{allowed}");
+        }
+
+        for denied in [
+            "http://amsaccess.com/",
+            "https://amsaccess.com.evil.invalid/",
+            "https://amsaccess.com@evil.invalid/",
+            "https://evil.invalid\\@foo.amsaccess.com/",
+            "https://foo.amsaccess.com:444/",
+            "https://user@foo.amsaccess.com/",
+            "https://foo.amsaccess.com@evil.invalid/",
+        ] {
+            assert!(validated_external_url(denied).is_err(), "{denied}");
+        }
+    }
 }
 
 /// Install platform-level keyboard intercept.
@@ -3777,7 +3811,21 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // Plugin navigation hooks apply to config-created windows as well as
+        // windows built in setup. Keep every top-level navigation on the app
+        // origin so content references cannot replace the exam shell.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("reference-navigation")
+                .on_navigation(|webview, url| {
+                    reference_navigation::is_allowed_app_navigation(
+                        url,
+                        webview.app_handle().config().build.dev_url.as_ref(),
+                    )
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
+            cppref::read_cppref_asset,
             collect_device_state,
             evaluate_session_readiness,
             start_secure_session,
@@ -3861,6 +3909,7 @@ pub fn run() {
                 tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
                     .with_webview_configuration(macos_webview_configuration()?)
                     .initialization_script(BLOCK_NATIVE_CONTEXT_MENU)
+                    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                     .build()?;
             }
 

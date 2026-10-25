@@ -8,6 +8,7 @@ target/
 # Node
 node_modules
 .pnpm-store/
+.cache/
 .turbo/
 *.tsbuildinfo
 

@@ -8,9 +8,7 @@
 
 use crate::process_runner::{Budget, CommandDeadlineExt};
 use block2::RcBlock;
-use core_rs::exam::{
-    CloseAppsResult, KeyboardInterceptResult, LockdownConfig, ProcessScanResult,
-};
+use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, LockdownConfig, ProcessScanResult};
 use std::ffi::c_void;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
@@ -2282,4 +2280,3 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
         Err(error) => Err(format!("Could not run networksetup: {error}")),
     }
 }
-

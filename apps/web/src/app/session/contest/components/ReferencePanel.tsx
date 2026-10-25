@@ -20,7 +20,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BookOpen, CornerUpLeft, Search, X } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { Button } from "@astryxdesign/core/Button";
 import { HOME_PAGE, type Hit, labelOf, readPage, resolveHref, search } from "../cppref";
+import { referenceContent } from "../reference-content";
 import { useTheme } from "@/lib/theme";
 
 const ASSET_BASE = "/cppref/assets";
@@ -143,29 +145,6 @@ const STYLESHEETS = [
   `${ASSET_BASE}/reference/common/site_modules.css`,
 ];
 
-/** The book's pages are whole documents; only the body belongs in the host. */
-function bodyOf(html: string): string {
-  const open = html.search(/<body[^>]*>/i);
-  if (open < 0) return html;
-  const start = html.indexOf(">", open) + 1;
-  const close = html.toLowerCase().lastIndexOf("</body>");
-  return html.slice(start, close < 0 ? undefined : close);
-}
-
-/** Point relative images at the copied assets; leave data: URIs alone. */
-function withAssets(html: string, from: string): string {
-  const dir = from.slice(0, from.lastIndexOf("/") + 1);
-  return html.replace(/\ssrc="(?!https?:|data:|\/)([^"]+)"/gi, (_whole, rel: string) => {
-    const parts: string[] = [];
-    for (const part of (dir + rel).split("/")) {
-      if (!part || part === ".") continue;
-      if (part === "..") parts.pop();
-      else parts.push(part);
-    }
-    return ` src="${ASSET_BASE}/${parts.join("/")}"`;
-  });
-}
-
 type Status = { kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string };
 
 export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClose: () => void }) {
@@ -177,6 +156,8 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   const [path, setPath] = useState(HOME_PAGE);
   const [history, setHistory] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "loading" });
+  const [reload, setReload] = useState(0);
+  const [searchError, setSearchError] = useState("");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -216,7 +197,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         // specificity, ours is the one that wins.
         shadowRef.current.innerHTML =
           `${links}<style>${THEME_CSS}</style>` +
-          `<div class="cppref-page" data-theme="${theme}">${withAssets(bodyOf(html), path)}</div>`;
+          `<div class="cppref-page" data-theme="${theme}">${referenceContent(html, path)}</div>`;
         setStatus({ kind: "idle" });
         scrollRef.current?.scrollTo({ top: 0 });
       })
@@ -234,7 +215,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     // `theme` is deliberately absent: flipping it must not refetch and
     // re-scroll the page, so the effect below just re-labels the wrapper.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
+  }, [path, reload]);
 
   useEffect(() => {
     shadowRef.current?.querySelector(".cppref-page")?.setAttribute("data-theme", theme);
@@ -244,14 +225,25 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const onClick = (event: MouseEvent) => {
+    const onActivate = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
       const anchor = event
         .composedPath()
         .find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement);
       if (!anchor) return;
       event.preventDefault();
-      const href = anchor.getAttribute("href") ?? "";
-      if (href.startsWith("#")) return;
+      // Anchors have no href: middle-click, context menus, downloads and
+      // default browser navigation cannot escape this controlled handler.
+      if (event.type === "auxclick") return;
+      const href = anchor.getAttribute("data-cppref-href") ?? "";
+      if (href.startsWith("#")) {
+        try {
+          shadowRef.current?.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView();
+        } catch {
+          /* Ignore malformed fragment identifiers. */
+        }
+        return;
+      }
       const target = resolveHref(href, path);
       if (target) {
         setBlocked(null);
@@ -260,23 +252,39 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         setBlocked(anchor.textContent?.trim() || href);
       }
     };
-    host.addEventListener("click", onClick);
-    return () => host.removeEventListener("click", onClick);
+    host.addEventListener("click", onActivate);
+    host.addEventListener("auxclick", onActivate);
+    host.addEventListener("keydown", onActivate);
+    return () => {
+      host.removeEventListener("click", onActivate);
+      host.removeEventListener("auxclick", onActivate);
+      host.removeEventListener("keydown", onActivate);
+    };
   }, [go, path]);
 
   useEffect(() => {
+    setSearchError("");
     if (!query.trim()) {
       setHits([]);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      void search(query).then((found) => {
-        if (!cancelled) {
-          setHits(found);
-          setCursor(0);
-        }
-      });
+      void search(query)
+        .then((found) => {
+          if (!cancelled) {
+            setHits(found);
+            setCursor(0);
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            setHits([]);
+            setSearchError(
+              error instanceof Error ? error.message : "Reference search is unavailable."
+            );
+          }
+        });
     }, 120);
     return () => {
       cancelled = true;
@@ -434,7 +442,13 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         </HStack>
       ) : null}
 
-      {query.trim() && hits.length === 0 ? (
+      {searchError && (
+        <Text role="alert" type="supporting" style={{ padding: "var(--spacing-3)" }}>
+          {searchError}
+        </Text>
+      )}
+
+      {query.trim() && hits.length === 0 && !searchError ? (
         <HStack style={{ padding: "8px 12px", flexShrink: 0 }}>
           <Text size="xsm">Nothing in the reference matches that.</Text>
         </HStack>
@@ -487,11 +501,17 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
 
       <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 12px" }}>
         {status.kind === "error" ? (
-          <VStack gap={6} style={{ padding: 24 }}>
+          <VStack gap={4} style={{ padding: "var(--spacing-6)" }}>
             <Text size="sm" style={{ fontWeight: 600 }}>
-              That page is not in the offline reference.
+              Couldn’t open the offline reference.
             </Text>
             <Text size="xsm">{status.message}</Text>
+            <Button
+              label="Retry"
+              variant="secondary"
+              onClick={() => setReload((value) => value + 1)}
+              style={{ alignSelf: "flex-start" }}
+            />
           </VStack>
         ) : null}
         <div ref={hostRef} />

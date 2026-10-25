@@ -2,9 +2,7 @@ pub mod instance;
 mod settings;
 
 use crate::process_runner::{Budget, CommandDeadlineExt};
-use core_rs::exam::{
-    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult,
-};
+use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, ProcessScanResult};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 mod kde;

@@ -32,13 +32,12 @@ const nextConfig = {
   // Disable server features — Tauri loads static files
   trailingSlash: true,
   // The packed cppreference book is stored brotli-compressed and is NOT
-  // decoded by any code we ship: the browser inflates it in its network layer
-  // because the response says so. That is what keeps a 336 MB reference down
-  // to 8 MB with no decoder in the bundle.
+  // decoded by frontend JavaScript: the dev server lets the browser inflate
+  // it in the network layer. Installed builds read and decode embedded blocks
+  // through read_cppref_asset instead of relying on WebView fetch support.
   //
   // `output: "export"` ignores headers, so this serves `next dev` only. The
-  // production path is Tauri's asset protocol, which must set the same header
-  // for the blocks; until it does, the Reference tab works in dev only.
+  // production path is native IPC, so it does not depend on these headers.
   async headers() {
     return [
       {
