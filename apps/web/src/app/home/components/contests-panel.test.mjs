@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { clockIsSynchronised, listContests, serverNow } from "../../../lib/proctor-api.ts";
 const source = readFileSync(new URL("./ContestsPanel.tsx", import.meta.url), "utf8");
 const code = ts.transpileModule(source, {
   compilerOptions: {
@@ -12,19 +13,36 @@ const code = ts.transpileModule(source, {
   },
 }).outputText;
 const jsx = (type, props) => ({ type, props });
+let orderedAt;
+let serverTime = 1_000;
+let effects = [];
+let stateUpdates = [];
 const context = {
   exports: {},
   require(name) {
     if (name === "react")
       return {
         memo: (fn) => fn,
-        useState: (initial) => [initial(), () => {}],
-        useEffect() {},
+        useState: (initial) => [initial(), (value) => stateUpdates.push(value)],
+        useEffect: (effect) => effects.push(effect),
         useMemo: (fn) => fn(),
       };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
-    if (name === "./utils") return { getContestEntryState: () => ({ phase: "upcoming" }) };
-    if (name === "./home-contest-presentation") return { sortHomeContests: (contests) => contests };
+    if (name === "@/lib/proctor-api") return { serverNow: () => serverTime };
+    if (name === "./utils")
+      return {
+        getContestEntryState: (_contest, now) => {
+          orderedAt = now;
+          return { phase: "upcoming" };
+        },
+      };
+    if (name === "./home-contest-presentation")
+      return {
+        sortHomeContests: (contests, phase) => {
+          contests.forEach(phase);
+          return contests;
+        },
+      };
     return new Proxy({}, { get: (_, key) => key });
   },
 };
@@ -47,6 +65,33 @@ function render(props) {
   );
 }
 const contests = [{ id: "one", title: "Algorithms" }];
+
+test("contest ordering uses the same server time as its entry card", () => {
+  serverTime = 1_000;
+  effects = [];
+  stateUpdates = [];
+  render({ contests });
+  assert.equal(orderedAt, 1_000);
+  // The first contest response can establish server time after the panel mounts.
+  serverTime = 2_000;
+  effects[0]();
+  assert.deepEqual(stateUpdates, [2_000]);
+});
+
+test("contest list HTTP Date anchors Home timing despite a wrong device clock", async (t) => {
+  const serverTime = Date.parse("2026-10-25T12:00:00Z");
+  t.mock.method(Date, "now", () => serverTime + 24 * 60 * 60 * 1000);
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("[]", { headers: { Date: new Date(serverTime).toUTCString() } })
+  );
+
+  assert.deepEqual(await listContests(), []);
+  assert.equal(clockIsSynchronised(), true);
+  assert.ok(Math.abs(serverNow() - serverTime) < 1_000);
+});
+
 test("cached data plus failed refresh and search miss keeps stale notice and Clear search", () => {
   let search;
   const nodes = render({

@@ -382,7 +382,7 @@ export function getContestEntryState(c: InvitedContest, now: number): ContestEnt
 
   const verificationOpen = start - verificationWindowMinutes * 60 * 1000;
   // Format all displayed times in the candidate's LOCAL timezone (no contest-tz
-  // override), so they agree with the countdown which uses absolute Date.now().
+  // override), so they agree with the countdown driven by server time.
   const verificationOpensAt = formatContestClock(verificationOpen);
   const contestStartsAt = formatContestClock(c.start_at);
   const contestEndsAt = formatContestClock(c.end_at);

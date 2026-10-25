@@ -10,6 +10,7 @@ import { List, ListItem } from "@astryxdesign/core/List";
 import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { Icon } from "@astryxdesign/core/Icon";
 import { dateTimeFormatter } from "@/lib/date-time-format";
+import { serverNow } from "@/lib/proctor-api";
 import type { InvitedContest } from "./types";
 
 /** Calendar dates and agenda times use the device's local time zone together. */
@@ -39,8 +40,11 @@ export const ContestCalendar = memo(function ContestCalendar(props: ContestCalen
 });
 
 function LocalContestCalendar({ contests, loading, error, onSelectContest }: ContestCalendarProps) {
-  const [selectedDate, setSelectedDate] = useState<ISODateString>(() => localDateKey(new Date()));
-  const [focusDate, setFocusDate] = useState<ISODateString>(selectedDate);
+  // Until a date is chosen, follow the server clock as the first response anchors it.
+  const [selectedDate, setSelectedDate] = useState<ISODateString | null>(null);
+  const [focusDate, setFocusDate] = useState<ISODateString | null>(null);
+  const shownDate = selectedDate ?? localDateKey(new Date(serverNow()));
+  const shownFocusDate = focusDate ?? shownDate;
   const schedule = useMemo(
     () =>
       contests
@@ -54,14 +58,15 @@ function LocalContestCalendar({ contests, loading, error, onSelectContest }: Con
         .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
     [contests]
   );
-  const selectedEvents = schedule.filter((event) => event.day === selectedDate);
+  const selectedEvents = schedule.filter((event) => event.day === shownDate);
   const practiceCount = contests.filter((contest) => contest.is_practice).length;
   const missingDates = contests.length - practiceCount - schedule.length;
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
   const nextEvent = schedule.find((event) => event.startsAt.getTime() >= now);
+  useEffect(() => setNow(serverNow()), [schedule]);
   // Memoization must not freeze "next contest" after a start time passes.
   useEffect(() => {
-    const current = Date.now();
+    const current = serverNow();
     if (
       now < current &&
       schedule.some(
@@ -73,7 +78,7 @@ function LocalContestCalendar({ contests, loading, error, onSelectContest }: Con
     }
     if (!nextEvent) return;
     const timer = setTimeout(
-      () => setNow(Date.now()),
+      () => setNow(serverNow()),
       Math.min(2_147_483_647, Math.max(1, nextEvent.startsAt.getTime() - current + 1))
     );
     return () => clearTimeout(timer);
@@ -82,7 +87,7 @@ function LocalContestCalendar({ contests, loading, error, onSelectContest }: Con
     weekday: "short",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${selectedDate}T12:00:00`));
+  }).format(new Date(`${shownDate}T12:00:00`));
   function selectDate(date: ISODateString) {
     setSelectedDate(date);
     setFocusDate(date);
@@ -103,14 +108,14 @@ function LocalContestCalendar({ contests, loading, error, onSelectContest }: Con
             label="Today"
             variant="ghost"
             size="sm"
-            onClick={() => selectDate(localDateKey(new Date()))}
+            onClick={() => selectDate(localDateKey(new Date(serverNow())))}
           />
         </HStack>
         <Calendar
           mode="single"
-          value={selectedDate}
+          value={shownDate}
           onChange={setSelectedDate}
-          focusDate={focusDate}
+          focusDate={shownFocusDate}
           onFocusDateChange={setFocusDate}
           aria-label="Contest dates"
           style={{ width: "100%", minWidth: 0, padding: 0 }}
@@ -159,7 +164,7 @@ function LocalContestCalendar({ contests, loading, error, onSelectContest }: Con
                   No contests start on this day.
                 </Text>
               )}
-              {nextEvent && nextEvent.day !== selectedDate && (
+              {nextEvent && nextEvent.day !== shownDate && (
                 <Button
                   label="Show next contest"
                   variant="ghost"
