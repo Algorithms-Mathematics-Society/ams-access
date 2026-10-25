@@ -28,6 +28,7 @@ import { CONTEST_STYLES } from "./components/workspace-styles";
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
@@ -116,7 +117,7 @@ import {
   type SourceSnapshot,
 } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
-import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
+import { restoreDraftWorkspace } from "./draft-workspace";
 import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
@@ -437,10 +438,12 @@ export default function ContestPageClient() {
   const autoLoadRetriesRef = useRef(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const latestActiveDraftRef = useRef<{
+    sessionId: string | null;
     questionId: string;
     fileId: string;
     source: string;
     language: string;
+    files: EditorFile[];
   } | null>(null);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
   // even when the candidate has stopped typing (e.g. a transient network blip).
@@ -1584,23 +1587,29 @@ export default function ContestPageClient() {
     setHasUnsavedChanges(true);
     const q = questions[activeQ];
     if (!q) return;
-    setQuestionFiles((prev) => {
-      const files = prev[q.id];
-      if (!files) return prev;
-      return {
-        ...prev,
-        [q.id]: files.map((f) => {
-          if (!f.id.endsWith(":main")) return f;
-          return {
-            ...f,
-            name: questionFileName(q, normalizedLanguage),
-            content: isPristineStarter(f.content)
-              ? defaultStarterFor(normalizedLanguage)
-              : f.content,
-          };
-        }),
-      };
-    });
+    const changeFiles = (files: EditorFile[]) =>
+      files.map((f) => {
+        if (!f.id.endsWith(":main")) return f;
+        return {
+          ...f,
+          name: questionFileName(q, normalizedLanguage),
+          content: isPristineStarter(f.content) ? defaultStarterFor(normalizedLanguage) : f.content,
+        };
+      });
+    const latest = latestActiveDraftRef.current;
+    const files = changeFiles(
+      latest?.sessionId === sessionId && latest.questionId === q.id ? latest.files : editorFiles
+    );
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: q.id,
+      fileId: activeFileId,
+      source: files.find((f) => f.id === activeFileId)?.content ?? "",
+      language: toLanguageId(normalizedLanguage),
+      files,
+    };
+    writeLocalAnswerBuffer();
+    setQuestionFiles((prev) => (prev[q.id] ? { ...prev, [q.id]: changeFiles(prev[q.id]) } : prev));
   }
 
   function handleCodeChange(value: string) {
@@ -1612,12 +1621,40 @@ export default function ContestPageClient() {
     // actual outcome.
     const qId = questions[activeQ]?.id ?? "";
     const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
+    const latest = latestActiveDraftRef.current;
+    const files = (
+      latest?.sessionId === sessionId && latest.questionId === qId ? latest.files : editorFiles
+    ).map((f) => (f.id === currentActiveId ? { ...f, content: value } : f));
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: qId,
+      fileId: currentActiveId,
+      source: value,
+      language:
+        latest?.sessionId === sessionId && latest.questionId === qId
+          ? latest.language
+          : toLanguageId(selectedLanguage),
+      files,
+    };
+    writeLocalAnswerBuffer();
     setQuestionFiles((prev) => ({
       ...prev,
       [qId]: (prev[qId] ?? []).map((f) =>
         f.id === currentActiveId ? { ...f, content: value } : f
       ),
     }));
+  }
+
+  function activeDraftSnapshot() {
+    const latest = latestActiveDraftRef.current;
+    if (latest?.sessionId === sessionId && latest.questionId === questions[activeQ]?.id)
+      return latest;
+    return {
+      files: editorFiles,
+      fileId: activeFileId,
+      source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+      language: toLanguageId(selectedLanguage),
+    };
   }
 
   // `casesOverride` exists because this reads `customCases` out of the render
@@ -1641,6 +1678,7 @@ export default function ContestPageClient() {
     // Persist the current code before dispatching to the judge. A failed
     // device write is surfaced by the draft status; it does not block a run,
     // which sends the source to the judge directly.
+    const runDraft = activeDraftSnapshot();
     await handleSave();
     if (runVisit !== runVisitRef.current) return;
 
@@ -1650,17 +1688,17 @@ export default function ContestPageClient() {
     let attemptId: string;
     try {
       setRunSourceSnapshot({
-        fileId: activeFileId,
+        fileId: runDraft.fileId,
         questionId: questions[activeQ].id,
         problemTitle: questions[activeQ].title,
-        filename: activeFile?.name ?? "main.cpp",
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-        language: toLanguageId(selectedLanguage),
+        filename: runDraft.files.find((f) => f.id === runDraft.fileId)?.name ?? "main.cpp",
+        source: runDraft.source,
+        language: runDraft.language,
       });
       const created = await runAgainstSamples(sessionId, {
         problemLabel: questions[activeQ].id,
-        language: toLanguageId(selectedLanguage),
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        language: runDraft.language,
+        source: runDraft.source,
         // Only when the candidate pressed Run Custom. An ordinary Run must
         // send nothing here, or the samples are never reached.
         customCases: useCustomCases ? toWire(casesOverride ?? customCases) : null,
@@ -1791,13 +1829,14 @@ export default function ContestPageClient() {
     if (!sessionId) return false;
     const qId = questions[activeQ]?.id;
     if (!qId) return false;
+    const draft = activeDraftSnapshot();
     const saved = writeAnswerBuffer(localStorage, sessionId, qId, {
-      language: toLanguageId(selectedLanguage),
+      language: draft.language,
       // Every tab, not just the active one. Scratch tabs were persisted
       // nowhere at all — not locally and not on the server, which only ever
       // receives the active file.
-      files: editorFiles,
-      activeFileId,
+      files: draft.files,
+      activeFileId: draft.fileId,
       savedAtMs: Date.now(),
       revision: draftRevisionsRef.current[qId] ?? 0,
     });
@@ -1832,25 +1871,20 @@ export default function ContestPageClient() {
     const qId = questions[activeQ].id;
     // A failed write leaves the work dirty: nothing durable holds it.
     if (!writeLocalAnswerBuffer()) return false;
+    const draft = activeDraftSnapshot();
     setSavedAnswers((prev) => ({
       ...prev,
       [qId]: {
-        language: toLanguageId(selectedLanguage),
-        content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
+        language: draft.language,
+        content: draft.source,
       },
     }));
     setHasUnsavedChanges(false);
     return true;
   }
 
-  // Capture this render's immutable question/file/source closure at request time.
-  // Reading a live ref only when a deferred job starts loses the outgoing
-  // question if navigation happens while another save is in flight.
-  const saveQueueRef = useRef<ReturnType<typeof createDraftSaveQueue> | null>(null);
-  if (!saveQueueRef.current) saveQueueRef.current = createDraftSaveQueue();
   function handleSave(): Promise<boolean> {
-    writeLocalAnswerBuffer();
-    return saveQueueRef.current!(`${sessionId}:${questions[activeQ]?.id ?? ""}`, doSave);
+    return doSave();
   }
 
   async function handleSubmitSolution() {
@@ -1868,9 +1902,10 @@ export default function ContestPageClient() {
 
     try {
       const qId = questions[activeQ].id;
+      const draft = activeDraftSnapshot();
       const submittedSource = {
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-        language: toLanguageId(selectedLanguage),
+        source: draft.source,
+        language: draft.language,
       };
       const previousRequest = submitKeyRef.current;
       if (
@@ -2394,9 +2429,12 @@ export default function ContestPageClient() {
   }, [loading, cameraPickKey]);
 
   useEffect(() => {
-    if (!sessionId || !browserOnline) return;
+    if (!sessionId) return;
 
     let cancelled = false;
+    let latestRequest = 0;
+    let acceptedSuccess = 0;
+    let authExpired = false;
 
     /**
      * Liveness — and the only way the app learns anything changed.
@@ -2408,10 +2446,14 @@ export default function ContestPageClient() {
      * the failures.
      */
     const beat = async () => {
+      const request = ++latestRequest;
       try {
         const live = await heartbeat(sessionId);
-        if (cancelled) return;
+        if (cancelled || authExpired || request !== latestRequest) return;
+        acceptedSuccess = request;
 
+        // A server reply is stronger evidence than navigator.onLine's hint.
+        setBrowserOnline(true);
         setHeartbeatState((prev) => onHeartbeatSuccess(prev, Date.now()));
 
         // The server's word on where we are, once a minute. This corrects any
@@ -2438,23 +2480,32 @@ export default function ContestPageClient() {
           setSessionEnded("submitted");
         }
       } catch (caught) {
-        if (cancelled) return;
+        if (cancelled || authExpired) return;
         if (caught instanceof ProctorApiError && caught.status === 401) {
+          // A newer transport failure cannot invalidate an earlier auth rejection.
+          // A newer accepted server reply can: it proved the session is still valid.
+          if (request <= acceptedSuccess) return;
+          authExpired = true;
           // The token expired mid-exam. Keep `ams_active_session` so the
           // resume path still has something to resume.
           void redirectAfterRelease("/login");
           return;
         }
+        if (request !== latestRequest) return;
         setHeartbeatState(onHeartbeatFailure);
       }
     };
 
     // `beat` is defined above; expose it now that it exists.
-    retryBeatRef.current = () => void beat();
-    void beat();
+    const retry = () => void beat();
+    retryBeatRef.current = retry;
+    // A browser "offline" hint suppresses only the immediate request. The
+    // minute poll still checks for recovery if an online event never arrives.
+    if (browserOnline) void beat();
     const id = setInterval(() => void beat(), 60_000);
     return () => {
       cancelled = true;
+      if (retryBeatRef.current === retry) retryBeatRef.current = () => {};
       clearInterval(id);
     };
     // Recheck immediately on reconnect; ignore the previous connection's replies.
@@ -3366,12 +3417,18 @@ export default function ContestPageClient() {
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
-  latestActiveDraftRef.current = {
-    questionId: currentQId,
-    fileId: activeFileId,
-    source: currentCode,
-    language: toLanguageId(selectedLanguage),
-  };
+  // Event handlers persist immediately; a committed render then becomes the
+  // source for later saves, before the passive persistence effect runs.
+  useLayoutEffect(() => {
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: currentQId,
+      fileId: activeFileId,
+      source: currentCode,
+      language: toLanguageId(selectedLanguage),
+      files: editorFiles,
+    };
+  }, [questionFiles, questionActiveFile, selectedLanguage, currentQId, sessionId]);
 
   // The local buffer is the only persistence. Written on every change rather
   // than debounced: a localStorage write costs nothing, and the debounce only

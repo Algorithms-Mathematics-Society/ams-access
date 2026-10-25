@@ -7,7 +7,10 @@ const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const start = client.indexOf("  async function handleSubmitSolution()");
 const end = client.indexOf("  // Exit teardown:", start);
 assert.ok(start >= 0 && end > start);
-const handler = ts.transpileModule(client.slice(start, end), {
+const draftStart = client.indexOf("  function activeDraftSnapshot()");
+const draftEnd = client.indexOf("  // `casesOverride`", draftStart);
+assert.ok(draftStart >= 0 && draftEnd > draftStart);
+const handler = ts.transpileModule(client.slice(draftStart, draftEnd) + client.slice(start, end), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
@@ -22,6 +25,7 @@ function fixture() {
     editorFiles: [{ id: "main", content: "answer one" }],
     activeFileId: "main",
     selectedLanguage: "cpp17",
+    latestActiveDraftRef: { current: null },
     submitInFlightRef: { current: false },
     exitInFlightRef: { current: false },
     submitKeyRef: { current: null },
