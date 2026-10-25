@@ -205,17 +205,20 @@ const program = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText;
 
-function stageHarness(h) {
+function stageHarness(h, pathWarnings = []) {
   const phases = [],
-    advances = [];
+    advances = [],
+    shownWarnings = [];
   const context = {
     window: { __TAURI__: {} },
     ensureNetworkHelper,
     invokeStrict: h.invoke,
     invoke: async (command) => {
+      if (command === "get_network_path_warnings") return pathWarnings;
       assert.equal(command, "check_network_stability", "Helper checks must use the strict bridge");
       return { reachable: true, latency_ms: 10, quality: "excellent" };
     },
+    setPathWarnings: (value) => shownWarnings.push(value),
     withNullableTimeout: (promise) => promise,
     getNetworkProbeHost: () => "example.invalid",
     isGatingRelaxed: () => false,
@@ -231,8 +234,22 @@ function stageHarness(h) {
   const start = new Function(...Object.keys(context), `${program}; return effect;`)(
     ...Object.values(context)
   );
-  return { phases, advances, start };
+  return { phases, advances, shownWarnings, start };
 }
+
+test("a proxy or VPN warning is shown and holds the stage instead of auto-advancing", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const proxy = "A system HTTP proxy is set.";
+  const h = harness([true]),
+    stage = stageHarness(h, [proxy]),
+    cleanup = stage.start();
+  await settle();
+  assert.deepEqual(stage.phases, ["checking", "pass"]);
+  assert.deepEqual(stage.shownWarnings.at(-1), [proxy]);
+  t.mock.timers.tick(1400);
+  assert.deepEqual(stage.advances, [], "the candidate continues by hand once they have read it");
+  cleanup();
+});
 
 test("actual onboarding effect warns on persistent busy without requesting installation", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });

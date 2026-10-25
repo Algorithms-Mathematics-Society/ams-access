@@ -3,6 +3,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/Stack";
 import { CheckLine, StageHeader } from "../ui";
+import { PowerAdvice } from "../PowerAdvice";
 import { REVIEW_STAGE, STAGES, type StageStatus } from "../../support";
 
 /**
@@ -155,11 +156,14 @@ export function Stage12_IntegrityConfirmation({
       {/* On macOS, switching apps, Spaces or desktops while the secure
           workspace loads can leave AMS Access frozen. */}
       {!blocked && platform?.toLowerCase() === "macos" && (
-        <Banner
-          status="error"
-          title="Do not leave this screen"
-          description="After clicking Continue, stay on this screen until your contest opens. Do not switch apps, press Cmd+Tab, or swipe to another desktop."
-        />
+        <VStack gap={5}>
+          <PowerAdvice />
+          <Banner
+            status="error"
+            title="Do not leave this screen"
+            description="After clicking Continue, stay on this screen until your contest opens. Do not switch apps, press Cmd+Tab, or swipe to another desktop."
+          />
+        </VStack>
       )}
       {!blocked && (
         <Button

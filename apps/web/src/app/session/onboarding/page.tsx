@@ -26,9 +26,9 @@ import {
   strictContestPolicy,
   type OrganizerOverride,
 } from "@ams/api-client";
-import { fetchJson, SessionBindingError } from "@/lib/api-client";
-import { authHeaders, participantToken } from "@/lib/candidate-auth";
-import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
+import { SessionBindingError } from "@/lib/api-client";
+import { participantToken } from "@/lib/candidate-auth";
+import { getContest, serverNow, startSession, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
@@ -89,6 +89,11 @@ import {
   type Stage,
   type StageStatus,
 } from "./support";
+
+// Longest random wait before a candidate held for the start enters at T=0.
+// The end is fixed server-side, so the wait is exam time lost: keep it short
+// (a 150 s spread was removed for exactly that reason).
+const START_JITTER_MS = 15_000;
 
 // Astryx Kbd uses modifier glyphs; this shortcut intentionally spells out its keys.
 function SetupExitShortcut() {
@@ -573,23 +578,15 @@ export default function OnboardingPage() {
         const body = await wait(
           "session creation",
           () =>
-            fetchJson<{ uid?: string }>(
-              `${API_URL}/participant/sessions`,
-              {
-                method: "POST",
-                headers: authHeaders({ "Content-Type": "application/json" }),
-                body: JSON.stringify({
-                  // The contest uid, and the machine. Identity comes from the
-                  // participant token — the old body sent a candidate email,
-                  // which was both unverified and no longer a thing this system
-                  // has.
-                  contest_uid: contestId,
-                  device_fingerprint: getOrCreateDeviceId(),
-                  os_name: navigator.platform,
-                }),
-              },
-              { dedupeKey: `session:create:${contestId}`, retries: 2 }
-            ),
+            // `startSession` sends the client version and throws the server's
+            // own sentence ("not registered for this contest"), where the
+            // generic fetch said "HTTP 403". It also does not retry: a create
+            // that times out may have landed, and the next entry attempt resumes it.
+            startSession({
+              contestUid: contestId,
+              deviceFingerprint: getOrCreateDeviceId(),
+              osName: navigator.platform,
+            }),
           60000
         );
         if (body?.uid) {
@@ -962,9 +959,12 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== FINAL_STAGE) return;
-    if (waitMs <= 0 && readyForStart) {
-      void finalizeSecureStart();
-    }
+    if (waitMs > 0 || !readyForStart) return;
+    // Everyone waiting here reaches 0 in the same second. A random 0-15 s
+    // spread keeps a full hall from hitting the server in one burst; the
+    // screen says "Starting…" meanwhile.
+    const id = setTimeout(() => void finalizeSecureStart(), Math.random() * START_JITTER_MS);
+    return () => clearTimeout(id);
   }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
 
   // Keep completion callbacks stable throughout a visit. Presentation changes
@@ -1043,14 +1043,25 @@ export default function OnboardingPage() {
     [advanceController, stageRun, dryRun]
   );
 
-  const emergencyExit = useCallback(async () => {
+  const leaveSetup = useCallback(async (nav: { push: (href: string) => void }) => {
     entryAttemptsRef.current.cancel();
     cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
 
-    await exitToHome(router);
-  }, [router]);
+    await exitToHome(nav);
+  }, []);
+  const emergencyExit = useCallback(() => leaveSetup(router), [leaveSetup, router]);
+
+  // macOS applies an Input Monitoring grant, and sometimes Accessibility, only
+  // to a new process. Release everything setup changed, then relaunch.
+  const quitAndReopen = useCallback(async () => {
+    let destination = "/home";
+    await leaveSetup({ push: (href) => (destination = href) });
+    await invokeStrict("relaunch_app").catch(() => {});
+    // Still here: this build cannot relaunch. Go home released, to quit by hand.
+    router.push(destination);
+  }, [leaveSetup, router]);
 
   useEffect(() => {
     function handleEmergencyKey(e: KeyboardEvent) {
@@ -1211,8 +1222,12 @@ export default function OnboardingPage() {
                       <Text>
                         AMS Access needs {macPermissionBlock.pane} permission to block exam keyboard
                         shortcuts. Open System Settings, find AMS Access under Privacy &amp;
-                        Security → {macPermissionBlock.pane}, and toggle it on. Then run the device
-                        check again.
+                        Security → {macPermissionBlock.pane}, and toggle it on. Then quit and reopen
+                        AMS Access so macOS applies it.
+                      </Text>
+                      <Text>
+                        If AMS Access is already switched on, select it, click –, then add it again
+                        with +, and reopen.
                       </Text>
                       <HStack gap={3} wrap="wrap">
                         <Button
@@ -1222,6 +1237,11 @@ export default function OnboardingPage() {
                               section: macPermissionBlock.section,
                             })
                           }
+                        />
+                        <Button
+                          label="Quit & reopen AMS Access"
+                          variant="secondary"
+                          onClick={() => void quitAndReopen()}
                         />
                         <Button
                           label="Run checks again"
@@ -1532,7 +1552,11 @@ export default function OnboardingPage() {
                                 <HStack gap={3} align="center">
                                   <Spinner />
                                   <Text type="supporting" color="secondary">
-                                    Checking contest entry…
+                                    {/* Held for the start and not yet entering:
+                                        the random T=0 spread is running. */}
+                                    {readyForStart && !transitioning
+                                      ? "Starting…"
+                                      : "Checking contest entry…"}
                                   </Text>
                                 </HStack>
                               </VStack>

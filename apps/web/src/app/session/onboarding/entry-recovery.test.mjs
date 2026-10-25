@@ -117,7 +117,7 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
     router: { push: (path) => state.navigation.push(path) },
     setTimeout,
     serverNow: () => 0,
-    fetchJson: async () => {
+    startSession: async () => {
       state.sessions += 1;
       return {};
     },

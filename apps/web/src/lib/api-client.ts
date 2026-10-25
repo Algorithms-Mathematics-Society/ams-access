@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createAbortTimeout } from "./abort-timeout";
+import { CLIENT_VERSION } from "./client-version";
 
 /**
  * Thrown by fetchJson (and surfaces from raw-fetch call sites that inspect the
@@ -132,7 +133,8 @@ export function isClientError(error: Error): boolean {
 
 export async function fetchJson<T>(
   input: RequestInfo | URL,
-  init: RequestInit = {},
+  // A plain header map, so the version header below can be merged into it.
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {},
   options: FetchJsonOptions = {}
 ): Promise<T> {
   const {
@@ -147,11 +149,13 @@ export async function fetchJson<T>(
   const existing = getCacheEntry<T>(dedupeKey)?.promise;
   if (existing) return existing;
 
+  // Without the version header the server's 426 gate waves the call through.
+  const request = { ...init, headers: { "X-AMS-Client-Version": CLIENT_VERSION, ...init.headers } };
   const promise = (async () => {
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
-        return await fetchWithTimeout(input, init, timeoutMs, async (response) => {
+        return await fetchWithTimeout(input, request, timeoutMs, async (response) => {
           if (!response.ok) {
             // Detect session-binding 403s so callers can route to the resume flow.
             if (response.status === 403) {
