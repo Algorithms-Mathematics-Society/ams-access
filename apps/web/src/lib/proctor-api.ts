@@ -28,6 +28,20 @@ const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
 // connection surfaces rather than hanging the UI.
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+function retryAfterSeconds(headers: Headers): number {
+  const value = headers.get("Retry-After")?.trim();
+  if (!value) return 0;
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) ? seconds : 0;
+  }
+  if (/^[+-]?\d+(?:\.\d+)?$/.test(value)) return 0;
+  const deadline = Date.parse(value);
+  const serverDate = Date.parse(headers.get("Date") ?? "");
+  if (!Number.isFinite(deadline) || !Number.isFinite(serverDate)) return 0;
+  return Math.max(0, Math.ceil((deadline - serverDate) / 1000));
+}
+
 export class ProctorApiError extends Error {
   // Declared and assigned rather than written as constructor parameter
   // properties. Node's `--experimental-strip-types` — which is how this
@@ -164,15 +178,8 @@ export function restoreToken(): boolean {
     const saved = store.getItem(TOKEN_KEY);
     if (!saved) return false;
 
-    const expiresAt = Number(store.getItem(TOKEN_EXPIRY_KEY) ?? "0");
-    // Treat an unknown expiry as usable: the server is the authority and will
-    // answer 401 if it is not. Discarding it here would force a re-login for a
-    // token that still works.
-    if (expiresAt && expiresAt <= Date.now()) {
-      setToken(null);
-      return false;
-    }
-
+    // The stored expiry was computed from the device clock. On a hard reload
+    // there is no server clock yet, so let the server accept or reject it.
     token = saved;
     return true;
   } catch {
@@ -264,27 +271,37 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    // The login overload response carries its wait in Retry-After while its
+    // JSON detail is a sentence. Keep that wait available to the UI.
+    const headerWait = retryAfterSeconds(res.headers);
+    const retryDetail = headerWait > 0 ? { retry_after: headerWait } : null;
     // `detail` is a string for most errors and an object for the ones the
     // client has to act on — 426 (too old, here is the download) and 429
     // (cooling down, here is how long).
     const raw = (data as { detail?: unknown; error?: unknown } | null)?.detail ?? null;
     if (raw && typeof raw === "object") {
       const structured = raw as { error?: string; code?: string; retry_after?: number };
+      const detail =
+        retryDetail && typeof structured.retry_after !== "number"
+          ? { ...structured, ...retryDetail }
+          : structured;
       throw new ProctorApiError(
         structured.error ?? `Request failed (${res.status}).`,
         res.status,
         structured.code ?? "",
-        structured
+        detail
       );
     }
     const detail =
       (raw as string | null) ??
       ((data as { error?: string } | null)?.error as string | undefined) ??
       `Request failed (${res.status}).`;
-    throw new ProctorApiError(String(detail), res.status);
+    throw new ProctorApiError(String(detail), res.status, "", retryDetail);
   }
 
-  noteServerTime((data as { server_time?: string } | null)?.server_time);
+  noteServerTime(
+    (data as { server_time?: string } | null)?.server_time ?? res.headers?.get("Date") ?? undefined
+  );
   return data as T;
 }
 
