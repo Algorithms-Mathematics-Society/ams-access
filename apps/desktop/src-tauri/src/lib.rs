@@ -3705,6 +3705,17 @@ pub fn run() {
             return;
         }
     };
+    // The network helper pins this executable's path, so a copy on the disk
+    // image or under App Translocation must be moved before setup can work.
+    // Stop before recovery: this copy cannot reach the helper anyway.
+    #[cfg(target_os = "macos")]
+    if std::env::current_exe().is_ok_and(|exe| platform_rs::macos::unstable_bundle_path(&exe)) {
+        platform_rs::macos::show_startup_message(
+            "Move AMS Access to Applications",
+            "AMS Access is running from its disk image or from a temporary copy macOS made, so it cannot set up exam protection.\n\nIn Finder, drag AMS Access into the Applications folder, eject the AMS Access disk image, then open AMS Access from Applications.",
+        );
+        return;
+    }
     // F5: harden the DLL search path before anything else loads a library, so a
     // malicious DLL planted in the launch directory or %CWD% can never be
     // preferred over the system copy (DLL preloading / search-order hijack).

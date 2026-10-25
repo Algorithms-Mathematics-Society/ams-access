@@ -1719,6 +1719,18 @@ const HELPER_CLIENT_CONFIG_DEST: &str =
     "/Library/Application Support/AMS Access/network-helper-client.conf";
 const HELPER_CONFIG_DIR: &str = "/Library/Application Support/AMS Access";
 
+/// Whether this copy of the app runs from a path the helper cannot pin. The
+/// helper authorizes its client by executable path, and a copy run from the
+/// mounted disk image or translocated by Gatekeeper (a random path on every
+/// launch) would ask for the admin password again each time, or fail lockdown.
+/// shortcut: any bundle under /Volumes counts, including an install on an
+/// external drive; check that the volume is read-only if labs need that.
+pub fn unstable_bundle_path(exe: &std::path::Path) -> bool {
+    let path = exe.to_string_lossy();
+    path.contains(".app/Contents/MacOS/")
+        && (path.contains("/AppTranslocation/") || path.starts_with("/Volumes/"))
+}
+
 /// Check whether the helper daemon socket is reachable and accepts this app.
 pub fn network_helper_running() -> bool {
     helper_send(r#"{"cmd":"ping"}"#).is_ok()
@@ -2412,6 +2424,25 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disk_image_and_translocated_copies_are_unstable() {
+        let unstable = |path: &str| unstable_bundle_path(std::path::Path::new(path));
+        assert!(unstable(
+            "/Volumes/AMS Access/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(unstable("/private/var/folders/x/T/AppTranslocation/1A2B/d/AMS Access.app/Contents/MacOS/ams-access"));
+        assert!(!unstable(
+            "/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(!unstable(
+            "/Users/me/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        // A dev build is not a bundle, wherever the checkout lives.
+        assert!(!unstable(
+            "/Volumes/Work/ams-access/target/debug/ams-access"
+        ));
+    }
 
     /// A recorded failure turns the whole result into an error upstream and
     /// the readiness screen shows every field as Unknown. `ioreg -l` did that
