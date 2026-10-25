@@ -26,9 +26,9 @@ import {
   strictContestPolicy,
   type OrganizerOverride,
 } from "@ams/api-client";
-import { fetchJson, SessionBindingError } from "@/lib/api-client";
-import { authHeaders, participantToken } from "@/lib/candidate-auth";
-import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
+import { SessionBindingError } from "@/lib/api-client";
+import { participantToken } from "@/lib/candidate-auth";
+import { getContest, serverNow, startSession, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
@@ -573,23 +573,15 @@ export default function OnboardingPage() {
         const body = await wait(
           "session creation",
           () =>
-            fetchJson<{ uid?: string }>(
-              `${API_URL}/participant/sessions`,
-              {
-                method: "POST",
-                headers: authHeaders({ "Content-Type": "application/json" }),
-                body: JSON.stringify({
-                  // The contest uid, and the machine. Identity comes from the
-                  // participant token — the old body sent a candidate email,
-                  // which was both unverified and no longer a thing this system
-                  // has.
-                  contest_uid: contestId,
-                  device_fingerprint: getOrCreateDeviceId(),
-                  os_name: navigator.platform,
-                }),
-              },
-              { dedupeKey: `session:create:${contestId}`, retries: 2 }
-            ),
+            // `startSession` sends the client version and throws the server's
+            // own sentence ("not registered for this contest"), where the
+            // generic fetch said "HTTP 403". It also does not retry: a create
+            // that times out may have landed, and the next entry attempt resumes it.
+            startSession({
+              contestUid: contestId,
+              deviceFingerprint: getOrCreateDeviceId(),
+              osName: navigator.platform,
+            }),
           60000
         );
         if (body?.uid) {
