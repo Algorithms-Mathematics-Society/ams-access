@@ -95,6 +95,16 @@ export default function LoginPage() {
           // Home can render without these labels; authentication already succeeded.
         }
       }
+      if (!result.contest) {
+        // No contest named: drop the last sign-in's, which may be someone else's.
+        for (const key of [STORAGE_KEYS.ACTIVE_CONTEST, STORAGE_KEYS.ACTIVE_CONTEST_TITLE]) {
+          try {
+            localStorage.removeItem(key);
+          } catch {
+            // As above: a label, not authentication.
+          }
+        }
+      }
 
       router.push("/home");
     } catch (caught) {

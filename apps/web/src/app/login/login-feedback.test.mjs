@@ -33,6 +33,7 @@ function harness({
   failKey,
   failure,
   loading = false,
+  contest = { uid: "contest", title: "Contest" },
 } = {}) {
   const state = {},
     calls = [],
@@ -63,7 +64,7 @@ function harness({
     studentLogin: async (...args) => {
       calls.push(args);
       if (failure) throw failure;
-      return { user: { display_name: "Candidate" }, contest: { uid: "contest", title: "Contest" } };
+      return { user: { display_name: "Candidate" }, contest };
     },
     STORAGE_KEYS: {
       DISPLAY_NAME: "display",
@@ -75,6 +76,7 @@ function harness({
         writes.push([key, value]);
         if (key === failKey || failKey === "all") throw new Error("storage blocked");
       },
+      removeItem: (key) => writes.push([key, null]),
     },
     router: { push: (path) => routes.push(path) },
     describeUnreachable: () => ({ message: "Connection failed", diagnostic: "fixture" }),
@@ -134,6 +136,19 @@ test("nonempty password is passed unchanged and server rejection remains authori
   assert.equal(h.state.invalidField, null);
   assert.equal(h.state.loading, false);
   assert.deepEqual(h.routes, []);
+});
+test("a sign-in with no contest clears the previous contest labels", async () => {
+  const h = harness({ contest: null });
+  await h.submit();
+  assert.deepEqual(h.routes, ["/home"]);
+  assert.deepEqual(
+    h.writes.map((write) => [...write]),
+    [
+      ["display", "Candidate"],
+      ["contest", null],
+      ["title", null],
+    ]
+  );
 });
 test("a 426 opens the update dialog with the server's download link", async () => {
   const h = harness({
