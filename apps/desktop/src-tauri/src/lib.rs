@@ -3598,6 +3598,9 @@ fn finish_shutdown() {
         *shutting_down = true;
         // Restore input and stop native producers before waiting on the disk.
         // Receiver closure handles callbacks already in flight.
+        #[cfg(target_os = "windows")]
+        platform_rs::windows::close_desktop_on_exit();
+        #[cfg(not(target_os = "windows"))]
         platform_dispatch!(unlock_desktop(), else ());
         if let Some(Ok(recorder)) = EVENT_RECORDER.get() {
             if let Err(error) = recorder.drain_on_exit(Duration::from_secs(5)) {
@@ -3607,7 +3610,9 @@ fn finish_shutdown() {
         // Even a failed/timed-out drain must restore network access.
         #[cfg(target_os = "linux")]
         let _ = LINUX_NETWORK.close(platform_rs::linux::disable_network_lockdown);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        let _ = platform_rs::windows::close_network_lockdown_on_exit();
+        #[cfg(target_os = "macos")]
         let _ = platform_dispatch!(disable_network_lockdown(), else Ok(()));
     });
 }
@@ -4082,9 +4087,9 @@ pub fn run() {
                 #[cfg(target_os = "windows")]
                 {
                     // unlock_desktop covers keyboard, sleep prevention, registry, shield, game bar
-                    platform_rs::windows::unlock_desktop();
+                    platform_rs::windows::close_desktop_on_exit();
                     // Firewall rules must be cleared even on crash — intentional persistence
-                    let _ = platform_rs::windows::disable_network_lockdown();
+                    let _ = platform_rs::windows::close_network_lockdown_on_exit();
                 }
                 #[cfg(target_os = "macos")]
                 {

@@ -1928,7 +1928,10 @@ export default function ContestPageClient() {
   // Exit teardown: release every OS-level lock and stop proctoring. This MUST run
   // on every exit path — confirmed or not — so a network failure can never trap a
   // candidate inside the locked-down shell. Every step is failure-tolerant.
-  async function runExitTeardown(preserveSession = false): Promise<boolean> {
+  async function runExitTeardown(
+    preserveSession = false,
+    startedExitPhoto?: Promise<void>
+  ): Promise<boolean> {
     let released = true;
     try {
       // Remember which session this was before dropping it. The results
@@ -1943,7 +1946,7 @@ export default function ContestPageClient() {
     }
     // Capture is synchronous before upload starts. Release local controls while
     // the upload runs, then await delivery before navigating away.
-    const exitPhoto = exitPhotoRef.current().catch(() => {});
+    const exitPhoto = startedExitPhoto ?? exitPhotoRef.current().catch(() => {});
 
     // The one place the camera is genuinely finished with: the exam is over
     // and the candidate is leaving the locked-down shell.
@@ -2019,23 +2022,34 @@ export default function ContestPageClient() {
   }
 
   // Redirects release native controls without finishing the exam or removing
-  // its recovery record. Revoke upload credentials while retaining the native
-  // recording binding, so teardown evidence remains with the same session.
+  // its recovery record. Revoke upload credentials as soon as the exit-photo
+  // request starts; the native recording binding remains for teardown evidence.
   async function redirectAfterRelease(destination: string) {
     if (redirectInFlightRef.current || exitInFlightRef.current) return;
     redirectInFlightRef.current = true;
     setPendingRedirect(destination);
     setLoadError(null);
-    if (destination === "/login") {
-      logout();
-      clearQueryCache();
-    }
+    let signedOut = false;
+    const signOut = () => {
+      if (destination === "/login" && !signedOut) {
+        logout();
+        clearQueryCache();
+        signedOut = true;
+      }
+    };
     let revoked = true;
+    let exitPhoto: Promise<void> | undefined;
     try {
       try {
         redirectSaveRef.current();
       } catch {
         // Storage failures must never prevent releasing native controls.
+      }
+      if (destination === "/login") {
+        // The request reads its bearer synchronously before its first await.
+        // Sign out now, without waiting for the upload or native cleanup.
+        exitPhoto = exitPhotoRef.current().catch(() => {});
+        signOut();
       }
       try {
         if (window.__TAURI__) {
@@ -2053,7 +2067,7 @@ export default function ContestPageClient() {
       } catch {
         revoked = false;
       }
-      const released = await runExitTeardown(true);
+      const released = await runExitTeardown(true, exitPhoto);
       if (released && revoked) {
         router.replace(destination);
       } else {
@@ -2062,6 +2076,7 @@ export default function ContestPageClient() {
         );
       }
     } finally {
+      signOut();
       redirectInFlightRef.current = false;
     }
   }
