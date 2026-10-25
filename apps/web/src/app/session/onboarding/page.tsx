@@ -1043,14 +1043,25 @@ export default function OnboardingPage() {
     [advanceController, stageRun, dryRun]
   );
 
-  const emergencyExit = useCallback(async () => {
+  const leaveSetup = useCallback(async (nav: { push: (href: string) => void }) => {
     entryAttemptsRef.current.cancel();
     cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
 
-    await exitToHome(router);
-  }, [router]);
+    await exitToHome(nav);
+  }, []);
+  const emergencyExit = useCallback(() => leaveSetup(router), [leaveSetup, router]);
+
+  // macOS applies an Input Monitoring grant, and sometimes Accessibility, only
+  // to a new process. Release everything setup changed, then relaunch.
+  const quitAndReopen = useCallback(async () => {
+    let destination = "/home";
+    await leaveSetup({ push: (href) => (destination = href) });
+    await invokeStrict("relaunch_app").catch(() => {});
+    // Still here: this build cannot relaunch. Go home released, to quit by hand.
+    router.push(destination);
+  }, [leaveSetup, router]);
 
   useEffect(() => {
     function handleEmergencyKey(e: KeyboardEvent) {
@@ -1211,8 +1222,12 @@ export default function OnboardingPage() {
                       <Text>
                         AMS Access needs {macPermissionBlock.pane} permission to block exam keyboard
                         shortcuts. Open System Settings, find AMS Access under Privacy &amp;
-                        Security → {macPermissionBlock.pane}, and toggle it on. Then run the device
-                        check again.
+                        Security → {macPermissionBlock.pane}, and toggle it on. Then quit and reopen
+                        AMS Access so macOS applies it.
+                      </Text>
+                      <Text>
+                        If AMS Access is already switched on, select it, click –, then add it again
+                        with +, and reopen.
                       </Text>
                       <HStack gap={3} wrap="wrap">
                         <Button
@@ -1222,6 +1237,11 @@ export default function OnboardingPage() {
                               section: macPermissionBlock.section,
                             })
                           }
+                        />
+                        <Button
+                          label="Quit & reopen AMS Access"
+                          variant="secondary"
+                          onClick={() => void quitAndReopen()}
                         />
                         <Button
                           label="Run checks again"
