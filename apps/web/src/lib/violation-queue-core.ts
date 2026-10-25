@@ -18,7 +18,16 @@
  * through the real ones.
  */
 
-export const STORAGE_KEY = "ams.proctor.pending-events";
+/** One stored queue per session. A single global key sent whatever was left
+ * over (a practice run's events, or the previous candidate's on a lab Mac)
+ * into the next session to flush. The `ams_` prefix is what sign-out clears. */
+export function storageKey(sessionUid: string): string {
+  return `ams_proctor_pending_events:${sessionUid}`;
+}
+
+/** The old global key. Its events cannot be attributed to a session, so they
+ * are discarded rather than sent anywhere. */
+export const LEGACY_STORAGE_KEY = "ams.proctor.pending-events";
 
 /** Above this the oldest are dropped: a stuck detector could otherwise fill
  * storage and take the exam UI down, losing the whole record rather than
@@ -50,28 +59,37 @@ export type SendBatch = (events: StoredEvent[]) => Promise<unknown>;
 export function isPermanentFailure(error: unknown): boolean {
   const status = (error as { status?: number } | null)?.status;
   if (typeof status !== "number") return false;
-  // 429 is a request to slow down, not a refusal — retry it.
-  return status >= 400 && status < 500 && status !== 429;
+  // 429 is a request to slow down, not a refusal — retry it. 401 is about
+  // the token, not the batch: the events still belong to this session and go
+  // out once the candidate is signed in again.
+  return status >= 400 && status < 500 && status !== 429 && status !== 401;
 }
 
 export class ViolationQueue {
   private flushing = false;
   private readonly store: KeyValueStore;
   private readonly send: SendBatch;
+  private readonly key: string;
   private readonly now: () => Date;
 
   // Fields are declared and assigned rather than using parameter properties:
   // those emit code rather than only types, so Node's strip-only TypeScript
   // mode — which is what runs these tests — refuses them.
-  constructor(store: KeyValueStore, send: SendBatch, now: () => Date = () => new Date()) {
+  constructor(
+    store: KeyValueStore,
+    send: SendBatch,
+    sessionUid: string,
+    now: () => Date = () => new Date()
+  ) {
     this.store = store;
     this.send = send;
+    this.key = storageKey(sessionUid);
     this.now = now;
   }
 
   read(): StoredEvent[] {
     try {
-      const raw = this.store.getItem(STORAGE_KEY);
+      const raw = this.store.getItem(this.key);
       if (!raw) return [];
       const parsed: unknown = JSON.parse(raw);
       return Array.isArray(parsed) ? (parsed as StoredEvent[]) : [];
@@ -83,7 +101,7 @@ export class ViolationQueue {
 
   private write(events: StoredEvent[]): void {
     try {
-      this.store.setItem(STORAGE_KEY, JSON.stringify(events));
+      this.store.setItem(this.key, JSON.stringify(events));
     } catch {
       // Quota exceeded, or private browsing. Losing durability is bad;
       // throwing inside a violation handler and taking down the detector

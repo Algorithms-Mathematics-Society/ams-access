@@ -124,6 +124,7 @@ import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
 import {
   enqueue as enqueueViolation,
   flush as flushViolationQueue,
+  flushBeforeExit as flushViolationsBeforeExit,
   report as reportViolation,
   setActiveSession as setViolationSession,
 } from "@/lib/violation-queue";
@@ -2955,6 +2956,12 @@ export default function ContestPageClient() {
     // sorts last in the strip however long the paper ran.
     photoSequenceRef.current += 1;
     await captureAndUploadIdentityPhoto(sessionId, "exit", photoSequenceRef.current);
+    // Unsent violation events leave with the exit frame, the last evidence
+    // this session sends. Bounded: whatever is left stays queued under this
+    // session's key and must never hold the candidate in the locked room.
+    await withTimeout(flushViolationsBeforeExit(sessionId), 3000, "Event flush timed out").catch(
+      () => {}
+    );
   };
   useEffect(() => {
     if (!sessionId || !cameraVideoReady || !cameraStream) return;
