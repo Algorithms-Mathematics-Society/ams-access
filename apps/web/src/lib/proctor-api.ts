@@ -356,6 +356,8 @@ export type ProctorSession = {
   remaining_ms: number | null;
   ends_at: string | null;
   phase: SessionPhase;
+  /** Absent until the reference-revision API is deployed; 0 means unpublished. */
+  reference_revision?: number;
 };
 
 export type SymbolicRule = {
@@ -650,6 +652,20 @@ export async function getContest(
   return request<ContestIndex>(
     "GET",
     `/participant/contests/${encodeURIComponent(contestUid)}${query}`
+  );
+}
+
+export type PublishedReferenceResponse = {
+  revision: number;
+  reference_sheet: import("@/app/session/contest/reference-sheet").ReferenceSheet | null;
+};
+
+export async function getPublishedReferenceSheet(
+  contestUid: string
+): Promise<PublishedReferenceResponse> {
+  return request<PublishedReferenceResponse>(
+    "GET",
+    `/participant/contests/${encodeURIComponent(contestUid)}/reference-sheet`
   );
 }
 

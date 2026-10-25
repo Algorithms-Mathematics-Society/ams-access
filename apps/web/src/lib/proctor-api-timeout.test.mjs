@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getContest,
+  getPublishedReferenceSheet,
   latestResumeRequest,
   studentLogin,
   logout,
@@ -164,4 +165,18 @@ test("contest metadata reads opt out of reference text without changing workspac
   assert(urls[0].endsWith("/participant/contests/contest%2Fid"));
   assert.equal(urls[1], urls[0]);
   assert.equal(urls[2], `${urls[0]}?include_reference=false`);
+});
+
+test("published reference refresh reads only the narrow authenticated endpoint", async (t) => {
+  const urls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    urls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ revision: 0, reference_sheet: null }));
+  });
+  assert.deepEqual(await getPublishedReferenceSheet("contest/id"), {
+    revision: 0,
+    reference_sheet: null,
+  });
+  assert(urls[0].url.endsWith("/participant/contests/contest%2Fid/reference-sheet"));
+  assert.equal(urls[0].options.cache, "no-store");
 });
