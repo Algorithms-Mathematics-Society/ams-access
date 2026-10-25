@@ -143,7 +143,7 @@ import {
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
-  getContest,
+  getPublishedReferenceSheet,
   getRun,
   getSession,
   heartbeat,
@@ -351,6 +351,10 @@ export default function ContestPageClient() {
   );
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
+  const activeContestIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    activeContestIdRef.current = contest?.id ?? null;
+  }, [contest?.id]);
   // The server's own view of where we are in the contest window. Outranks any
   // deadline arithmetic done here — see `isBell`.
   const [contestPhase, setContestPhase] = useState<ClockPhase>("running");
@@ -504,6 +508,8 @@ export default function ContestPageClient() {
   // when the browser thinks it is online and the server is still
   // unreachable -- a captive portal, or a network joined seconds ago.
   const retryBeatRef = useRef<() => void>(() => {});
+  const referenceRevisionRef = useRef(0);
+  const referenceFetchInFlightRef = useRef(false);
   // Set when the *server* says this session is over — terminated by an
   // invigilator, or finished elsewhere. Distinct from the bell.
   const [sessionEnded, setSessionEnded] = useState<"terminated" | "submitted" | null>(null);
@@ -1358,9 +1364,11 @@ export default function ContestPageClient() {
         (question.cxxprobe?.assets ?? []).map((asset) => asset.object_url).filter(Boolean)
       );
 
+      const initialReferenceSheet = readReferenceSheet(index.reference_sheet);
+      referenceRevisionRef.current = initialReferenceSheet?.revision ?? 0;
       setContest({
         id: index.uid,
-        reference_sheet: readReferenceSheet(index.reference_sheet),
+        reference_sheet: initialReferenceSheet,
         title: index.title,
         end_at: index.ends_at,
         status: index.phase === "running" ? "ACTIVE" : index.phase.toUpperCase(),
@@ -2501,6 +2509,57 @@ export default function ContestPageClient() {
     let latestRequest = 0;
     let acceptedSuccess = 0;
     let authExpired = false;
+    let terminal = false;
+    let requestedReferenceRevision = 0;
+    let referenceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshReference = async () => {
+      referenceTimer = null;
+      if (
+        cancelled ||
+        authExpired ||
+        terminal ||
+        activeContestIdRef.current !== contestId ||
+        referenceFetchInFlightRef.current
+      )
+        return;
+      if (requestedReferenceRevision === referenceRevisionRef.current) return;
+      referenceFetchInFlightRef.current = true;
+      const requestAtFetch = latestRequest;
+      const expectedRevision = requestedReferenceRevision;
+      try {
+        const latest = await getPublishedReferenceSheet(contestId);
+        if (
+          cancelled ||
+          authExpired ||
+          terminal ||
+          activeContestIdRef.current !== contestId ||
+          latest.revision !== expectedRevision ||
+          expectedRevision !== requestedReferenceRevision
+        )
+          return;
+        const sheet = readReferenceSheet(latest.reference_sheet);
+        if ((sheet?.revision ?? 0) !== latest.revision) return;
+        referenceRevisionRef.current = latest.revision;
+        setContest((prev) => (prev?.id === contestId ? { ...prev, reference_sheet: sheet } : prev));
+      } catch (caught) {
+        if (
+          cancelled ||
+          authExpired ||
+          terminal ||
+          activeContestIdRef.current !== contestId ||
+          requestAtFetch < acceptedSuccess
+        )
+          return;
+        if (caught instanceof ProctorApiError && caught.status === 401) {
+          authExpired = true;
+          void redirectAfterRelease("/login");
+        }
+        // Keep the last published sheet offline; retry a changed revision on the next heartbeat.
+      } finally {
+        referenceFetchInFlightRef.current = false;
+      }
+    };
 
     /**
      * Liveness — and the only way the app learns anything changed.
@@ -2541,29 +2600,35 @@ export default function ContestPageClient() {
         }
 
         if (live.status === "terminated") {
+          terminal = true;
           setSessionEnded("terminated");
         } else if (live.status === "submitted") {
+          terminal = true;
           setSessionEnded("submitted");
         }
-        if (live.ends_at === null && live.status === "active") {
-          // Practice sheets may be published after entry; keep the last copy offline.
-          try {
-            const latest = await getContest(contestId);
-            if (cancelled || authExpired || request !== latestRequest || latest.uid !== contestId)
-              return;
-            setContest((prev) =>
-              prev?.id === contestId
-                ? { ...prev, reference_sheet: readReferenceSheet(latest.reference_sheet) }
-                : prev
-            );
-          } catch (caught) {
-            if (cancelled || authExpired || request !== latestRequest) return;
-            if (caught instanceof ProctorApiError && caught.status === 401) {
-              authExpired = true;
-              void redirectAfterRelease("/login");
+        if (
+          activeContestIdRef.current === contestId &&
+          live.ends_at === null &&
+          live.status === "active"
+        ) {
+          // Older API deployments omit the revision. Keep the entry preload until the API is upgraded.
+          if (Number.isSafeInteger(live.reference_revision) && live.reference_revision! >= 0) {
+            requestedReferenceRevision = live.reference_revision!;
+            if (requestedReferenceRevision !== referenceRevisionRef.current) {
+              if (referenceTimer === null && !referenceFetchInFlightRef.current) {
+                referenceTimer = setTimeout(
+                  () => void refreshReference(),
+                  Math.floor(Math.random() * 10_001)
+                );
+              }
+            } else if (referenceTimer !== null) {
+              clearTimeout(referenceTimer);
+              referenceTimer = null;
             }
-            // A sheet transport failure cannot turn a successful heartbeat into an offline verdict.
           }
+        } else if (referenceTimer !== null) {
+          clearTimeout(referenceTimer);
+          referenceTimer = null;
         }
       } catch (caught) {
         if (cancelled || authExpired) return;
@@ -2591,11 +2656,12 @@ export default function ContestPageClient() {
     const id = setInterval(() => void beat(), 60_000);
     return () => {
       cancelled = true;
+      if (referenceTimer !== null) clearTimeout(referenceTimer);
       if (retryBeatRef.current === retry) retryBeatRef.current = () => {};
       clearInterval(id);
     };
     // Recheck immediately on reconnect; ignore the previous connection's replies.
-  }, [sessionId, contestId, router, browserOnline]);
+  }, [sessionId, contestId, contest?.id, router, browserOnline]);
 
   // Flush the moment the connection comes back, rather than waiting out the
   // autosave backoff. A candidate who reconnects with thirty seconds left
