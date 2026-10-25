@@ -1094,12 +1094,11 @@ export default function OnboardingPage() {
         style={{
           width: "100%",
           maxWidth: "calc(var(--spacing-10) * 28)",
-          // Keep checks bounded, but let the introduction, practice summary
-          // and short-window overflow remain reachable by wheel/touchpad.
-          height: "100dvh",
-          minHeight: 0,
-          overflowX: "hidden",
-          overflowY: "auto",
+          // Let AppShell's scrollable main region own page scrolling. A nested
+          // viewport-height scroller here traps wheel/touch input and can clip
+          // setup content in short windows.
+          minHeight: "100%",
+          minWidth: 0,
           marginInline: "auto",
           padding: "clamp(var(--spacing-4), 4vw, var(--spacing-10))",
           fontFamily: "var(--font-sans)",
