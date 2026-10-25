@@ -79,6 +79,7 @@ function harness(token = true) {
         return {
           fetchClientVersion: () => version.promise,
           minorUpgradeAvailable: (_, latest) => latest !== "4.1.0",
+          belowMinimum: (_, minimum) => minimum === "4.2.0",
         };
       if (name.endsWith("proctor-api"))
         return {
@@ -183,11 +184,28 @@ test("required update takes precedence over token and welcome", async () => {
   const h = harness();
   h.render();
   h.mount();
-  h.version.resolve({ latest: "4.2.0", download_url: "fixture" });
+  h.version.resolve({ minimum: "4.2.0", latest: "4.2.0", download_url: "fixture" });
   await flush();
   assert.equal(h.render().type, "UpdateRequiredDialog");
   assert.equal(h.calls(), 0);
   assert.deepEqual(h.routes, []);
+});
+test("a newer advisory release is a dismissible notice that never blocks", async () => {
+  for (const token of [true, false]) {
+    const h = harness(token);
+    h.render();
+    h.mount();
+    h.version.resolve({ minimum: "4.0.0", latest: "4.2.0", download_url: "fixture" });
+    h.contests.resolve([]);
+    await flush();
+    const tree = h.render();
+    assert.notEqual(tree.type, "UpdateRequiredDialog");
+    assert.equal(h.calls(), token ? 1 : 0);
+    const banner = tree.props.children.props.banner;
+    assert.equal(banner.type, "Banner");
+    assert.equal(banner.props.isDismissable, true);
+    assert.match(banner.props.title, /install after your exam/);
+  }
 });
 test("no token reveals welcome only after version gate", async () => {
   const h = harness(false);

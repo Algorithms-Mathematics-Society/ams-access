@@ -10,6 +10,8 @@ import { AccessLogo } from "@/components/AccessLogo";
 
 interface WelcomeScreenProps {
   onEnter: () => void;
+  /** An advisory notice, such as a newer release to install after the exam. */
+  banner?: React.ReactNode;
 }
 
 const steps = [
@@ -18,11 +20,11 @@ const steps = [
   { number: "03", title: "Enter your contest", detail: "Review the schedule and entry checks." },
 ];
 
-export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
+export default function WelcomeScreen({ onEnter, banner }: WelcomeScreenProps) {
   // Astryx centered-hero composition: 640px hero, 800px preparation guide,
   // and 16–40px outer gutters. All regions stay in normal document flow.
   return (
-    <AppShell height="fill" variant="section" contentPadding={0}>
+    <AppShell height="fill" variant="section" contentPadding={0} banner={banner}>
       <VStack
         data-welcome-page
         gap={6}

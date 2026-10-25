@@ -24,13 +24,15 @@
  * token stops at "Continue as {name}?" rather than opening that candidate's
  * workspace for whoever sat down next.
  *
- * The version check runs first on purpose. An out-of-date client should not
- * be quietly signed in to sit a contest; it should be told to update.
+ * The version check runs first on purpose. A client below the server's
+ * minimum should not be quietly signed in to sit a contest; it should be told
+ * to update. A newer advisory release is only a dismissible notice.
  */
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@astryxdesign/core/AppShell";
+import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
@@ -39,7 +41,7 @@ import { RouteLoadingShell } from "@/components/RouteLoadingShell";
 import WelcomeScreen from "./WelcomeScreen";
 import { StartupAnimation } from "@/components/StartupAnimation";
 import { UpdateRequiredDialog } from "./login/UpdateRequiredDialog";
-import { fetchClientVersion, minorUpgradeAvailable } from "@/lib/client-update";
+import { belowMinimum, fetchClientVersion, minorUpgradeAvailable } from "@/lib/client-update";
 import { resolveApiBase } from "@/lib/api-base";
 import { currentToken, listContests, logout } from "@/lib/proctor-api";
 import { clearQueryCache } from "@/lib/api-client";
@@ -107,10 +109,15 @@ export default function RootPage() {
       if (appVersion) {
         const info = await fetchClientVersion(resolveApiBase());
         if (cancelled) return;
-        if (info?.latest && minorUpgradeAvailable(appVersion, info.latest)) {
-          setUpdate({ latest: info.latest, url: info.download_url });
+        // Only the server's minimum blocks: it refuses those builds with 426
+        // anyway. A newer `latest` is advisory and must never stop an exam.
+        if (info?.minimum && belowMinimum(appVersion, info.minimum)) {
+          setUpdate({ latest: info.latest || info.minimum, url: info.download_url });
           setGate("update");
           return;
+        }
+        if (info?.latest && minorUpgradeAvailable(appVersion, info.latest)) {
+          setUpdate({ latest: info.latest, url: info.download_url });
         }
       }
 
@@ -150,14 +157,32 @@ export default function RootPage() {
     );
   }
 
+  const notice = update && (
+    <Banner
+      status="info"
+      container="section"
+      isDismissable
+      title="Update available, install after your exam"
+      description={`${appVersion} → ${update.latest}`}
+      endContent={
+        <Button
+          label="Download"
+          variant="secondary"
+          size="sm"
+          onClick={() => openExternal(update.url)}
+        />
+      }
+    />
+  );
+
   // Keep a visible status after Skip, reduced motion, or the intro deadline
   // while the gates finish. Entry remains unavailable until they resolve.
   return (
     <StartupAnimation>
       {gate === "welcome" ? (
-        <WelcomeScreen onEnter={() => router.push("/login")} />
+        <WelcomeScreen banner={notice} onEnter={() => router.push("/login")} />
       ) : gate === "confirm" ? (
-        <AppShell height="fill" variant="section" contentPadding={4}>
+        <AppShell height="fill" variant="section" contentPadding={4} banner={notice}>
           <VStack gap={6} align="center" justify="center" style={{ minHeight: "100%" }}>
             <VStack gap={2} align="center">
               <Heading level={1} justify="center" textWrap="balance">
