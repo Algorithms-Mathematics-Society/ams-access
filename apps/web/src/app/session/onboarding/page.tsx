@@ -90,6 +90,8 @@ import {
   type StageStatus,
 } from "./support";
 
+const TOO_EARLY_MESSAGE = blockedMessage({ kind: "too_early", opensInMs: 0 });
+
 // Astryx Kbd uses modifier glyphs; this shortcut intentionally spells out its keys.
 function SetupExitShortcut() {
   return (
@@ -184,10 +186,18 @@ export default function OnboardingPage() {
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
   const [faceReviewSaveFailed, setFaceReviewSaveFailed] = useState(false);
-  const [contestWindow, setContestWindow] = useState<ContestWindowMeta | null>(null);
   // The server's own view of the window, including `phase`. The entry gate is
   // derived from this rather than from local clock arithmetic.
   const [contestIndex, setContestIndex] = useState<ContestIndex | null>(null);
+  // Derived from every fresh index, not just the first: a start postponed after
+  // the page loaded left the countdown at zero, and entry re-ran ~70 times a second.
+  const startAt = contestIndex?.starts_at;
+  const endAt = contestIndex?.ends_at ?? null;
+  const windowMinutes = contestIndex?.verification_window_minutes ?? null;
+  const contestWindow = useMemo<ContestWindowMeta | null>(
+    () => (startAt ? { startAt, endAt, verificationWindowMinutes: windowMinutes } : null),
+    [startAt, endAt, windowMinutes]
+  );
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const preparedSessionIdRef = useRef<string | null>(null);
@@ -356,11 +366,6 @@ export default function OnboardingPage() {
       .then((index) => {
         if (cancelled) return;
         setContestIndex(index);
-        setContestWindow({
-          startAt: index.starts_at,
-          endAt: index.ends_at,
-          verificationWindowMinutes: index.verification_window_minutes,
-        });
       })
       .catch(() => {
         if (!cancelled)
@@ -954,7 +959,8 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== FINAL_STAGE) return;
-    if (waitMs <= 0 && readyForStart) {
+    // The clock, not `waitMs`: that is a tick behind a freshly postponed start.
+    if (readyForStart && new Date(contestWindow.startAt).getTime() <= serverNow()) {
       void finalizeSecureStart();
     }
   }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
@@ -1104,6 +1110,13 @@ export default function OnboardingPage() {
     };
   }, [isTooEarly, contestId, tooEarlyPoll]);
   const canRunChecks = isTestAccount || shouldRunChecks(entry);
+  // An entry refused as too early leaves its block up; once the poll above sees
+  // check-in open, retry it, or the promised automatic entry needs a click.
+  useEffect(() => {
+    if (canRunChecks && !transitioning && policyBlock === TOO_EARLY_MESSAGE) {
+      void finalizeSecureStart();
+    }
+  }, [canRunChecks, transitioning, policyBlock, finalizeSecureStart]);
   const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
   const showWaitLock = currentStage === FINAL_STAGE && readyForStart;
   // The keyboard intercept's method names the missing macOS permission.
