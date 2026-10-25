@@ -12,6 +12,9 @@ export const STORAGE_KEYS = {
   // correctly, it is no longer active — but the results screen still needs to
   // know which session's submissions to show, and it opens *after* that.
   LAST_SESSION: "ams_last_session",
+  // The capability for the signed-in participant support conversation. It is
+  // cleared with participant auth; logged-out one-shot drafts use a separate key.
+  SUPPORT_CONVERSATION: "ams_support_conversation_v1",
 
   // The camera the candidate picked, by deviceId.
   //

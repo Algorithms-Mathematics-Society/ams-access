@@ -15,6 +15,7 @@
  */
 
 import { resolveApiBase } from "./api-base.ts";
+import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import type { LockdownConfig } from "@ams/api-client";
 
 const API = resolveApiBase();
@@ -22,7 +23,7 @@ const API = resolveApiBase();
 /** Sent on every call. The server refuses builds older than its minimum with
  * a 426 naming the download, so a candidate on a stale installer gets a
  * sentence telling them what to do rather than a login that fails silently. */
-const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
+export const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
 
 // Long enough for a slow network at an exam centre; short enough that a dead
 // connection surfaces rather than hanging the UI.
@@ -132,10 +133,24 @@ function storage(): Storage | null {
   }
 }
 
+function clearSignedInSupportReceipt(): void {
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(STORAGE_KEYS.SUPPORT_CONVERSATION);
+    }
+  } catch {
+    // Auth changes must remain effective if session storage is blocked.
+  }
+}
+
 export function setToken(value: string | null, expiresInSeconds?: number): void {
+  const store = storage();
+  // `setToken` is used for successful sign-in and sign-out. Either boundary
+  // invalidates the previous participant's local chat capability, even when
+  // localStorage is unavailable and the prior identity cannot be compared.
+  clearSignedInSupportReceipt();
   token = value;
   if (value !== null) signedOut = false;
-  const store = storage();
   if (!store) return;
   try {
     if (value === null) {

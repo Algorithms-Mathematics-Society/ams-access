@@ -7,8 +7,11 @@ import {
   mergeSupportMessages,
   matchesSupportOperation,
   parseSupportReceipt,
+  parseGuestIssueDraft,
+  matchesGuestIssueDraft,
   SUPPORT_STORAGE_KEY,
 } from "../lib/support-chat.ts";
+const GUEST_STORAGE_KEY = `${SUPPORT_STORAGE_KEY}_guest_request`;
 
 const { outputText } = ts.transpileModule(
   readFileSync(new URL("./HelpRequestModal.tsx", import.meta.url), "utf8"),
@@ -42,7 +45,14 @@ const flush = async () => {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 };
 
-function harness({ stored, storageFails = false, sharedStorage, newAccess = ACCESS } = {}) {
+function harness({
+  stored,
+  storageFails = false,
+  sharedStorage,
+  newAccess = ACCESS,
+  kind,
+  participantToken = "participant-token",
+} = {}) {
   const states = [],
     refs = [],
     effects = [],
@@ -56,7 +66,12 @@ function harness({ stored, storageFails = false, sharedStorage, newAccess = ACCE
     effectIndex = 0,
     timerId = 0,
     dirty = false;
-  let props = { open: true, onClose() {}, kind: "LOGIN", summary: "I cannot sign in." };
+  let props = {
+    open: true,
+    onClose() {},
+    kind: kind ?? (stored ? "OTHER" : "LOGIN"),
+    summary: "I cannot sign in.",
+  };
   const jsx = (type, props) => ({ type, props });
   const context = {
     exports: {},
@@ -113,13 +128,17 @@ function harness({ stored, storageFails = false, sharedStorage, newAccess = ACCE
         };
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name.endsWith("api-base")) return { resolveApiBase: () => "https://example.test" };
+      if (name.endsWith("proctor-api")) return { currentToken: () => participantToken };
       if (name.endsWith("support-chat"))
         return {
           SUPPORT_STORAGE_KEY,
           mergeSupportMessages,
           matchesSupportOperation,
           parseSupportReceipt,
+          parseGuestIssueDraft,
+          matchesGuestIssueDraft,
           newSupportAccess: () => ({ ...newAccess }),
+          currentToken: () => participantToken,
           supportRequest: (base, path, access, body) =>
             new Promise((resolve, reject) =>
               requests.push({ base, path, access, body, resolve, reject })
@@ -207,6 +226,10 @@ function harness({ stored, storageFails = false, sharedStorage, newAccess = ACCE
   return h;
 }
 function contact(h) {
+  if (!h.all("TextInput").some((n) => n.props.label === "Email")) {
+    h.field("Message", "The password is rejected.");
+    return;
+  }
   h.field("Email", " candidate@example.test ");
   h.field("Phone number", " +91 9999999999 ");
   h.field("Name", " Candidate ");
@@ -233,7 +256,7 @@ test("signed-out form has required contact fields in requested order and native 
     assert.equal(input.required, true);
   }
   assert.equal(h.all("TextInput")[0].props.type, "email");
-  assert.match(h.text(), /even if you cannot sign in/);
+  assert.match(h.text(), /support team/);
   h.send(false);
   assert.equal(h.requests.length, 0);
   h.unmount();
@@ -246,44 +269,43 @@ test("first query and trimmed contacts create a private conversation without acc
   h.send();
   assert.equal(h.requests.length, 1);
   const request = h.requests[0];
-  assert.equal(request.path, "/support/conversations");
+  assert.equal(request.path, "/support/issues");
   assert.equal(request.access, undefined);
   assert.deepEqual(JSON.parse(JSON.stringify(request.body)), {
-    ...ACCESS,
+    uid: MESSAGE_UID,
     email: "candidate@example.test",
     phone: "+91 9999999999",
     name: "Candidate",
-    organization: "",
     category: "LOGIN",
-    body: "I cannot sign in.\n\nThe password is rejected.",
+    body: "The password is rejected.",
   });
-  assert.equal(h.receipt().pendingStart.uid, ACCESS.uid);
-  request.resolve({ uid: ACCESS.uid });
+  assert.equal(JSON.parse(h.storage.get(GUEST_STORAGE_KEY)).uid, MESSAGE_UID);
+  assert.equal(h.storage.has(SUPPORT_STORAGE_KEY), false);
+  request.resolve({ received: true });
   await flush();
   h.render();
-  assert.equal(h.receipt().pendingStart, undefined);
-  assert.equal(h.requests[1].access.token, ACCESS.token);
-  await active(h, [message()]);
-  assert.match(h.text(), /I can help/);
+  assert.match(h.text(), /Request sent/);
+  assert.equal(h.storage.has(GUEST_STORAGE_KEY), false);
+  assert.equal(h.requests.length, 1, "guest request is one way and must not poll");
   h.unmount();
 });
 
 test("closing during creation preserves acknowledgement and guards duplicate clicks", async () => {
-  const h = harness();
+  const h = harness({ kind: "OTHER" });
   contact(h);
   h.send();
   assert.equal(h.render({ open: false }), null);
   h.requests[0].resolve({ uid: ACCESS.uid });
   await flush();
   h.render({ open: true, summary: "A different problem" });
-  assert.equal(h.requests.filter((r) => r.path === "/support/conversations").length, 1);
+  assert.equal(h.requests.filter((r) => r.path === "/participant/support/conversations").length, 1);
   assert.equal(h.receipt().access.uid, ACCESS.uid);
   await active(h);
   h.unmount();
 });
 
 test("failed create retries the exact saved request after close, context changes and reload", async () => {
-  const h = harness();
+  const h = harness({ kind: "OTHER" });
   contact(h);
   h.send();
   const original = JSON.parse(JSON.stringify(h.requests[0].body));
@@ -299,7 +321,7 @@ test("failed create retries the exact saved request after close, context changes
   h.requests[1].reject(new Error("Still offline"));
   await flush();
   h.unmount();
-  const resumed = harness({ stored: h.receipt() });
+  const resumed = harness({ stored: h.receipt(), kind: "OTHER" });
   assert.equal(resumed.requests.length, 0);
   resumed.send();
   assert.deepEqual(JSON.parse(JSON.stringify(resumed.requests[0].body)), original);
@@ -311,14 +333,14 @@ test("failed create retries the exact saved request after close, context changes
 });
 
 test("missing create acknowledgement retains capability and retry payload", async () => {
-  const h = harness();
+  const h = harness({ kind: "OTHER" });
   contact(h);
   h.send();
   h.requests[0].resolve({ uid: "wrong" });
   await flush();
   h.render();
   assert.match(h.text(), /did not confirm/);
-  assert.ok(h.receipt().pendingStart);
+  assert.ok(h.receipt().pendingParticipantStart);
   h.unmount();
 });
 
@@ -397,12 +419,12 @@ test("resolved conversations remain readable and have no message composer", asyn
   assert.equal(h.all("form").length, 0);
   h.click("Forget chat / new request");
   assert.equal(h.storage.has(SUPPORT_STORAGE_KEY), false);
-  assert.equal(h.all("TextInput")[0].props.label, "Email");
+  assert.equal(h.all("TextArea")[0].props.label, "Message");
   h.unmount();
 });
 
 test("blocked storage warns without losing in-memory access or duplicating creation", async () => {
-  const h = harness({ storageFails: true });
+  const h = harness({ storageFails: true, kind: "OTHER" });
   contact(h);
   h.send();
   h.requests[0].resolve({ uid: ACCESS.uid });
@@ -432,7 +454,7 @@ test("reopening adopts another help surface's saved chat without mixing historie
 });
 
 test("a storage write failure preserves in-memory conversation across close and reopen", async () => {
-  const h = harness({ storageFails: true });
+  const h = harness({ storageFails: true, kind: "OTHER" });
   contact(h);
   h.send();
   h.requests[0].resolve({ uid: ACCESS.uid });
@@ -454,6 +476,31 @@ test("contest host can render the form without mounting a native dialog above se
   assert.equal(h.all("ContestOverlay").length, 1);
   assert.equal(h.all("form").length, 1);
   h.unmount();
+});
+
+test("secondary action is rendered in composing and chat footers without becoming a submit", async () => {
+  const action = { type: "Button", props: { type: "button", label: "Open resources" } };
+  const composing = harness();
+  composing.render({ secondaryAction: action });
+  assert.equal(
+    composing.all("Button").find((button) => button.props.label === "Open resources")?.props.type,
+    "button"
+  );
+  assert.equal(
+    composing.all("Button").filter((button) => button.props.type === "submit").length,
+    1
+  );
+  composing.unmount();
+
+  const chat = harness({ stored: { access: ACCESS } });
+  await active(chat, [message()]);
+  chat.render({ secondaryAction: action });
+  assert.equal(
+    chat.all("Button").find((button) => button.props.label === "Open resources")?.props.type,
+    "button"
+  );
+  assert.equal(chat.all("form").length, 1);
+  chat.unmount();
 });
 
 test("malformed or nonadvancing history stops pagination and preserves visible messages", async () => {
@@ -482,13 +529,13 @@ const NEXT_MESSAGE_UID = "55555555-5555-4555-8555-555555555555";
 
 test("late creation acknowledgement cannot replace a newer help surface's conversation", async () => {
   const sharedStorage = new Map();
-  const a = harness({ sharedStorage });
+  const a = harness({ sharedStorage, kind: "OTHER" });
   contact(a);
   a.send();
   const late = a.requests[0];
   a.render({ open: false });
-  const b = harness({ sharedStorage, newAccess: NEW_ACCESS });
-  b.click("Start a new request");
+  const b = harness({ sharedStorage, newAccess: NEW_ACCESS, kind: "OTHER" });
+  b.click("Edit message");
   contact(b);
   b.send();
   assert.equal(b.receipt().access.uid, NEW_ACCESS.uid);
@@ -496,20 +543,20 @@ test("late creation acknowledgement cannot replace a newer help surface's conver
   await flush();
   a.render();
   assert.equal(b.receipt().access.uid, NEW_ACCESS.uid);
-  assert.ok(b.receipt().pendingStart);
+  assert.ok(b.receipt().pendingParticipantStart);
   a.unmount();
   b.unmount();
 });
 
 test("late message acknowledgement cannot replace an adopted conversation or its pending creation", async () => {
   const sharedStorage = new Map([[SUPPORT_STORAGE_KEY, JSON.stringify({ access: ACCESS })]]);
-  const a = harness({ sharedStorage });
+  const a = harness({ sharedStorage, kind: "OTHER" });
   await active(a);
   a.field("Message", "Old message");
   a.send();
   const late = a.requests.at(-1);
   a.render({ open: false });
-  const b = harness({ sharedStorage, newAccess: NEW_ACCESS });
+  const b = harness({ sharedStorage, newAccess: NEW_ACCESS, kind: "OTHER" });
   await active(b);
   b.click("Forget chat / new request");
   contact(b);
@@ -519,21 +566,25 @@ test("late message acknowledgement cannot replace an adopted conversation or its
   await flush();
   a.render();
   assert.equal(a.receipt().access.uid, NEW_ACCESS.uid);
-  assert.equal(a.all("TextInput").length, 4, "the adopted pending creation stays displayed");
-  assert.ok(a.receipt().pendingStart);
+  assert.equal(
+    a.all("TextArea")[0].props.label,
+    "Message",
+    "the adopted participant request stays displayed"
+  );
+  assert.ok(a.receipt().pendingParticipantStart);
   a.unmount();
   b.unmount();
 });
 
 test("late duplicate acknowledgement preserves a newer pending message on the same conversation", async () => {
   const sharedStorage = new Map([[SUPPORT_STORAGE_KEY, JSON.stringify({ access: ACCESS })]]);
-  const a = harness({ sharedStorage });
+  const a = harness({ sharedStorage, kind: "OTHER" });
   await active(a);
   a.field("Message", "First message");
   a.send();
   const late = a.requests.at(-1);
   a.render({ open: false });
-  const b = harness({ sharedStorage });
+  const b = harness({ sharedStorage, kind: "OTHER" });
   await active(b);
   b.send();
   b.requests.at(-1).resolve({ uid: MESSAGE_UID });

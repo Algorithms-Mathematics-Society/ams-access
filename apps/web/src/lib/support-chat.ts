@@ -1,3 +1,6 @@
+import { CLIENT_VERSION } from "./proctor-api.ts";
+import { STORAGE_KEYS } from "../constants/storage-keys.ts";
+
 /** Support capabilities are unrelated to participant/exam bearer tokens. */
 export type SupportMessage = {
   uid: string;
@@ -27,9 +30,18 @@ export type SupportStart = SupportAccess & {
 export type SupportReceipt = {
   access: SupportAccess;
   pendingStart?: SupportStart;
+  pendingParticipantStart?: { uid: string; token: string; category: string; body: string };
   pendingMessage?: { uid: string; body: string };
 };
-export const SUPPORT_STORAGE_KEY = "ams_support_conversation_v1";
+export type GuestIssueDraft = {
+  uid: string;
+  email: string;
+  phone: string;
+  name: string;
+  body: string;
+  category: string;
+};
+export const SUPPORT_STORAGE_KEY = STORAGE_KEYS.SUPPORT_CONVERSATION;
 
 export function newSupportAccess(): SupportAccess {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -37,6 +49,41 @@ export function newSupportAccess(): SupportAccess {
     uid: crypto.randomUUID(),
     token: Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(""),
   };
+}
+
+export function parseGuestIssueDraft(value: string | null): GuestIssueDraft | null {
+  if (!value) return null;
+  try {
+    const data = JSON.parse(value) as GuestIssueDraft;
+    if (
+      !data ||
+      !UUID.test(data.uid) ||
+      !bounded(data.email, 3, 320) ||
+      !bounded(data.phone, 5, 40) ||
+      !bounded(data.name, 1, 120) ||
+      !bounded(data.body, 1, 4000) ||
+      !categories.has(data.category)
+    )
+      return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export function matchesGuestIssueDraft(
+  current: GuestIssueDraft | null,
+  expected: GuestIssueDraft
+): boolean {
+  return Boolean(
+    current &&
+    current.uid === expected.uid &&
+    current.email === expected.email &&
+    current.phone === expected.phone &&
+    current.name === expected.name &&
+    current.body === expected.body &&
+    current.category === expected.category
+  );
 }
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -63,9 +110,18 @@ export function parseSupportReceipt(value: string | null): SupportReceipt | null
         !categories.has(start.category))
     )
       return null;
+    const participantStart = data.pendingParticipantStart;
+    if (
+      participantStart &&
+      (participantStart.uid !== data.access.uid ||
+        participantStart.token !== data.access.token ||
+        !bounded(participantStart.body, 1, 4000) ||
+        !categories.has(participantStart.category))
+    )
+      return null;
     const message = data.pendingMessage;
     if (message && (!UUID.test(message.uid) || !bounded(message.body, 1, 4000))) return null;
-    if (start && message) return null;
+    if ((start || participantStart) && message) return null;
     return data;
   } catch {
     return null;
@@ -97,6 +153,17 @@ export function matchesSupportOperation(
       saved.organization === sent.organization
     );
   }
+  if (expected.pendingParticipantStart) {
+    const saved = current.pendingParticipantStart;
+    const sent = expected.pendingParticipantStart;
+    return Boolean(
+      saved &&
+      saved.uid === sent.uid &&
+      saved.token === sent.token &&
+      saved.body === sent.body &&
+      saved.category === sent.category
+    );
+  }
   return Boolean(
     expected.pendingMessage &&
     current.pendingMessage &&
@@ -117,7 +184,8 @@ export async function supportRequest<T>(
   base: string,
   path: string,
   access?: SupportAccess,
-  body?: unknown
+  body?: unknown,
+  participantToken?: string
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
@@ -127,12 +195,25 @@ export async function supportRequest<T>(
       cache: "no-store",
       signal: controller.signal,
       headers: {
+        "X-AMS-Client-Version": CLIENT_VERSION,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         ...(access ? { Authorization: `Bearer ${access.token}` } : {}),
+        ...(participantToken ? { Authorization: `Bearer ${participantToken}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const data = await response.json();
+    const responseBody = await response.text();
+    let data: { detail?: unknown };
+    try {
+      const parsed: unknown = responseBody ? JSON.parse(responseBody) : {};
+      data = parsed && typeof parsed === "object" ? (parsed as { detail?: unknown }) : {};
+    } catch {
+      // A proxy or server can commit the request and then return an HTML/error
+      // page. Keep the original idempotency identifier so retry is safe.
+      throw new Error(
+        "The server response could not be confirmed. Delivery is not confirmed. Retry with the same request."
+      );
+    }
     if (!response.ok) {
       const detail =
         typeof data.detail === "string" && data.detail.trim()

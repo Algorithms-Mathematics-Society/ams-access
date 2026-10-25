@@ -166,9 +166,13 @@ controls inert, with focus restored only on ordinary dismissal. Reference conten
 is bounded plain text from the existing authenticated contest payload, with a
 fast, reduced-motion-aware opening transition and no network work on open.
 
-Participant support reuses the shared dialog on login/home and ContestOverlay
-inside an assessment. Use labeled email, phone, name and issue fields, plain-text
-messages with sender and local timestamp, explicit delivery/reconnect feedback,
-and readable resolved history. Keep pending retries tied to their original
-identifiers. Support must yield to mandatory overlays without changing exam
-state. The organization portal owns the separate staff inbox.
+Logged-out login support is a one-shot issue form with email, phone, name and
+message, followed by confirmation; it does not expose conversation access. Signed-in
+Help uses the larger shared conversation dialog on home and ContestOverlay
+inside an assessment. It asks only for a message; participant and organization
+context come from authentication. Show plain-text replies with sender
+and local timestamp, explicit delivery/reconnect feedback, and readable resolved
+history. Keep pending retries tied to their original identifiers. Support must
+yield to mandatory overlays without changing exam state. The organization portal
+owns the separate staff inbox. Device incident reporting with diagnostics remains
+a separate contest action.

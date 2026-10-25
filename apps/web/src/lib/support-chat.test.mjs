@@ -50,17 +50,29 @@ test("request sends only its support capability and never caches private replies
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url, init) => {
     calls.push({ url, init });
-    return { ok: true, json: async () => ({ uid: access.uid }) };
+    return { ok: true, text: async () => JSON.stringify({ uid: access.uid }) };
   });
   await supportRequest("https://example.test", "/support/conversations", undefined, {
     name: "Candidate",
   });
   assert.equal(calls[0].init.headers.Authorization, undefined);
+  assert.equal(calls[0].init.headers["X-AMS-Client-Version"], "2.0.0");
   assert.equal(calls[0].init.method, "POST");
   await supportRequest("https://example.test", `/support/conversations/${access.uid}`, access);
   assert.equal(calls[1].init.headers.Authorization, `Bearer ${access.token}`);
   assert.equal(calls[1].init.cache, "no-store");
   assert.equal(calls[1].init.method, "GET");
+  await supportRequest(
+    "https://example.test",
+    "/participant/support/conversations",
+    undefined,
+    {
+      uid: access.uid,
+    },
+    "participant-token"
+  );
+  assert.equal(calls[2].init.headers.Authorization, "Bearer participant-token");
+  assert.equal(calls[2].init.headers["X-AMS-Client-Version"], "2.0.0");
 });
 
 test("timeout remains armed until JSON body completes and always clears afterward", async (t) => {
@@ -80,7 +92,7 @@ test("timeout remains armed until JSON body completes and always clears afterwar
     signal = init.signal;
     return {
       ok: true,
-      json: () =>
+      text: () =>
         new Promise((resolve) => {
           finish = resolve;
         }),
@@ -91,7 +103,7 @@ test("timeout remains armed until JSON body completes and always clears afterwar
   assert.equal(cleared, false);
   fire();
   assert.equal(signal.aborted, true);
-  finish({ uid: access.uid });
+  finish(JSON.stringify({ uid: access.uid }));
   assert.deepEqual(await request, { uid: access.uid });
   assert.equal(cleared, true);
 });
@@ -107,7 +119,7 @@ for (const failure of ["network", "timeout", "body-timeout"])
       if (failure === "timeout") throw error;
       return {
         ok: true,
-        json: async () => {
+        text: async () => {
           throw error;
         },
       };
@@ -125,7 +137,7 @@ test("server validation and rate limits expose actionable errors", async (t) => 
   t.mock.method(globalThis, "fetch", async () => ({
     ok: false,
     status,
-    json: async () => ({ detail }),
+    text: async () => JSON.stringify({ detail }),
   }));
   await assert.rejects(
     supportRequest("https://example.test", "/support/conversations"),

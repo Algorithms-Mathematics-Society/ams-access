@@ -6,14 +6,17 @@ staff authorization live in the API, not a Next.js route in this repository.
 
 ## Flow
 
-1. Use **Get help** on Login/Home or **Help** in the assessment.
-2. Enter email, phone, name, and the issue. No participant login is required.
-   An organization code is optional for a single-organization deployment and
-   required to route a request when more than one organization exists.
-3. The contact details and original query are stored atomically. The query appears
-   as the first chat message. Staff see it under **Support** on the main dashboard.
-4. Both sides can send plain-text messages. Open conversations poll every four
-   seconds while visible, using bounded history pages. Staff can resolve/reopen.
+1. Logged-out **Get help** asks for email, phone, name and the issue. It sends a
+   one-way report to `POST /support/issues`, then shows confirmation. No
+   organization code or conversation access is requested or returned.
+2. Signed-in **Help** asks only for a message. The authenticated participant and
+   contest supply contact and organization context to
+   `POST /participant/support/conversations`.
+3. Staff see both kinds of issue under **Support** on the main dashboard. Guest
+   issues are contact-only: staff follow up by email or phone and cannot send
+   an unreadable chat reply. Signed-in issues support plain-text conversation.
+4. Signed-in conversations poll every four seconds while visible, using bounded
+   history pages. Staff can resolve/reopen issues.
 
 A random 256-bit capability grants participant access to exactly one thread.
 Only its SHA-256 hash is stored in the database. The client stores the capability
@@ -35,6 +38,8 @@ conversations and pending messages opened from another help surface. Resolved
 threads keep unconfirmed messages visible for retry: committed messages can be
 acknowledged; an uncommitted message requires staff to reopen the issue or a new
 request.
+Signing out or changing participant tokens clears signed-in conversation access.
+Guest request drafts use separate storage and contain no chat capability.
 
 During an assessment, chat uses the existing ordinary ContestOverlay, yields to
 mandatory security/network/expiry overlays and preserves the editor and exam
@@ -44,11 +49,15 @@ telemetry or passwords.
 
 ## Deployment
 
-Apply `ams-api` migration `f14d8c2a907b` and deploy its support endpoints before
-releasing the matching admin portal and candidate app. No new environment
-variables, realtime infrastructure or runtime dependencies are introduced.
-Older server deployments return a visible failure; there is no false delivery
-acknowledgement or fallback to a one-way incident.
+Apply `ams-api` migrations through `3b4e8a2c1d90` and deploy its support endpoints
+before releasing the matching admin portal and candidate app. The migration
+adds `chat_enabled`, preserving existing conversations while marking new guest
+issues as one-way. Private read/reply routes also enforce this flag.
+For multi-organization deployments, set server-side `AMS_SUPPORT_ORGANIZATION_SLUG`
+to the receiving inbox's existing organization slug (production SSM parameter:
+`/ams/prod/support_organization_slug`). A sole organization is used automatically.
+Ambiguous or invalid routing returns 503. Participants never enter this setting.
+Older server deployments return a visible failure without false delivery confirmation.
 
 The API bounds messages at 4000 characters, reads at 100 messages/page and inbox
 pages at 50 issues. Creation is bounded at 100 requests/hour per observed source
@@ -69,9 +78,8 @@ and reply/history response validation. Browser fixtures cover inbox/reply/
 resolution and narrow/desktop layouts. Fixtures do not prove API integration.
 
 The candidate production static export, typecheck and size budgets pass. The
-backend pure suite, lint and type checks pass; migration upgrade/downgrade/
-upgrade was exercised against scratch PostgreSQL in single-user mode. Real
-multi-connection API/database tests remain to run on a scratch Postgres because
+backend pure suite, lint and support type checks pass. Real
+API/database tests remain to run on a scratch Postgres because
 this sandbox prohibits server sockets. The admin full build/typecheck requires
 restoring the repository's already-declared missing CodeMirror dependencies.
 Packaged desktop lockdown/focus acceptance remains a separate native check.

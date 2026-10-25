@@ -4449,20 +4449,31 @@ export default function ContestPageClient() {
         onClose={closeSupportChat}
         kind="OTHER"
         summary="I need help during my assessment."
+        secondaryAction={
+          <Button
+            type="button"
+            label="Report a device incident with diagnostics"
+            variant="secondary"
+            style={{
+              marginInlineEnd: "auto",
+              maxWidth: "100%",
+              flexShrink: 0,
+              height: "auto",
+              whiteSpace: "normal",
+              border: "var(--border-width) solid var(--color-border-emphasized)",
+            }}
+            onClick={() => {
+              setShowSupportChat(false);
+              setShowSupportModal(true);
+            }}
+          />
+        }
         renderDialog={(content) => (
           <ContestOverlay labelId="support-chat-title" dialogRef={supportChatDialogRef} wide>
             <Heading level={2} id="support-chat-title">
               Talk to your organizer
             </Heading>
             {content}
-            <Button
-              label="Report a device incident with diagnostics"
-              variant="ghost"
-              onClick={() => {
-                setShowSupportChat(false);
-                setShowSupportModal(true);
-              }}
-            />
           </ContestOverlay>
         )}
       />
