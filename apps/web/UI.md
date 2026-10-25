@@ -224,6 +224,13 @@ Restore success requires a successful status query confirming no pending restora
 
 ## Frontend feedback and request ownership
 
+Login and organizer-approval creation synchronously own their pending request,
+including multiple submit events before React rerenders. Failed attempts release
+ownership for explicit retry; successful login keeps ownership through navigation.
+Approval ownership is released on completion, including responses invalidated by
+sign-out. Existing server-directed login cooldown and recovery identity checks
+remain authoritative. These guards add no background work or automatic retries.
+
 Startup keeps a visible status after the intro while version and sign-in checks
 finish. Empty credentials are checked before requesting sign-in, and the login ID
 field accepts short IDs or full handles. Optional display metadata storage failures

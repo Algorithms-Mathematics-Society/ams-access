@@ -75,6 +75,7 @@ async function setup(t, { expiry = Date.now() + 3600000, failedKey = "all" } = {
     loginId: "candidate-B",
     password: "password",
     loading: false,
+    loginInFlightRef: { current: false },
     performance,
     cooldownUntil: { current: 0 },
     setCooldownSeconds() {},
