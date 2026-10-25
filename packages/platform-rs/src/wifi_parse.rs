@@ -153,14 +153,6 @@ pub fn parse_networksetup_list(stdout: &str) -> Vec<WifiNetwork> {
         .collect()
 }
 
-/// `networksetup -getairportnetwork <iface>`: "Current Wi-Fi Network: NAME",
-/// or a sentence such as "You are not associated with an AirPort network."
-pub fn parse_airport_network(stdout: &str) -> Option<String> {
-    let (_, name) = stdout.trim().split_once(": ")?;
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,18 +251,5 @@ mod tests {
         let rows = parse_networksetup_list(out);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].ssid, "CampusWiFi");
-    }
-
-    #[test]
-    fn airport_network_reads_the_name_and_nothing_from_a_sentence() {
-        assert_eq!(
-            parse_airport_network("Current Wi-Fi Network: Campus: East\n").as_deref(),
-            Some("Campus: East")
-        );
-        assert_eq!(
-            parse_airport_network("You are not associated with an AirPort network.\n"),
-            None
-        );
-        assert_eq!(parse_airport_network(""), None);
     }
 }
