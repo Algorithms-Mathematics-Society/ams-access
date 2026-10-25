@@ -3830,6 +3830,7 @@ export default function ContestPageClient() {
         loadError={loadError}
         router={router}
         onRetry={() => void redirectAfterRelease(pendingRedirect)}
+        exitTo={pendingRedirect}
       />
     ) : (
       <BootScreen label="Releasing device controls..." />

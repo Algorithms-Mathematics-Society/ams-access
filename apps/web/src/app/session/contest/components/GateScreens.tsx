@@ -27,8 +27,14 @@ export interface ContestLoadErrorScreenProps {
   router: ReturnType<typeof useRouter>;
   /** Present only for retryable failures. */
   onRetry?: () => void;
+  /** Where the exit goes; a redirect that failed cleanup keeps its target. */
+  exitTo?: string;
 }
-export function ContestLoadErrorScreen({ loadError, onRetry }: ContestLoadErrorScreenProps) {
+export function ContestLoadErrorScreen({
+  loadError,
+  onRetry,
+  exitTo = "/home",
+}: ContestLoadErrorScreenProps) {
   return (
     <AppShell height="fill" style={{ height: "100dvh" }}>
       <VStack
@@ -42,7 +48,11 @@ export function ContestLoadErrorScreen({ loadError, onRetry }: ContestLoadErrorS
           {onRetry && <Button label="Retry" variant="primary" onClick={onRetry} />}
           {/* Always offered, even when cleanup failed: the release is local
               and works with the backend down, so a stuck candidate can leave. */}
-          <BackToHomeButton label="Exit to contests" variant={onRetry ? "secondary" : "primary"} />
+          <BackToHomeButton
+            label={exitTo === "/login" ? "Exit to sign in" : "Exit to contests"}
+            variant={onRetry ? "secondary" : "primary"}
+            destination={exitTo}
+          />
         </VStack>
       </VStack>
     </AppShell>
