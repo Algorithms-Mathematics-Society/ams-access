@@ -1,4 +1,5 @@
 import { type useRouter } from "next/navigation";
+import { exitToHome } from "@/lib/exit-to-home";
 
 export interface ErrorScreenProps {
   error: string;
@@ -44,7 +45,7 @@ export function ErrorScreen({ error, fetchResults, router }: ErrorScreenProps) {
       <button onClick={() => void fetchResults()} className="results-btn results-btn-primary">
         Retry
       </button>
-      <button onClick={() => router.push("/home")} className="results-btn results-btn-ghost">
+      <button onClick={() => void exitToHome(router)} className="results-btn results-btn-ghost">
         Back to Home
       </button>
     </div>

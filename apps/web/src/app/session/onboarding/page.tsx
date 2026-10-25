@@ -25,7 +25,6 @@ import {
   browserDeviceState,
   strictContestPolicy,
   type OrganizerOverride,
-  type RestoreStatus,
 } from "@ams/api-client";
 import { fetchJson, SessionBindingError } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
@@ -33,6 +32,7 @@ import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
+import { exitToHome } from "@/lib/exit-to-home";
 import { decideNetworkLockdown } from "./network-gate";
 import { effectiveReadinessPolicy } from "./effective-policy";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
@@ -1048,30 +1048,7 @@ export default function OnboardingPage() {
     cameraStreamRef.current = null;
     setCameraStream(null);
 
-    const win = await tauriWindow();
-    if (win) {
-      await win.setFullscreen(false).catch(() => {});
-      // macOS onboarding covers the screen with simple full-screen, which
-      // setFullscreen(false) does not leave.
-      await win.setSimpleFullscreen(false).catch(() => {});
-      await win.setAlwaysOnTop(false).catch(() => {});
-      await win.setDecorations(true).catch(() => {});
-    }
-    try {
-      await window.__TAURI__?.core.invoke("unlock_desktop");
-    } catch {}
-    try {
-      await window.__TAURI__?.core.invoke("disable_keyboard_intercept");
-    } catch {}
-    try {
-      await window.__TAURI__?.core.invoke("disable_network_lockdown");
-    } catch {}
-    // Settings that could not be restored are listed, with their fixes, by
-    // the restore card in Settings; ?restore=pending opens it.
-    const remaining = await window.__TAURI__?.core
-      .invoke<RestoreStatus>("get_lockdown_restore_status")
-      .catch(() => null);
-    router.push(remaining?.pending ? "/home?restore=pending" : "/home");
+    await exitToHome(router);
   }, [router]);
 
   useEffect(() => {
