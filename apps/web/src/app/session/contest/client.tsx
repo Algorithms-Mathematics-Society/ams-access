@@ -143,6 +143,7 @@ import {
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
+  getContest,
   getRun,
   getSession,
   heartbeat,
@@ -2544,6 +2545,26 @@ export default function ContestPageClient() {
         } else if (live.status === "submitted") {
           setSessionEnded("submitted");
         }
+        if (live.ends_at === null && live.status === "active") {
+          // Practice sheets may be published after entry; keep the last copy offline.
+          try {
+            const latest = await getContest(contestId);
+            if (cancelled || authExpired || request !== latestRequest || latest.uid !== contestId)
+              return;
+            setContest((prev) =>
+              prev?.id === contestId
+                ? { ...prev, reference_sheet: readReferenceSheet(latest.reference_sheet) }
+                : prev
+            );
+          } catch (caught) {
+            if (cancelled || authExpired || request !== latestRequest) return;
+            if (caught instanceof ProctorApiError && caught.status === 401) {
+              authExpired = true;
+              void redirectAfterRelease("/login");
+            }
+            // A sheet transport failure cannot turn a successful heartbeat into an offline verdict.
+          }
+        }
       } catch (caught) {
         if (cancelled || authExpired) return;
         if (caught instanceof ProctorApiError && caught.status === 401) {
@@ -2574,7 +2595,7 @@ export default function ContestPageClient() {
       clearInterval(id);
     };
     // Recheck immediately on reconnect; ignore the previous connection's replies.
-  }, [sessionId, router, browserOnline]);
+  }, [sessionId, contestId, router, browserOnline]);
 
   // Flush the moment the connection comes back, rather than waiting out the
   // autosave backoff. A candidate who reconnects with thirty seconds left
