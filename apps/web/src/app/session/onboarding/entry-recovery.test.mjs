@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { entryProgressLabel } from "./entry-progress.ts";
 
 import {
   EntryCancelledError,
@@ -79,14 +80,17 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
   const time = fakeClock();
   const attempts = createEntryAttemptController(time.clock);
   attempts.activate();
-  const state = { blocks: [], retries: [], navigation: [], sessions: 0 };
+  const state = { blocks: [], retries: [], navigation: [], sessions: 0, progress: [] };
   const context = {
     entryAttemptsRef: { current: attempts },
+    setupLeavingRef: { current: false },
     contestWindow: null,
     setPolicyBlock: (value) => state.blocks.push(value),
     setFaceReviewSaveFailed() {},
     setEntryRetryAvailable: (value) => state.retries.push(value),
     setTransitioning() {},
+    setEntryProgress: (value) => state.progress.push(value),
+    entryProgressLabel,
     dryRun: false,
     evaluateEntryGateFromServer: async () => ({ ok: true, index: null }),
     isTestAccount: false,
@@ -102,6 +106,7 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
     },
     platform: "linux",
     collectDeviceState,
+    invokeStrict: async () => {},
     isGatingRelaxed: () => false,
     getNetworkProbeHost: () => "probe.invalid",
     API_URL: "https://api.invalid",
@@ -329,4 +334,15 @@ test("session binding failures remain visible instead of navigating in the same 
   const branch = callbackCode.slice(start, end);
   assert.match(branch, /setPolicyBlock/);
   assert.doesNotMatch(branch, /router\.(?:push|replace)/);
+});
+
+test("leaving setup prevents final entry from starting again", async () => {
+  const f = fixture({
+    enumerateDevices: async () => [],
+    collectDeviceState: async () => ({}),
+    overrides: { setupLeavingRef: { current: true } },
+  });
+  await f.finalize();
+  assert.equal(f.state.sessions, 0);
+  assert.deepEqual(f.state.navigation, []);
 });

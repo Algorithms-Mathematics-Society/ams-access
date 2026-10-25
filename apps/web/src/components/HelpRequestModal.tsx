@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { supportDiagnostics } from "@/lib/support-diagnostics";
 import { AccessDialog } from "./AccessDialog";
 import { VStack, HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -79,7 +80,7 @@ export function HelpRequestModal({
     const payload = {
       category: kind,
       message: [summary, note.trim()].filter(Boolean).join("\n\n"),
-      diagnostics: details ?? {},
+      diagnostics: supportDiagnostics(details),
       contact: email.trim(),
       contest_uid: contestId ?? undefined,
     };
@@ -143,7 +144,7 @@ export function HelpRequestModal({
           <Text type="supporting">Contact: {request?.email}</Text>
           {reference && (
             <MetadataList>
-              <MetadataListItem label="Reference">
+              <MetadataListItem label="Support reference">
                 <Text type="code" style={{ overflowWrap: "anywhere", userSelect: "all" }}>
                   {reference}
                 </Text>
@@ -209,7 +210,15 @@ export function HelpRequestModal({
                   placeholder="Describe the problem so your proctor can help faster."
                 />
                 <Text type="supporting">
-                  Diagnostic details about your device and the error are included automatically.
+                  Only the automatic context shown below is included. Your message and reply email
+                  are sent to your organizer. Do not include passwords, access tokens or screenshots
+                  containing credentials. Describe what you have already tried.
+                </Text>
+                <Text
+                  type="code"
+                  style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", userSelect: "text" }}
+                >
+                  {JSON.stringify(supportDiagnostics(details), null, 2)}
                 </Text>
                 {state === "sending" && (
                   <Text role="status" type="supporting">

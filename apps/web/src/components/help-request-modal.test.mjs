@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { supportDiagnostics } from "../lib/support-diagnostics.ts";
 
 const { outputText } = ts.transpileModule(
   readFileSync(new URL("./HelpRequestModal.tsx", import.meta.url), "utf8"),
@@ -28,6 +29,7 @@ function harness() {
     fetch: (url, init) =>
       new Promise((resolve, reject) => requests.push({ url, init, resolve, reject })),
     require(name) {
+      if (name.endsWith("support-diagnostics")) return { supportDiagnostics };
       if (name === "react")
         return {
           useState(initial) {
@@ -258,4 +260,25 @@ test("unauthenticated help preserves direct-organizer guidance and cannot send",
   assert.equal(h.all("form").length, 0);
   assert.match(h.text(), /Sign in to send/);
   assert.equal(h.requests.length, 0);
+});
+
+test("preview and transmitted automatic context exclude raw sensitive diagnostics", async () => {
+  const h = harness();
+  h.render({
+    details: {
+      source: "resume_flow",
+      resume_status: "PENDING",
+      password: "PRIVATE-PASSWORD",
+      token: "PRIVATE-TOKEN",
+      diagnostics: { error: "PRIVATE-LOG" },
+    },
+  });
+  draft(h);
+  assert.doesNotMatch(h.text(), /PRIVATE-PASSWORD|PRIVATE-TOKEN|PRIVATE-LOG/);
+  h.send();
+  const payload = JSON.parse(h.requests[0].init.body);
+  assert.deepEqual(payload.diagnostics, { source: "resume_flow", resume_status: "PENDING" });
+  assert.equal(payload.contact, "candidate@example.test");
+  h.requests[0].resolve(receipt("SAFE-REF"));
+  await flush();
 });

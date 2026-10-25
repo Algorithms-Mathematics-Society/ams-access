@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { authHeaders, participantToken } from "./candidate-auth.ts";
+import { createDeviceRelease, releaseRestoreStatus } from "./release-device-controls.ts";
 import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import { bufferKey, isBufferKey } from "../app/session/contest/answer-buffer.ts";
 import {
@@ -504,8 +505,18 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
     setTimeout: (callback, delay) => setTimeout(callback, hang ? 1 : delay),
     clearTimeout,
     ACTIVE_SESSION_KEY: "ams_active_session",
+    sessionId: "session-1",
+    readStoredSession: () => {
+      try {
+        return JSON.parse(localStorage.getItem("ams_active_session"));
+      } catch {
+        return null;
+      }
+    },
     STORAGE_KEYS,
     redirectInFlightRef: { current: false },
+    leavingWorkspaceRef: { current: false },
+    setLeaveConfirm() {},
     exitInFlightRef: { current: false },
     redirectSaveRef: {
       current: () => {
@@ -560,6 +571,7 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
                     token: null,
                     preserveBinding: true,
                   });
+                if (command === "get_platform") return { os: "linux" };
                 if (command === "get_lockdown_restore_status")
                   return { pending: fail === "pending", items: [] };
               },
@@ -567,6 +579,8 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
           },
         },
   };
+  context.releaseDeviceControls = createDeviceRelease(() => context.window.__TAURI__, 5);
+  context.releaseRestoreStatus = releaseRestoreStatus;
   return { ...contestExitHandlers(context), calls, context, error: () => error };
 }
 
@@ -588,7 +602,7 @@ test("exit releases native controls while the captured identity photo is still u
   assert.ok(fixture.calls.indexOf("identity-photo") < fixture.calls.indexOf("camera"));
 });
 
-test("login redirect starts the exit-photo request with the current token before logout", async () => {
+test("login redirect captures authenticated evidence before logout without awaiting delivery", async () => {
   setToken("exit-photo-token", 3600);
   const fixture = contestExitFixture();
   const originalFetch = globalThis.fetch;
@@ -616,7 +630,9 @@ test("login redirect starts the exit-photo request with the current token before
     assert.equal(currentToken(), null);
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(fixture.calls.includes("get_lockdown_restore_status"));
-    assert.ok(!fixture.calls.includes("redirect:/login"));
+    // Local recovery must not wait for optional evidence delivery.
+    await exiting;
+    assert.ok(fixture.calls.includes("redirect:/login"));
     finishUpload();
     await exiting;
     assert.equal(currentToken(), null);
@@ -671,12 +687,14 @@ test("auth redirect releases all native controls before navigation and retains r
     // Before "camera": the exit frame has to be taken while there is still
     // a stream to take it from.
     "identity-photo",
-    "configure_event_stream",
     "camera",
+    "configure_event_stream",
+    "get_platform",
     "setFullscreen",
     "setAlwaysOnTop",
     "setDecorations",
     "unlock_desktop",
+    "disable_keyboard_intercept",
     "disable_network_lockdown",
     "get_lockdown_restore_status",
     "redirect:/login",
@@ -800,4 +818,58 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
   cleanup();
   assert.equal(fixture.calls.at(-1), "redirect:/login");
   assert.ok(fixture.calls.indexOf("unlock_desktop") < fixture.calls.indexOf("redirect:/login"));
+});
+
+test("intentional leave restores controls while finish is pending and repeated clicks share teardown", async () => {
+  const fixture = contestExitFixture();
+  fixture.context.exitInFlightRef.current = true;
+  await fixture.redirectAfterRelease("/home");
+  assert.deepEqual(fixture.calls, []);
+  await Promise.all([
+    fixture.redirectAfterRelease("/home", true),
+    fixture.redirectAfterRelease("/home", true),
+  ]);
+  assert.equal(fixture.context.leavingWorkspaceRef.current, true);
+  assert.equal(fixture.calls.filter((call) => call === "unlock_desktop").length, 1);
+  assert.equal(fixture.calls.at(-1), "redirect:/home");
+});
+
+test("a hanging exit evidence upload cannot delay camera or native release", async () => {
+  const fixture = contestExitFixture();
+  fixture.context.exitPhotoRef.current = () => new Promise(() => {});
+  await fixture.redirectAfterRelease("/home");
+  assert.ok(fixture.calls.includes("camera"));
+  assert.ok(fixture.calls.includes("unlock_desktop"));
+  assert.equal(fixture.calls.at(-1), "redirect:/home");
+});
+
+test("confirmed finish only removes the matching serialized recovery record", async () => {
+  localStorage.setItem(
+    "ams_active_session",
+    JSON.stringify({ id: "session-1", contest_id: "contest" })
+  );
+  const fixture = contestExitFixture();
+  await fixture.runExitTeardown(false);
+  assert.equal(localStorage.getItem("ams_active_session"), null);
+  assert.equal(JSON.parse(localStorage.getItem(STORAGE_KEYS.LAST_SESSION)).id, "session-1");
+  localStorage.setItem(
+    "ams_active_session",
+    JSON.stringify({ id: "newer-session", contest_id: "contest" })
+  );
+  await fixture.runExitTeardown(false);
+  assert.equal(JSON.parse(localStorage.getItem("ams_active_session")).id, "newer-session");
+});
+
+test("failed release while finish is pending remains retryable without restarting finish", async () => {
+  const fixture = contestExitFixture("configure_event_stream");
+  fixture.context.exitInFlightRef.current = true;
+  await fixture.redirectAfterRelease("/home", true);
+  assert.match(fixture.error(), /cleanup could not be confirmed/);
+  const attemptsBefore = fixture.calls.filter((call) => call === "configure_event_stream").length;
+  await fixture.redirectAfterRelease("/home");
+  assert.equal(
+    fixture.calls.filter((call) => call === "configure_event_stream").length,
+    attemptsBefore + 1
+  );
+  assert.equal(fixture.context.exitInFlightRef.current, true);
 });

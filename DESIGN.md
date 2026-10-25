@@ -165,3 +165,8 @@ security/network and expiry flows. Keep the workspace mounted and background
 controls inert, with focus restored only on ordinary dismissal. Reference content
 is bounded plain text from the existing authenticated contest payload, with a
 fast, reduced-motion-aware opening transition and no network work on open.
+
+Signed-out sign-in help uses the shared dialog with local guidance and a public
+browser contact handoff. Keep the URL/address selectable, diagnostics explicitly
+reviewable, and copy/open feedback distinct from message delivery. It must remain
+usable without participant authentication or network-dependent initialization.

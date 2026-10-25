@@ -3,6 +3,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Button } from "@astryxdesign/core/Button";
+import { resultSummary, candidateCheckFailed } from "../result-summary";
 import { outputText } from "../execution-output";
 import { GATE_KIND } from "../family-summary";
 import { behaviourLanguage, ruleLanguage, shortChip } from "../rule-language";
@@ -66,7 +67,7 @@ function passed(row: TestRow): boolean {
  * a case the candidate had not got wrong, and a tooltip saying "failed".
  */
 function unjudged(row: TestRow): boolean {
-  return String(row.verdict ?? "").trim() === "";
+  return !passed(row) && !candidateCheckFailed(row.verdict);
 }
 
 /** The headline, in the words a candidate expects to read. */
@@ -79,7 +80,8 @@ const VERDICT_WORDS: Record<string, string> = {
   CE: "Compile Error",
   OLE: "Output Limit Exceeded",
   PE: "Presentation Error",
-  SE: "Judge Error",
+  SE: "Judging unavailable",
+  IE: "Judging unavailable",
 };
 
 function verdictWord(code: string | null | undefined): string {
@@ -185,12 +187,16 @@ export function ResultsPanel({
         <Text weight="semibold" style={{ color: "var(--color-text-error)" }}>
           {error}
         </Text>
+        <Text type="supporting" color="secondary">
+          This message is not a final verdict on your code. Check the attempt’s recorded result
+          before changing or resubmitting it.
+        </Text>
       </VStack>
     );
   }
 
   const compileFailed = compilerIsError && compilerText;
-  if (!rows.length && !compileFailed) {
+  if (!rows.length && !compileFailed && !verdict) {
     return (
       <VStack gap={2} padding={4}>
         <Text type="supporting" color="secondary">
@@ -200,13 +206,15 @@ export function ResultsPanel({
     );
   }
 
-  const allPassed = rows.length > 0 && rows.every(passed);
-  const headline = verdictWord(verdict) || (allPassed ? "Accepted" : "Wrong Answer");
-  const good = headline === "Accepted";
+  const summary = resultSummary(verdict, Boolean(compileFailed));
+  const headline = summary.title;
+  const good = summary.tone === "success";
 
   // A broken rule is reported first and loudest, because partial credit is
   // already gone by the time a candidate reads anything else.
-  const brokenRules = rows.filter((row) => familyOf(row) === GATE_KIND && !passed(row));
+  const brokenRules = rows.filter(
+    (row) => familyOf(row) === GATE_KIND && candidateCheckFailed(row.verdict)
+  );
 
   const current = rows[Math.min(selected, Math.max(rows.length - 1, 0))];
 
@@ -223,7 +231,13 @@ export function ResultsPanel({
         <Text
           size="xl"
           weight="semibold"
-          style={{ color: good ? "var(--color-text-success)" : "var(--color-text-error)" }}
+          style={{
+            color: good
+              ? "var(--color-text-success)"
+              : summary.tone === "failure"
+                ? "var(--color-text-error)"
+                : "var(--color-text-secondary)",
+          }}
         >
           {headline}
         </Text>
@@ -243,6 +257,12 @@ export function ResultsPanel({
           </Text>
         )}
       </HStack>
+
+      {summary.explanation && (
+        <Text type="supporting" color="secondary">
+          {summary.explanation}
+        </Text>
+      )}
 
       {brokenRules.length > 0 && (
         <VStack
@@ -532,6 +552,20 @@ function CaseDetail({
 }) {
   const family = familyOf(row);
   const ok = passed(row);
+
+  if (!ok && unjudged(row) && (family !== "io" || String(row.verdict ?? "").trim())) {
+    return (
+      <VStack gap={3}>
+        <Text>No candidate verdict is available for this check.</Text>
+        <Text type="supporting" color="secondary">
+          {resultSummary(row.verdict).explanation}
+        </Text>
+        {(row.checker_message || row.stderr_text) && (
+          <Text>{row.checker_message || row.stderr_text}</Text>
+        )}
+      </VStack>
+    );
+  }
 
   if (family === GATE_KIND) {
     const rule = ruleLanguage(row.label ?? "", row.checker_message);

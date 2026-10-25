@@ -136,7 +136,7 @@ export function deriveContestantReadiness({
     // All checks pass — build a "ready" message with the richest available context.
     if (activeSession?.updated_at) {
       const ago = formatTimeAgo(activeSession.updated_at, now);
-      return make("ready", `Resume available. Last verified ${ago}.`);
+      return make("ready", `Device check complete. Session last verified ${ago}.`);
     }
 
     if (entryWindowStatus === "allowed" && contest) {
@@ -159,10 +159,26 @@ export function deriveContestantReadiness({
     return make("needs_action", `Fix ${pluralChecks(n)} before entering.`, n, 0);
   }
 
+  const unverified = Object.values(readiness).filter((status) => status === "unavailable").length;
+  const warnings = Object.values(readiness).filter((status) => status === "warn").length;
+  if (unverified || warnings) {
+    return make(
+      "advisory_warning",
+      "Some device checks have warnings or are not verified. The contest’s required checks still determine entry.",
+      0,
+      warnings + unverified
+    );
+  }
+
   // All statuses ok, no report.
   if (activeSession) {
     const ago = activeSession.updated_at ? formatTimeAgo(activeSession.updated_at, now) : null;
-    return make("ready", ago ? `Resume available. Last verified ${ago}.` : "Resume available.");
+    return make(
+      "ready",
+      ago
+        ? `Device check complete. Session last verified ${ago}.`
+        : "Device check complete. Session eligibility is checked when you choose Resume."
+    );
   }
 
   return make("ready", "Device check complete.");

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { getContest } from "@/lib/proctor-api";
 import { decideEntry, shouldRunChecks, blockedMessage } from "@/app/session/onboarding/entry-gate";
 import { invoke } from "@ams/api-client";
-import { getThemeColors, toPreflightPolicyItem, calculateReadinessScore } from "./utils";
+import { getThemeColors, toPreflightPolicyItem } from "./utils";
 import { deriveContestantReadiness } from "./readiness-context";
 import { Button } from "./ui-primitives";
 import { Grid } from "@astryxdesign/core/Grid";
@@ -102,6 +102,8 @@ export function SessionReadinessModal({
   const router = useRouter();
   const c = getThemeColors(theme);
   const [isRescanning, setIsRescanning] = useState(false);
+  const rescanInFlightRef = useRef(false);
+  const [rescanError, setRescanError] = useState<string | null>(null);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [entryWindow, setEntryWindow] = useState<{
@@ -156,7 +158,6 @@ export function SessionReadinessModal({
     };
   }, [contestId, entryWindowRefreshIndex, sessionType]);
 
-  const score = calculateReadinessScore(readiness);
   const requiredReportChecks = activeReport?.required_checks ?? [];
   const context = useMemo(
     () =>
@@ -230,7 +231,9 @@ export function SessionReadinessModal({
   const canProceed = scanStatus === "done" && entryWindowAllowed && policyAllowsProceed;
   const primaryActionLabel = canProceed
     ? sessionType === "resume"
-      ? "Resume contest"
+      ? onProceed
+        ? "Request re-entry approval"
+        : "Resume contest"
       : "Enter contest"
     : scanStatus === "scanning"
       ? "Checking..."
@@ -329,10 +332,21 @@ export function SessionReadinessModal({
   }, [activeReport, entryWindow.reason, entryWindow.status, entryWindowChecking, scanStatus]);
 
   async function handleRescan() {
+    if (rescanInFlightRef.current) return;
+    rescanInFlightRef.current = true;
     setIsRescanning(true);
+    setRescanError(null);
     setEntryWindowRefreshIndex((value) => value + 1);
-    await onRescan();
-    setIsRescanning(false);
+    try {
+      await onRescan();
+    } catch {
+      setRescanError(
+        "The device recheck could not complete. Retry the checks or ask your invigilator; no new pass was confirmed."
+      );
+    } finally {
+      rescanInFlightRef.current = false;
+      setIsRescanning(false);
+    }
   }
 
   // SECURITY: every contest entry — new OR resume — must route through
@@ -348,8 +362,6 @@ export function SessionReadinessModal({
     router.prefetch(proceedHref);
   }, [proceedHref, router]);
 
-  const currentProgress = scanStatus === "scanning" ? 0 : score;
-
   // §4 — Technical details: smooth height+opacity reveal
   const techDetailsContentRef = useRef<HTMLDivElement>(null);
 
@@ -358,7 +370,11 @@ export function SessionReadinessModal({
       <AccessDialog
         open
         onClose={onClose}
-        title={modalTitle}
+        title={
+          !activeReport && scanStatus === "done" && !unproctoredDevSession
+            ? "Entry requirements not verified"
+            : modalTitle
+        }
         subtitle={context.message}
         labelId="session-readiness-title"
         width="calc(var(--spacing-10) * 17)"
@@ -370,11 +386,27 @@ export function SessionReadinessModal({
                 Device readiness
               </Text>
               <Text type="supporting" hasTabularNumbers>
-                {activeReport ? `${Math.round(currentProgress)}% complete` : "Not verified"}
+                {scanStatus === "scanning"
+                  ? "Checks in progress"
+                  : activeReport
+                    ? `${activeReport.required_checks.filter((check) => check.outcome === "pass" && !check.blocking).length} of ${activeReport.required_checks.length} required checks passed`
+                    : "Not verified"}
               </Text>
             </HStack>
           </VStack>
 
+          {rescanError && (
+            <Text type="supporting" role="alert">
+              {rescanError}
+            </Text>
+          )}
+          {canProceed && (
+            <Text type="supporting">
+              {onProceed
+                ? "This sends a re-entry request to your organizer. Approval does not skip the required device checks."
+                : "Next: device setup and final entry verification. Checks run again where needed to confirm that permissions and protection are still available."}
+            </Text>
+          )}
           {unproctoredDevSession && (
             <VStack
               gap={1}

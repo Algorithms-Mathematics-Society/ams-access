@@ -271,16 +271,6 @@ export function TerminalPanel({
       output: c.expected ?? undefined,
     }));
   }, [customCases]);
-  // Compiler messages follow the run when there is one, and otherwise fall back
-  // to the last submission -- the precedence the Compiler output tab used before
-  // the two output tabs were folded into this one pane.
-  const compilerText = runResult
-    ? (runResult.compile_output ?? null)
-    : (latestAttempt?.compile_output ?? null);
-  const compilerIsError = runResult
-    ? runResult.status === "CE"
-    : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE";
-
   // Attempts-list filter (ALL / FAILED / PASSED). Judged attempts split on the
   // final verdict; still-judging attempts only appear under ALL.
   const attemptMatchesFilter = (sub: SubmissionAttemptRecord) => {
@@ -432,6 +422,14 @@ export function TerminalPanel({
           // The custom pane is always about its run. The official pane shows
           // the submission once one supersedes the run.
           const showRun = custom ? true : viewingRun;
+          // Diagnostics must belong to the displayed attempt, not the last
+          // run in another tab or a run superseded by a submission.
+          const compilerText = showRun
+            ? view.result?.compile_output
+            : latestAttempt?.compile_output;
+          const compilerIsError = showRun
+            ? view.result?.status === "CE"
+            : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE";
           const status = view.status;
           const paneLive = activeTab === runMode && isRunning;
 
