@@ -43,7 +43,7 @@ import { StartupAnimation } from "@/components/StartupAnimation";
 import { UpdateRequiredDialog } from "./login/UpdateRequiredDialog";
 import { belowMinimum, fetchClientVersion, minorUpgradeAvailable } from "@/lib/client-update";
 import { resolveApiBase } from "@/lib/api-base";
-import { currentToken, listContests, logout } from "@/lib/proctor-api";
+import { ProctorApiError, currentToken, listContests, logout } from "@/lib/proctor-api";
 import { clearQueryCache } from "@/lib/api-client";
 import { openExternal } from "@/lib/open-external";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
@@ -99,10 +99,14 @@ export default function RootPage() {
   const [gate, setGate] = useState<Gate>("checking");
   const [update, setUpdate] = useState<{ latest: string; url: string } | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
   const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? "";
 
   useEffect(() => {
     let cancelled = false;
+    // The version check and the token check can take up to 26 s between
+    // them on a struggling server. Say so rather than spin in silence.
+    const slowTimer = setTimeout(() => setSlow(true), 5_000);
 
     void (async () => {
       // 1. Is this build still the one to be running?
@@ -124,18 +128,25 @@ export default function RootPage() {
       // 2. Is there still a session to resume? A stored token can be
       //    expired, revoked, or from a rotated credential, and only the
       //    server knows which -- so ask it, with the cheapest authenticated
-      //    call there is. A failure is not an error here: it just means
-      //    signing in, which is what would have happened anyway.
+      //    call there is. Only a 401 means signing in again. A timeout,
+      //    an unreachable host or a 5xx says nothing about the token, and
+      //    sending everyone to the login endpoint during an outage is the
+      //    storm this gate exists to prevent; Home shows its own error and
+      //    retry.
       if (currentToken()) {
         try {
           await listContests();
+        } catch (caught) {
           if (cancelled) return;
-          setName(storedDisplayName());
-          setGate("confirm");
-          return;
-        } catch {
-          if (cancelled) return;
+          if (caught instanceof ProctorApiError && caught.status === 401) {
+            setGate("welcome");
+            return;
+          }
         }
+        if (cancelled) return;
+        setName(storedDisplayName());
+        setGate("confirm");
+        return;
       }
 
       setGate("welcome");
@@ -143,6 +154,7 @@ export default function RootPage() {
 
     return () => {
       cancelled = true;
+      clearTimeout(slowTimer);
     };
   }, [appVersion, router]);
 
@@ -218,7 +230,13 @@ export default function RootPage() {
         <VStack role="status" aria-live="polite">
           <RouteLoadingShell
             variant="home"
-            label={gate === "signed-in" ? "Opening your workspace…" : "Checking your access…"}
+            label={
+              gate === "signed-in"
+                ? "Opening your workspace…"
+                : slow
+                  ? "Still checking your access. The exam server is slow to answer…"
+                  : "Checking your access…"
+            }
           />
         </VStack>
       )}

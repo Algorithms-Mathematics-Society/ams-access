@@ -12,12 +12,19 @@ const code = ts.transpileModule(source, {
   },
 }).outputText;
 const deferred = () => {
-  let resolve;
-  const promise = new Promise((r) => {
+  let resolve, reject;
+  const promise = new Promise((r, j) => {
     resolve = r;
+    reject = j;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
+class ProctorApiError extends Error {
+  constructor(status) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
@@ -26,7 +33,8 @@ function harness(token = true) {
     contests = deferred(),
     states = [],
     routes = [],
-    cleanup = [];
+    cleanup = [],
+    timers = [];
   let index = 0,
     effect,
     calls = 0;
@@ -49,6 +57,8 @@ function harness(token = true) {
   const context = {
     exports: {},
     localStorage: store,
+    setTimeout: (fn) => timers.push(fn),
+    clearTimeout: () => {},
     process: { env: { NEXT_PUBLIC_APP_VERSION: "4.1.0" } },
     require(name) {
       if (name === "react")
@@ -89,6 +99,7 @@ function harness(token = true) {
             return contests.promise;
           },
           logout: () => cleanup.push("logout"),
+          ProctorApiError,
         };
       if (name.endsWith("api-client"))
         return {
@@ -120,6 +131,7 @@ function harness(token = true) {
     calls: () => calls,
     store,
     cleanup,
+    timers,
     mount: () => effect(),
     render: () => {
       index = 0;
@@ -207,6 +219,34 @@ test("a newer advisory release is a dismissible notice that never blocks", async
     assert.match(banner.props.title, /install after your exam/);
   }
 });
+test("a slow check says so", () => {
+  const h = harness();
+  h.render();
+  h.mount();
+  h.timers.forEach((fn) => fn());
+  status(h.render(), "Still checking your access. The exam server is slow to answer…");
+});
+for (const [failure, error] of [
+  ["401", new ProctorApiError(401)],
+  ["503", new ProctorApiError(503)],
+  ["timeout", new ProctorApiError(0)],
+]) {
+  test(`a ${failure} from the token check ${failure === "401" ? "signs in again" : "still goes home"}`, async () => {
+    const h = harness();
+    h.render();
+    h.mount();
+    h.version.resolve(null);
+    h.contests.promise.catch(() => {});
+    h.contests.reject(error);
+    await flush();
+    const tree = h.render();
+    if (failure === "401") assert.equal(tree.props.children.type, "./WelcomeScreen");
+    else {
+      find(tree, "Continue").props.onClick();
+      assert.deepEqual(h.routes, ["/home"]);
+    }
+  });
+}
 test("no token reveals welcome only after version gate", async () => {
   const h = harness(false);
   status(h.render(), "Checking your access…");
