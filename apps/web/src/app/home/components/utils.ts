@@ -357,7 +357,9 @@ export function formatContestDateLabel(startAt: string, endAt: string, timezone?
 
 export function getVerificationWindowMinutes(c: InvitedContest) {
   const value = c.verification_window_minutes;
-  return typeof value === "number" && Number.isFinite(value) && value > 0
+  // 0 is the server's "no verification window": entry opens at the start.
+  // Only a missing value falls back to the default.
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : DEFAULT_VERIFICATION_WINDOW_MINUTES;
 }
