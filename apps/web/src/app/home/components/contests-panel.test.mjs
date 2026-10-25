@@ -25,6 +25,7 @@ const context = {
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name === "./utils") return { getContestEntryState: () => ({ phase: "upcoming" }) };
     if (name === "./home-contest-presentation") return { sortHomeContests: (contests) => contests };
+    if (name === "@/lib/proctor-api") return { serverNow: () => 0 };
     return new Proxy({}, { get: (_, key) => key });
   },
 };

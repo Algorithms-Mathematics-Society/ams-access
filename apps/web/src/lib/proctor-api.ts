@@ -823,3 +823,14 @@ export async function consumeResume(sessionUid: string): Promise<ProctorSession>
     {}
   );
 }
+
+/** Anchor the clock from the contest list, and say whether it could.
+ *
+ * `request` reads `server_time` off the response body, and this body is an
+ * array, so a copy carried by each item never reaches it. Today's server
+ * sends none at all, which is why the caller has a fallback. */
+export function noteListServerTime(items: readonly object[]): boolean {
+  const iso = (items[0] as { server_time?: string } | undefined)?.server_time;
+  noteServerTime(iso);
+  return Boolean(iso && !Number.isNaN(Date.parse(iso)));
+}

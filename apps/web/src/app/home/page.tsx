@@ -18,10 +18,12 @@ import {
   type ContestSummary,
   ProctorApiError,
   consumeResume,
+  getContest,
   getSession,
   latestResumeRequest,
   listContests,
   logout,
+  noteListServerTime,
   requestResume,
   restoreToken,
 } from "@/lib/proctor-api";
@@ -317,6 +319,14 @@ export default function HomePage() {
       // string, which made it both spoofable and dependent on an address the
       // platform does not have for a slip-authenticated candidate.
       const contests = await listContests();
+      // Cards decide Enter, "Ended" and "Not open yet" by `serverNow()`, and
+      // nothing anchors it after an app restart or a night's sleep, so they
+      // ran on the Mac's own clock. Re-anchor on every load: from the list
+      // when the server sends `server_time` there, otherwise from one contest's
+      // detail, which carries it. A failed anchor must not hide the list.
+      if (!noteListServerTime(contests) && contests[0]) {
+        await getContest(contests[0].uid, { includeReference: false }).catch(() => {});
+      }
       return contests.map(toInvitedContest);
     },
     { enabled: identityHydrated, staleMs: 30_000, retries: 0 }

@@ -10,6 +10,7 @@ import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { ActiveContestCard } from "./ContestCards";
+import { serverNow } from "@/lib/proctor-api";
 import { getContestEntryState, getScheduledContestTickDelay } from "./utils";
 import { sortHomeContests } from "./home-contest-presentation";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
@@ -45,17 +46,25 @@ export const ContestsPanel = memo(function ContestsPanel({
   refreshing?: boolean;
   highlightedContestId?: string | null;
 }) {
-  const [now, setNow] = useState(() => Date.now());
+  // The server's clock, like the cards: the list load re-anchors it, so take
+  // a fresh reading whenever the contests change.
+  const [now, setNow] = useState(() => serverNow());
 
   // Presentation order follows the existing contest boundaries; entry policy stays in each row.
   useEffect(() => {
     if (contests.length === 0) return;
-    const timer = setTimeout(
-      () => setNow(Date.now()),
-      Math.min(...contests.map((contest) => getScheduledContestTickDelay(contest, Date.now())))
-    );
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const current = serverNow();
+      setNow(current);
+      timer = setTimeout(
+        tick,
+        Math.min(...contests.map((contest) => getScheduledContestTickDelay(contest, current)))
+      );
+    };
+    tick();
     return () => clearTimeout(timer);
-  }, [contests, now]);
+  }, [contests]);
 
   const ordered = useMemo(
     () => sortHomeContests(contests, (contest) => getContestEntryState(contest, now).phase),
