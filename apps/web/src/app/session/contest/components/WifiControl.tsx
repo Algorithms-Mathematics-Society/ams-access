@@ -12,10 +12,9 @@ import { Text } from "@astryxdesign/core/Text";
  * only way back onto a network was to leave the contest, and before that
  * existed, to hold the power button. So the picker comes inside.
  *
- * It renders nothing at all when the platform cannot list networks -- a
- * browser dev build, or a machine with no wireless interface. An empty
- * dropdown would read as "no networks in range", which is a different and
- * more alarming claim than "this app cannot ask".
+ * Network names and connection state come exclusively from the native layer.
+ * Browsers and unsupported devices show guidance to use system settings,
+ * rather than an empty or simulated network list.
  */
 
 type WifiNetwork = {
@@ -33,29 +32,7 @@ type WifiScan = {
 
 const REFRESH_MS = 20_000;
 
-/**
- * Stand-in networks for `pnpm dev:hosted`, where there is no native layer to
- * ask and the control would otherwise render nothing at all.
- *
- * `process.env.NODE_ENV` is substituted at build time, so this whole branch
- * is removed from a production bundle: a shipped installer cannot show these
- * even if the native call fails. It exists to review the dropdown's layout
- * and the password flow in a browser, and for nothing else.
- */
-function devScan(): WifiScan | null {
-  if (process.env.NODE_ENV === "production") return null;
-  if (typeof window !== "undefined" && window.__TAURI__) return null;
-  return {
-    supported: true,
-    current: "CampusWiFi",
-    networks: [
-      { ssid: "CampusWiFi", signal: 78, secured: true, current: true },
-      { ssid: "Hostel_5G", signal: 64, secured: true, current: false },
-      { ssid: "AMS-Guest", signal: 41, secured: false, current: false },
-      { ssid: "iPhone Hotspot", signal: 92, secured: true, current: false },
-    ],
-  };
-}
+const UNSUPPORTED_SCAN: WifiScan = { supported: false, current: null, networks: [] };
 
 export function WifiControl({ online, inline = false }: { online: boolean; inline?: boolean }) {
   const [scan, setScan] = useState<WifiScan | null>(null);
@@ -64,6 +41,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [scanError, setScanError] = useState("");
   const [note, setNote] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   // Which way the menu opens, and how tall it may be.
@@ -78,17 +56,23 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   });
 
   const refresh = useCallback(async () => {
+    if (!window.__TAURI__) {
+      setScan(UNSUPPORTED_SCAN);
+      return;
+    }
     try {
-      const next = await window.__TAURI__?.core.invoke<WifiScan>("scan_wifi");
-      setScan(next ?? devScan());
+      const next = await window.__TAURI__.core.invoke<WifiScan>("scan_wifi");
+      setScan(next ?? UNSUPPORTED_SCAN);
+      setScanError("");
     } catch {
-      setScan(devScan());
+      setScan(UNSUPPORTED_SCAN);
+      setScanError("Could not load Wi-Fi networks. Rescan to try again.");
     }
   }, []);
 
   useEffect(() => {
     // One scan on mount, to learn whether this machine can list networks at
-    // all -- that decides whether the button appears.
+    // all, so an unsupported environment never displays invented networks.
     void refresh();
   }, [refresh]);
 
@@ -97,7 +81,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     // scan spawns a subprocess, and polling one every twenty seconds for a
     // two-hour paper is several hundred of them per candidate for a list
     // nobody is looking at.
-    if (!open && online) return;
+    if (!window.__TAURI__ || (!open && online)) return;
     const id = window.setInterval(() => void refresh(), REFRESH_MS);
     return () => window.clearInterval(id);
   }, [open, online, refresh]);
@@ -135,35 +119,45 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     };
   }, [open]);
 
-  if (!scan?.supported) return null;
+  if (!scan) return null;
+  const nativeAvailable = Boolean(window.__TAURI__);
 
   const join = async (network: WifiNetwork, secret: string) => {
     setBusy(true);
     setError("");
     setNote("");
     try {
-      if (window.__TAURI__) {
-        await window.__TAURI__.core.invoke("connect_wifi", {
-          ssid: network.ssid,
-          password: secret || null,
-        });
-      } else if (process.env.NODE_ENV === "production") {
+      if (!window.__TAURI__ || !scan.supported) {
         throw new Error("Changing network is not supported here.");
       }
+      await window.__TAURI__.core.invoke("connect_wifi", {
+        ssid: network.ssid,
+        password: secret || null,
+      });
       setNote(`Joining ${network.ssid}…`);
       setSelected(null);
       setPassword("");
       // The OS takes a moment to associate; the heartbeat notices on its own.
       window.setTimeout(() => void refresh(), 2500);
     } catch (caught) {
-      setError(typeof caught === "string" ? caught : "Could not join that network.");
+      setError(
+        typeof caught === "string"
+          ? caught
+          : caught instanceof Error
+            ? caught.message
+            : "Could not join that network."
+      );
     } finally {
       setBusy(false);
     }
   };
 
   const Icon = online ? Wifi : WifiOff;
-  const label = scan.current ? `Network: ${scan.current}` : "Not connected to wifi";
+  const label = scan.supported
+    ? scan.current
+      ? `Network: ${scan.current}`
+      : "Not connected to Wi-Fi"
+    : `Network connection: ${online ? "online" : "offline"}`;
 
   return (
     <VStack
@@ -179,7 +173,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={inline ? `Change network. ${label}` : label}
+        aria-label={inline && scan.supported ? `Change network. ${label}` : label}
         aria-expanded={open}
         title={label}
         style={{
@@ -197,7 +191,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
         <Icon size={16} aria-hidden="true" />
         {inline && (
           <Text type="supporting" color="secondary">
-            Change network
+            {scan.supported ? "Change network" : "Network connection"}
           </Text>
         )}
       </button>
@@ -238,25 +232,39 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
             <Text type="supporting" color="secondary">
               Wi-Fi
             </Text>
-            <button
-              type="button"
-              onClick={() => void refresh()}
-              aria-label="Rescan networks"
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "var(--color-text-secondary)",
-                display: "flex",
-              }}
-            >
-              <RefreshCw size={14} aria-hidden="true" />
-            </button>
+            {nativeAvailable && (
+              <button
+                type="button"
+                onClick={() => void refresh()}
+                aria-label="Rescan networks"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-text-secondary)",
+                  display: "flex",
+                }}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+              </button>
+            )}
           </HStack>
 
-          {scan.networks.length === 0 && (
+          {!scan.supported && !scanError && (
             <Text type="supporting" color="secondary">
-              No saved networks found.
+              {nativeAvailable
+                ? "Wi-Fi controls are unavailable on this device. Use your device’s Wi-Fi settings to view or change networks."
+                : "Your browser cannot list Wi-Fi networks or identify the connected network. Use your device’s Wi-Fi settings to view or change networks."}
+            </Text>
+          )}
+          {scanError && (
+            <Text role="alert" type="supporting" color="secondary">
+              {scanError}
+            </Text>
+          )}
+          {scan.supported && scan.networks.length === 0 && (
+            <Text type="supporting" color="secondary">
+              No Wi-Fi networks reported by your device. Rescan to try again.
             </Text>
           )}
 
