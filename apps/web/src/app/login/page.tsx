@@ -260,8 +260,6 @@ export default function LoginPage() {
         onClose={() => setHelpOpen(false)}
         kind="LOGIN"
         summary="I can't sign in to AMS Access."
-        // Normalised as studentLogin does, so it matches the roster.
-        loginId={loginId.toUpperCase().replace(/\s+/g, "")}
         details={{
           source: "login",
           // The handle is not a secret — it is in their email and on the

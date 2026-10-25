@@ -137,19 +137,25 @@ function draft(h) {
   h.field("TextArea", "Preview is blank");
 }
 
-test("contact is optional: a request without one is sent and its receipt omits it", async () => {
+test("native required/email validation blocks dispatch and shows specific field errors", () => {
   const h = harness();
   const field = h.all("TextInput")[0];
-  assert.equal(field.props.isOptional, true);
-  assert.equal(field.props.isRequired, undefined);
-  h.send();
-  assert.equal(h.requests.length, 1);
-  assert.equal(JSON.parse(h.requests[0].init.body).contact, "");
-  h.requests[0].resolve(receipt("REF-A"));
-  await flush();
-  h.render();
-  assert.match(h.text(), /REF-A/);
-  assert.doesNotMatch(h.text(), /Contact:/);
+  const input = {};
+  field.props.ref(input);
+  assert.equal(input.required, true);
+  assert.equal(field.props.type, "email");
+  for (const missing of [true, false]) {
+    h.all("form")[0].props.onInvalidCapture({ target: { validity: { valueMissing: missing } } });
+    h.send(false);
+    h.render();
+    assert.match(
+      h.all("TextInput")[0].props.status.message,
+      missing ? /Enter an email/ : /valid email/
+    );
+    assert.equal(h.requests.length, 0);
+  }
+  h.field("TextInput", "candidate@example.test");
+  assert.equal(h.all("TextInput")[0].props.status, undefined);
 });
 
 test("pending close/reopen preserves request ownership and duplicate-click guard", async () => {
@@ -246,67 +252,10 @@ test("a valid receipt is retained even if the timeout signal fired before body c
   assert.match(h.text(), /CONFIRMED/);
 });
 
-function signedOut() {
+test("unauthenticated help preserves direct-organizer guidance and cannot send", () => {
   const h = harness();
   h.auth(false);
-  h.render({ kind: "LOGIN", summary: "I can't sign in.", loginId: " AMS-1234 " });
-  return h;
-}
-
-test("signed out, help goes to /client/support with what the candidate typed", async () => {
-  const h = signedOut();
-  assert.doesNotMatch(h.text(), /Diagnostic details/);
-  h.field("TextArea", "Slip is smudged");
-  h.send();
-  assert.equal(h.requests.length, 1);
-  assert.equal(h.requests[0].url, "https://example.test/client/support");
-  assert.equal(h.requests[0].init.headers.Authorization, undefined);
-  assert.deepEqual(JSON.parse(h.requests[0].init.body), {
-    login_id: "AMS-1234",
-    message: "I can't sign in.\n\nSlip is smudged",
-    contact: null,
-  });
-  h.requests[0].resolve({ ok: true, json: async () => ({ uid: "SUP-1" }) });
-  await flush();
-  h.render();
-  assert.match(h.text(), /SUP-1/);
+  assert.equal(h.all("form").length, 0);
+  assert.match(h.text(), /Sign in to send/);
+  assert.equal(h.requests.length, 0);
 });
-
-for (const failure of ["404", "405", "network"]) {
-  test(`signed out, a server without /client/support (${failure}) says ask an invigilator`, async () => {
-    const h = signedOut();
-    h.send();
-    if (failure === "network") h.requests[0].reject(new TypeError("Load failed"));
-    else h.requests[0].resolve({ ok: false, status: Number(failure) });
-    await flush();
-    h.render();
-    const banner = h.all("Banner")[0];
-    assert.equal(banner.props.title, "Ask an invigilator");
-    assert.equal(banner.props.status, "info");
-    assert.match(banner.props.description, /reset your sign-in/);
-  });
-}
-
-for (const detail of [
-  { error: "Too many help requests.", code: "RATE_LIMITED", retry_after: 30 },
-  { error: "RATE_LIMITED", message: "Too many help requests.", retry_after: 30 },
-]) {
-  test(`a 429 says how long to wait (${Object.keys(detail).join(",")})`, async () => {
-    const h = signedOut();
-    h.send();
-    h.requests[0].resolve({
-      ok: false,
-      status: 429,
-      json: async () => ({ detail }),
-      headers: { get: () => null },
-    });
-    await flush();
-    h.render();
-    const banner = h.all("Banner")[0];
-    assert.equal(banner.props.title, "Too many requests");
-    assert.equal(
-      banner.props.description,
-      "Too many help requests. Try again in 30 seconds, or ask an invigilator."
-    );
-  });
-}
