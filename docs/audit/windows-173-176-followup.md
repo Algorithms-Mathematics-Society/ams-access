@@ -90,3 +90,7 @@ It must validate the seven new database integration cases after publication.
 All four issues remain open until their outstanding evidence is collected. Merge
 or port the local fix onto current `main`, run CI on that exact revision, then
 retest the intended Windows artifact before completing the acceptance records.
+
+## Independent review follow-up
+
+Combined with PR #237, all 915 web tests and web TypeScript pass. Review identified a companion API limit: issued/reused handles may exceed the login schema's 32-character cap. The bounded schema correction and regressions are being added to API PR #14; this Access PR does not alone establish long-handle end-to-end support. Ready for review; full packaging CI and device/staging acceptance remain separate gates.
