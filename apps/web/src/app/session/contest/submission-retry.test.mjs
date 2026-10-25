@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { attemptLimitError } from "./attempt-limits.ts";
 
 const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const start = client.indexOf("  async function handleSubmitSolution()");
@@ -26,6 +27,7 @@ function fixture() {
     exitInFlightRef: { current: false },
     submitKeyRef: { current: null },
     toLanguageId: (value) => value,
+    attemptLimitError,
     newIdempotencyKey: () => `key-${++key}`,
     setIsSubmitting: () => {},
     setSubmissionError: (error) => {

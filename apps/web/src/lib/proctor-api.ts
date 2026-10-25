@@ -268,6 +268,27 @@ async function request<T>(
     // client has to act on — 426 (too old, here is the download) and 429
     // (cooling down, here is how long).
     const raw = (data as { detail?: unknown; error?: unknown } | null)?.detail ?? null;
+    // FastAPI's validation errors: a list of `{loc, msg, type}`. The first
+    // `msg` is the readable part; "Request failed (422)" told nobody anything.
+    if (Array.isArray(raw)) {
+      const first = raw[0] as { msg?: unknown } | undefined;
+      throw new ProctorApiError(
+        typeof first?.msg === "string" ? first.msg : `Request failed (${res.status}).`,
+        res.status,
+        "VALIDATION"
+      );
+    }
+    // The server's unhandled-error body. Its request id is the only thing
+    // that ties what the candidate saw to the server log, so keep it.
+    const requestId = (data as { request_id?: unknown } | null)?.request_id;
+    if (res.status >= 500 && typeof requestId === "string") {
+      throw new ProctorApiError(
+        `Something went wrong on the server (ref ${requestId.slice(0, 8)}).`,
+        res.status,
+        "",
+        { request_id: requestId }
+      );
+    }
     if (raw && typeof raw === "object") {
       const structured = raw as { error?: string; code?: string; retry_after?: number };
       throw new ProctorApiError(
@@ -648,9 +669,35 @@ export async function getProblem(contestUid: string, label: string): Promise<Pro
   return body.problem;
 }
 
-// Drafts are not sent to the server. Work is written to the device on every
-// change and read back on restart (see contest/answer-buffer.ts), so there is
-// no draft endpoint to call and no save that can fail mid-contest.
+// Drafts live on the device first: written on every change and read back on
+// restart (see contest/answer-buffer.ts). The server copy is a background
+// backup so work can follow the candidate to a spare machine; nothing waits
+// on it and its failures are never shown.
+
+export async function listDrafts(sessionUid: string): Promise<Draft[]> {
+  return request<Draft[]>(
+    "GET",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts`,
+    undefined,
+    // Short: the room is loading, and the device copy does not need this.
+    8_000
+  );
+}
+
+/** A `clientRevision` at or below the server's is a no-op that returns the
+ * stored copy, so a retried save can never reinstate older code. */
+export async function saveDraft(
+  sessionUid: string,
+  label: string,
+  draft: { source: string; language: string; clientRevision: number }
+): Promise<Draft> {
+  return request<Draft>(
+    "PUT",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts/${encodeURIComponent(label)}`,
+    { source: draft.source, language: draft.language, client_revision: draft.clientRevision },
+    8_000
+  );
+}
 
 // ── running and submitting ────────────────────────────────────────────────
 

@@ -116,7 +116,13 @@ import {
   type SourceSnapshot,
 } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
-import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
+import {
+  DRAFT_BACKUP_MS,
+  createDraftSaveQueue,
+  draftBackup,
+  restoreDraftWorkspace,
+  stopsDraftBackup,
+} from "./draft-workspace";
 import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
@@ -124,6 +130,7 @@ import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
 import {
   enqueue as enqueueViolation,
   flush as flushViolationQueue,
+  flushBeforeExit as flushViolationsBeforeExit,
   report as reportViolation,
   setActiveSession as setViolationSession,
 } from "@/lib/violation-queue";
@@ -133,6 +140,8 @@ import {
   read as readAnswerBuffer,
   write as writeAnswerBuffer,
 } from "./answer-buffer";
+import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss";
+import { attemptLimitError, runCooldownMessage } from "./attempt-limits";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   connectionLevel,
@@ -145,8 +154,11 @@ import {
   getRun,
   getSession,
   heartbeat,
+  listDrafts,
   listMySubmissions,
   logout,
+  saveDraft,
+  type Draft,
   run as runAgainstSamples,
   serverNow,
   startSession,
@@ -435,6 +447,9 @@ export default function ContestPageClient() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadRetryable, setLoadRetryable] = useState(false);
   const autoLoadRetriesRef = useRef(0);
+  // When an unconfirmed 401 arrived; see `auth-loss.ts`. Shared by the loader
+  // and the heartbeat so either can confirm what the other first saw.
+  const unauthorizedAtRef = useRef<number | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const latestActiveDraftRef = useRef<{
     questionId: string;
@@ -463,6 +478,10 @@ export default function ContestPageClient() {
   // Per-problem autosave revision. A ref rather than state: it is read and
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
+  // What the server's backup copy holds per problem (see `draftBackup`), and
+  // whether backing up has been given up for this session.
+  const serverDraftRef = useRef<Record<string, string>>({});
+  const draftBackupOffRef = useRef(false);
   const submitInFlightRef = useRef(false);
   // Retain an unacknowledged request only for retries of its exact payload.
   const submitKeyRef = useRef<{
@@ -1327,6 +1346,7 @@ export default function ContestPageClient() {
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
       let live = await getSession(stored.id);
       if (disposed) return;
+      unauthorizedAtRef.current = null;
       livePhase = live.phase;
 
       if (live.status === "submitted" || live.status === "terminated") {
@@ -1389,20 +1409,27 @@ export default function ContestPageClient() {
 
       const answersMap: Record<string, { language: string; content: string }> = {};
       const restored: string[] = [];
-      // No server drafts: work is local only. `restoreDraftWorkspace` and
-      // `chooseRestore` already handle a null server copy by taking the
-      // buffer, so this is the path they were written for.
+      // The device buffer is primary. The server's backup copy only matters
+      // when it is newer or the buffer is gone (a spare machine), which
+      // `chooseRestore` decides; failing to fetch it must not stop the room.
+      const serverDrafts = await listDrafts(live.uid).catch(() => [] as Draft[]);
+      if (disposed) return;
       const restoredFiles: Record<string, EditorFile[]> = {};
       const restoredActiveFiles: Record<string, string> = {};
       // A first offline draft may have no server row at all. Enumerate the paper.
       for (const question of questions) {
         const buffered = readAnswerBuffer(localStorage, live.uid, question.id);
-        draftRevisionsRef.current[question.id] = buffered?.revision ?? 0;
+        const server = serverDrafts.find((draft) => draft.problem_label === question.id) ?? null;
+        draftRevisionsRef.current[question.id] = Math.max(
+          buffered?.revision ?? 0,
+          server?.client_revision ?? 0
+        );
+        if (server) serverDraftRef.current[question.id] = `${server.language}\n${server.source}`;
         const workspace = restoreDraftWorkspace(
           question.id,
           question.starter_filename ?? questionFileName(question, "C++23"),
           buffered,
-          null
+          server
         );
         if (workspace) {
           restoredFiles[question.id] = workspace.files;
@@ -1436,7 +1463,16 @@ export default function ContestPageClient() {
     })().catch((error) => {
       if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
       if (error instanceof ProctorApiError && error.status === 401) {
-        void redirectAfterRelease("/login");
+        const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
+        unauthorizedAtRef.current = step.firstAt;
+        if (step.signedOut) {
+          void redirectAfterRelease("/login");
+          return;
+        }
+        setLoadError("Checking your sign-in. This page will retry in a few seconds.");
+        setLoadRetryable(true);
+        setLoading(false);
+        retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), AUTH_RECHECK_MS);
         return;
       }
       if (error instanceof SessionBindingError) {
@@ -1629,9 +1665,19 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (runInFlightRef.current) return;
-    runInFlightRef.current = true;
 
     const mode: "all" | "custom" = useCustomCases ? "custom" : "all";
+    const limitError = attemptLimitError(
+      editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+      useCustomCases ? toWire(casesOverride ?? customCases) : null
+    );
+    if (limitError) {
+      setRunMode(mode);
+      resetRunPanelState(mode);
+      patchRun(mode, { error: limitError });
+      return;
+    }
+    runInFlightRef.current = true;
     setRunMode(mode);
     setIsRunning(true);
     resetRunPanelState(mode);
@@ -1676,13 +1722,27 @@ export default function ContestPageClient() {
       if (runVisit !== runVisitRef.current) return;
       setIsRunning(false);
       if (caught instanceof ProctorApiError && caught.status === 429) {
-        const wait = caught.retryAfterSeconds;
-        patchRun(mode, {
-          error: wait
-            ? `Please wait ~${wait}s before running again.`
-            : "Please wait a few seconds before running again.",
-        });
-      } else if (caught instanceof ProctorApiError && caught.status === 409) {
+        // A live countdown: "Please wait ~300s" was a number to do sums with.
+        // Stops when the candidate runs again or switches problem.
+        const until = Date.now() + (caught.retryAfterSeconds || 5) * 1000;
+        const code = caught.code;
+        const tick = () => {
+          const left = (until - Date.now()) / 1000;
+          if (runVisit !== runVisitRef.current) return clearInterval(timer);
+          if (left <= 0) {
+            clearInterval(timer);
+            patchRun(mode, { error: null });
+            return;
+          }
+          patchRun(mode, { error: runCooldownMessage(code, left) });
+        };
+        const timer = setInterval(tick, 1000);
+        tick();
+      } else if (caught instanceof ProctorApiError && caught.status === 503) {
+        patchRun(mode, { error: "The judge is temporarily unavailable. Try Run again shortly." });
+      } else if (caught instanceof ProctorApiError && caught.status >= 400) {
+        // The server said why (a closed session, a validation error, a server
+        // fault with its reference). "Could not reach the judge" was untrue.
         patchRun(mode, { error: caught.message });
       } else {
         patchRun(mode, {
@@ -1822,10 +1882,11 @@ export default function ContestPageClient() {
   // on restart, so a crash or reload recovers the code without the network
   // being involved at all.
   //
-  // What that costs is honest: work does not follow the candidate to another
-  // machine, and clearing site data loses it. What it buys is that a flaky
-  // connection can no longer put "Save failed — retry before submitting" in
-  // front of someone mid-contest about code that was never actually at risk.
+  // What it buys is that a flaky connection can no longer put "Save failed —
+  // retry before submitting" in front of someone mid-contest about code that
+  // was never actually at risk. So work can still follow the candidate to a
+  // spare machine, a silent background backup (below) copies the buffer to
+  // the server when it changes; this save never waits on it.
   async function doSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) return false;
     const qId = questions[activeQ].id;
@@ -1860,6 +1921,13 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (submitInFlightRef.current || exitInFlightRef.current) return;
+    const limitError = attemptLimitError(
+      editorFiles.find((f) => f.id === activeFileId)?.content ?? ""
+    );
+    if (limitError) {
+      setSubmissionError(limitError);
+      return;
+    }
     submitInFlightRef.current = true;
 
     setIsSubmitting(true);
@@ -1898,6 +1966,13 @@ export default function ContestPageClient() {
           idempotencyKey: request.idempotencyKey,
         });
       } catch (caught) {
+        if (caught instanceof ProctorApiError && caught.status === 503) {
+          // ams-api answers 503 here only after committing the submission row
+          // and failing to queue it, so the attempt exists. The key is kept,
+          // so pressing Submit again replays this attempt, not a new one.
+          setSubmissionError("Judging is temporarily unavailable; your attempt was recorded.");
+          return;
+        }
         if (caught instanceof ProctorApiError) {
           // 409 is a closed session, 429 a rate limit; both already carry a
           // sentence written for a candidate, so pass it through rather than
@@ -2154,6 +2229,18 @@ export default function ContestPageClient() {
   expiryHandlerRef.current = handleContestExpiry;
   const onContestExpiry = useCallback(() => expiryHandlerRef.current(), []);
 
+  // Ten minutes after the bell, leave as if Submit & Exit had been pressed.
+  // A candidate who walked away otherwise leaves a lab Mac locked until
+  // someone finds it; the paper is closed, so nothing can be lost. A ref, so
+  // the timer runs the current handler and its in-flight guards.
+  const finishHandlerRef = useRef(handleSubmitConfirmed);
+  finishHandlerRef.current = handleSubmitConfirmed;
+  useEffect(() => {
+    if (!bellRung) return;
+    const id = setTimeout(() => void finishHandlerRef.current(), 10 * 60_000);
+    return () => clearTimeout(id);
+  }, [bellRung]);
+
   // Leaving the contest room by any route ends the exam's use of the camera.
   // The submit teardown releases it too, but a redirect (session already
   // finished, sign-in expired) left the camera light on.
@@ -2370,6 +2457,7 @@ export default function ContestPageClient() {
     if (!sessionId || !browserOnline) return;
 
     let cancelled = false;
+    let recheckTimer: ReturnType<typeof setTimeout> | null = null;
 
     /**
      * Liveness — and the only way the app learns anything changed.
@@ -2385,6 +2473,7 @@ export default function ContestPageClient() {
         const live = await heartbeat(sessionId);
         if (cancelled) return;
 
+        unauthorizedAtRef.current = null;
         setHeartbeatState((prev) => onHeartbeatSuccess(prev, Date.now()));
 
         // The server's word on where we are, once a minute. This corrects any
@@ -2413,9 +2502,16 @@ export default function ContestPageClient() {
       } catch (caught) {
         if (cancelled) return;
         if (caught instanceof ProctorApiError && caught.status === 401) {
-          // The token expired mid-exam. Keep `ams_active_session` so the
-          // resume path still has something to resume.
-          void redirectAfterRelease("/login");
+          const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
+          unauthorizedAtRef.current = step.firstAt;
+          if (step.signedOut) {
+            // The token expired mid-exam. Keep `ams_active_session` so the
+            // resume path still has something to resume.
+            void redirectAfterRelease("/login");
+            return;
+          }
+          // Provisional: recheck soon rather than at the next minute's beat.
+          recheckTimer = setTimeout(() => void beat(), AUTH_RECHECK_MS);
           return;
         }
         setHeartbeatState(onHeartbeatFailure);
@@ -2429,9 +2525,53 @@ export default function ContestPageClient() {
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (recheckTimer) clearTimeout(recheckTimer);
     };
     // Recheck immediately on reconnect; ignore the previous connection's replies.
   }, [sessionId, router, browserOnline]);
+
+  // Background backup of the device buffer to the server, only for problems
+  // whose answer changed since the server last accepted one. It never blocks
+  // and never shows an error; a failure that will not clear by itself (no
+  // route to the server, or drafts closed) stops it for this session.
+  useEffect(() => {
+    if (!sessionId || questions.length === 0) return;
+    let cancelled = false;
+    const backup = async () => {
+      for (const question of questions) {
+        if (cancelled || draftBackupOffRef.current) return;
+        const next = draftBackup(
+          readAnswerBuffer(localStorage, sessionId, question.id),
+          serverDraftRef.current[question.id]
+        );
+        if (!next) continue;
+        try {
+          const saved = await saveDraft(sessionId, question.id, {
+            source: next.source,
+            language: next.language,
+            clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
+          });
+          // The server answers with what it holds, which is another device's
+          // copy when ours was stale; the next tick then supersedes it.
+          draftRevisionsRef.current[question.id] = Math.max(
+            draftRevisionsRef.current[question.id] ?? 0,
+            saved.client_revision
+          );
+          serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
+        } catch (caught) {
+          if (caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
+            draftBackupOffRef.current = true;
+          }
+          return;
+        }
+      }
+    };
+    const id = setInterval(() => void backup(), DRAFT_BACKUP_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionId, questions]);
 
   // Flush the moment the connection comes back, rather than waiting out the
   // autosave backoff. A candidate who reconnects with thirty seconds left
@@ -2955,6 +3095,12 @@ export default function ContestPageClient() {
     // sorts last in the strip however long the paper ran.
     photoSequenceRef.current += 1;
     await captureAndUploadIdentityPhoto(sessionId, "exit", photoSequenceRef.current);
+    // Unsent violation events leave with the exit frame, the last evidence
+    // this session sends. Bounded: whatever is left stays queued under this
+    // session's key and must never hold the candidate in the locked room.
+    await withTimeout(flushViolationsBeforeExit(sessionId), 3000, "Event flush timed out").catch(
+      () => {}
+    );
   };
   useEffect(() => {
     if (!sessionId || !cameraVideoReady || !cameraStream) return;

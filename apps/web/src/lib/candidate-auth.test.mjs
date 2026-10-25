@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { authHeaders, participantToken } from "./candidate-auth.ts";
 import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import { bufferKey, isBufferKey } from "../app/session/contest/answer-buffer.ts";
+import { AUTH_RECHECK_MS, onUnauthorized } from "../app/session/contest/auth-loss.ts";
 import {
   currentToken,
   hasToken,
@@ -697,6 +698,11 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
     // ask for one immediately. Bound as a plain box: this test is about the
     // 401 path, not about who else can trigger a heartbeat.
     retryBeatRef: { current: () => {} },
+    // A first 401 already seen long ago, so this one confirms the sign-out
+    // (see auth-loss.ts); the provisional first one is covered there.
+    unauthorizedAtRef: { current: 0 },
+    onUnauthorized,
+    AUTH_RECHECK_MS,
   };
   const cleanup = new Function(...Object.keys(bindings), `${js}; return effect();`)(
     ...Object.values(bindings)
