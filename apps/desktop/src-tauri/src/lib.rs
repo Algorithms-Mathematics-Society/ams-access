@@ -1988,7 +1988,8 @@ fn lockdown_restore_status() -> LockdownRestoreStatus {
     #[cfg(target_os = "windows")]
     if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
         return LockdownRestoreStatus {
-            pending: platform_rs::windows::desktop_recovery_pending(),
+            pending: platform_rs::windows::desktop_recovery_pending()
+                || windows_firewall::recovery_pending(),
             items: vec![],
         };
     }
@@ -2052,7 +2053,13 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
         #[cfg(target_os = "windows")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
             let mut owner = _owner;
-            owner.stop(&mut DesktopOperations::new(app, false))?;
+            let desktop = owner.stop(&mut DesktopOperations::new(app, false));
+            let network = if windows_firewall::recovery_needed(WANTS_FIREWALL) {
+                windows_firewall::disable_blocking().map(|_| ())
+            } else {
+                Ok(())
+            };
+            lockdown_lifecycle::combine_cleanup(desktop, network)?;
         }
         #[cfg(target_os = "linux")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
@@ -3775,7 +3782,9 @@ pub fn run() {
         }
         // Finish stale-rule cleanup before entry can create new rules. A
         // detached cleanup could otherwise remove this instance's own lockdown.
-        if let Err(error) = platform_rs::windows::disable_network_lockdown() {
+        let network_recovery = platform_rs::windows::disable_network_lockdown();
+        windows_firewall::note_startup_cleanup(&network_recovery);
+        if let Err(error) = network_recovery {
             eprintln!("Windows startup firewall recovery incomplete: {error}");
         }
     }
