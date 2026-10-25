@@ -134,6 +134,7 @@ import {
   read as readAnswerBuffer,
   write as writeAnswerBuffer,
 } from "./answer-buffer";
+import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   connectionLevel,
@@ -436,6 +437,9 @@ export default function ContestPageClient() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadRetryable, setLoadRetryable] = useState(false);
   const autoLoadRetriesRef = useRef(0);
+  // When an unconfirmed 401 arrived; see `auth-loss.ts`. Shared by the loader
+  // and the heartbeat so either can confirm what the other first saw.
+  const unauthorizedAtRef = useRef<number | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const latestActiveDraftRef = useRef<{
     questionId: string;
@@ -1328,6 +1332,7 @@ export default function ContestPageClient() {
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
       let live = await getSession(stored.id);
       if (disposed) return;
+      unauthorizedAtRef.current = null;
       livePhase = live.phase;
 
       if (live.status === "submitted" || live.status === "terminated") {
@@ -1437,7 +1442,16 @@ export default function ContestPageClient() {
     })().catch((error) => {
       if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
       if (error instanceof ProctorApiError && error.status === 401) {
-        void redirectAfterRelease("/login");
+        const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
+        unauthorizedAtRef.current = step.firstAt;
+        if (step.signedOut) {
+          void redirectAfterRelease("/login");
+          return;
+        }
+        setLoadError("Checking your sign-in. This page will retry in a few seconds.");
+        setLoadRetryable(true);
+        setLoading(false);
+        retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), AUTH_RECHECK_MS);
         return;
       }
       if (error instanceof SessionBindingError) {
@@ -2371,6 +2385,7 @@ export default function ContestPageClient() {
     if (!sessionId || !browserOnline) return;
 
     let cancelled = false;
+    let recheckTimer: ReturnType<typeof setTimeout> | null = null;
 
     /**
      * Liveness — and the only way the app learns anything changed.
@@ -2386,6 +2401,7 @@ export default function ContestPageClient() {
         const live = await heartbeat(sessionId);
         if (cancelled) return;
 
+        unauthorizedAtRef.current = null;
         setHeartbeatState((prev) => onHeartbeatSuccess(prev, Date.now()));
 
         // The server's word on where we are, once a minute. This corrects any
@@ -2414,9 +2430,16 @@ export default function ContestPageClient() {
       } catch (caught) {
         if (cancelled) return;
         if (caught instanceof ProctorApiError && caught.status === 401) {
-          // The token expired mid-exam. Keep `ams_active_session` so the
-          // resume path still has something to resume.
-          void redirectAfterRelease("/login");
+          const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
+          unauthorizedAtRef.current = step.firstAt;
+          if (step.signedOut) {
+            // The token expired mid-exam. Keep `ams_active_session` so the
+            // resume path still has something to resume.
+            void redirectAfterRelease("/login");
+            return;
+          }
+          // Provisional: recheck soon rather than at the next minute's beat.
+          recheckTimer = setTimeout(() => void beat(), AUTH_RECHECK_MS);
           return;
         }
         setHeartbeatState(onHeartbeatFailure);
@@ -2430,6 +2453,7 @@ export default function ContestPageClient() {
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (recheckTimer) clearTimeout(recheckTimer);
     };
     // Recheck immediately on reconnect; ignore the previous connection's replies.
   }, [sessionId, router, browserOnline]);
