@@ -65,7 +65,9 @@ export function SlipForm({
               autoCorrect="off"
               spellCheck={false}
               inputMode="text"
-              maxLength={64}
+              // Leave room for a full handle and keep overlong IDs invalid
+              // instead of truncating them into a valid 64-character ID.
+              maxLength={256}
               aria-describedby={errorDescription}
               aria-invalid={invalidField === "handle" || undefined}
               autoFocus

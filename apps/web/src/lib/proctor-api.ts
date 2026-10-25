@@ -524,9 +524,9 @@ export type ViolationEvent = {
 /** Exchange the printed login id and password for a session token. */
 export async function studentLogin(loginId: string, password: string): Promise<LoginResult> {
   const result = await request<LoginResult>("POST", "/participant/login", {
-    // Normalised here so a candidate typing lowercase, or with the spaces
-    // they see on the printed slip, is not told their credentials are wrong.
-    login_id: loginId.trim().toUpperCase().replace(/\s+/g, ""),
+    // The server normalises case and the supported full-handle suffixes.
+    // Preserve internal characters so a typo cannot select another identity.
+    login_id: loginId.trim(),
     password: password.trim(),
   });
   setToken(result.token, result.expires_in);

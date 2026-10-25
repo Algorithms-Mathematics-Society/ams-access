@@ -229,6 +229,13 @@ test("full-handle paste and password reveal behavior stay intact", () => {
     .find((n) => n.props?.id === "login-id")
     .props.onChange({ target: { value: "Candidate@access" } });
   assert.equal(handle, "candidate");
+  const input = nodes.find((n) => n.props?.id === "login-id");
+  const fullHandle = `${"a".repeat(64)}@access.amsaccess.com`;
+  assert.ok(input.props.maxLength >= fullHandle.length);
+  input.props.onChange({ target: { value: fullHandle } });
+  assert.equal(handle, "a".repeat(64));
+  input.props.onChange({ target: { value: "john doe@other.example" } });
+  assert.equal(handle, "john doe@other.example");
   assert.equal(nodes.find((n) => n.props?.id === "login-password").props.type, "password");
   nodes.find((n) => n.props?.label === "Show").props.onClick();
   nodes = all(render());
