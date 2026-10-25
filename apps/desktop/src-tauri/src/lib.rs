@@ -1997,6 +1997,18 @@ fn relaunch_as_admin(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Warnings for a system proxy or a full-tunnel VPN, which lockdown would cut
+/// off. Empty when the path is direct, and on other platforms.
+#[tauri::command]
+async fn get_network_path_warnings() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(platform_rs::macos::network_path_warnings)
+        .await
+        .unwrap_or_default();
+    #[cfg(not(target_os = "macos"))]
+    Vec::new()
+}
+
 /// Set on a relaunched process. Tauri starts it just before this one exits,
 /// so on macOS it waits for the instance lock instead of taking the old
 /// process for a second instance and quitting.
@@ -3938,6 +3950,7 @@ pub fn run() {
             is_process_elevated,
             relaunch_as_admin,
             relaunch_app,
+            get_network_path_warnings,
             open_privacy_settings,
             check_screen_sharing,
             get_screen_capture_permitted_apps,

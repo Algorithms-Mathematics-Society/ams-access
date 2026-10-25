@@ -21,6 +21,7 @@ mod allowlist;
 mod displays;
 pub mod instance;
 mod kiosk_window;
+mod network_path;
 mod power;
 mod remote_access;
 mod system_settings;
@@ -32,6 +33,7 @@ pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
     top_safe_inset, wait_native_fullscreen_exit,
 };
+pub use network_path::network_path_warnings;
 pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
