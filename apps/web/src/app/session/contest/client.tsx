@@ -3606,8 +3606,9 @@ export default function ContestPageClient() {
   const runStatusFor = (slice: RunSlice) =>
     slice.error
       ? {
-          // Client-side failure reaching the judge — distinct from a judge verdict.
-          label: "Couldn’t reach the judge",
+          // The run never reached a verdict; the message below says why (empty
+          // code, cooldown, offline), so the label must not claim it was the network.
+          label: "Run didn’t start",
           color: "var(--color-text-red)",
           bg: "var(--color-error-muted)",
           border: "color-mix(in srgb, var(--color-error) 28%, transparent)",
