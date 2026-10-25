@@ -10,7 +10,6 @@ pub enum SessionStage {
     KeyboardLockdown,
     EnvironmentValidation,
     RestrictedApps,
-    VmDetection,
     CameraInit,
     FaceCalibration,
     PresenceVerification,
@@ -79,13 +78,6 @@ pub struct CloseAppsResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtDetectionResult {
-    pub detected: bool,
-    pub platform: Option<String>,
-    pub confidence: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyboardInterceptResult {
     pub active: bool,
     pub method: String,
@@ -126,7 +118,6 @@ pub enum CheckKind {
     ClockIntegrity,
     KeyboardLockdown,
     RestrictedApps,
-    Virtualization,
     Platform,
     ExternalDisplay,
     RemoteServer,
@@ -162,7 +153,6 @@ pub enum FailureReasonCode {
     NetworkHelperUnavailable,
     KeyboardLockdownUnavailable,
     RestrictedApplicationDetected,
-    VirtualizationDetected,
     UnsupportedPlatform,
     ClockSkewDetected,
     ExternalDisplayDetected,
@@ -284,7 +274,6 @@ impl SessionPolicy {
             CheckKind::DeviceId,
             CheckKind::Platform,
             CheckKind::RestrictedApps,
-            CheckKind::Virtualization,
             CheckKind::KeyboardLockdown,
             CheckKind::Network,
             CheckKind::NetworkLockdown,
@@ -472,7 +461,6 @@ pub struct DeviceState {
     pub network: Option<NetworkCheckResult>,
     pub keyboard: Option<KeyboardInterceptResult>,
     pub restricted_processes: Option<ProcessScanResult>,
-    pub virtualization: Option<VirtDetectionResult>,
     pub external_displays: Option<DisplayScan>,
     pub rdp_server: Option<bool>,
     /// Whether the privileged network-lockdown helper is installed and reachable.
@@ -572,8 +560,7 @@ impl ExamSession {
             SessionStage::MonitorDetection => SessionStage::KeyboardLockdown,
             SessionStage::KeyboardLockdown => SessionStage::EnvironmentValidation,
             SessionStage::EnvironmentValidation => SessionStage::RestrictedApps,
-            SessionStage::RestrictedApps => SessionStage::VmDetection,
-            SessionStage::VmDetection => SessionStage::CameraInit,
+            SessionStage::RestrictedApps => SessionStage::CameraInit,
             SessionStage::CameraInit => SessionStage::FaceCalibration,
             SessionStage::FaceCalibration => SessionStage::PresenceVerification,
             SessionStage::PresenceVerification => SessionStage::AudioVerification,
@@ -878,28 +865,6 @@ fn evaluate_requirement(
                 vec![
                     RecoveryAction::CloseRestrictedApplications,
                     RecoveryAction::RetryReadinessScan,
-                ],
-            ),
-            None => unknown(FailureReasonCode::ProbeUnavailable),
-        },
-        CheckKind::Virtualization => match &device_state.virtualization {
-            Some(virt) if !virt.detected => (
-                true,
-                None,
-                Some("physical environment expected".to_string()),
-                vec![],
-            ),
-            Some(virt) => (
-                false,
-                Some(FailureReasonCode::VirtualizationDetected),
-                Some(
-                    virt.platform
-                        .clone()
-                        .unwrap_or_else(|| "virtualized environment detected".to_string()),
-                ),
-                vec![
-                    RecoveryAction::UsePhysicalMachine,
-                    RecoveryAction::ContactOrganizer,
                 ],
             ),
             None => unknown(FailureReasonCode::ProbeUnavailable),
@@ -1243,11 +1208,6 @@ mod tests {
                 clean: true,
                 advisory: vec![],
             }),
-            virtualization: Some(VirtDetectionResult {
-                detected: false,
-                platform: None,
-                confidence: "high".to_string(),
-            }),
             external_displays: None,
             rdp_server: None,
             network_helper_ready: Some(true),
@@ -1467,10 +1427,10 @@ mod tests {
     #[test]
     fn strict_policy_blocks_required_failure() {
         let mut state = passing_state();
-        state.virtualization = Some(VirtDetectionResult {
-            detected: true,
-            platform: Some("KVM".to_string()),
-            confidence: "high".to_string(),
+        state.restricted_processes = Some(ProcessScanResult {
+            found: vec!["obs".to_string()],
+            clean: false,
+            ..Default::default()
         });
 
         let report = evaluate_readiness(
@@ -1483,7 +1443,7 @@ mod tests {
         assert_eq!(report.decision, EnforcementDecision::Blocked);
         assert!(report
             .blocking_reasons
-            .contains(&FailureReasonCode::VirtualizationDetected));
+            .contains(&FailureReasonCode::RestrictedApplicationDetected));
     }
 
     #[test]
@@ -1776,7 +1736,7 @@ mod tests {
                 CheckKind::RemoteServer,
             ]
         );
-        assert_eq!(report.required_checks.len(), 7);
+        assert_eq!(report.required_checks.len(), 6);
         assert_eq!(
             report.required_checks.len() + report.optional_checks.len(),
             report.checks.len()
@@ -1805,11 +1765,6 @@ mod tests {
                 found: vec![],
                 clean: true,
                 advisory: vec![],
-            }),
-            virtualization: Some(VirtDetectionResult {
-                detected: false,
-                platform: None,
-                confidence: "high".to_string(),
             }),
             external_displays: Some(DisplayScan {
                 count: 1,
@@ -2378,13 +2333,12 @@ mod readiness_delivery_contract {
     use super::*;
 
     /// The desktop names failed checks by serialising `CheckKind`, not by
-    /// formatting it. `Debug` would give `Virtualization` where the server,
+    /// formatting it. `Debug` would give `RestrictedApps` where the server,
     /// the override records and the client's allow-list all say
-    /// `virtualization` — a waiver granted for one would never match.
+    /// `restricted_apps` — a waiver granted for one would never match.
     #[test]
     fn check_kinds_serialise_as_snake_case() {
         let cases = [
-            (CheckKind::Virtualization, "virtualization"),
             (CheckKind::KeyboardLockdown, "keyboard_lockdown"),
             (CheckKind::RestrictedApps, "restricted_apps"),
             (CheckKind::ClockIntegrity, "clock_integrity"),

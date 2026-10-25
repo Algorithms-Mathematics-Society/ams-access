@@ -319,7 +319,6 @@ export function SessionReadinessModal({
       checkLog("network", "NET", "Network connectivity"),
       checkLog("microphone", "AUD", "Microphone"),
       checkLog("camera", "CAM", "Camera"),
-      checkLog("virtualization", "SEC", "Virtual machine check"),
       checkLog("keyboard_lockdown", "SEC", "Keyboard lockdown"),
       checkLog("restricted_apps", "SEC", "Restricted app check"),
       checkLog("platform", "SEC", "Platform compatibility"),

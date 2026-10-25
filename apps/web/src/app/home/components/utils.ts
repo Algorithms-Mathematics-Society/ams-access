@@ -26,7 +26,6 @@ export const READINESS_TIMEOUT_MS = {
   media: 2000,
   platform: 2500,
   process: 3500,
-  virtualization: 3500,
   network: 5000,
 };
 
@@ -37,7 +36,6 @@ export const EMPTY_TELEMETRY = {
   platform: null,
   env: null,
   processes: null,
-  virt: null,
   network: null,
   lastScannedAt: null,
   isLoading: false,
@@ -184,7 +182,6 @@ export function readinessFromReport(report: ReadinessReport): ReadinessState {
     networkLockdown: statusFromReport(report, "network_lockdown"),
     keyboard: statusFromReport(report, "keyboard_lockdown"),
     restrictedApps: statusFromReport(report, "restricted_apps"),
-    vm: statusFromReport(report, "virtualization"),
     platform: statusFromReport(report, "platform"),
   };
 }
@@ -211,12 +208,6 @@ export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
       return { label: "Microphone", success: "Microphone ready", fail: "Microphone not available" };
     case "camera":
       return { label: "Camera", success: "Camera ready", fail: "Camera not available" };
-    case "virtualization":
-      return {
-        label: "Virtual machine check",
-        success: "No VM detected",
-        fail: "Virtual machine detected",
-      };
     case "keyboard_lockdown":
       return {
         label: "Keyboard lockdown",
@@ -548,14 +539,13 @@ export function calculateReadinessScore(r: ReadinessState) {
   const cameraOk = r.camera === "ok";
   const micOk = r.mic === "ok";
   const networkOk = r.network === "ok";
-  const secureEnvOk = r.vm === "ok" && r.keyboard === "ok" && r.platform === "ok";
+  const secureEnvOk = r.keyboard === "ok" && r.platform === "ok";
 
   if (!networkOk) score -= 30;
   if (!secureEnvOk) {
-    const vmDeduct = r.vm !== "ok" ? 15 : 0;
     const kbDeduct = r.keyboard !== "ok" ? 10 : 0;
     const platDeduct = r.platform !== "ok" ? 10 : 0;
-    score -= vmDeduct + kbDeduct + platDeduct;
+    score -= kbDeduct + platDeduct;
   }
 
   if (!cameraOk && !micOk) {
@@ -574,6 +564,6 @@ export function getEstimatedTimeToReady(r: ReadinessState) {
   if (r.camera !== "ok") time += 45;
   if (r.mic !== "ok") time += 15;
   if (r.network !== "ok") time += 30;
-  if (r.vm !== "ok" || r.keyboard !== "ok") time += 60;
+  if (r.keyboard !== "ok") time += 60;
   return time;
 }

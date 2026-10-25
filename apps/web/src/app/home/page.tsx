@@ -161,7 +161,6 @@ export default function HomePage() {
     networkLockdown: "checking",
     keyboard: "checking",
     restrictedApps: "checking",
-    vm: "checking",
     platform: "checking",
   });
   const [readinessReport, setReadinessReport] = useState<
@@ -233,7 +232,6 @@ export default function HomePage() {
           platform: telemetry.platform ?? null,
           env: telemetry.env ?? null,
           processes: telemetry.processes ?? null,
-          virt: telemetry.virt ?? null,
           network: telemetry.network ?? null,
           // Carried separately from `error`: the scan as a whole succeeded,
           // and these name the individual probes that did not.
@@ -272,7 +270,6 @@ export default function HomePage() {
           platform: r.platform === "checking" ? (supported ? "ok" : "fail") : r.platform,
           keyboard: r.keyboard === "checking" ? (supported ? "ok" : "fail") : r.keyboard,
           restrictedApps: snapshot.processes?.clean ? "ok" : flagged(r.restrictedApps),
-          vm: snapshot.virt && !snapshot.virt.detected ? "ok" : flagged(r.vm),
           network: snapshot.network ? (snapshot.network.reachable ? "ok" : "warn") : "unavailable",
         }));
         appendSecurityEvent(
@@ -379,7 +376,6 @@ export default function HomePage() {
         networkLockdown: "checking",
         keyboard: "checking",
         restrictedApps: "checking",
-        vm: "checking",
         platform: "checking",
       });
       appendSecurityEvent("READINESS: Local integrity scan started");
@@ -482,7 +478,6 @@ export default function HomePage() {
         networkLockdown: "unavailable",
         keyboard: native,
         restrictedApps: native,
-        vm: native,
         platform: native,
       });
       appendSecurityEvent("READINESS: Local integrity scan failed", "error");

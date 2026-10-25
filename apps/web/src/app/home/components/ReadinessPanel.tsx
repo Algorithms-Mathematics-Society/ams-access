@@ -16,7 +16,6 @@ const checks = [
   ["network", "Network connection"],
   ["camera", "Camera"],
   ["mic", "Microphone"],
-  ["vm", "Virtual machine check"],
   ["keyboard", "Keyboard lockdown"],
   ["platform", "Platform support"],
   ["restrictedApps", "Restricted apps"],

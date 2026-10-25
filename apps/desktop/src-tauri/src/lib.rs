@@ -21,7 +21,6 @@ use base64::Engine as _;
 use core_rs::exam::{
     evaluate_readiness, CheckOutcome, DeviceState, EnforcementDecision, KeyboardInterceptResult,
     LockdownConfig, NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy,
-    VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1109,7 +1108,6 @@ fn collect_fast_device_state() -> DeviceState {
     };
     #[cfg(not(target_os = "macos"))]
     let restricted_processes = Some(native_scan_processes());
-    let virtualization = Some(native_detect_virtualization());
 
     // Windows-only native probes for the readiness policy: extra/wireless displays
     // and an active inbound RDP listener. Linux leaves them None so the policy
@@ -1131,7 +1129,6 @@ fn collect_fast_device_state() -> DeviceState {
         network: None,
         keyboard: None,
         restricted_processes,
-        virtualization,
         external_displays,
         rdp_server,
         // Populated for real in collect_device_state_inner (Linux only); the fast
@@ -1410,7 +1407,7 @@ async fn deliver_readiness_report(
     // The kind is serialised rather than formatted: `CheckKind` is
     // `rename_all = "snake_case"`, so serde produces exactly the identifier
     // the server stores and the override client matches on. `Debug` would
-    // give `Virtualization` where every other layer says `virtualization`.
+    // give `RestrictedApps` where every other layer says `restricted_apps`.
     let failed_checks: Vec<serde_json::Value> = report
         .checks
         .iter()
@@ -1577,20 +1574,6 @@ mod external_url_tests {
             assert!(validated_external_url(denied).is_err(), "{denied}");
         }
     }
-}
-
-/// Detect virtualisation / VM environment.
-#[tauri::command]
-async fn detect_virtualization() -> Result<VirtDetectionResult, String> {
-    checked_informational_probe(native_detect_virtualization).await
-}
-
-fn native_detect_virtualization() -> VirtDetectionResult {
-    platform_dispatch!(detect_virtualization(), else VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "unknown".to_string(),
-    })
 }
 
 /// Install platform-level keyboard intercept.
@@ -2273,10 +2256,8 @@ pub struct FullTelemetry {
     pub env: SecurityEnvironment,
     // Optional because a probe that could not run is not a probe that found
     // nothing. In a proctoring tool those must not look alike: reporting an
-    // unscanned machine as "no restricted apps" is a false negative, and
-    // reporting it as "not virtualised" is worse.
+    // unscanned machine as "no restricted apps" is a false negative.
     pub processes: Option<ProcessScanResult>,
-    pub virt: Option<VirtDetectionResult>,
     pub network: Option<NetworkCheckResult>,
     /// Why a probe did not produce a result, named per probe. Empty when
     /// everything ran.
@@ -2296,7 +2277,7 @@ async fn get_full_telemetry(
     // items said "The scan could not complete" together, and a diagnostics
     // page where even the operating system was "Not available". Retrying
     // could not help, because nothing about it was transient.
-    let (platform, env, processes, virt, scan_errors) =
+    let (platform, env, processes, scan_errors) =
         blocking_probe::run(blocking_probe::Priority::Informational, || {
             let _budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
             let mut scan_errors: Vec<String> = Vec::new();
@@ -2315,13 +2296,7 @@ async fn get_full_telemetry(
             }
             let processes = processes_error.is_none().then_some(processes);
 
-            let (virt, virt_error) = isolated_probe(native_detect_virtualization);
-            if let Some(reason) = &virt_error {
-                scan_errors.push(format!("virtual machine check: {reason}"));
-            }
-            let virt = virt_error.is_none().then_some(virt);
-
-            Ok::<_, String>((platform, env, processes, virt, scan_errors))
+            Ok::<_, String>((platform, env, processes, scan_errors))
         })
         .await??;
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
@@ -2333,7 +2308,6 @@ async fn get_full_telemetry(
         platform,
         env,
         processes,
-        virt,
         network,
         scan_errors,
     })
@@ -3876,7 +3850,6 @@ pub fn run() {
             evaluate_session_readiness,
             start_secure_session,
             scan_processes,
-            detect_virtualization,
             open_external_url,
             enable_keyboard_intercept,
             disable_keyboard_intercept,

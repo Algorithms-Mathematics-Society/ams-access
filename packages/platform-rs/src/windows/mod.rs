@@ -1,7 +1,5 @@
 use crate::process_runner::{Budget, CommandDeadlineExt};
-use core_rs::exam::{
-    CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
-};
+use core_rs::exam::{CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult};
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -495,16 +493,6 @@ fn reg_dword_nonzero(key: &str, value: &str) -> bool {
     false
 }
 
-fn reg_key_exists(key: &str) -> bool {
-    hidden_command("reg")
-        .args(["query", key])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .bounded_status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 // ── Sleep prevention ──────────────────────────────────────────────────────────
 
 fn set_sleep_prevention(enable: bool) {
@@ -740,115 +728,6 @@ fn unlock_desktop_unlocked() {
     disable_keyboard_intercept();
     if let Err(error) = recover_registry_if_crashed() {
         eprintln!("Windows registry restoration incomplete: {error}");
-    }
-}
-
-mod virtualization;
-
-// ── Virtualization detection (registry + CPUID + ACPI + firmware identity) ──
-
-pub fn detect_virtualization() -> VirtDetectionResult {
-    let _budget = Budget::new(std::time::Duration::from_secs(6));
-    // Method 1: Guest-specific tools/integration keys and firmware (<100 ms total).
-    // Host application install keys and host-only network adapters are not evidence.
-    // Hyper-V VM guest key is checked here — critical for the MicrosoftHyperV CPUID
-    // exclusion in Method 2 to be correct.
-    const VM_REGISTRY_KEYS: &[(&str, &str)] = &[
-        (r"HKLM\SOFTWARE\VMware, Inc.\VMware Tools", "vmware"),
-        (
-            r"HKLM\SOFTWARE\Oracle\VirtualBox Guest Additions",
-            "virtualbox",
-        ),
-        (
-            r"HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters",
-            "hyper-v",
-        ),
-        (r"HKLM\HARDWARE\ACPI\DSDT\VBOX__", "virtualbox"),
-        (r"HKLM\HARDWARE\ACPI\DSDT\BOCHS_", "bochs"),
-        (r"HKLM\HARDWARE\ACPI\DSDT\QEMU", "qemu"),
-        (r"HKLM\HARDWARE\ACPI\FADT\VBOX__", "virtualbox"),
-    ];
-    for (key, platform) in VM_REGISTRY_KEYS {
-        if reg_key_exists(key) {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(platform.to_string()),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    // Method 2: CPUID hypervisor present bit (~1µs, no I/O — fastest possible check).
-    //
-    // MicrosoftHyperV is intentionally excluded: Windows 11 enables Hyper-V VBS /
-    // Credential Guard / HVCI on bare-metal hardware, which sets the CPUID hypervisor
-    // bit with vendor "Microsoft Hv" but is NOT a VM. If this were a real Hyper-V VM,
-    // the Guest\Parameters registry key (Method 1) would have already matched and
-    // returned. Reaching this point means that key is absent → treat "Microsoft Hv" as
-    // VBS on bare metal and fall through.
-    {
-        let cpuid = raw_cpuid::CpuId::new();
-        if let Some(hv) = cpuid.get_hypervisor_info() {
-            let kind = hv.identify();
-            if !matches!(kind, raw_cpuid::Hypervisor::HyperV) {
-                let platform = match kind {
-                    raw_cpuid::Hypervisor::VMware => "vmware",
-                    raw_cpuid::Hypervisor::KVM => "kvm",
-                    raw_cpuid::Hypervisor::Xen => "xen",
-                    raw_cpuid::Hypervisor::QEMU => "qemu",
-                    raw_cpuid::Hypervisor::Bhyve => "bhyve",
-                    // Parallels has no dedicated raw-cpuid variant; it surfaces
-                    // as Unknown(..) and is still reported as detected.
-                    _ => "unknown_hypervisor",
-                };
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(platform.to_string()),
-                    confidence: "high".to_string(),
-                };
-            }
-        }
-    }
-
-    // Method 3: ACPI table name scan (~30ms) — catches QEMU / bochs without guest tools.
-    if let Ok(out) = hidden_command("reg")
-        .args(["query", r"HKLM\HARDWARE\ACPI\DSDT"])
-        .bounded_output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        for vm in &["vbox", "vmware", "qemu", "bochs", "xen", "bxpc"] {
-            if text.contains(vm) {
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(vm.to_string()),
-                    confidence: "high".to_string(),
-                };
-            }
-        }
-    }
-
-    // Method 4: firmware identity is available locally, without systeminfo's
-    // slow WMI/network enumeration or localized labels. Host-only adapters and
-    // VBS status are not guest hardware evidence. A failed required query still
-    // propagates through the enclosing scan budget rather than reporting clean.
-    if let Ok(out) = hidden_command("reg")
-        .args(["query", r"HKLM\HARDWARE\DESCRIPTION\System\BIOS"])
-        .bounded_checked_output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout);
-        if let Some(platform) = virtualization::registry_guest_platform(&text) {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(platform.to_string()),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "high".to_string(),
     }
 }
 
