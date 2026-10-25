@@ -117,14 +117,29 @@ test("Windows restore failure stays visible and retry uses the journal", async (
     desktop.indexOf("fn get_lockdown_restore_status()")
   );
   assert.match(status, /cfg\(target_os = "windows"\)[\s\S]*?desktop_recovery_pending\(\)/);
+  assert.match(
+    status,
+    /desktop_recovery_pending\(\)\s*\|\| windows_firewall::recovery_pending\(\)/
+  );
   const retry = desktop.slice(
     desktop.indexOf("async fn retry_lockdown_restore("),
     desktop.indexOf("async fn check_network_stability(")
   );
-  assert.match(
-    retry,
-    /cfg\(target_os = "windows"\)[\s\S]*?!LOCKDOWN_ENGAGED[\s\S]*?owner\.stop\(&mut DesktopOperations::new\(app, false\)\)\?/
+  const windowsRetry = retry.slice(
+    retry.indexOf('#[cfg(target_os = "windows")]'),
+    retry.indexOf('#[cfg(target_os = "linux")]')
   );
+  assert.match(windowsRetry, /if !LOCKDOWN_ENGAGED\.load\(Ordering::SeqCst\)/);
+  assert.match(
+    windowsRetry,
+    /let desktop = owner\.stop\(&mut DesktopOperations::new\(app, false\)\);/
+  );
+  assert.match(
+    windowsRetry,
+    /let network = if windows_firewall::recovery_needed\(WANTS_FIREWALL\)/
+  );
+  assert.match(windowsRetry, /windows_firewall::disable_blocking\(\)\.map\(\|_\| \(\)\)/);
+  assert.match(windowsRetry, /lockdown_lifecycle::combine_cleanup\(desktop, network\)\?;/);
   assert.match(
     desktop,
     /cfg\(target_os = "windows"\)\]\s*let protected = \{\s*let status = platform_rs::windows::lock_desktop_with_status\(\)\?/
