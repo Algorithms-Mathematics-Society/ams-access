@@ -2,8 +2,14 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { ContestSponsor } from "@/components/ContestSponsor";
 import type { ContestIndex } from "@/lib/proctor-api";
+import { dateTimeFormatter } from "@/lib/date-time-format";
 
-export function SetupContestContext({ contest, dryRun, hasContest, sponsorPlacement }: {
+export function SetupContestContext({
+  contest,
+  dryRun,
+  hasContest,
+  sponsorPlacement,
+}: {
   contest: ContestIndex | null;
   dryRun: boolean;
   hasContest: boolean;
@@ -11,19 +17,54 @@ export function SetupContestContext({ contest, dryRun, hasContest, sponsorPlacem
 }) {
   if (!hasContest) return null;
   const start = contest ? new Date(contest.starts_at) : null;
-  const startLabel = start && Number.isFinite(start.getTime())
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(start) + " UTC"
-    : "Start time unavailable";
-  return <HStack as="section" aria-label="Contest setup context" gap={4} justify="between" align="start" wrap="wrap"
-    style={{ paddingBlock: "var(--spacing-3)", borderBottom: "var(--border-width) solid var(--color-border)", minWidth: 0 }}>
-    <VStack gap={1} style={{ minWidth: 0, flex: "1 1 50%" }}>
-      <Text type="supporting" color="secondary">{dryRun ? "Practicing setup for" : "Setting up for"}</Text>
-      <Text weight="semibold" style={{ overflowWrap: "anywhere" }}>{contest?.title || "Contest details unavailable"}</Text>
-      {sponsorPlacement && contest && <ContestSponsor contestId={contest.uid} placement={sponsorPlacement} />}
-    </VStack>
-    <VStack gap={1} style={{ minWidth: 0 }}>
-      <Text type="supporting" color="secondary">{contest?.ends_at === null ? "Practice · untimed" : `Scheduled start · ${startLabel}`}</Text>
-      <Text type="supporting" color="secondary">{contest && !dryRun ? "Last checked: " : ""}{dryRun ? "Rehearsal only · no contest entry" : !contest ? "Entry status is checked before your workspace opens" : contest.phase === "running" ? "Contest in progress" : contest.phase === "verification" ? "Verification window open" : contest.phase === "ended" ? "Contest ended" : "Waiting for the verification window"}</Text>
-    </VStack>
-  </HStack>;
+  const startLabel =
+    start && Number.isFinite(start.getTime())
+      ? dateTimeFormatter({ dateStyle: "medium", timeStyle: "short" }).format(start)
+      : "Start time unavailable";
+  return (
+    <HStack
+      as="section"
+      aria-label="Contest setup context"
+      gap={4}
+      justify="between"
+      align="start"
+      wrap="wrap"
+      style={{
+        paddingBlock: "var(--spacing-3)",
+        borderBottom: "var(--border-width) solid var(--color-border)",
+        minWidth: 0,
+      }}
+    >
+      <VStack gap={1} style={{ minWidth: 0, flex: "1 1 50%" }}>
+        <Text type="supporting" color="secondary">
+          {dryRun ? "Practicing setup for" : "Setting up for"}
+        </Text>
+        <Text weight="semibold" style={{ overflowWrap: "anywhere" }}>
+          {contest?.title || "Contest details unavailable"}
+        </Text>
+        {sponsorPlacement && contest && (
+          <ContestSponsor contestId={contest.uid} placement={sponsorPlacement} />
+        )}
+      </VStack>
+      <VStack gap={1} style={{ minWidth: 0 }}>
+        <Text type="supporting" color="secondary">
+          {contest?.ends_at === null ? "Practice · untimed" : `Scheduled start · ${startLabel}`}
+        </Text>
+        <Text type="supporting" color="secondary">
+          {contest && !dryRun ? "Last checked: " : ""}
+          {dryRun
+            ? "Rehearsal only · no contest entry"
+            : !contest
+              ? "Entry status is checked before your workspace opens"
+              : contest.phase === "running"
+                ? "Contest in progress"
+                : contest.phase === "verification"
+                  ? "Verification window open"
+                  : contest.phase === "ended"
+                    ? "Contest ended"
+                    : "Waiting for the verification window"}
+        </Text>
+      </VStack>
+    </HStack>
+  );
 }

@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
-import { Text } from "@astryxdesign/core/Text";
-import { VStack } from "@astryxdesign/core/Stack";
 import { invoke } from "../support";
 
 type BatterySnapshot = { percentage: number; charging: boolean; plugged_in?: boolean | null };
@@ -10,9 +8,8 @@ type BatterySnapshot = { percentage: number; charging: boolean; plugged_in?: boo
 const LOW_BATTERY_PERCENT = 40;
 
 /**
- * Keeping awake stops idle sleep, not lid-close sleep, and a lid close is
- * recorded as a violation. Say so before the contest, and flag a battery
- * that will not last while there is still time to find a charger.
+ * Flags a battery that will not last while there is still time to find a
+ * charger. Sleep, a closed lid included, is already reported as `system_sleep`.
  */
 export function PowerAdvice() {
   const [battery, setBattery] = useState<BatterySnapshot | null>(null);
@@ -25,16 +22,12 @@ export function PowerAdvice() {
     !(battery.plugged_in ?? battery.charging) &&
     battery.percentage < LOW_BATTERY_PERCENT;
 
+  if (!low) return null;
   return (
-    <VStack gap={3}>
-      <Text>Keep the lid open and the charger connected. Closing the lid is reported.</Text>
-      {low && (
-        <Banner
-          status="warning"
-          title={`Battery at ${battery.percentage}% and not charging`}
-          description="Connect your charger before you continue. A Mac that sleeps or shuts down during the contest is reported."
-        />
-      )}
-    </VStack>
+    <Banner
+      status="warning"
+      title={`Battery at ${battery.percentage}% and not charging`}
+      description="Connect your charger before you continue. A Mac that sleeps or shuts down during the contest is reported."
+    />
   );
 }

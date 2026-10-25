@@ -139,7 +139,11 @@ export function SessionReadinessModal({
             ? { status: "allowed", reason: null }
             : {
                 status: "blocked",
-                reason: blockedMessage(decision) ?? "Contest entry window is not open.",
+                // Onboarding's copy promises automatic entry; this dialog only re-checks on demand.
+                reason:
+                  decision.kind === "too_early"
+                    ? "Check-in has not opened yet. Run checks again once it opens."
+                    : (blockedMessage(decision) ?? "Contest entry window is not open."),
               }
         );
       })
