@@ -240,7 +240,7 @@ fn reload_services(reload: &Reload) {
 
 // ── Snapshot storage ─────────────────────────────────────────────────────────
 
-fn state_dir() -> Option<PathBuf> {
+pub(super) fn state_dir() -> Option<PathBuf> {
     super::home_dir().map(|home| home.join("Library/Application Support/AMS Access"))
 }
 

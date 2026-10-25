@@ -3684,6 +3684,27 @@ pub fn run() {
             return;
         }
     };
+    // On macOS a second launch brings the first forward and exits without
+    // touching its lockdown.
+    #[cfg(target_os = "macos")]
+    let _macos_instance = match platform_rs::macos::instance::acquire(Duration::ZERO) {
+        Ok(owner) => owner,
+        Err(platform_rs::macos::instance::Refused::Running(pid)) => {
+            eprintln!("AMS Access is already running; leaving it in charge");
+            if let Some(pid) = pid {
+                platform_rs::macos::activate_process(pid);
+            }
+            return;
+        }
+        Err(platform_rs::macos::instance::Refused::Failed(error)) => {
+            eprintln!("AMS Access cannot acquire instance ownership: {error}");
+            platform_rs::macos::show_startup_message(
+                "AMS Access could not start",
+                &format!("{error}\n\nIf AMS Access is already open, use that window. Otherwise, check that your Library/Application Support folder is writable."),
+            );
+            return;
+        }
+    };
     // F5: harden the DLL search path before anything else loads a library, so a
     // malicious DLL planted in the launch directory or %CWD% can never be
     // preferred over the system copy (DLL preloading / search-order hijack).

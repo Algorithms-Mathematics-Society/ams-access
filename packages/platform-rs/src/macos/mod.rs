@@ -19,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod allowlist;
 mod displays;
+pub mod instance;
 mod kiosk_window;
 mod power;
 mod remote_access;
@@ -1172,12 +1173,18 @@ pub fn retry_restore() -> RestoreStatus {
 /// thread run it inline.
 fn refocus_our_app() {
     let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), || {
-        kiosk_window::guarded(|| unsafe { refocus_on_main() })
+        kiosk_window::guarded(|| unsafe { refocus_on_main(std::process::id()) })
     });
 }
 
-unsafe fn refocus_on_main() {
-    let our_pid = std::process::id() as i32;
+/// Bring another running app forward, best effort. A second launch calls this
+/// on its main thread, before it starts any UI, to show the instance that
+/// already owns the exam.
+pub fn activate_process(pid: u32) {
+    let _ = kiosk_window::guarded(|| unsafe { refocus_on_main(pid) });
+}
+
+unsafe fn refocus_on_main(pid: u32) {
     let cls = objc_getClass(c"NSRunningApplication".as_ptr());
     if cls.is_null() {
         return;
@@ -1190,7 +1197,7 @@ unsafe fn refocus_on_main() {
     // +[NSRunningApplication runningApplicationWithProcessIdentifier:pid]
     type FnForPid = unsafe extern "C" fn(*mut c_void, *const c_void, i32) -> *mut c_void;
     let send_for_pid: FnForPid = std::mem::transmute(objc_msgSend as *const ());
-    let app = send_for_pid(cls, sel_for_pid, our_pid);
+    let app = send_for_pid(cls, sel_for_pid, pid as i32);
     if app.is_null() {
         return;
     }
@@ -1781,6 +1788,21 @@ do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchc
     }
 
     Err("helper installed but socket not ready within 3 s".to_string())
+}
+
+/// A native alert before any window exists, for problems that stop startup.
+/// osascript draws it without the app's run loop, as `install_network_helper`
+/// already relies on, and it gives up after five minutes so a candidate who
+/// walks away does not leave a stuck process behind.
+pub fn show_startup_message(title: &str, message: &str) {
+    let script = format!(
+        r#"display alert "{}" message "{}" as critical buttons {{"OK"}} default button "OK" giving up after 300"#,
+        applescript_string(title),
+        applescript_string(message)
+    );
+    let _ = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .bounded_output_with_timeout(std::time::Duration::from_secs(310));
 }
 
 fn applescript_string(value: &str) -> String {
