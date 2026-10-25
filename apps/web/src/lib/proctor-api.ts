@@ -268,6 +268,27 @@ async function request<T>(
     // client has to act on — 426 (too old, here is the download) and 429
     // (cooling down, here is how long).
     const raw = (data as { detail?: unknown; error?: unknown } | null)?.detail ?? null;
+    // FastAPI's validation errors: a list of `{loc, msg, type}`. The first
+    // `msg` is the readable part; "Request failed (422)" told nobody anything.
+    if (Array.isArray(raw)) {
+      const first = raw[0] as { msg?: unknown } | undefined;
+      throw new ProctorApiError(
+        typeof first?.msg === "string" ? first.msg : `Request failed (${res.status}).`,
+        res.status,
+        "VALIDATION"
+      );
+    }
+    // The server's unhandled-error body. Its request id is the only thing
+    // that ties what the candidate saw to the server log, so keep it.
+    const requestId = (data as { request_id?: unknown } | null)?.request_id;
+    if (res.status >= 500 && typeof requestId === "string") {
+      throw new ProctorApiError(
+        `Something went wrong on the server (ref ${requestId.slice(0, 8)}).`,
+        res.status,
+        "",
+        { request_id: requestId }
+      );
+    }
     if (raw && typeof raw === "object") {
       const structured = raw as { error?: string; code?: string; retry_after?: number };
       throw new ProctorApiError(

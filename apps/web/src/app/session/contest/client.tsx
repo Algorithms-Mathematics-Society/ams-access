@@ -135,6 +135,7 @@ import {
   write as writeAnswerBuffer,
 } from "./answer-buffer";
 import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss";
+import { attemptLimitError } from "./attempt-limits";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   connectionLevel,
@@ -1644,9 +1645,19 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (runInFlightRef.current) return;
-    runInFlightRef.current = true;
 
     const mode: "all" | "custom" = useCustomCases ? "custom" : "all";
+    const limitError = attemptLimitError(
+      editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+      useCustomCases ? toWire(casesOverride ?? customCases) : null
+    );
+    if (limitError) {
+      setRunMode(mode);
+      resetRunPanelState(mode);
+      patchRun(mode, { error: limitError });
+      return;
+    }
+    runInFlightRef.current = true;
     setRunMode(mode);
     setIsRunning(true);
     resetRunPanelState(mode);
@@ -1697,7 +1708,11 @@ export default function ContestPageClient() {
             ? `Please wait ~${wait}s before running again.`
             : "Please wait a few seconds before running again.",
         });
-      } else if (caught instanceof ProctorApiError && caught.status === 409) {
+      } else if (caught instanceof ProctorApiError && caught.status === 503) {
+        patchRun(mode, { error: "The judge is temporarily unavailable. Try Run again shortly." });
+      } else if (caught instanceof ProctorApiError && caught.status >= 400) {
+        // The server said why (a closed session, a validation error, a server
+        // fault with its reference). "Could not reach the judge" was untrue.
         patchRun(mode, { error: caught.message });
       } else {
         patchRun(mode, {
@@ -1875,6 +1890,13 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (submitInFlightRef.current || exitInFlightRef.current) return;
+    const limitError = attemptLimitError(
+      editorFiles.find((f) => f.id === activeFileId)?.content ?? ""
+    );
+    if (limitError) {
+      setSubmissionError(limitError);
+      return;
+    }
     submitInFlightRef.current = true;
 
     setIsSubmitting(true);
@@ -1913,6 +1935,13 @@ export default function ContestPageClient() {
           idempotencyKey: request.idempotencyKey,
         });
       } catch (caught) {
+        if (caught instanceof ProctorApiError && caught.status === 503) {
+          // ams-api answers 503 here only after committing the submission row
+          // and failing to queue it, so the attempt exists. The key is kept,
+          // so pressing Submit again replays this attempt, not a new one.
+          setSubmissionError("Judging is temporarily unavailable; your attempt was recorded.");
+          return;
+        }
         if (caught instanceof ProctorApiError) {
           // 409 is a closed session, 429 a rate limit; both already carry a
           // sentence written for a candidate, so pass it through rather than
