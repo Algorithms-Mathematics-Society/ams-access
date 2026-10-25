@@ -19,7 +19,9 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod allowlist;
 mod displays;
+pub mod instance;
 mod kiosk_window;
+mod network_path;
 mod power;
 mod remote_access;
 mod system_settings;
@@ -31,6 +33,7 @@ pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
     top_safe_inset, wait_native_fullscreen_exit,
 };
+pub use network_path::network_path_warnings;
 pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
@@ -1172,12 +1175,18 @@ pub fn retry_restore() -> RestoreStatus {
 /// thread run it inline.
 fn refocus_our_app() {
     let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), || {
-        kiosk_window::guarded(|| unsafe { refocus_on_main() })
+        kiosk_window::guarded(|| unsafe { refocus_on_main(std::process::id()) })
     });
 }
 
-unsafe fn refocus_on_main() {
-    let our_pid = std::process::id() as i32;
+/// Bring another running app forward, best effort. A second launch calls this
+/// on its main thread, before it starts any UI, to show the instance that
+/// already owns the exam.
+pub fn activate_process(pid: u32) {
+    let _ = kiosk_window::guarded(|| unsafe { refocus_on_main(pid) });
+}
+
+unsafe fn refocus_on_main(pid: u32) {
     let cls = objc_getClass(c"NSRunningApplication".as_ptr());
     if cls.is_null() {
         return;
@@ -1190,7 +1199,7 @@ unsafe fn refocus_on_main() {
     // +[NSRunningApplication runningApplicationWithProcessIdentifier:pid]
     type FnForPid = unsafe extern "C" fn(*mut c_void, *const c_void, i32) -> *mut c_void;
     let send_for_pid: FnForPid = std::mem::transmute(objc_msgSend as *const ());
-    let app = send_for_pid(cls, sel_for_pid, our_pid);
+    let app = send_for_pid(cls, sel_for_pid, pid as i32);
     if app.is_null() {
         return;
     }
@@ -1712,6 +1721,18 @@ const HELPER_CLIENT_CONFIG_DEST: &str =
     "/Library/Application Support/AMS Access/network-helper-client.conf";
 const HELPER_CONFIG_DIR: &str = "/Library/Application Support/AMS Access";
 
+/// Whether this copy of the app runs from a path the helper cannot pin. The
+/// helper authorizes its client by executable path, and a copy run from the
+/// mounted disk image or translocated by Gatekeeper (a random path on every
+/// launch) would ask for the admin password again each time, or fail lockdown.
+/// shortcut: any bundle under /Volumes counts, including an install on an
+/// external drive; check that the volume is read-only if labs need that.
+pub fn unstable_bundle_path(exe: &std::path::Path) -> bool {
+    let path = exe.to_string_lossy();
+    path.contains(".app/Contents/MacOS/")
+        && (path.contains("/AppTranslocation/") || path.starts_with("/Volumes/"))
+}
+
 /// Check whether the helper daemon socket is reachable and accepts this app.
 pub fn network_helper_running() -> bool {
     helper_send(r#"{"cmd":"ping"}"#).is_ok()
@@ -1781,6 +1802,21 @@ do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchc
     }
 
     Err("helper installed but socket not ready within 3 s".to_string())
+}
+
+/// A native alert before any window exists, for problems that stop startup.
+/// osascript draws it without the app's run loop, as `install_network_helper`
+/// already relies on, and it gives up after five minutes so a candidate who
+/// walks away does not leave a stuck process behind.
+pub fn show_startup_message(title: &str, message: &str) {
+    let script = format!(
+        r#"display alert "{}" message "{}" as critical buttons {{"OK"}} default button "OK" giving up after 300"#,
+        applescript_string(title),
+        applescript_string(message)
+    );
+    let _ = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .bounded_output_with_timeout(std::time::Duration::from_secs(310));
 }
 
 fn applescript_string(value: &str) -> String {
@@ -2294,9 +2330,9 @@ pub fn request_av_permissions() {
 
 /// The wireless interface, usually `en0` but not on every model.
 fn wifi_interface() -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/networksetup")
+    let output = Command::new("/usr/sbin/networksetup")
         .arg("-listallhardwareports")
-        .output()
+        .bounded_output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines().peekable();
@@ -2315,17 +2351,26 @@ fn wifi_interface() -> Option<String> {
     None
 }
 
-/// The SSID currently joined, if any.
+/// Shown as the joined network when macOS withholds its name.
+const HIDDEN_SSID: &str = "Wi-Fi connected";
+
+/// The SSID currently joined, if any. Since macOS 14.4 `-getairportnetwork`
+/// often says "not associated" while joined, because the name is withheld
+/// from apps without location access. An IPv4 address on the interface means
+/// joined all the same, so the panel must not claim there is no network.
 fn current_ssid(interface: &str) -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/networksetup")
+    let text = Command::new("/usr/sbin/networksetup")
         .args(["-getairportnetwork", interface])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    // "Current Wi-Fi Network: NAME", or "You are not associated ...".
-    let (_, name) = text.trim().split_once(": ")?;
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_string())
+        .bounded_output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    crate::wifi_parse::parse_airport_network(&text).or_else(|| {
+        Command::new("/usr/sbin/ipconfig")
+            .args(["getifaddr", interface])
+            .bounded_output()
+            .is_ok_and(|output| output.status.success() && !output.stdout.trim_ascii().is_empty())
+            .then(|| HIDDEN_SSID.to_string())
+    })
 }
 
 /// Saved networks, with the joined one marked.
@@ -2334,9 +2379,9 @@ pub fn wifi_scan() -> crate::WifiScan {
         return crate::WifiScan::default();
     };
     let current = current_ssid(&interface);
-    let Ok(output) = std::process::Command::new("/usr/sbin/networksetup")
+    let Ok(output) = Command::new("/usr/sbin/networksetup")
         .args(["-listpreferredwirelessnetworks", &interface])
-        .output()
+        .bounded_output()
     else {
         return crate::WifiScan::default();
     };
@@ -2345,8 +2390,9 @@ pub fn wifi_scan() -> crate::WifiScan {
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut rows = crate::wifi_parse::parse_networksetup_list(&text);
-    // The joined network is not always in the preferred list.
-    if let Some(name) = current.as_deref() {
+    // The joined network is not always in the preferred list. A hidden
+    // name is not a network the candidate could pick.
+    if let Some(name) = current.as_deref().filter(|name| *name != HIDDEN_SSID) {
         if !rows.iter().any(|r| r.ssid == name) {
             rows.push(crate::WifiNetwork {
                 ssid: name.to_string(),
@@ -2368,12 +2414,18 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
     let Some(interface) = wifi_interface() else {
         return Err("No wireless interface on this Mac.".into());
     };
-    let mut command = std::process::Command::new("/usr/sbin/networksetup");
+    let mut command = Command::new("/usr/sbin/networksetup");
     command.args(["-setairportnetwork", &interface, ssid]);
+    // networksetup takes the password only as an argument, so other local
+    // processes can read it from `ps` while this command runs.
     if let Some(secret) = password.filter(|p| !p.is_empty()) {
         command.arg(secret);
     }
-    match command.output() {
+    // Joining waits for association and a DHCP lease, so allow longer than a
+    // query, but never hang the panel.
+    let result = command.bounded_output_with_timeout(std::time::Duration::from_secs(30));
+    drop(command); // its argv copy holds the password
+    match result {
         // networksetup exits 0 even when it failed, and says so on stdout.
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -2390,6 +2442,25 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disk_image_and_translocated_copies_are_unstable() {
+        let unstable = |path: &str| unstable_bundle_path(std::path::Path::new(path));
+        assert!(unstable(
+            "/Volumes/AMS Access/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(unstable("/private/var/folders/x/T/AppTranslocation/1A2B/d/AMS Access.app/Contents/MacOS/ams-access"));
+        assert!(!unstable(
+            "/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(!unstable(
+            "/Users/me/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        // A dev build is not a bundle, wherever the checkout lives.
+        assert!(!unstable(
+            "/Volumes/Work/ams-access/target/debug/ams-access"
+        ));
+    }
 
     /// A recorded failure turns the whole result into an error upstream and
     /// the readiness screen shows every field as Unknown. `ioreg -l` did that

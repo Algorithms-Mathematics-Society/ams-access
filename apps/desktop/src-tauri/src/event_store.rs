@@ -600,6 +600,39 @@ impl EventStore {
         validate_checkpoint(&mut File::open(&batch.path)?, &batch.checkpoint)?;
         write_checkpoint(&batch.path, &batch.checkpoint)
     }
+
+    /// Record that the server refused this batch for good, before it is
+    /// acknowledged so later evidence can move. The events stay in the spool
+    /// at the recorded offsets, and the quarantine record keeps retention
+    /// from ever deleting the run.
+    pub fn quarantine_refused(
+        &self,
+        binding: &SessionBinding,
+        batch: &UploadBatch,
+        reason: &str,
+    ) -> io::Result<()> {
+        let _guard = self
+            .io_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if binding != &batch.binding {
+            return Err(invalid("batch belongs to another session"));
+        }
+        let directory = batch.path.with_extension("quarantine");
+        private_directory(&directory)?;
+        let mut options = private_options();
+        options.write(true).create(true).truncate(true);
+        let mut file =
+            options.open(directory.join(format!("refused-{}.json", batch.start_offset)))?;
+        serde_json::to_writer(
+            &mut file,
+            &serde_json::json!({"offset": batch.start_offset, "end_offset": batch.checkpoint.offset, "events": batch.events.len(), "reason": reason, "server_refused": true}),
+        )
+        .map_err(invalid)?;
+        file.sync_all()?;
+        sync_directory(&directory)?;
+        sync_directory(batch.path.parent().expect("spool parent"))
+    }
 }
 
 /// Prefer full event identity, including hash/sequence, over timestamp + kind:
@@ -1596,5 +1629,32 @@ mod tests {
         assert!(fs::read_to_string(&path)
             .unwrap()
             .contains("data:image/jpeg"));
+    }
+
+    #[test]
+    fn refused_batch_is_recorded_then_skipped_and_kept_from_retention() {
+        let fixture = Fixture::new();
+        let store = fixture.store("old");
+        let a = binding("a");
+        store
+            .append(Some(&a), EventStream::Violation, &event(1))
+            .unwrap();
+        let refused = pending(&store, &a);
+        store.quarantine_refused(&a, &refused, "HTTP 422").unwrap();
+        store.acknowledge(&a, &refused).unwrap();
+        store
+            .append(Some(&a), EventStream::Violation, &event(2))
+            .unwrap();
+        assert_eq!(pending(&store, &a).events[0]["seq"], 2);
+        let record = refused
+            .path
+            .with_extension("quarantine")
+            .join("refused-0.json");
+        assert!(fs::read_to_string(record).unwrap().contains("HTTP 422"));
+        store.close_binding(&a).unwrap();
+        let later =
+            std::time::SystemTime::now() + std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        assert_eq!(fixture.store("new").cleanup_acknowledged(later).unwrap(), 0);
+        assert!(refused.path.exists());
     }
 }
