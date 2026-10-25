@@ -43,7 +43,6 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
   const processes = telemetry?.processes;
   const network = telemetry?.network;
   const platform = telemetry?.platform;
-  const virt = telemetry?.virt;
   const env = telemetry?.env;
   const lastScanned = telemetry?.lastScannedAt
     ? new Date(telemetry.lastScannedAt).toLocaleTimeString([], { hour12: false })
@@ -240,22 +239,20 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         ],
       };
     }
-    case "vm":
     default:
       return {
-        title: "Virtual machine check failed",
-        problem: "AMS Access detected a virtualized or unsupported device environment.",
+        title: "Device check failed",
+        problem: "A device check did not pass, and this build has no specific guidance for it.",
         steps: [
-          "Close VirtualBox, VMware, Parallels, or similar virtualization tools.",
-          "Restart into your normal physical desktop environment.",
           "Run the device check again.",
+          "Restart AMS Access if the check keeps failing.",
+          "Contact your organizer with the scan time below if it still fails.",
         ],
         primaryLabel: "Run checks again",
         primaryAction: "retry",
         details: [
-          { label: "VM detected", value: formatValue(virt?.detected, "Unknown") },
-          { label: "Detected platform", value: formatValue(virt?.platform, "None reported") },
-          { label: "Confidence", value: formatValue(virt?.confidence, "Unknown") },
+          { label: "Check", value: checkKey },
+          { label: "Last scanned", value: lastScanned },
         ],
       };
   }

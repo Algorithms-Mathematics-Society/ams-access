@@ -53,7 +53,7 @@ function installDeviceFixtures(config) {
       return telemetry;
     }
     if(command==='collect_device_state'&&config.mode==='healthy')return{};
-    if(command==='evaluate_session_readiness'&&config.mode==='healthy')return{decision:'allowed',checks:['camera','microphone','network','keyboard_lockdown','restricted_apps','virtualization','platform'].map(kind=>({kind,outcome:'pass',required:true,severity:'block',blocking:false,reason:null})),blocking_reasons:[]};
+    if(command==='evaluate_session_readiness'&&config.mode==='healthy')return{decision:'allowed',checks:['camera','microphone','network','keyboard_lockdown','restricted_apps','platform'].map(kind=>({kind,outcome:'pass',required:true,severity:'block',blocking:false,reason:null})),blocking_reasons:[]};
     throw Error('Fixture command unavailable: '+command);
   }}};
 }

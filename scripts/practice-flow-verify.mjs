@@ -70,7 +70,6 @@ function fixtures(config) {
           return { active: true, method: "gnome", platform: "linux" };
         if (command === "apply_capture_protection") return true;
         if (command === "scan_processes") return { found: [], clean: true };
-        if (command === "detect_virtualization") return { detected: false, platform: null };
         if (command === "get_lockdown_restore_status") return { pending: false, items: [] };
         return null;
       },

@@ -54,7 +54,7 @@ function installDeviceFixtures(config) {
       return telemetry;
     }
     if(command==='collect_device_state'&&['healthy','integrity','offline'].includes(config.mode))return{};
-    if(command==='evaluate_session_readiness'&&['healthy','integrity','offline'].includes(config.mode))return{contest_id:null,device_id:'fixture-device',policy_profile:'internal_pilot',generated_at_ms:Date.now(),required_checks:[],optional_checks:[],decision:'allowed',checks:['camera','microphone','network','keyboard_lockdown','restricted_apps','virtualization','platform'].map(kind=>({kind,outcome:'pass',required:true,severity:'block',blocking:false,reason:null})),blocking_reasons:[]};
+    if(command==='evaluate_session_readiness'&&['healthy','integrity','offline'].includes(config.mode))return{contest_id:null,device_id:'fixture-device',policy_profile:'internal_pilot',generated_at_ms:Date.now(),required_checks:[],optional_checks:[],decision:'allowed',checks:['camera','microphone','network','keyboard_lockdown','restricted_apps','platform'].map(kind=>({kind,outcome:'pass',required:true,severity:'block',blocking:false,reason:null})),blocking_reasons:[]};
     throw Error('Fixture command unavailable: '+command);
   }}};
 }
@@ -191,8 +191,8 @@ try {
     await click('Copy support summary');await until("window.__deviceClipboard.length===1");
     await recordCheck('Copy uses existing support summary and omits credentials', "window.__deviceClipboard[0].startsWith('AMS Access — Support Summary')&&!window.__deviceClipboard[0].includes('p0-local-fixture')");
     await click('Export diagnostic report');await until('window.__deviceBlobs.length===1');
-    await recordCheck('Export includes native version and matching setup results', "(async()=>{const d=JSON.parse(await window.__deviceBlobs[0].text());return d.client_version==='9.8.7-fixture'&&d.setup_checks.length===7&&d.security_lock_matrix.vm_shield_active===true&&d.os==='linux x86_64'&&d.proctoring_telemetry.network_latency_ms===null&&d.security_lock_matrix.ld_preload_clean===true&&window.__deviceDownloads[0].startsWith('ams_diagnostic_report_')})()");
-    await recordCheck('Summary matches virtualization, app and startup rows',"window.__deviceClipboard[0].includes('Virtual machine check: Ready')&&window.__deviceClipboard[0].includes('Restricted apps: Ready')&&window.__deviceClipboard[0].includes('Startup integrity: Ready')&&window.__deviceClipboard[0].includes('9.8.7-fixture')&&!window.__deviceClipboard[0].includes('release-production')");
+    await recordCheck('Export includes native version and matching setup results', "(async()=>{const d=JSON.parse(await window.__deviceBlobs[0].text());return d.client_version==='9.8.7-fixture'&&d.setup_checks.length===6&&d.os==='linux x86_64'&&d.proctoring_telemetry.network_latency_ms===null&&d.security_lock_matrix.ld_preload_clean===true&&window.__deviceDownloads[0].startsWith('ams_diagnostic_report_')})()");
+    await recordCheck('Summary matches app and startup rows',"window.__deviceClipboard[0].includes('Restricted apps: Ready')&&window.__deviceClipboard[0].includes('Startup integrity: Ready')&&window.__deviceClipboard[0].includes('9.8.7-fixture')&&!window.__deviceClipboard[0].includes('release-production')");
     await recordCheck('Report actions make no backend mutations', "!(window.__p0Requests||[]).some(r=>r.method==='POST')");
   }
   viewport={width:1280,height:800};await send('Emulation.setDeviceMetricsOverride',{...viewport,deviceScaleFactor:1,mobile:false});

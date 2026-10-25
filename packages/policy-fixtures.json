@@ -71,12 +71,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "internal_pilot/macos": {
@@ -147,12 +141,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -231,12 +219,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "internal_pilot/windows": {
@@ -307,12 +289,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -391,12 +367,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "internal_pilot/windows_no_admin": {
@@ -467,12 +437,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -551,12 +515,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "practice/linux": {
@@ -627,12 +585,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -711,12 +663,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "practice/none": {
@@ -787,12 +733,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -871,12 +811,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "practice/windows_msix": {
@@ -947,12 +881,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -1031,12 +959,6 @@
       "required": false,
       "severity": "warning",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
     }
   },
   "practice/windows_no_firewall": {
@@ -1107,12 +1029,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": true,
-      "required": false,
-      "severity": "warning",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": true,
       "required": false,
       "severity": "warning",
@@ -1191,12 +1107,6 @@
       "required": true,
       "severity": "block",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "warning"
     }
   },
   "strict_contest/macos": {
@@ -1267,12 +1177,6 @@
       "unsupported_severity": "warning"
     },
     "restricted_apps": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "warning"
-    },
-    "virtualization": {
       "organizer_override_allowed": false,
       "required": true,
       "severity": "block",
@@ -1351,12 +1255,6 @@
       "required": true,
       "severity": "block",
       "unsupported_severity": "warning"
-    },
-    "virtualization": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "warning"
     }
   },
   "strict_contest/windows": {
@@ -1427,12 +1325,6 @@
       "unsupported_severity": "block"
     },
     "restricted_apps": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "block"
-    },
-    "virtualization": {
       "organizer_override_allowed": false,
       "required": true,
       "severity": "block",
@@ -1511,12 +1403,6 @@
       "required": true,
       "severity": "block",
       "unsupported_severity": "block"
-    },
-    "virtualization": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "block"
     }
   },
   "strict_contest/windows_no_admin": {
@@ -1591,12 +1477,6 @@
       "required": true,
       "severity": "block",
       "unsupported_severity": "block"
-    },
-    "virtualization": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "block"
     }
   },
   "strict_contest/windows_no_firewall": {
@@ -1667,12 +1547,6 @@
       "unsupported_severity": "block"
     },
     "restricted_apps": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
-      "unsupported_severity": "block"
-    },
-    "virtualization": {
       "organizer_override_allowed": false,
       "required": true,
       "severity": "block",

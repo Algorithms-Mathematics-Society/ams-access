@@ -28,7 +28,7 @@ export function ProgressBar({ current, results, compact = false, blocked = false
         {phases.map(phase => {
           const phaseState = setupPhase(phase, step, results, blocked);
           const { active } = phaseState;
-          const label = phase.start === 7 ? "Camera setup" : phase.start === 10 ? "Microphone" : PHASE_FRIENDLY_NAME[phase.group] ?? phase.group;
+          const label = phase.start === 6 ? "Camera setup" : phase.start === 9 ? "Microphone" : PHASE_FRIENDLY_NAME[phase.group] ?? phase.group;
           return <HStack as="li" key={phase.start} gap={3} align="start" aria-current={active ? "step" : undefined} style={{ padding: "var(--spacing-3)", borderRadius: "var(--radius-element)", background: active ? "var(--color-background-card)" : "transparent" }}>
             <StatusDot variant={phaseState.variant} label={phaseState.label} />
             <VStack gap={1} style={{ minWidth: 0 }}>

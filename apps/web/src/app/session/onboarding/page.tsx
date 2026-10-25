@@ -41,7 +41,6 @@ import { Stage2_MonitorDetection } from "./components/stages/Stage2_MonitorDetec
 import { Stage3_KeyboardLockdown } from "./components/stages/Stage3_KeyboardLockdown";
 import { Stage4_EnvironmentValidation } from "./components/stages/Stage4_EnvironmentValidation";
 import { Stage5_RestrictedApps } from "./components/stages/Stage5_RestrictedApps";
-import { Stage6_VMDetection } from "./components/stages/Stage6_VMDetection";
 import { Stage7_CameraInit } from "./components/stages/Stage7_CameraInit";
 import { Stage8_FaceCalibration } from "./components/stages/Stage8_FaceCalibration";
 import { Stage9_PresenceVerification } from "./components/stages/Stage9_PresenceVerification";
@@ -1015,7 +1014,7 @@ export default function OnboardingPage() {
   const advanceWarn = useCallback(
     (detail?: string) => {
       if (advanceController.advance(stageRun, "warn") && detail) {
-        if (stageRun.stage === 2 || stageRun.stage === 7) {
+        if (stageRun.stage === 2 || stageRun.stage === 6) {
           const record = createFaceReviewRequest();
           record.request();
           warningRecordsRef.current.set(stageRun.stage, { detail, record });
@@ -1504,7 +1503,7 @@ export default function OnboardingPage() {
                           {currentStage === 1 && (
                             <Stage1_Fullscreen onPass={advancePass} onWarn={advanceWarn} />
                           )}
-                          {(currentStage === 2 || currentStage === 7) &&
+                          {(currentStage === 2 || currentStage === 6) &&
                             !effectivePolicy &&
                             contextError && (
                               <Banner
@@ -1542,9 +1541,6 @@ export default function OnboardingPage() {
                             <Stage5_RestrictedApps onPass={advancePass} onWarn={advanceWarn} />
                           )}
                           {currentStage === 6 && (
-                            <Stage6_VMDetection onPass={advancePass} onWarn={advanceWarn} />
-                          )}
-                          {currentStage === 7 && (
                             <Stage7_CameraInit
                               onPass={advancePass}
                               onCameraReady={handleCameraReady}
@@ -1553,7 +1549,7 @@ export default function OnboardingPage() {
                               overrideActive={cameraOverride}
                             />
                           )}
-                          {currentStage === 8 && (
+                          {currentStage === 7 && (
                             <Stage8_FaceCalibration
                               stream={cameraStream}
                               cameraUnavailable={cameraUnavailable}
@@ -1563,17 +1559,17 @@ export default function OnboardingPage() {
                               onFaceFallback={handleFaceFallback}
                             />
                           )}
-                          {currentStage === 9 && (
+                          {currentStage === 8 && (
                             <Stage9_PresenceVerification
                               stream={cameraStream}
                               onPass={advancePass}
                               onWarn={advanceWarn}
                             />
                           )}
-                          {currentStage === 10 && (
+                          {currentStage === 9 && (
                             <Stage10_AudioVerification onPass={advancePass} onWarn={advanceWarn} />
                           )}
-                          {currentStage === 11 && (
+                          {currentStage === 10 && (
                             <Stage11_NetworkValidation onPass={advancePass} onWarn={advanceWarn} />
                           )}
                           {currentStage === REVIEW_STAGE && (

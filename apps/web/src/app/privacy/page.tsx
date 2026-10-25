@@ -43,9 +43,9 @@ export default function PrivacyPage() {
                   "Account identifiers such as the signed-in email address and organization context.",
                   "Contest identifiers, invite code status, active session identifiers, answers, submissions, heartbeat status, and timestamps.",
                   "Device readiness signals such as operating system, CPU architecture, display/session environment, camera and microphone availability, network latency, and jitter.",
-                  "Security signals such as restricted process names, virtualization indicators, keyboard lockdown capability, local injection checks, and session violation events.",
+                  "Security signals such as restricted process names, keyboard lockdown capability, local injection checks, and session violation events.",
                   "Media permission results, live camera or microphone streams, and local face calibration snapshots used for readiness checks and proctoring features.",
-                  "Diagnostic report data that you choose to export or send through support flows, including OS, architecture, display server, media availability, latency, jitter, VM/security results, and keyboard readiness.",
+                  "Diagnostic report data that you choose to export or send through support flows, including OS, architecture, display server, media availability, latency, jitter, security scan results, and keyboard readiness.",
                 ]}
               />
               <P>
@@ -63,7 +63,7 @@ export default function PrivacyPage() {
             <LegalList
               items={[
                 "To identify the signed-in contestant context and show available, live, completed, or blocked sessions.",
-                "To run pre-session readiness checks and explain failed camera, microphone, network, process, virtualization, or platform checks.",
+                "To run pre-session readiness checks and explain failed camera, microphone, network, process, or platform checks.",
                 "To enforce contest integrity rules, including fullscreen/lockdown behavior, process scanning, keyboard interception where supported, and network restrictions where enabled.",
                 "To recover interrupted active sessions and support troubleshooting.",
                 "To send submissions, session heartbeats, incident reports, and diagnostic data to the configured AMS contest services when those integrations are available.",

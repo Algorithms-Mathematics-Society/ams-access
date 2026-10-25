@@ -19,7 +19,6 @@ export const CHECK_KIND_LABELS: Record<string, string> = {
   clock_integrity: "Device clock",
   keyboard_lockdown: "Keyboard lockdown",
   restricted_apps: "Restricted applications",
-  virtualization: "Virtual machine check",
   platform: "Platform compatibility",
   external_display: "External display",
   remote_server: "Remote-desktop session",

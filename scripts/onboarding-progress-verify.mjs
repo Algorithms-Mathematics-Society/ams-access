@@ -181,7 +181,7 @@ try {
     const b=await bar(label);check(label+' value '+completed,b.value===completed,b);check(label+' rendered width '+completed,Math.abs(b.fill/b.width-b.value/b.max)<.015,b);
     check(label+' visible fill contrast',contrast(b.trackColor,b.fillColor)>=3,b);manifest.bars??=[];manifest.bars.push(b);return b;
   }
-  const stageNames=['Stage1_Fullscreen','Stage2_MonitorDetection','Stage3_KeyboardLockdown','Stage4_EnvironmentValidation','Stage5_RestrictedApps','Stage6_VMDetection','Stage7_CameraInit','Stage8_FaceCalibration','Stage9_PresenceVerification','Stage10_AudioVerification','Stage11_NetworkValidation'];
+  const stageNames=['Stage1_Fullscreen','Stage2_MonitorDetection','Stage3_KeyboardLockdown','Stage4_EnvironmentValidation','Stage5_RestrictedApps','Stage7_CameraInit','Stage8_FaceCalibration','Stage9_PresenceVerification','Stage10_AudioVerification','Stage11_NetworkValidation'];
   async function completeCurrent(name,warning=false){await evaluate(`(()=>{for(const e of document.querySelectorAll('*')){const k=Object.keys(e).find(k=>k.startsWith('__reactFiber$'));if(!k)continue;for(let f=e[k];f;f=f.return){if(f.type?.name===${JSON.stringify(name)}){const action=f.memoizedProps[${JSON.stringify(warning?'onWarn':'onPass')}];if(typeof action!=='function')throw Error('Missing completion callback');window.__previousStageComplete=action;action();action();return true}}}throw Error('Stage not found: '+${JSON.stringify(name)}+'; '+document.querySelector('[data-onboarding-stage]')?.getAttribute('data-onboarding-stage'))})()`);}
   for(let step=1;step<=12;step++){
     // Isolate each callback transition from timers of forcibly completed hardware fixtures.

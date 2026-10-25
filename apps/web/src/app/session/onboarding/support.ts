@@ -211,14 +211,13 @@ export const STAGES: Omit<Stage, "status">[] = [
   { id: 3, label: "Keyboard Setup", group: "Workspace Lockdown" },
   { id: 4, label: "Setup Verification", group: "System Checks" },
   { id: 5, label: "Application Check", group: "System Checks" },
-  { id: 6, label: "Device Compatibility", group: "System Checks" },
-  { id: 7, label: "Camera Setup", group: "Media Setup" },
-  { id: 8, label: "Face Scan", group: "Identity Scan" },
-  { id: 9, label: "Presence Check", group: "Identity Scan" },
-  { id: 10, label: "Microphone Check", group: "Media Setup" },
-  { id: 11, label: "Connection Check", group: "Finalizing" },
-  { id: 12, label: "Final Review", group: "Finalizing" },
-  { id: 13, label: "Entering Contest", group: "Finalizing" },
+  { id: 6, label: "Camera Setup", group: "Media Setup" },
+  { id: 7, label: "Face Scan", group: "Identity Scan" },
+  { id: 8, label: "Presence Check", group: "Identity Scan" },
+  { id: 9, label: "Microphone Check", group: "Media Setup" },
+  { id: 10, label: "Connection Check", group: "Finalizing" },
+  { id: 11, label: "Final Review", group: "Finalizing" },
+  { id: 12, label: "Entering Contest", group: "Finalizing" },
 ];
 
 /** The stage that performs the actual secure start. Nothing follows it. */
@@ -255,31 +254,26 @@ export const STAGE_META: Record<number, { checking: string; todo: string | null;
       onFail: "Entry is blocked until restricted apps are closed",
     },
     6: {
-      checking: "Whether this device is running inside a virtual machine",
-      todo: null,
-      onFail: "Session is flagged for review — you may still enter",
-    },
-    7: {
       checking: "Camera access and video feed",
       todo: "Allow camera access when your OS asks",
       onFail: "Camera is required — fix the permission and try again",
     },
-    8: {
+    7: {
       checking: "Face position and framing, checked on this device",
       todo: "Look directly at the camera and hold still until captured",
       onFail: "Setup waits until a valid face is captured — contact your proctor if stuck",
     },
-    9: {
+    8: {
       checking: "Live presence via camera feed",
       todo: "Stay visible in front of your camera",
       onFail: "Presence must be confirmed before continuing",
     },
-    10: {
+    9: {
       checking: "Microphone access and audio signal",
       todo: "Allow microphone access when prompted",
       onFail: "Microphone is optional — setup continues with an advisory warning",
     },
-    11: {
+    10: {
       checking: "Network connection and response time",
       todo: "Make sure you have a stable internet connection",
       onFail: "Poor connection is recorded — you may still enter",

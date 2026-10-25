@@ -93,15 +93,6 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
         : "No native platform result is available.",
     },
     {
-      label: "Virtual machine check",
-      status: telemetry.virt ? (telemetry.virt.detected ? "fail" : "ok") : "unknown",
-      detail: telemetry.virt
-        ? telemetry.virt.detected
-          ? `${telemetry.virt.platform ?? "Virtual environment"} detected.`
-          : "No virtualization detected in the latest scan."
-        : "No virtualization result is available.",
-    },
-    {
       label: "Restricted apps",
       status: telemetry.processes ? (telemetry.processes.clean ? "ok" : "fail") : "unknown",
       detail: telemetry.processes
@@ -199,7 +190,6 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
       },
       security_lock_matrix: {
         platform_supported: readiness.platform === "ok",
-        vm_shield_active: telemetry.virt ? !telemetry.virt.detected : null,
         restricted_apps_clean: telemetry.processes?.clean ?? null,
         ld_preload_clean: securityEnv ? !securityEnv.ld_preload_injection : null,
         keyboard_lock_available: readiness.keyboard === "ok",
@@ -237,7 +227,6 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
         : null,
       platform: platformInfo,
       environment: securityEnv,
-      virtualization: telemetry.virt,
       restricted_apps: telemetry.processes,
       network,
       readiness,
