@@ -81,6 +81,7 @@ import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
 import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
 import { dateTimeFormatter } from "@/lib/date-time-format";
+import { exitToHome } from "@/lib/exit-to-home";
 import { deriveContestantReadiness } from "./components/readiness-context";
 
 // Keys that belong to the machine, not the candidate, so sign-out keeps them.
@@ -125,6 +126,23 @@ export default function HomePage() {
     if (new URLSearchParams(window.location.search).get("restore") === "pending") {
       setActiveNav("settings");
     }
+  }, []);
+  // Backstop for any screen that reaches Home without releasing the lockdown.
+  // No contest runs while Home is showing, so an engaged lockdown here is
+  // left over: release it as "exit to home" does, and open the Settings
+  // restore card if anything could not be put back.
+  useEffect(() => {
+    if (!hasNativeBridge()) return;
+    invoke<boolean>("is_lockdown_engaged")
+      .then((engaged) => {
+        if (!engaged) return;
+        return exitToHome({
+          push: (href) => {
+            if (href.includes("restore=pending")) setActiveNav("settings");
+          },
+        });
+      })
+      .catch(() => {});
   }, []);
   const [signingOut, setSigningOut] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
