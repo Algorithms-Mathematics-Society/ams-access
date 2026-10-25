@@ -19,28 +19,84 @@
  * moment it could least afford it. That is the restart storm from 21 Oct, and
  * it was one `if` away from not happening.
  *
+ * **Whose session it is.** A token lasts a week, and lab Macs are shared, so
+ * the person launching the app may not be the one who signed in. A valid
+ * token stops at "Continue as {name}?" rather than opening that candidate's
+ * workspace for whoever sat down next.
+ *
  * The version check runs first on purpose. An out-of-date client should not
  * be quietly signed in to sit a contest; it should be told to update.
  */
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { Button } from "@astryxdesign/core/Button";
 import { VStack } from "@astryxdesign/core/Stack";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { invoke } from "@ams/api-client";
 import { RouteLoadingShell } from "@/components/RouteLoadingShell";
 import WelcomeScreen from "./WelcomeScreen";
 import { StartupAnimation } from "@/components/StartupAnimation";
 import { UpdateRequiredDialog } from "./login/UpdateRequiredDialog";
 import { fetchClientVersion, minorUpgradeAvailable } from "@/lib/client-update";
 import { resolveApiBase } from "@/lib/api-base";
-import { currentToken, listContests } from "@/lib/proctor-api";
+import { currentToken, listContests, logout } from "@/lib/proctor-api";
+import { clearQueryCache } from "@/lib/api-client";
 import { openExternal } from "@/lib/open-external";
+import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { isBufferKey } from "@/app/session/contest/answer-buffer";
 
-type Gate = "checking" | "update" | "signed-in" | "welcome";
+type Gate = "checking" | "update" | "confirm" | "signed-in" | "welcome";
+
+function storedDisplayName(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Home's sign-out, for someone who never reached Home.
+ *
+ * Two differences. The native event stream is reset without waiting: this is
+ * a fresh launch, so nothing has configured it yet. And the previous
+ * candidate's unsent drafts are kept: Home asks before deleting them, and the
+ * person at the keyboard now is not the one who can answer.
+ */
+function signOutPreviousCandidate() {
+  logout();
+  clearQueryCache();
+  void invoke("configure_event_stream", { apiUrl: "", sessionId: null, token: null }).catch(
+    () => {}
+  );
+  try {
+    Object.keys(localStorage)
+      .filter(
+        (key) =>
+          key.startsWith("ams_") &&
+          key !== STORAGE_KEYS.DEVICE_ID &&
+          key !== STORAGE_KEYS.THEME &&
+          !isBufferKey(key)
+      )
+      .forEach((key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          // Keep clearing other keys if this one is blocked.
+        }
+      });
+  } catch {
+    // Storage may be inaccessible even to enumeration; the token is already gone.
+  }
+}
 
 export default function RootPage() {
   const router = useRouter();
   const [gate, setGate] = useState<Gate>("checking");
   const [update, setUpdate] = useState<{ latest: string; url: string } | null>(null);
+  const [name, setName] = useState<string | null>(null);
   const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? "";
 
   useEffect(() => {
@@ -67,8 +123,8 @@ export default function RootPage() {
         try {
           await listContests();
           if (cancelled) return;
-          router.replace("/home");
-          setGate("signed-in");
+          setName(storedDisplayName());
+          setGate("confirm");
           return;
         } catch {
           if (cancelled) return;
@@ -100,6 +156,39 @@ export default function RootPage() {
     <StartupAnimation>
       {gate === "welcome" ? (
         <WelcomeScreen onEnter={() => router.push("/login")} />
+      ) : gate === "confirm" ? (
+        <AppShell height="fill" variant="section" contentPadding={4}>
+          <VStack gap={6} align="center" justify="center" style={{ minHeight: "100%" }}>
+            <VStack gap={2} align="center">
+              <Heading level={1} justify="center" textWrap="balance">
+                {name ? `Continue as ${name}?` : "Continue where you left off?"}
+              </Heading>
+              <Text color="secondary" justify="center">
+                This computer is still signed in from an earlier session.
+              </Text>
+            </VStack>
+            <VStack gap={3} align="center">
+              <Button
+                label="Continue"
+                variant="primary"
+                size="lg"
+                data-startup-focus
+                onClick={() => {
+                  router.replace("/home");
+                  setGate("signed-in");
+                }}
+              />
+              <Button
+                label="Not you? Sign out"
+                variant="ghost"
+                onClick={() => {
+                  signOutPreviousCandidate();
+                  setGate("welcome");
+                }}
+              />
+            </VStack>
+          </VStack>
+        </AppShell>
       ) : (
         <VStack role="status" aria-live="polite">
           <RouteLoadingShell
