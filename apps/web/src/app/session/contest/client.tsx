@@ -2229,6 +2229,18 @@ export default function ContestPageClient() {
   expiryHandlerRef.current = handleContestExpiry;
   const onContestExpiry = useCallback(() => expiryHandlerRef.current(), []);
 
+  // Ten minutes after the bell, leave as if Submit & Exit had been pressed.
+  // A candidate who walked away otherwise leaves a lab Mac locked until
+  // someone finds it; the paper is closed, so nothing can be lost. A ref, so
+  // the timer runs the current handler and its in-flight guards.
+  const finishHandlerRef = useRef(handleSubmitConfirmed);
+  finishHandlerRef.current = handleSubmitConfirmed;
+  useEffect(() => {
+    if (!bellRung) return;
+    const id = setTimeout(() => void finishHandlerRef.current(), 10 * 60_000);
+    return () => clearTimeout(id);
+  }, [bellRung]);
+
   // Leaving the contest room by any route ends the exam's use of the camera.
   // The submit teardown releases it too, but a redirect (session already
   // finished, sign-in expired) left the camera light on.
