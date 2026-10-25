@@ -226,6 +226,7 @@ function homeSignOutHandler(context, name = "signOut") {
     withTelemetryTimeout: (promise) => promise,
     setResumeStatus() {},
     setActiveNav() {},
+    recoveryEpochRef: { current: 0 },
     DEVICE_SCOPED_KEYS: new Set([STORAGE_KEYS.DEVICE_ID, STORAGE_KEYS.THEME]),
     isBufferKey,
     ...context,
