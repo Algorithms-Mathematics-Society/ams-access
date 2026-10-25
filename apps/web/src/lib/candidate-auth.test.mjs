@@ -25,6 +25,7 @@ import {
   logout,
   restoreToken,
   setToken,
+  uploadIdentityPhoto,
 } from "./proctor-api.ts";
 
 const TOKEN_KEY = "ams_participant_token";
@@ -557,6 +558,96 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
   return { ...contestExitHandlers(context), calls, context, error: () => error };
 }
 
+test("exit releases native controls while the captured identity photo is still uploading", async () => {
+  const fixture = contestExitFixture();
+  let finishUpload;
+  fixture.context.exitPhotoRef.current = () => {
+    fixture.calls.push("identity-photo");
+    return new Promise((resolve) => {
+      finishUpload = resolve;
+    });
+  };
+  const exiting = fixture.runExitTeardown(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const releasedBeforeUpload = fixture.calls.includes("get_lockdown_restore_status");
+  finishUpload();
+  await exiting;
+  assert.equal(releasedBeforeUpload, true);
+  assert.ok(fixture.calls.indexOf("identity-photo") < fixture.calls.indexOf("camera"));
+});
+
+test("login redirect starts the exit-photo request with the current token before logout", async () => {
+  setToken("exit-photo-token", 3600);
+  const fixture = contestExitFixture();
+  const originalFetch = globalThis.fetch;
+  let uploadHeaders;
+  let finishUpload;
+  let uploadStarted;
+  const started = new Promise((resolve) => {
+    uploadStarted = resolve;
+  });
+  const pending = new Promise((resolve) => {
+    finishUpload = resolve;
+  });
+  globalThis.fetch = async (_url, options) => {
+    uploadHeaders = options.headers;
+    uploadStarted();
+    await pending;
+    return { ok: true, text: async () => "{}" };
+  };
+  fixture.context.exitPhotoRef.current = () =>
+    uploadIdentityPhoto("session", "exit", "photo", 1).then(() => {});
+  try {
+    const exiting = fixture.redirectAfterRelease("/login");
+    await started;
+    assert.equal(uploadHeaders.Authorization, "Bearer exit-photo-token");
+    assert.equal(currentToken(), null);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(fixture.calls.includes("get_lockdown_restore_status"));
+    assert.ok(!fixture.calls.includes("redirect:/login"));
+    finishUpload();
+    await exiting;
+    assert.equal(currentToken(), null);
+    assert.equal(fixture.calls.at(-1), "redirect:/login");
+  } finally {
+    finishUpload?.();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("failed device release still discards login credentials after the photo attempt", async () => {
+  setToken("exit-photo-token", 3600);
+  const fixture = contestExitFixture("unlock_desktop");
+  await fixture.redirectAfterRelease("/login");
+  assert.equal(currentToken(), null);
+  assert.ok(!fixture.calls.includes("redirect:/login"));
+  assert.match(fixture.error(), /cleanup could not be confirmed/);
+});
+
+test("a server-expired token cannot make the exit photo appear delivered", async () => {
+  setToken("rejected-token", 3600);
+  const fixture = contestExitFixture();
+  const originalFetch = globalThis.fetch;
+  let delivered;
+  let authorization;
+  globalThis.fetch = async (_url, options) => {
+    authorization = options.headers.Authorization;
+    return { ok: false, status: 401, text: async () => '{"detail":"expired"}' };
+  };
+  fixture.context.exitPhotoRef.current = async () => {
+    delivered = await uploadIdentityPhoto("session", "exit", "photo", 1);
+  };
+  try {
+    await fixture.redirectAfterRelease("/login");
+    assert.equal(authorization, "Bearer rejected-token");
+    assert.equal(delivered, false);
+    assert.equal(currentToken(), null);
+    assert.equal(fixture.calls.at(-1), "redirect:/login");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("auth redirect releases all native controls before navigation and retains recovery", async () => {
   setToken("expired-but-cached");
   localStorage.setItem("ams_active_session", "recoverable");
@@ -565,10 +656,10 @@ test("auth redirect releases all native controls before navigation and retains r
   await fixture.redirectAfterRelease("/login");
   assert.deepEqual(fixture.calls, [
     "save",
-    "configure_event_stream",
     // Before "camera": the exit frame has to be taken while there is still
     // a stream to take it from.
     "identity-photo",
+    "configure_event_stream",
     "camera",
     "setFullscreen",
     "setAlwaysOnTop",

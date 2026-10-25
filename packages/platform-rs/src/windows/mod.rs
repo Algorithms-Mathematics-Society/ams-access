@@ -8,6 +8,7 @@ mod hook_delivery;
 mod hook_lifecycle;
 pub mod instance;
 mod keyboard_policy;
+mod power_request;
 mod registry_recovery;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
 pub use registry_recovery::RegistryLockdownStatus;
@@ -495,15 +496,8 @@ fn reg_dword_nonzero(key: &str, value: &str) -> bool {
 // ── Sleep prevention ──────────────────────────────────────────────────────────
 
 fn set_sleep_prevention(enable: bool) {
-    use windows::Win32::System::Power::{
-        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
-    };
-    unsafe {
-        if enable {
-            SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
-        } else {
-            SetThreadExecutionState(ES_CONTINUOUS);
-        }
+    if let Err(error) = power_request::set(enable) {
+        eprintln!("AMS Access: sleep prevention update failed: {error}");
     }
 }
 
@@ -546,6 +540,129 @@ pub fn desktop_recovery_pending() -> bool {
 
 // ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
+// Native-only gate: Tauri window/WebView callbacks must stay outside it.
+// Closing is terminal for this process; the next exam needs a new instance.
+struct TerminalGate {
+    closed: AtomicBool,
+    operation: std::sync::Mutex<()>,
+}
+
+impl TerminalGate {
+    const fn new() -> Self {
+        Self {
+            closed: AtomicBool::new(false),
+            operation: std::sync::Mutex::new(()),
+        }
+    }
+
+    fn enter(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        let guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (!self.closed.load(Ordering::SeqCst)).then_some(guard)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn close(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.closed.store(true, Ordering::SeqCst);
+        self.lock()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+}
+
+static DESKTOP_GATE: TerminalGate = TerminalGate::new();
+
+#[cfg(test)]
+mod terminal_gate_tests {
+    use super::TerminalGate;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn close_waits_for_active_native_change_then_restores() {
+        let gate = Arc::new(TerminalGate::new());
+        let changed = Arc::new(Mutex::new(false));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let worker = {
+            let gate = Arc::clone(&gate);
+            let changed = Arc::clone(&changed);
+            std::thread::spawn(move || {
+                let _guard = gate.enter().unwrap();
+                entered_tx.send(()).unwrap();
+                finish_rx.recv().unwrap();
+                *changed.lock().unwrap() = true;
+            })
+        };
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let closer = {
+            let gate = Arc::clone(&gate);
+            let changed = Arc::clone(&changed);
+            std::thread::spawn(move || {
+                let _guard = gate.close();
+                *changed.lock().unwrap() = false;
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !gate.is_closed() {
+            assert!(
+                Instant::now() < deadline,
+                "shutdown did not publish cancellation"
+            );
+            std::thread::yield_now();
+        }
+        finish_tx.send(()).unwrap();
+        worker.join().unwrap();
+        closer.join().unwrap();
+        assert!(!*changed.lock().unwrap());
+    }
+
+    #[test]
+    fn close_rejects_queued_native_change_and_keyboard_probe() {
+        let gate = Arc::new(TerminalGate::new());
+        let hook_operation = Arc::new(Mutex::new(()));
+        let held_hook = hook_operation.lock().unwrap();
+        let (native_queued_tx, native_queued_rx) = mpsc::channel();
+        let (native_continue_tx, native_continue_rx) = mpsc::channel();
+        let native = {
+            let gate = Arc::clone(&gate);
+            std::thread::spawn(move || {
+                native_queued_tx.send(()).unwrap();
+                native_continue_rx.recv().unwrap();
+                gate.enter().is_some()
+            })
+        };
+        let (queued_tx, queued_rx) = mpsc::channel();
+        let probe = {
+            let gate = Arc::clone(&gate);
+            let hook_operation = Arc::clone(&hook_operation);
+            std::thread::spawn(move || {
+                queued_tx.send(()).unwrap();
+                let _hook = hook_operation.lock().unwrap();
+                !gate.is_closed()
+            })
+        };
+        native_queued_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        queued_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        drop(gate.close());
+        native_continue_tx.send(()).unwrap();
+        drop(held_hook);
+        assert!(!native.join().unwrap());
+        assert!(!probe.join().unwrap());
+    }
+}
+
 pub fn lock_desktop() -> bool {
     lock_desktop_checked().unwrap_or(false)
 }
@@ -561,6 +678,9 @@ pub fn lock_desktop_checked() -> Result<bool, String> {
 
 /// Unelevated entry skips new registry policies, never unfinished recovery.
 pub fn lock_desktop_with_status() -> Result<DesktopLockdownStatus, String> {
+    let _operation = DESKTOP_GATE
+        .enter()
+        .ok_or("Windows desktop lockdown cannot start during shutdown")?;
     if !instance::owns_instance() {
         return Err("Windows lockdown requires instance ownership".into());
     }
@@ -590,6 +710,16 @@ pub fn lock_desktop_with_status() -> Result<DesktopLockdownStatus, String> {
 }
 
 pub fn unlock_desktop() {
+    let _operation = DESKTOP_GATE.lock();
+    unlock_desktop_unlocked();
+}
+
+pub fn close_desktop_on_exit() {
+    let _operation = DESKTOP_GATE.close();
+    unlock_desktop_unlocked();
+}
+
+fn unlock_desktop_unlocked() {
     if !instance::owns_instance() {
         return;
     }
@@ -913,6 +1043,9 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let _operation = HOOK_OPERATION
         .lock()
         .unwrap_or_else(|error| error.into_inner());
+    if DESKTOP_GATE.is_closed() {
+        return keyboard_intercept_result(false);
+    }
     let existing = HOOK_SESSION
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -927,7 +1060,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     *HOOK_SESSION
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = Some(session.clone());
-    set_sleep_prevention(true);
     spawn_hook_thread(session.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while session.active.load(Ordering::SeqCst)
@@ -939,7 +1071,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let installed = session.ready() && spawn_hook_watchdog(session.clone());
     if !installed {
         session.cancel();
-        set_sleep_prevention(false);
     }
     keyboard_intercept_result(installed)
 }
@@ -996,7 +1127,6 @@ pub fn disable_keyboard_intercept() {
     }
     // The owner observes cancellation during its bounded pump. No TID-based
     // WM_QUIT can be lost before queue creation or target a reused thread ID.
-    set_sleep_prevention(false);
 }
 
 // ── Injected-input event callback (F11) ───────────────────────────────────────
@@ -1241,7 +1371,7 @@ pub fn harden_dll_search_path() {
 
 // ── Network lockdown (process-scoped, not global policy) ─────────────────────
 
-static NETWORK_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static NETWORK_GATE: TerminalGate = TerminalGate::new();
 
 /// Restrict this executable's outbound destinations without overlapping blocks
 /// and allows: explicit Windows firewall blocks always take precedence.
@@ -1256,9 +1386,9 @@ pub fn enable_network_lockdown(
     }
     // Validate before removing any existing policy.
     let plan = firewall_policy::plan(allowed_ips)?;
-    let _policy_owner = NETWORK_POLICY_LOCK
-        .lock()
-        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    let _policy_owner = NETWORK_GATE
+        .enter()
+        .ok_or("Windows firewall lockdown cannot start during shutdown")?;
     runtime.revalidate_layout()?;
     // Firewall program identities use DOS paths; canonicalize returns the
     // extended-length prefix, which is not part of the executable identity.
@@ -1343,13 +1473,19 @@ pub fn disable_network_lockdown() -> Result<(), String> {
     if !instance::owns_instance() {
         return Err("Windows firewall recovery requires instance ownership".into());
     }
-    let _policy_owner = NETWORK_POLICY_LOCK
-        .lock()
-        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    let _policy_owner = NETWORK_GATE.lock();
     disable_network_lockdown_unlocked()
 }
 
-// The public operation retains NETWORK_POLICY_LOCK through installation and
+pub fn close_network_lockdown_on_exit() -> Result<(), String> {
+    let _policy_owner = NETWORK_GATE.close();
+    if !instance::owns_instance() {
+        return Err("Windows firewall recovery requires instance ownership".into());
+    }
+    disable_network_lockdown_unlocked()
+}
+
+// The public operation retains NETWORK_GATE through installation and
 // rollback, including when the bounded rollback runs on a separate worker.
 fn disable_network_lockdown_unlocked() -> Result<(), String> {
     let _budget = Budget::new(std::time::Duration::from_secs(8));
