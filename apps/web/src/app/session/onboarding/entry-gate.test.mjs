@@ -98,9 +98,16 @@ test("an unknown phase is treated as not-yet-open, never as live", () => {
   assert.equal(shouldRunChecks(decision), false);
 });
 
-test("the start gate uses synchronized server time and has no client-side admission delay", () => {
+// The admission spread costs a candidate exam time against a fixed server
+// end, so it stays small: 150 s was removed as unfair, 15 s (7.5 s on
+// average) is the agreed ceiling for flattening the T=0 burst.
+test("the start gate uses synchronized server time and a spread of at most 15 s", () => {
   const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
   assert.match(source, /const now = serverNow\(\);\s*setWaitMs\(Math\.max\(0, startMs - now\)\)/);
-  assert.match(source, /if \(waitMs <= 0 && readyForStart\) \{\s*void finalizeSecureStart\(\)/);
-  assert.doesNotMatch(source, /START_JITTER_MS|startJitter|jitterElapsed/);
+  assert.match(
+    source,
+    /if \(waitMs > 0 \|\| !readyForStart\) return;[\s\S]*?setTimeout\(\(\) => void finalizeSecureStart\(\), Math\.random\(\) \* START_JITTER_MS\)/
+  );
+  const ceiling = Number(/const START_JITTER_MS = ([\d_]+);/.exec(source)?.[1].replace(/_/g, ""));
+  assert.ok(ceiling > 0 && ceiling <= 15_000, `jitter ceiling ${ceiling} ms`);
 });
