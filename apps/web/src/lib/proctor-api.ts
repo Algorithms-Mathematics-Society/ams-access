@@ -834,3 +834,23 @@ export function noteListServerTime(items: readonly object[]): boolean {
   noteServerTime(iso);
   return Boolean(iso && !Number.isNaN(Date.parse(iso)));
 }
+
+/** This participant's most recent session for a contest, or null when the
+ * server has none. Results use it when this device kept no record (another
+ * Mac, or after sign-out). A server without the route answers 404 or 405,
+ * which means the same thing to the caller. */
+export async function getMyContestSession(contestUid: string): Promise<{
+  uid: string;
+  status: SessionStatus;
+  started_at: string | null;
+  ended_at: string | null;
+} | null> {
+  try {
+    return await request("GET", `/participant/contests/${encodeURIComponent(contestUid)}/session`);
+  } catch (error) {
+    if (error instanceof ProctorApiError && (error.status === 404 || error.status === 405)) {
+      return null;
+    }
+    throw error;
+  }
+}

@@ -13,7 +13,13 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
-import { getContest, listMySubmissions, ProctorApiError } from "@/lib/proctor-api";
+import {
+  getContest,
+  getMyContestSession,
+  listMySubmissions,
+  logout,
+  ProctorApiError,
+} from "@/lib/proctor-api";
 import { toAttemptRecords, type AttemptRecord } from "@/app/session/contest/attempt-adapter";
 import { partialCreditZeroed } from "@/app/session/contest/family-summary";
 import { verdictColor, verdictLabel, isTerminalVerdict } from "@/lib/verdict";
@@ -63,16 +69,23 @@ function ResultsView({ contestId }: { contestId: string }) {
     if (inFlight.current) return;
     const version = ++requestVersion.current;
     setError(null);
-    const sessionId = resolveSessionId(contestId);
-    if (!contestId || !sessionId) {
-      setError(
-        "This device has no saved session for this contest. Return home and open your most recent contest, or ask an invigilator for help with an older session."
-      );
+    const noSession =
+      "This device has no saved session for this contest. Return home and open your most recent contest, or ask an invigilator for help with an older session.";
+    if (!contestId) {
+      setError(noSession);
       return;
     }
     inFlight.current = true;
     setLoading(true);
     try {
+      // Another Mac, or a sign-out, leaves no local record; the server still
+      // knows the session.
+      const sessionId = resolveSessionId(contestId) ?? (await getMyContestSession(contestId))?.uid;
+      if (version !== requestVersion.current) return;
+      if (!sessionId) {
+        setError(noSession);
+        return;
+      }
       const [index, submissions] = await Promise.all([
         getContest(contestId, { includeReference: false }),
         listMySubmissions(sessionId),
@@ -91,6 +104,8 @@ function ResultsView({ contestId }: { contestId: string }) {
     } catch (caught) {
       if (version !== requestVersion.current) return;
       if (caught instanceof ProctorApiError && caught.status === 401) {
+        // Drop the dead token first, or sign-in starts from a stale one.
+        logout();
         router.push("/login");
         return;
       }
