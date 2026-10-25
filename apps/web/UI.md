@@ -289,3 +289,22 @@ transient verification failures and offers Retry verification.
 The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
 so network names and password controls stay inside the dialog at narrow sizes.
 The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
+
+The offline C++ reference is prepared by the web dev and build hooks. First setup
+downloads the pinned cppreference archive, verifies its checksum, and packs it into
+`public/cppref/`; later builds reuse a validated bundle. For setup without network
+access, set `CPPREFERENCE_ARCHIVE` to the pinned archive or `CPPREFERENCE_SOURCE`
+to its extracted directory containing `reference/`. Run
+`node scripts/setup-cppreference.mjs --check` from `apps/web` to check the bundle.
+Installed apps read the embedded index and bounded Brotli blocks through native
+`read_cppref_asset` IPC; development servers use the existing Brotli response headers.
+Missing bundles fail preparation rather than producing a broken installer. Reference
+load errors offer Retry, and rejected index/block loads remain retryable.
+Reference HTML is sanitized before rendering: scripts, forms, frames, inline styles,
+event handlers and external image sources are removed. Article anchors carry only
+controlled navigation metadata, so clicks, keyboard activation and middle-clicks
+cannot open external URLs. Only bundled article paths and image assets are allowed.
+Build preparation strips external CSS/SVG resource references and omits upstream
+JavaScript; bundle checks reject unsafe copied assets. Native top-level navigation
+is restricted to the app origin (or the configured development origin), and the
+external-browser command refuses requests while native exam lockdown is active.
