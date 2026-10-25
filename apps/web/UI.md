@@ -243,7 +243,10 @@ updates preserve selection. The horizontal header logo is 180px wide with
 existing page gutters and built-in artwork clear space preserved.
 
 Sign-in labels match the credential slip: Login ID and Password. Short IDs and full
-`@access` handles retain the existing normalization. The password starts masked,
+`@access` and `@access.amsaccess.com` handles accept case changes and surrounding
+whitespace. Internal whitespace, punctuation, unknown domains and overlong IDs
+are preserved for server rejection rather than silently selecting another identity.
+The password starts masked,
 with a Show/Hide control and a persistent format hint linked to the input.
 
 ## Contest reference sheet

@@ -1,10 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getContest, latestResumeRequest, ProctorApiError } from "./proctor-api.ts";
+import {
+  getContest,
+  latestResumeRequest,
+  studentLogin,
+  logout,
+  ProctorApiError,
+} from "./proctor-api.ts";
 import { startResumePolling } from "../app/home/components/resume-polling.ts";
 const settle = async () => {
   for (let i = 0; i < 16; i++) await Promise.resolve();
 };
+
+test("login transport preserves identity and sends exactly one request per attempt", async (t) => {
+  const bodies = [];
+  t.mock.method(globalThis, "fetch", async (_, options) => {
+    bodies.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ detail: "Incorrect login ID or password." }), {
+      status: 401,
+    });
+  });
+  t.after(logout);
+  const ids = [" Candidate@access ", "john doe", "john+doe", "john@example.com", "a".repeat(65)];
+  for (const id of ids) {
+    await assert.rejects(studentLogin(id, "ABCD-EFGH-JKMN"), (error) => error.status === 401);
+  }
+  assert.deepEqual(
+    bodies,
+    ids.map((id) => ({ login_id: id.trim(), password: "ABCD-EFGH-JKMN" }))
+  );
+});
 
 test("stalled response body times out and the next resume polling tick can retry", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
