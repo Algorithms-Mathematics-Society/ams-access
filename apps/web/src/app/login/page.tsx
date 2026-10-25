@@ -25,6 +25,9 @@ import { AccessLogo } from "@/components/AccessLogo";
 import { invoke } from "@ams/api-client";
 import { describeUnreachable } from "@/lib/network-error";
 import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
+import { DEFAULT_DOWNLOAD_URL } from "@/lib/client-update";
+import { openExternal } from "@/lib/open-external";
+import { UpdateRequiredDialog } from "./UpdateRequiredDialog";
 import { BrandPane } from "./components/BrandPane";
 import { SlipForm } from "./components/SlipForm";
 import styles from "./login.module.css";
@@ -42,6 +45,8 @@ export default function LoginPage() {
   // without it. See `network-error.ts`.
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Set on a 426: the server refuses this build, so the only way on is to install.
+  const [upgrade, setUpgrade] = useState<{ version: string; url: string } | null>(null);
   const homePrefetched = useRef(false);
   useEffect(() => {
     if (!loginId || homePrefetched.current) return;
@@ -101,8 +106,15 @@ export default function LoginPage() {
 
       if (caught.needsUpgrade) {
         // The one error where telling them exactly what to do is the whole
-        // point: a version mismatch is unfixable from inside the app.
+        // point: a version mismatch is unfixable from inside the app, so give
+        // them the server's download link rather than a sentence about it.
+        const { min_version, download_url } = caught.detail ?? {};
         setError(caught.message);
+        setUpgrade({
+          version: typeof min_version === "string" ? min_version : "",
+          url:
+            typeof download_url === "string" && download_url ? download_url : DEFAULT_DOWNLOAD_URL,
+        });
         return;
       }
       if (caught.status === 0) {
@@ -223,6 +235,15 @@ export default function LoginPage() {
           <BrandPane />
         </HStack>
       </VStack>
+
+      {upgrade && (
+        <UpdateRequiredDialog
+          currentVersion={process.env.NEXT_PUBLIC_APP_VERSION ?? ""}
+          latestVersion={upgrade.version}
+          downloadUrl={upgrade.url}
+          onInstall={openExternal}
+        />
+      )}
 
       <HelpRequestModal
         open={helpOpen}

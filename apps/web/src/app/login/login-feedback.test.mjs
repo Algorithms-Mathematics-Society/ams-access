@@ -18,9 +18,13 @@ const compile = (source) =>
   }).outputText;
 const handlerCode = compile(page.slice(start, end));
 class ProctorApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, detail = null) {
     super(message);
     this.status = status;
+    this.detail = detail;
+  }
+  get needsUpgrade() {
+    return this.status === 426;
   }
 }
 function harness({
@@ -52,6 +56,10 @@ function harness({
     setLoading: (value) => {
       state.loading = value;
     },
+    setUpgrade: (value) => {
+      state.upgrade = value;
+    },
+    DEFAULT_DOWNLOAD_URL: "https://default.test",
     studentLogin: async (...args) => {
       calls.push(args);
       if (failure) throw failure;
@@ -126,6 +134,23 @@ test("nonempty password is passed unchanged and server rejection remains authori
   assert.equal(h.state.invalidField, null);
   assert.equal(h.state.loading, false);
   assert.deepEqual(h.routes, []);
+});
+test("a 426 opens the update dialog with the server's download link", async () => {
+  const h = harness({
+    failure: new ProctorApiError("Too old", 426, {
+      min_version: "4.2.0",
+      download_url: "https://server.test/download",
+    }),
+  });
+  await h.submit();
+  assert.deepEqual(
+    { ...h.state.upgrade },
+    { version: "4.2.0", url: "https://server.test/download" }
+  );
+  assert.deepEqual(h.routes, []);
+  const bare = harness({ failure: new ProctorApiError("Too old", 426) });
+  await bare.submit();
+  assert.deepEqual({ ...bare.state.upgrade }, { version: "", url: "https://default.test" });
 });
 test("loading prevents duplicate sign-in and network error is not field invalidity", async () => {
   const busy = harness({ loading: true });
