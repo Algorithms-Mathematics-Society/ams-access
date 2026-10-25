@@ -24,11 +24,14 @@ coverage now includes internal whitespace/punctuation, unknown and partial
 suffixes, invisible characters, long IDs, full-handle paste and the actual login
 request body. Each attempt still sends exactly one request.
 
-Read-only inspection of sibling `ams-api` found another unresolved requirement:
+Initial read-only inspection of sibling `ams-api` found another requirement:
 `POST /contests/{contest_uid}/participants/{login_id}/reissue` generates and commits
 a fresh password on every invocation, without an idempotency key. A retried
-request can rotate it again. The accepted rotation/session policy and a tested
-retry-safe server implementation are required before #176 can pass. No production
+request can rotate it again. A subsequent follow-up now implements consumed request
+IDs, atomic rotation, bounded hashing outside the transaction, and portal retry
+ID retention. Its migration and PostgreSQL integration tests still need validation
+on an unrestricted host. See `ams-api/docs/credential-reissue.md` and the exact
+Windows/staging steps in [Shubh's checklist](windows-173-176-shubh.md). No production
 credentials, delivery records or database were accessed in this review.
 
 ## Validation performed
@@ -65,6 +68,14 @@ credentials, delivery records or database were accessed in this review.
   result is claimed.
 - Local full Tauri builds require WebKit/libsoup development libraries absent on
   this host. No hook has been weakened and no native test has been relabeled pass.
+
+The server/portal follow-up passed 189 runnable API tests, three focused reissue
+logic/schema tests, portal TypeScript and all 20 portal test files. Seven new
+PostgreSQL integration cases are skipped locally: a disposable PostgreSQL cluster
+initialized successfully but the sandbox denied creation of its Unix socket.
+Offline Alembic SQL generation succeeds. Mypy passes for the changed participant
+service and schemas; checking the wider route/model files reports existing errors
+outside the new reissue code. No migrations or production changes were applied.
 
 All four issues remain open until their outstanding evidence is collected. Merge
 or port the local fix onto current `main`, run CI on that exact revision, then
