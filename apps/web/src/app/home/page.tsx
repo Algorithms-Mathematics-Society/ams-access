@@ -20,6 +20,7 @@ import {
   consumeResume,
   getContest,
   getSession,
+  hasToken,
   latestResumeRequest,
   listContests,
   logout,
@@ -64,6 +65,7 @@ import { DashboardShell, DashboardColumns } from "./components/DashboardShell";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { Banner } from "@astryxdesign/core/Banner";
 import { AccessDialog } from "@/components/AccessDialog";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { isBufferKey } from "@/app/session/contest/answer-buffer";
@@ -928,7 +930,32 @@ export default function HomePage() {
       (resumeVerification === "verified" &&
         String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING"))
   );
-  const contestsPanel = (
+  // A token that expired, was revoked or is missing (a signed-out exit lands
+  // here too) made Refresh fail for ever with no way to sign in. Drafts and
+  // the saved session stay on the device for after sign-in.
+  const signInExpired =
+    identityHydrated &&
+    (!hasToken() ||
+      (invitedContestsQuery.error instanceof ProctorApiError &&
+        invitedContestsQuery.error.status === 401));
+  const contestsPanel = signInExpired ? (
+    <Banner
+      key="contests"
+      status="warning"
+      title="Your sign-in expired"
+      description="Sign in again to see your contests. Work saved on this device is kept."
+      endContent={
+        <AstryxButton
+          label="Sign in"
+          onClick={() => {
+            logout();
+            clearQueryCache();
+            router.push("/login");
+          }}
+        />
+      }
+    />
+  ) : (
     <ContestsPanel
       key="contests"
       onRefresh={refreshContests}
