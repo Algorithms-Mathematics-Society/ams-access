@@ -116,7 +116,13 @@ import {
   type SourceSnapshot,
 } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
-import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
+import {
+  DRAFT_BACKUP_MS,
+  createDraftSaveQueue,
+  draftBackup,
+  restoreDraftWorkspace,
+  stopsDraftBackup,
+} from "./draft-workspace";
 import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
@@ -148,8 +154,11 @@ import {
   getRun,
   getSession,
   heartbeat,
+  listDrafts,
   listMySubmissions,
   logout,
+  saveDraft,
+  type Draft,
   run as runAgainstSamples,
   serverNow,
   startSession,
@@ -469,6 +478,10 @@ export default function ContestPageClient() {
   // Per-problem autosave revision. A ref rather than state: it is read and
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
+  // What the server's backup copy holds per problem (see `draftBackup`), and
+  // whether backing up has been given up for this session.
+  const serverDraftRef = useRef<Record<string, string>>({});
+  const draftBackupOffRef = useRef(false);
   const submitInFlightRef = useRef(false);
   // Retain an unacknowledged request only for retries of its exact payload.
   const submitKeyRef = useRef<{
@@ -1396,20 +1409,27 @@ export default function ContestPageClient() {
 
       const answersMap: Record<string, { language: string; content: string }> = {};
       const restored: string[] = [];
-      // No server drafts: work is local only. `restoreDraftWorkspace` and
-      // `chooseRestore` already handle a null server copy by taking the
-      // buffer, so this is the path they were written for.
+      // The device buffer is primary. The server's backup copy only matters
+      // when it is newer or the buffer is gone (a spare machine), which
+      // `chooseRestore` decides; failing to fetch it must not stop the room.
+      const serverDrafts = await listDrafts(live.uid).catch(() => [] as Draft[]);
+      if (disposed) return;
       const restoredFiles: Record<string, EditorFile[]> = {};
       const restoredActiveFiles: Record<string, string> = {};
       // A first offline draft may have no server row at all. Enumerate the paper.
       for (const question of questions) {
         const buffered = readAnswerBuffer(localStorage, live.uid, question.id);
-        draftRevisionsRef.current[question.id] = buffered?.revision ?? 0;
+        const server = serverDrafts.find((draft) => draft.problem_label === question.id) ?? null;
+        draftRevisionsRef.current[question.id] = Math.max(
+          buffered?.revision ?? 0,
+          server?.client_revision ?? 0
+        );
+        if (server) serverDraftRef.current[question.id] = `${server.language}\n${server.source}`;
         const workspace = restoreDraftWorkspace(
           question.id,
           question.starter_filename ?? questionFileName(question, "C++23"),
           buffered,
-          null
+          server
         );
         if (workspace) {
           restoredFiles[question.id] = workspace.files;
@@ -1862,10 +1882,11 @@ export default function ContestPageClient() {
   // on restart, so a crash or reload recovers the code without the network
   // being involved at all.
   //
-  // What that costs is honest: work does not follow the candidate to another
-  // machine, and clearing site data loses it. What it buys is that a flaky
-  // connection can no longer put "Save failed — retry before submitting" in
-  // front of someone mid-contest about code that was never actually at risk.
+  // What it buys is that a flaky connection can no longer put "Save failed —
+  // retry before submitting" in front of someone mid-contest about code that
+  // was never actually at risk. So work can still follow the candidate to a
+  // spare machine, a silent background backup (below) copies the buffer to
+  // the server when it changes; this save never waits on it.
   async function doSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) return false;
     const qId = questions[activeQ].id;
@@ -2496,6 +2517,49 @@ export default function ContestPageClient() {
     };
     // Recheck immediately on reconnect; ignore the previous connection's replies.
   }, [sessionId, router, browserOnline]);
+
+  // Background backup of the device buffer to the server, only for problems
+  // whose answer changed since the server last accepted one. It never blocks
+  // and never shows an error; a failure that will not clear by itself (no
+  // route to the server, or drafts closed) stops it for this session.
+  useEffect(() => {
+    if (!sessionId || questions.length === 0) return;
+    let cancelled = false;
+    const backup = async () => {
+      for (const question of questions) {
+        if (cancelled || draftBackupOffRef.current) return;
+        const next = draftBackup(
+          readAnswerBuffer(localStorage, sessionId, question.id),
+          serverDraftRef.current[question.id]
+        );
+        if (!next) continue;
+        try {
+          const saved = await saveDraft(sessionId, question.id, {
+            source: next.source,
+            language: next.language,
+            clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
+          });
+          // The server answers with what it holds, which is another device's
+          // copy when ours was stale; the next tick then supersedes it.
+          draftRevisionsRef.current[question.id] = Math.max(
+            draftRevisionsRef.current[question.id] ?? 0,
+            saved.client_revision
+          );
+          serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
+        } catch (caught) {
+          if (caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
+            draftBackupOffRef.current = true;
+          }
+          return;
+        }
+      }
+    };
+    const id = setInterval(() => void backup(), DRAFT_BACKUP_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionId, questions]);
 
   // Flush the moment the connection comes back, rather than waiting out the
   // autosave backoff. A candidate who reconnects with thirty seconds left

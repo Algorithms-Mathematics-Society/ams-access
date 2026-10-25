@@ -669,9 +669,35 @@ export async function getProblem(contestUid: string, label: string): Promise<Pro
   return body.problem;
 }
 
-// Drafts are not sent to the server. Work is written to the device on every
-// change and read back on restart (see contest/answer-buffer.ts), so there is
-// no draft endpoint to call and no save that can fail mid-contest.
+// Drafts live on the device first: written on every change and read back on
+// restart (see contest/answer-buffer.ts). The server copy is a background
+// backup so work can follow the candidate to a spare machine; nothing waits
+// on it and its failures are never shown.
+
+export async function listDrafts(sessionUid: string): Promise<Draft[]> {
+  return request<Draft[]>(
+    "GET",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts`,
+    undefined,
+    // Short: the room is loading, and the device copy does not need this.
+    8_000
+  );
+}
+
+/** A `clientRevision` at or below the server's is a no-op that returns the
+ * stored copy, so a retried save can never reinstate older code. */
+export async function saveDraft(
+  sessionUid: string,
+  label: string,
+  draft: { source: string; language: string; clientRevision: number }
+): Promise<Draft> {
+  return request<Draft>(
+    "PUT",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts/${encodeURIComponent(label)}`,
+    { source: draft.source, language: draft.language, client_revision: draft.clientRevision },
+    8_000
+  );
+}
 
 // ── running and submitting ────────────────────────────────────────────────
 
