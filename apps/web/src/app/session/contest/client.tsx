@@ -1760,6 +1760,7 @@ export default function ContestPageClient() {
 
     // Polling window elapsed without a terminal verdict: the submission is still
     // queued on the judge. Surface that clearly instead of leaving a silent spinner.
+    if (runVisit !== runVisitRef.current) return;
     setIsRunning(false);
     patchRun(mode, { error: null, timedOut: true });
     // The timed-out state stays visible in the run pane — the run is never an

@@ -147,3 +147,37 @@ test("a finishing session cannot start another submission", async () => {
   await f.submit();
   assert.equal(f.posts.length, 0);
 });
+
+test("a failed final Run poll cannot time out the next problem", async () => {
+  const start = client.indexOf("  async function pollRun(");
+  const end = client.indexOf("\n  // Status-only re-poll", start);
+  assert.ok(start >= 0 && end > start);
+  const code = ts.transpileModule(client.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  let rejectRun;
+  let polls = 0;
+  const writes = [];
+  const context = {
+    runVisitRef: { current: 1 },
+    setTimeout: (callback) => callback(),
+    getRun: () => {
+      polls++;
+      return new Promise((_resolve, reject) => {
+        rejectRun = reject;
+      });
+    },
+    setIsRunning: (value) => writes.push(["running", value]),
+    patchRun: (mode, value) => writes.push([mode, value]),
+  };
+  const poll = new Function(...Object.keys(context), `${code}; return pollRun;`)(
+    ...Object.values(context)
+  );
+  const pending = poll("all", "session", "attempt", 1, [0]);
+  await Promise.resolve();
+  assert.equal(polls, 1);
+  context.runVisitRef.current = 2; // switchQuestion invalidates the old run
+  rejectRun(new Error("connection lost"));
+  await pending;
+  assert.deepEqual(writes, []);
+});
