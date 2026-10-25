@@ -1067,9 +1067,13 @@ export default function HomePage() {
           onProceed={
             // The card's "resume" comes from the contest phase, not from a
             // session; only the stored session for this contest may resume.
+            // The server reopens an active or pending session without an
+            // invigilator, so those go straight to onboarding (the modal's own
+            // link); only a submitted or terminated one needs approval.
             preflightSessionType === "resume" &&
             activeSession &&
-            activeSession.contest_id === preflightContestId
+            activeSession.contest_id === preflightContestId &&
+            !["active", "pending"].includes(String(activeSession.status ?? "").toLowerCase())
               ? async () => {
                   setPreflightContestId(null);
                   await submitResumeRequest(activeSession);
