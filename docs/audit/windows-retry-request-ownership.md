@@ -57,3 +57,7 @@ current `ResultsPanel`: failed `kind: behavior` rows display `checker_message`
 and stderr. The current worker emits exactly that kind. No duplicate UI rewrite
 was made; verify this path with actual returned fixtures in the intended packaged
 build. API/worker deployment order and other judging acceptance remain separate.
+
+## Independent review follow-up
+
+Reviewed with the credential-input changes in PR #236: all 915 web tests and web TypeScript pass on the combined tree. An independent review found no concrete blocker in the request guards or their retry/sign-out coverage. This PR is now ready for review. Packaging jobs were skipped while it was draft; the follow-up CI must supply that evidence. Windows device and staging acceptance remain outstanding.
