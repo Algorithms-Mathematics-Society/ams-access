@@ -1,17 +1,136 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { brotliCompressSync } from "node:zlib";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { EventEmitter, once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { test } from "node:test";
 import {
   checkBundle,
+  download,
   findReferenceDir,
   pack,
+  publishBundle,
   sanitizeCss,
   sanitizeSvg,
 } from "./setup-cppreference.mjs";
+
+test("download completes only after the output file closes", async () => {
+  const response = Readable.from([Buffer.from("archive")]);
+  response.statusCode = 200;
+  response.setTimeout = () => {};
+  const request = new EventEmitter();
+  request.setTimeout = () => {};
+  request.destroy = () => {};
+  const stream = new Writable({
+    autoDestroy: false,
+    write(_chunk, _encoding, done) {
+      done();
+    },
+  });
+  const getRequest = (_url, _options, callback) => {
+    queueMicrotask(() => callback(response));
+    return request;
+  };
+  let completed = false;
+  const pending = download(
+    new URL("https://example.test/archive"),
+    "unused",
+    0,
+    getRequest,
+    () => stream
+  ).then(() => {
+    completed = true;
+  });
+  await once(stream, "finish");
+  await Promise.resolve();
+  assert.equal(completed, false);
+  stream.emit("close");
+  await pending;
+  assert.equal(completed, true);
+});
+
+test("a failed download waits for the output file to close before rejecting", async () => {
+  const response = new PassThrough();
+  response.statusCode = 200;
+  response.setTimeout = () => {};
+  response.destroy = () => {};
+  const request = new EventEmitter();
+  request.setTimeout = () => {};
+  request.destroy = () => {};
+  const stream = new Writable({
+    autoDestroy: false,
+    write(_chunk, _encoding, done) {
+      done();
+    },
+  });
+  let destroyCalled = false;
+  stream.destroy = () => {
+    destroyCalled = true;
+    return stream;
+  };
+  const getRequest = (_url, _options, callback) => {
+    queueMicrotask(() => callback(response));
+    return request;
+  };
+  let rejected = false;
+  const pending = download(
+    new URL("https://example.test/archive"),
+    "unused",
+    0,
+    getRequest,
+    () => stream
+  ).catch((error) => {
+    rejected = true;
+    return error;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  response.emit("error", new Error("injected read failure"));
+  await Promise.resolve();
+  assert.equal(destroyCalled, true);
+  assert.equal(rejected, false);
+  stream.emit("close");
+  assert.match((await pending).message, /injected read failure/);
+  assert.equal(rejected, true);
+});
+
+test("a failed bundle promotion restores the previous bundle", () => {
+  const root = mkdtempSync(join(process.cwd(), "cppref-publish-"));
+  const staging = join(root, "staging"),
+    destination = join(root, "bundle");
+  mkdirSync(staging);
+  mkdirSync(destination);
+  writeFileSync(join(staging, "marker"), "new");
+  writeFileSync(join(destination, "marker"), "old");
+  try {
+    assert.throws(
+      () =>
+        publishBundle(staging, destination, (from, to) => {
+          if (from === staging) throw new Error("injected promotion failure");
+          renameSync(from, to);
+        }),
+      /injected promotion failure/
+    );
+    assert.equal(readFileSync(join(destination, "marker"), "utf8"), "old");
+    assert.equal(readFileSync(join(staging, "marker"), "utf8"), "new");
+    assert.equal(existsSync(`${destination}.backup-${process.pid}`), false);
+    publishBundle(staging, destination);
+    assert.equal(readFileSync(join(destination, "marker"), "utf8"), "new");
+    assert.equal(existsSync(`${destination}.backup-${process.pid}`), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "cppref-check-"));

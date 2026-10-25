@@ -331,13 +331,19 @@ function safeArchiveListing(archive) {
     if (/^[lh]/.test(line)) throw new Error("archive contains links; refusing unsafe extraction");
 }
 
-async function download(url, target, redirects = 0) {
+export async function download(
+  url,
+  target,
+  redirects = 0,
+  getRequest = https.get,
+  createStream = createWriteStream
+) {
   if (redirects > 5) throw new Error("archive download exceeded redirect limit");
   let deadline;
   let activeRequest;
   try {
     const response = await new Promise((resolvePromise, reject) => {
-      activeRequest = https.get(
+      activeRequest = getRequest(
         url,
         { headers: { "User-Agent": "ams-access-cppreference-setup" } },
         resolvePromise
@@ -359,39 +365,68 @@ async function download(url, target, redirects = 0) {
       const next = new URL(location, url);
       if (next.protocol !== "https:") throw new Error("archive redirect must remain HTTPS");
       clearTimeout(deadline);
-      return await download(next, target, redirects + 1);
+      return await download(next, target, redirects + 1, getRequest, createStream);
     }
     if (response.statusCode !== 200) {
       response.resume();
       throw new Error(`archive download failed with HTTP ${response.statusCode}`);
     }
-    const stream = createWriteStream(target);
+    const stream = createStream(target);
     response.setTimeout(30_000, () =>
       response.destroy(new Error("archive download stalled for 30 seconds"))
     );
     await new Promise((resolvePromise, reject) => {
       let settled = false;
+      let finished = false;
+      let failure;
       const fail = (error) => {
-        if (settled) return;
-        settled = true;
+        if (settled || failure) return;
+        failure = error;
         activeRequest.destroy();
         response.destroy();
         stream.destroy();
-        reject(error);
       };
       stream.once("error", fail);
       response.once("error", fail);
       response.once("aborted", () => fail(new Error("archive download response was aborted")));
       stream.once("finish", () => {
+        finished = true;
+      });
+      stream.once("close", () => {
         if (settled) return;
         settled = true;
-        resolvePromise();
+        if (failure) reject(failure);
+        else if (!finished) reject(new Error("archive download closed before completion"));
+        else resolvePromise();
       });
       response.pipe(stream);
     });
   } finally {
     clearTimeout(deadline);
   }
+}
+
+export function publishBundle(staging, destination, move = renameSync) {
+  const backup = `${destination}.backup-${process.pid}`;
+  if (existsSync(backup)) throw new Error(`previous bundle backup already exists: ${backup}`);
+  const hadPrevious = existsSync(destination);
+  if (hadPrevious) move(destination, backup);
+  try {
+    move(staging, destination);
+  } catch (error) {
+    if (hadPrevious) {
+      try {
+        move(backup, destination);
+      } catch (restoreError) {
+        throw new Error(
+          `bundle replacement failed; previous bundle remains at ${backup}: ${restoreError.message}`,
+          { cause: error }
+        );
+      }
+    }
+    throw error;
+  }
+  if (hadPrevious) rmSync(backup, { recursive: true, force: true });
 }
 
 async function obtainSource() {
@@ -483,9 +518,7 @@ export async function run(args = process.argv.slice(2)) {
     pack(source, staging);
     const check = checkBundle(staging);
     if (!check.ok) throw new Error(`generated bundle failed validation: ${check.reason}`);
-    rmSync(dest, { recursive: true, force: true });
-    mkdirSync(dirname(dest), { recursive: true });
-    renameSync(staging, dest);
+    publishBundle(staging, dest);
     const manifest = JSON.parse(readFileSync(join(dest, "manifest.json"), "utf8"));
     const mb = (n) => (n / 1048576).toFixed(1);
     console.log(
