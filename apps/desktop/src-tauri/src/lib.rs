@@ -668,6 +668,27 @@ fn acknowledge_current_event_batch(
     Ok(true)
 }
 
+/// What one upload response means for the batch it carried.
+#[derive(Debug, PartialEq)]
+enum UploadVerdict {
+    Delivered,
+    /// The server will never accept this batch (e.g. 422). Retrying it would
+    /// block every later event, sleep and focus evidence included.
+    Refused(u16),
+    Unauthorized,
+    Retry,
+}
+
+fn upload_verdict(status: u16) -> UploadVerdict {
+    match status {
+        200..=299 => UploadVerdict::Delivered,
+        401 => UploadVerdict::Unauthorized,
+        408 | 429 => UploadVerdict::Retry,
+        400..=499 => UploadVerdict::Refused(status),
+        _ => UploadVerdict::Retry,
+    }
+}
+
 fn spawn_event_sync_task(app: tauri::AppHandle) {
     let store = local_event_store(Some(&app));
     let dir = proctoring_log_dir(Some(&app));
@@ -765,10 +786,10 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                 "{}/participant/sessions/{}/events",
                 config.api_url, config.session_id
             );
-            let delivered = if batch.events.is_empty() {
+            let verdict = if batch.events.is_empty() {
                 // Only preserved quarantine bytes moved the cursor; no server
                 // event is falsely acknowledged and no empty POST is needed.
-                true
+                UploadVerdict::Delivered
             } else {
                 let request = client
                     .post(&url)
@@ -778,34 +799,56 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                     .send();
                 match while_event_lease_active(&config, request).await {
                     None => continue,
-                    Some(Ok(response)) if response.status().is_success() => true,
                     Some(Ok(response)) => {
-                        note_event_error(
-                            "upload event batch",
-                            format!("HTTP {}", response.status().as_u16()),
-                        );
-                        false
+                        let status = response.status().as_u16();
+                        let verdict = upload_verdict(status);
+                        if verdict != UploadVerdict::Delivered {
+                            note_event_error("upload event batch", format!("HTTP {status}"));
+                        }
+                        verdict
                     }
                     Some(Err(error)) => {
                         note_event_error("upload event batch", error.without_url());
-                        false
+                        UploadVerdict::Retry
                     }
                 }
             };
-            if delivered {
-                match tauri::async_runtime::spawn_blocking(move || {
-                    acknowledge_current_event_batch(store, &config, &batch)
-                })
-                .await
-                {
-                    Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
-                    error => {
-                        note_event_error("acknowledge event batch", format!("{error:?}"));
-                        delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+            match verdict {
+                UploadVerdict::Delivered | UploadVerdict::Refused(_) => {
+                    let refused = match verdict {
+                        UploadVerdict::Refused(status) => Some(format!("HTTP {status}")),
+                        _ => None,
+                    };
+                    match tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(reason) = &refused {
+                            store.quarantine_refused(&config.binding, &batch, reason)?;
+                            event_status()
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .quarantine_notices += 1;
+                            note_event_error(
+                                "audit evidence quarantined / refused by server",
+                                reason,
+                            );
+                        }
+                        acknowledge_current_event_batch(store, &config, &batch)
+                    })
+                    .await
+                    {
+                        Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
+                        error => {
+                            note_event_error("acknowledge event batch", format!("{error:?}"));
+                            delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                        }
                     }
                 }
-            } else {
-                delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                // Retrying a token the server rejects only spins. Wait until
+                // configure_event_stream arms a new one; it revokes this lease.
+                UploadVerdict::Unauthorized => {
+                    let _ = config.lease.subscribe().wait_for(|revoked| *revoked).await;
+                    delay = EVENT_SYNC_INTERVAL_SECS;
+                }
+                UploadVerdict::Retry => delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS),
             }
         }
     });
@@ -4240,6 +4283,18 @@ mod pinning_tests {
 #[cfg(test)]
 mod event_integration_tests {
     use super::*;
+    #[test]
+    fn upload_refusals_move_on_and_transient_failures_retry() {
+        assert_eq!(upload_verdict(200), UploadVerdict::Delivered);
+        assert_eq!(upload_verdict(202), UploadVerdict::Delivered);
+        assert_eq!(upload_verdict(400), UploadVerdict::Refused(400));
+        assert_eq!(upload_verdict(413), UploadVerdict::Refused(413));
+        assert_eq!(upload_verdict(422), UploadVerdict::Refused(422));
+        assert_eq!(upload_verdict(401), UploadVerdict::Unauthorized);
+        for status in [408, 429, 500, 502, 503] {
+            assert_eq!(upload_verdict(status), UploadVerdict::Retry);
+        }
+    }
     #[test]
     fn chains_are_session_bound_and_resume_without_unbound_gaps() {
         let mut chains = HashMap::new();
