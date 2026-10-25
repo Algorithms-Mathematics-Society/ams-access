@@ -77,6 +77,16 @@ Offline Alembic SQL generation succeeds. Mypy passes for the changed participant
 service and schemas; checking the wider route/model files reports existing errors
 outside the new reissue code. No migrations or production changes were applied.
 
+After the user's successful fetch, all three follow-up branches were rebased
+without conflicts. Access is based on `26081ad`; API is based on `26ee3c1`;
+the portal branch already included its current `origin/main`. Post-rebase checks
+pass: 104 Access web test files, Access type-checking/version consistency, 191
+runnable API tests, scoped Ruff and service/schema Mypy, and all 20 portal test
+files plus TypeScript. API tests additionally report 40 skips and 405 database
+cases deselected in the non-database run; those are not counted as passes.
+The API CI uses PostgreSQL 16 and explicitly rejects skipped database tests.
+It must validate the seven new database integration cases after publication.
+
 All four issues remain open until their outstanding evidence is collected. Merge
 or port the local fix onto current `main`, run CI on that exact revision, then
 retest the intended Windows artifact before completing the acceptance records.
