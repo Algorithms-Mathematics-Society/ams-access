@@ -61,6 +61,7 @@ const commitSnapshot = ts.transpileModule(`const commit = ${committedSnapshot};`
 
 function fixture() {
   const entries = new Map();
+  const retryEntries = new Map();
   const pending = [];
   const files = [
     { id: "A:main", name: "main.cpp", content: "old" },
@@ -119,6 +120,7 @@ function fixture() {
     submitInFlightRef: { current: false },
     exitInFlightRef: { current: false },
     submitKeyRef: { current: null },
+    acknowledgedSubmitKeysRef: { current: {} },
     setIsSubmitting: () => {},
     setSubmissionError: () => {},
     newIdempotencyKey: () => "submit-1",
@@ -128,7 +130,11 @@ function fixture() {
     },
     setSubmittedSources: () => {},
     fetchSubmissions: async () => {},
-    localStorage: {},
+    localStorage: {
+      getItem: (key) => retryEntries.get(key) ?? null,
+      setItem: (key, value) => retryEntries.set(key, String(value)),
+      removeItem: (key) => retryEntries.delete(key),
+    },
   };
   const api = new Function(
     ...Object.keys(state),

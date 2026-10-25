@@ -40,6 +40,7 @@ function hydrate({ deniedRead, session, deniedRemoval = false } = {}) {
     STORAGE_KEYS: { DISPLAY_NAME: "display" },
     ACTIVE_SESSION_KEY: "session",
     scanGenerationRef: { current: 0 },
+    recoveryEpochRef: { current: 0 },
     localStorage: {
       getItem: (key) => {
         if (deniedRead === key || deniedRead === "all") throw new Error("denied");
@@ -100,6 +101,15 @@ const validationEnd = source.indexOf("\n  useEffect(() => {", validationStart);
 const validationCode = ts.transpileModule(source.slice(validationStart, validationEnd), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const recoveryCheckStart = source.indexOf("  function recoveryCurrent(");
+const recoveryCheckEnd = source.indexOf(
+  "\n  async function consumeApprovedResume",
+  recoveryCheckStart
+);
+assert.ok(recoveryCheckStart >= 0 && recoveryCheckEnd > recoveryCheckStart);
+const recoveryCheckCode = ts.transpileModule(source.slice(recoveryCheckStart, recoveryCheckEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 class ApiError extends Error {
   constructor(status) {
     super(`HTTP ${status}`);
@@ -116,6 +126,7 @@ function validationHarness({ error, approvalError, live, writeDenied = false } =
     busy: false,
   };
   const context = {
+    recoveryEpochRef: { current: 0 },
     ProctorApiError: ApiError,
     getSession: async () => {
       if (error) throw error;
@@ -152,12 +163,14 @@ function validationHarness({ error, approvalError, live, writeDenied = false } =
     appendSecurityEvent() {},
     ACTIVE_SESSION_KEY: "session",
     localStorage: {
+      getItem: () => state.stored,
       setItem: (_key, value) => {
         if (writeDenied) throw new Error("storage denied");
         state.stored = value;
       },
     },
   };
+  vm.runInNewContext(recoveryCheckCode, context);
   vm.runInNewContext(validationCode, context);
   return {
     state,
@@ -166,6 +179,92 @@ function validationHarness({ error, approvalError, live, writeDenied = false } =
     validate: (mode = "hydrate") => context.validateStoredActiveSession(session, mode),
   };
 }
+test("late validation of A cannot clear a newer onboarding session B", async () => {
+  let rejectOld;
+  const h = validationHarness();
+  h.context.getSession = () =>
+    new Promise((_resolve, reject) => {
+      rejectOld = reject;
+    });
+  const pending = h.validate();
+  const newer = JSON.stringify({ id: "B", contest_id: "contest-B" });
+  h.state.stored = newer;
+  rejectOld(new ApiError(404));
+  await pending;
+  assert.equal(h.state.stored, newer);
+  assert.equal(h.state.removed, 0);
+});
+test("sign-out prevents an earlier verification response from restoring saved recovery", async () => {
+  let resolveApproval;
+  const h = validationHarness();
+  h.context.latestResumeRequest = () =>
+    new Promise((resolve) => {
+      resolveApproval = resolve;
+    });
+  const pending = h.validate();
+  for (let i = 0; i < 8 && !resolveApproval; i++) await Promise.resolve();
+  assert.equal(typeof resolveApproval, "function");
+
+  const signOutStart = source.indexOf("  async function signOut() {");
+  const signOutEnd = source.indexOf("\n  // Match the existing resume guards", signOutStart);
+  const signOutCode = ts.transpileModule(source.slice(signOutStart, signOutEnd), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const storage = h.context.localStorage;
+  h.context.ACTIVE_SESSION_KEY = "ams_active_session";
+  storage.ams_active_session = h.state.stored;
+  storage.removeItem = (key) => {
+    delete storage[key];
+    h.state.stored = null;
+  };
+  h.context.setConfirmDiscardOpen = () => {};
+  h.context.setSigningOut = () => {};
+  h.context.logout = () => {};
+  h.context.clearQueryCache = () => {};
+  h.context.hasNativeBridge = () => false;
+  h.context.DEVICE_SCOPED_KEYS = new Set();
+  h.context.setTimeout = () => 1;
+  h.context.router = { push: () => assert.fail("navigation should remain delayed") };
+  vm.runInNewContext(signOutCode, h.context);
+  await h.context.signOut();
+  assert.equal(h.state.stored, null);
+  resolveApproval({ uid: "request", status: "APPROVED" });
+  await pending;
+  assert.equal(h.state.stored, null, "old verification must not restore A after sign-out");
+});
+test("sign-out cannot be followed by a late approval-consume redirect", async () => {
+  const start = source.indexOf("  async function consumeApprovedResume(");
+  const end = source.indexOf("  async function refreshResumeRequest(", start);
+  assert.ok(start >= 0 && end > start);
+  const code = ts.transpileModule(source.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  let resolveConsume;
+  const writes = [];
+  const navigation = [];
+  const recoveryEpochRef = { current: 0 };
+  const context = {
+    recoveryEpochRef,
+    recoveryCurrent: (_id, epoch) => epoch === recoveryEpochRef.current,
+    resumeConsumeInFlightRef: { current: false },
+    setResumeBusy: () => {},
+    setResumeStatus: () => {},
+    consumeResume: () => new Promise((resolve) => (resolveConsume = resolve)),
+    mergeResumeRequestIntoSession: () => ({ id: "A", contest_id: "contest" }),
+    localStorage: { setItem: (...args) => writes.push(args) },
+    ACTIVE_SESSION_KEY: "ams_active_session",
+    setActiveSession: () => writes.push("state"),
+    router: { push: (path) => navigation.push(path) },
+    encodeURIComponent,
+  };
+  vm.runInNewContext(code, context);
+  const pending = context.consumeApprovedResume({ id: "A", contest_id: "contest" });
+  recoveryEpochRef.current += 1; // signOut invalidates work started under the old identity
+  resolveConsume({});
+  await pending;
+  assert.deepEqual(writes, []);
+  assert.deepEqual(navigation, []);
+});
 for (const error of [
   new TypeError("offline"),
   new Error("timeout"),
@@ -282,6 +381,8 @@ test("a late approval poll cannot reset Resume state during consumption", async 
     resumeConsumeInFlightRef: { current: false },
     resumeInFlightRef: { current: false },
     activeSessionRef: { current: session },
+    recoveryEpochRef: { current: 0 },
+    recoveryCurrent: () => true,
     latestResumeRequest: () =>
       new Promise((resolve) => {
         resolvePoll = resolve;

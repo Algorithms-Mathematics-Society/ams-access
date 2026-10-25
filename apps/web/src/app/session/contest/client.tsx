@@ -475,6 +475,7 @@ export default function ContestPageClient() {
     source: string;
     idempotencyKey: string;
   } | null>(null);
+  const acknowledgedSubmitKeysRef = useRef<Record<string, string>>({});
   // Guards finish/teardown against duplicate clicks and submissions during exit.
   // Failed acknowledgements reset it so the candidate can explicitly retry.
   const exitInFlightRef = useRef(false);
@@ -1907,7 +1908,39 @@ export default function ContestPageClient() {
         source: draft.source,
         language: draft.language,
       };
-      const previousRequest = submitKeyRef.current;
+      const retryKey = `ams_pending_submission:${sessionId}:${qId}`;
+      let previousRequest = submitKeyRef.current;
+      let storedRaw: string | null;
+      try {
+        storedRaw = localStorage.getItem(retryKey);
+      } catch {
+        setSubmissionError(
+          "Could not read the submission retry record on this device. Ask an invigilator before submitting."
+        );
+        return;
+      }
+      let recoveredRetry = false;
+      try {
+        const stored = JSON.parse(storedRaw ?? "null");
+        if (
+          stored &&
+          stored.sessionId === sessionId &&
+          stored.problemLabel === qId &&
+          typeof stored.language === "string" &&
+          typeof stored.source === "string" &&
+          typeof stored.idempotencyKey === "string" &&
+          stored.idempotencyKey.length > 0 &&
+          stored.idempotencyKey.length <= 64 &&
+          stored.idempotencyKey !== acknowledgedSubmitKeysRef.current[retryKey]
+        ) {
+          previousRequest = stored;
+          recoveredRetry =
+            stored.language === submittedSource.language &&
+            stored.source === submittedSource.source;
+        }
+      } catch {
+        // Malformed stored data has no usable retry identity.
+      }
       if (
         !previousRequest ||
         previousRequest.sessionId !== sessionId ||
@@ -1915,16 +1948,27 @@ export default function ContestPageClient() {
         previousRequest.language !== submittedSource.language ||
         previousRequest.source !== submittedSource.source
       ) {
-        submitKeyRef.current = {
+        previousRequest = {
           sessionId,
           problemLabel: qId,
           ...submittedSource,
           idempotencyKey: newIdempotencyKey(),
         };
       }
+      // The key must survive a crash after server acceptance but before its
+      // response arrives. Refuse the POST if this device cannot retain it.
+      try {
+        localStorage.setItem(retryKey, JSON.stringify(previousRequest));
+      } catch {
+        setSubmissionError(
+          "Could not save the submission retry record on this device. Free storage or ask an invigilator before submitting."
+        );
+        return;
+      }
+      submitKeyRef.current = previousRequest;
       // A lost response must not make changed code (or another problem) reuse
       // the original attempt. Send the same snapshot used to select the key.
-      const request = submitKeyRef.current!;
+      const request = previousRequest;
       let created;
       try {
         created = await submitSolution(request.sessionId, {
@@ -1947,6 +1991,27 @@ export default function ContestPageClient() {
       // Accepted, so this click is finished with. The next one is a new
       // attempt and must not be deduplicated against this.
       submitKeyRef.current = null;
+      acknowledgedSubmitKeysRef.current[retryKey] = request.idempotencyKey;
+      let cleanupFailed = false;
+      try {
+        localStorage.removeItem(retryKey);
+      } catch {
+        try {
+          // A small tombstone lets a restarted app distinguish an acknowledged
+          // attempt from one whose response was lost.
+          localStorage.setItem(retryKey, JSON.stringify({ acknowledged: true }));
+        } catch {
+          cleanupFailed = true;
+        }
+      }
+      if (cleanupFailed)
+        setSubmissionError(
+          "Submission accepted, but this device could not clear its retry record. A retry after restart may return this attempt; ask an invigilator if you need another."
+        );
+      else if (recoveredRetry)
+        setSubmissionError(
+          "Confirmed an earlier submission request. Check the attempt list before submitting again."
+        );
       setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
     } catch (err: any) {
       setSubmissionError(err.message || "An unexpected error occurred.");
