@@ -33,6 +33,7 @@ import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { exitToHome } from "@/lib/exit-to-home";
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import { decideNetworkLockdown } from "./network-gate";
 import { effectiveReadinessPolicy } from "./effective-policy";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
@@ -1072,6 +1073,33 @@ export default function OnboardingPage() {
   const isTooEarly = isTestAccount ? false : entry.kind === "too_early";
   const isEnded = isTestAccount ? false : entry.kind === "ended";
   const verifyOpensInMs = entry.kind === "too_early" ? entry.opensInMs : 0;
+  // The phase is the server's, so while too early it has to be asked again:
+  // otherwise the countdown sits at 00:00:00 and the promised automatic entry
+  // never comes. Re-asked when check-in should open (with jitter, so a hall
+  // does not ask in the same second) and every 30 s besides.
+  const opensInRef = useRef(verifyOpensInMs);
+  opensInRef.current = verifyOpensInMs;
+  const [tooEarlyPoll, setTooEarlyPoll] = useState(0);
+  useEffect(() => {
+    if (!isTooEarly || !contestId) return;
+    let cancelled = false;
+    const opensIn = opensInRef.current;
+    const delayMs = (opensIn > 0 ? Math.min(opensIn, 30_000) : 5_000) + Math.random() * 5_000;
+    const id = setTimeout(() => {
+      getContest(contestId, { includeReference: false })
+        .then((index) => {
+          if (!cancelled) setContestIndex(index);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setTooEarlyPoll((n) => n + 1);
+        });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [isTooEarly, contestId, tooEarlyPoll]);
   const canRunChecks = isTestAccount || shouldRunChecks(entry);
   const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
   const showWaitLock = currentStage === FINAL_STAGE && readyForStart;
@@ -1399,10 +1427,7 @@ export default function OnboardingPage() {
                           title="Verification not open yet"
                           description={
                             <VStack gap={2}>
-                              <Text>
-                                Opens in {formatCountdown(verifyOpensInMs)} (
-                                {contestWindow?.timezone || "UTC"})
-                              </Text>
+                              <Text>Opens in {formatCountdown(verifyOpensInMs)}</Text>
                               <Text>
                                 You can start setup only in the configured verification window
                                 before contest start.
@@ -1416,6 +1441,13 @@ export default function OnboardingPage() {
                           status="error"
                           title="Contest has ended"
                           description="Return home to review your contests."
+                          endContent={
+                            <Button
+                              label="Back to contests"
+                              variant="secondary"
+                              clickAction={emergencyExit}
+                            />
+                          }
                         />
                       )}
                       {canRunChecks && (
@@ -1480,7 +1512,11 @@ export default function OnboardingPage() {
                                     {formatCountdown(waitMs)}
                                   </Text>
                                   <Text type="supporting" color="secondary">
-                                    {contestWindow.timezone || "UTC"}
+                                    at{" "}
+                                    {dateTimeFormatter({
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    }).format(new Date(contestWindow.startAt))}
                                   </Text>
                                 </VStack>
                               </VStack>
