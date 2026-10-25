@@ -90,11 +90,6 @@ import {
   type StageStatus,
 } from "./support";
 
-// Longest random wait before a candidate held for the start enters at T=0.
-// The end is fixed server-side, so the wait is exam time lost: keep it short
-// (a 150 s spread was removed for exactly that reason).
-const START_JITTER_MS = 15_000;
-
 // Astryx Kbd uses modifier glyphs; this shortcut intentionally spells out its keys.
 function SetupExitShortcut() {
   return (
@@ -959,12 +954,9 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== FINAL_STAGE) return;
-    if (waitMs > 0 || !readyForStart) return;
-    // Everyone waiting here reaches 0 in the same second. A random 0-15 s
-    // spread keeps a full hall from hitting the server in one burst; the
-    // screen says "Starting…" meanwhile.
-    const id = setTimeout(() => void finalizeSecureStart(), Math.random() * START_JITTER_MS);
-    return () => clearTimeout(id);
+    if (waitMs <= 0 && readyForStart) {
+      void finalizeSecureStart();
+    }
   }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
 
   // Keep completion callbacks stable throughout a visit. Presentation changes
@@ -1552,11 +1544,7 @@ export default function OnboardingPage() {
                                 <HStack gap={3} align="center">
                                   <Spinner />
                                   <Text type="supporting" color="secondary">
-                                    {/* Held for the start and not yet entering:
-                                        the random T=0 spread is running. */}
-                                    {readyForStart && !transitioning
-                                      ? "Starting…"
-                                      : "Checking contest entry…"}
+                                    Checking contest entry…
                                   </Text>
                                 </HStack>
                               </VStack>
