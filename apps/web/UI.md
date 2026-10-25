@@ -289,3 +289,11 @@ transient verification failures and offers Retry verification.
 The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
 so network names and password controls stay inside the dialog at narrow sizes.
 The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
+Wi-Fi names and the connected network come only from the native OS integration.
+Browser builds show guidance to use system Wi-Fi settings, without sample networks,
+password prompts, simulated joins or background scan polling. Native scan failures
+show a retry message rather than a fallback network list.
+
+Device setup lets AppShell own page scrolling to avoid nested viewport-height
+scroll regions. The MediaPipe loader routes its exact CPU delegate startup
+notice to console.info; all other stderr remains error output.
