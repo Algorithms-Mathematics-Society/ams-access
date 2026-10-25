@@ -235,6 +235,73 @@ test("denied verification persistence does not erase existing recovery", async (
   assert.equal(h.state.verification, "retryable");
 });
 
+test("Resume consumes a verified approval even while a background poll is in flight", async () => {
+  const start = source.indexOf("  async function handleResumeActiveSession() {");
+  const end = source.indexOf("\n  function handleSignOut()", start);
+  const code = ts.transpileModule(source.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const consumed = [];
+  let polled = 0;
+  const context = {
+    activeSession: { id: "saved", contest_id: "contest" },
+    resumeBusy: false,
+    resumeInFlightRef: { current: false },
+    setResumeStatus() {},
+    setResumeVerification() {},
+    validateStoredActiveSession: async () => ({
+      id: "saved",
+      contest_id: "contest",
+      resume_request_status: "APPROVED",
+    }),
+    consumeApprovedResume: async (session) => {
+      consumed.push(session.id);
+    },
+    refreshResumeRequest: async () => {
+      polled++;
+    },
+  };
+  vm.runInNewContext(code, context);
+  await Promise.all([context.handleResumeActiveSession(), context.handleResumeActiveSession()]);
+  assert.deepEqual(consumed, ["saved"]);
+  assert.equal(polled, 0);
+  assert.equal(context.resumeInFlightRef.current, false);
+});
+
+test("a late approval poll cannot reset Resume state during consumption", async () => {
+  const start = source.indexOf("  async function refreshResumeRequest(");
+  const end = source.indexOf("\n  const refreshResumeRequestRef", start);
+  const code = ts.transpileModule(source.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  let resolvePoll;
+  const session = { id: "saved", resume_request_id: "request", resume_request_status: "APPROVED" };
+  const writes = [];
+  const context = {
+    resumePollInFlightRef: { current: false },
+    resumeConsumeInFlightRef: { current: false },
+    resumeInFlightRef: { current: false },
+    activeSessionRef: { current: session },
+    latestResumeRequest: () =>
+      new Promise((resolve) => {
+        resolvePoll = resolve;
+      }),
+    mergeResumeRequestIntoSession: () => {
+      throw new Error("late poll applied");
+    },
+    setResumeStatus: (value) => writes.push(value),
+    setResumeBusy: (value) => writes.push(value),
+  };
+  vm.runInNewContext(code, context);
+  const pending = context.refreshResumeRequest(session);
+  assert.equal(context.resumePollInFlightRef.current, true);
+  context.resumeConsumeInFlightRef.current = true;
+  resolvePoll({ uid: "request", status: "APPROVED" });
+  await pending;
+  assert.deepEqual(writes, []);
+  assert.equal(context.resumePollInFlightRef.current, false);
+});
+
 const panelSource = readFileSync(
   new URL("./components/SessionActionsPanel.tsx", import.meta.url),
   "utf8"
