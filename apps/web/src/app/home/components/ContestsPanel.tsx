@@ -10,6 +10,7 @@ import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { ActiveContestCard } from "./ContestCards";
+import { serverNow } from "@/lib/proctor-api";
 import { getContestEntryState, getScheduledContestTickDelay } from "./utils";
 import { sortHomeContests } from "./home-contest-presentation";
 import type { InvitedContest, ContestantReadinessContext } from "./types";
@@ -45,14 +46,19 @@ export const ContestsPanel = memo(function ContestsPanel({
   refreshing?: boolean;
   highlightedContestId?: string | null;
 }) {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
+
+  // The first contest response can anchor server time after this panel mounted.
+  useEffect(() => {
+    if (contests.length > 0) setNow(serverNow());
+  }, [contests]);
 
   // Presentation order follows the existing contest boundaries; entry policy stays in each row.
   useEffect(() => {
     if (contests.length === 0) return;
     const timer = setTimeout(
-      () => setNow(Date.now()),
-      Math.min(...contests.map((contest) => getScheduledContestTickDelay(contest, Date.now())))
+      () => setNow(serverNow()),
+      Math.min(...contests.map((contest) => getScheduledContestTickDelay(contest, serverNow())))
     );
     return () => clearTimeout(timer);
   }, [contests, now]);

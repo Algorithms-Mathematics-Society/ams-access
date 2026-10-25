@@ -134,7 +134,9 @@ const finishJs = ts.transpileModule(finishHandler.getText(clientAst), {
 function finishHarness({
   pending = false,
   finish = async () => ({ ok: true, json: async () => ({}) }),
+  withTimeout = (promise) => promise,
 } = {}) {
+  const signals = [];
   const state = {
     active: "session-1",
     last: null,
@@ -164,9 +166,11 @@ function finishHarness({
     handleSave: async () => true,
     authHeaders: () => ({}),
     requestFinish,
+    withTimeout,
     setTimeout: (callback) => callback(),
-    postJsonKeepalive: async () => {
+    postJsonKeepalive: async (_url, _body, init) => {
       state.calls++;
+      signals.push(init.signal);
       return finish();
     },
     runExitTeardown: async (preserve) => {
@@ -179,6 +183,7 @@ function finishHarness({
   };
   return {
     state,
+    signals,
     exitInFlightRef,
     submitInFlightRef,
     run: new Function(...Object.keys(deps), `${finishJs}; return handleSubmitConfirmed;`)(
@@ -259,4 +264,39 @@ test("lost finish acknowledgement followed by already-finished response clears r
   assert.equal(h.state.phase, "submitted");
   assert.equal(h.state.active, null);
   assert.equal(h.state.calls, 2);
+});
+
+test("stalled Finish error body cannot hold native release", async () => {
+  let expire;
+  let attempts = 0;
+  let h;
+  h = finishHarness({
+    finish: async () => {
+      attempts++;
+      if (attempts === 2) assert.equal(h.signals[0].aborted, true);
+      return attempts === 1
+        ? { ok: false, json: () => new Promise(() => {}) }
+        : { ok: false, json: async () => ({ code: "SESSION_ALREADY_SUBMITTED" }) };
+    },
+    withTimeout: (promise) =>
+      Promise.race([
+        promise,
+        new Promise((_resolve, reject) => {
+          expire = () => reject(Error("Finish attempt timed out"));
+        }),
+      ]),
+  });
+  const finishing = h.run();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(typeof expire, "function");
+  assert.equal(h.state.releases, 0);
+  expire();
+  await finishing;
+  assert.equal(attempts, 2);
+  assert.equal(h.signals.length, 2);
+  assert.notEqual(h.signals[0], h.signals[1]);
+  assert.equal(h.signals[1].aborted, true);
+  assert.equal(h.state.releases, 1);
+  assert.equal(h.state.phase, "submitted");
 });

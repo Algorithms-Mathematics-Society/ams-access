@@ -18,9 +18,10 @@ const compile = (source) =>
   }).outputText;
 const handlerCode = compile(page.slice(start, end));
 class ProctorApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, retryAfterSeconds = 0) {
     super(message);
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 function harness({
@@ -39,6 +40,8 @@ function harness({
     loginId,
     password,
     loading,
+    performance: { now: () => 0 },
+    cooldownUntil: { current: 0 },
     ProctorApiError,
     setError: (value) => {
       state.error = value;
@@ -51,6 +54,9 @@ function harness({
     },
     setLoading: (value) => {
       state.loading = value;
+    },
+    setCooldownSeconds: (value) => {
+      state.cooldownSeconds = value;
     },
     studentLogin: async (...args) => {
       calls.push(args);
@@ -137,6 +143,15 @@ test("loading prevents duplicate sign-in and network error is not field invalidi
   assert.equal(h.state.error, "Connection failed");
 });
 
+test("server wait disables repeated login submissions even before rerender", async () => {
+  const h = harness({ failure: new ProctorApiError("The exam server is busy.", 503, 5) });
+  await h.submit();
+  await h.submit();
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.state.cooldownSeconds, 5);
+  assert.equal(h.state.error, "The exam server is busy.");
+});
+
 const formCode = compile(
   readFileSync(new URL("./components/SlipForm.tsx", import.meta.url), "utf8")
 );
@@ -221,4 +236,11 @@ test("full-handle paste and password reveal behavior stay intact", () => {
   nodes.find((n) => n.props?.label === "Hide").props.onClick();
   nodes = all(render());
   assert.equal(nodes.find((n) => n.props?.id === "login-password").props.type, "password");
+});
+
+test("sign-in button shows and honors the server cooldown", () => {
+  const nodes = all(formHarness()({ cooldownSeconds: 5 }));
+  const button = nodes.find((node) => node.props?.type === "submit");
+  assert.equal(button.props.label, "Try again in 5s");
+  assert.equal(button.props.isDisabled, true);
 });

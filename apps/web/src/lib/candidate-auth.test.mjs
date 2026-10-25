@@ -99,10 +99,21 @@ test("signing out drops the Authorization header", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(authHeaders(), "Authorization"), false);
 });
 
-test("an expired stored token is not used", () => {
-  localStorage.setItem(TOKEN_KEY, "stale");
-  localStorage.setItem("ams_participant_token_expires_at", String(Date.now() - 1000));
-  assert.equal(participantToken(), null);
+test("a fast device clock cannot discard a server-valid token on reload", () => {
+  localStorage.setItem(TOKEN_KEY, "server-valid");
+  localStorage.setItem(EXPIRY_KEY, String(Date.now() - 1000));
+  assert.equal(participantToken(), "server-valid");
+  assert.equal(authHeaders().Authorization, "Bearer server-valid");
+});
+
+test("a restored token still obeys the server's authentication rejection", async (t) => {
+  localStorage.setItem(TOKEN_KEY, "expired-on-server");
+  localStorage.setItem(EXPIRY_KEY, String(Date.now() - 1000));
+  t.mock.method(globalThis, "fetch", async (_url, init) => {
+    assert.equal(init.headers.Authorization, "Bearer expired-on-server");
+    return new Response(JSON.stringify({ detail: "Token expired" }), { status: 401 });
+  });
+  await assert.rejects(listContests(), (error) => error.status === 401);
 });
 
 test("a stored token with no recorded expiry is still used", () => {

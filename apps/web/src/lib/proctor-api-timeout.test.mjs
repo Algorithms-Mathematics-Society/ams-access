@@ -64,6 +64,69 @@ test("HTTP errors retain their status and successful bodies clear the timeout", 
   assert.equal(signal.aborted, false);
 });
 
+test("503 Retry-After header survives a plain-text server error", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ detail: "The exam server is busy." }), {
+        status: 503,
+        headers: { "Retry-After": "5" },
+      })
+  );
+  await assert.rejects(
+    latestResumeRequest("session"),
+    (error) =>
+      error instanceof ProctorApiError &&
+      error.status === 503 &&
+      error.message === "The exam server is busy." &&
+      error.retryAfterSeconds === 5
+  );
+});
+
+test("Retry-After HTTP date uses the server Date, while structured wait keeps precedence", async (t) => {
+  let response = new Response(JSON.stringify({ detail: "Busy" }), {
+    status: 503,
+    headers: {
+      Date: "Sun, 06 Nov 1994 08:49:37 GMT",
+      "Retry-After": "Sun, 06 Nov 1994 08:49:42 GMT",
+    },
+  });
+  t.mock.method(globalThis, "fetch", async () => response);
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 5);
+  response = new Response(JSON.stringify({ detail: { error: "Slow down", retry_after: 7 } }), {
+    status: 429,
+    headers: { "Retry-After": "5" },
+  });
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 7);
+});
+
+test("malformed numeric Retry-After cannot become a future HTTP date", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ detail: "Busy" }), {
+        status: 503,
+        headers: { Date: "Sun, 06 Nov 1994 08:49:37 GMT", "Retry-After": "-5" },
+      })
+  );
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 0);
+});
+
+test("HTTP-date Retry-After without an exposed server Date does not trust device time", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ detail: "Busy" }), {
+        status: 503,
+        headers: { "Retry-After": "Sun, 06 Nov 2094 08:49:42 GMT" },
+      })
+  );
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 0);
+});
+
 test("contest metadata reads opt out of reference text without changing workspace defaults", async (t) => {
   const urls = [];
   t.mock.method(globalThis, "fetch", async (url) => {
