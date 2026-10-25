@@ -10,6 +10,39 @@ use windows_core::Interface;
 
 static POLICY: tokio::sync::Mutex<Option<VerifiedRuntime>> = tokio::sync::Mutex::const_new(None);
 static HEALTH: PolicyHealth = PolicyHealth::new();
+static ENABLE_EPOCH: OperationEpoch = OperationEpoch::new();
+
+struct OperationEpoch(AtomicU64);
+
+impl OperationEpoch {
+    const fn new() -> Self {
+        Self(AtomicU64::new(0))
+    }
+
+    fn ticket(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn invalidate(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn check(&self, ticket: u64) -> Result<(), String> {
+        if self.ticket() == ticket {
+            Ok(())
+        } else {
+            Err("Network lockdown enable was cancelled by restoration".into())
+        }
+    }
+}
+
+pub fn enable_ticket() -> u64 {
+    ENABLE_EPOCH.ticket()
+}
+
+pub fn invalidate_pending_enable() {
+    ENABLE_EPOCH.invalidate();
+}
 
 struct PolicyHealth {
     generation: AtomicU64,
@@ -138,12 +171,14 @@ async fn verify(app: &tauri::AppHandle, runtime: &VerifiedRuntime) -> Result<(),
     runtime.verify_processes(browsers[0], &processes)
 }
 
-pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, String> {
+pub async fn enable(app: tauri::AppHandle, ips: Vec<String>, ticket: u64) -> Result<bool, String> {
     let mut policy = POLICY.lock().await;
+    ENABLE_EPOCH.check(ticket)?;
     HEALTH.installing();
     let folder = option_env!("AMS_PRIVATE_WEBVIEW2_FOLDER").unwrap_or("");
     let runtime = prepare_private_runtime(Path::new(folder))?;
     verify(&app, &runtime).await?;
+    ENABLE_EPOCH.check(ticket)?;
     let installed_runtime = runtime.clone();
     let install = tauri::async_runtime::spawn_blocking(move || {
         platform_rs::windows::enable_network_lockdown(&ips, &installed_runtime)
@@ -216,6 +251,7 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
 }
 
 pub fn disable_blocking() -> Result<bool, String> {
+    invalidate_pending_enable();
     let mut policy = POLICY.blocking_lock();
     if let Err(error) = platform_rs::windows::disable_network_lockdown() {
         HEALTH.cleanup_failed();
@@ -227,6 +263,7 @@ pub fn disable_blocking() -> Result<bool, String> {
 }
 
 pub async fn disable() -> Result<bool, String> {
+    invalidate_pending_enable();
     tauri::async_runtime::spawn_blocking(disable_blocking)
         .await
         .map_err(|error| error.to_string())?
@@ -234,7 +271,36 @@ pub async fn disable() -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::PolicyHealth;
+    use super::{OperationEpoch, PolicyHealth};
+
+    #[test]
+    fn restore_during_resolution_cancels_late_install() {
+        use std::sync::{mpsc, Arc, Mutex};
+
+        let epoch = Arc::new(OperationEpoch::new());
+        let policy = Arc::new(Mutex::new(false));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let pending = {
+            let epoch = Arc::clone(&epoch);
+            let policy = Arc::clone(&policy);
+            std::thread::spawn(move || {
+                let ticket = epoch.ticket();
+                started_tx.send(()).unwrap();
+                continue_rx.recv().unwrap(); // The DNS lookup finishes after restore.
+                let mut installed = policy.lock().unwrap();
+                if epoch.check(ticket).is_ok() {
+                    *installed = true;
+                }
+            })
+        };
+        started_rx.recv().unwrap();
+        epoch.invalidate();
+        *policy.lock().unwrap() = false; // Verified restore found no rules.
+        continue_tx.send(()).unwrap();
+        pending.join().unwrap();
+        assert!(!*policy.lock().unwrap());
+    }
 
     #[test]
     fn disable_invalidates_old_guard_and_default_build_has_no_required_policy() {

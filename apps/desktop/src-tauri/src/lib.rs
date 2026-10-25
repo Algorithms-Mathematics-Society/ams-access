@@ -1333,6 +1333,10 @@ async fn start_secure_session(
     token: Option<String>,
     lockdown_config: Option<LockdownConfig>,
 ) -> Result<ReadinessReport, String> {
+    let entry_generation = lockdown_lifecycle()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .generation;
     let policy = policy.unwrap_or_default();
     let mut report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
     enrich_report(&mut report, &device_state);
@@ -1357,7 +1361,7 @@ async fn start_secure_session(
         );
     }
     let require_keyboard = lockdown_lifecycle::keyboard_required(&policy, &device_state);
-    engage_desktop(app, require_keyboard).await.map_err(|reason| format!(
+    engage_desktop(app, require_keyboard, entry_generation).await.map_err(|reason| format!(
         "We couldn't prepare the required desktop protections. In Settings, select Restore system settings, then run device setup again. If it still fails, ask your invigilator for help. Details: {reason}"
     ))?;
     Ok(report)
@@ -2508,9 +2512,13 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
 /// evaluated policy (including unsupported-platform and organizer exceptions).
 #[tauri::command]
 async fn lock_desktop(app: tauri::AppHandle) -> bool {
+    let entry_generation = lockdown_lifecycle()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .generation;
     #[cfg(target_os = "macos")]
     platform_rs::macos::set_lockdown_config(LockdownConfig::default());
-    engage_desktop(app, !cfg!(target_os = "macos"))
+    engage_desktop(app, !cfg!(target_os = "macos"), entry_generation)
         .await
         .is_ok()
 }
@@ -2555,15 +2563,19 @@ fn release_native_desktop() -> Result<(), String> {
     Ok(())
 }
 
-async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result<(), String> {
+async fn engage_desktop(
+    app: tauri::AppHandle,
+    require_keyboard: bool,
+    entry_generation: u64,
+) -> Result<(), String> {
     KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut operations = DesktopOperations::new(app.clone(), require_keyboard);
-        match state.start(&mut operations) {
-            Ok(started) => {
+        match state.start_if_current(entry_generation, &mut operations) {
+            Ok(Some(started)) => {
                 LOCKDOWN_GENERATION.store(state.generation, Ordering::SeqCst);
                 #[cfg(target_os = "windows")]
                 if started {
@@ -2578,6 +2590,7 @@ async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result
                 let _ = started;
                 Ok(())
             }
+            Ok(None) => Err("Desktop entry was cancelled by restoration".into()),
             Err(error) => {
                 LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
                 record_proctoring_event(
@@ -2958,6 +2971,8 @@ async fn enable_network_lockdown(
         if !WANTS_FIREWALL {
             return Ok(false);
         }
+        #[cfg(target_os = "windows")]
+        let enable_ticket = windows_firewall::enable_ticket();
 
         #[cfg(not(target_os = "windows"))]
         let _ = app;
@@ -3006,7 +3021,7 @@ async fn enable_network_lockdown(
         // gate; the earlier readiness policy treats CheckKind::Network as advisory.
         // The frontend's decideNetworkLockdown applies the final platform policy.
         #[cfg(target_os = "windows")]
-        return windows_firewall::enable(app, ips).await;
+        return windows_firewall::enable(app, ips, enable_ticket).await;
         #[cfg(not(target_os = "windows"))]
         platform_dispatch!(
             enable_network_lockdown(&ips),

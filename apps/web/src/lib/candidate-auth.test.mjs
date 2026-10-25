@@ -557,6 +557,24 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
   return { ...contestExitHandlers(context), calls, context, error: () => error };
 }
 
+test("exit releases native controls while the captured identity photo is still uploading", async () => {
+  const fixture = contestExitFixture();
+  let finishUpload;
+  fixture.context.exitPhotoRef.current = () => {
+    fixture.calls.push("identity-photo");
+    return new Promise((resolve) => {
+      finishUpload = resolve;
+    });
+  };
+  const exiting = fixture.runExitTeardown(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const releasedBeforeUpload = fixture.calls.includes("get_lockdown_restore_status");
+  finishUpload();
+  await exiting;
+  assert.equal(releasedBeforeUpload, true);
+  assert.ok(fixture.calls.indexOf("identity-photo") < fixture.calls.indexOf("camera"));
+});
+
 test("auth redirect releases all native controls before navigation and retains recovery", async () => {
   setToken("expired-but-cached");
   localStorage.setItem("ams_active_session", "recoverable");

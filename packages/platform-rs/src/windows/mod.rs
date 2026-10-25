@@ -10,6 +10,7 @@ mod hook_delivery;
 mod hook_lifecycle;
 pub mod instance;
 mod keyboard_policy;
+mod power_request;
 mod registry_recovery;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
 pub use registry_recovery::RegistryLockdownStatus;
@@ -507,15 +508,8 @@ fn reg_key_exists(key: &str) -> bool {
 // ── Sleep prevention ──────────────────────────────────────────────────────────
 
 fn set_sleep_prevention(enable: bool) {
-    use windows::Win32::System::Power::{
-        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
-    };
-    unsafe {
-        if enable {
-            SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
-        } else {
-            SetThreadExecutionState(ES_CONTINUOUS);
-        }
+    if let Err(error) = power_request::set(enable) {
+        eprintln!("AMS Access: sleep prevention update failed: {error}");
     }
 }
 
@@ -1048,7 +1042,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     *HOOK_SESSION
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = Some(session.clone());
-    set_sleep_prevention(true);
     spawn_hook_thread(session.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while session.active.load(Ordering::SeqCst)
@@ -1060,7 +1053,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let installed = session.ready() && spawn_hook_watchdog(session.clone());
     if !installed {
         session.cancel();
-        set_sleep_prevention(false);
     }
     keyboard_intercept_result(installed)
 }
@@ -1117,7 +1109,6 @@ pub fn disable_keyboard_intercept() {
     }
     // The owner observes cancellation during its bounded pump. No TID-based
     // WM_QUIT can be lost before queue creation or target a reused thread ID.
-    set_sleep_prevention(false);
 }
 
 // ── Injected-input event callback (F11) ───────────────────────────────────────

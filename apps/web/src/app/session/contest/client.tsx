@@ -1941,12 +1941,9 @@ export default function ContestPageClient() {
     } catch {
       // ignore storage errors
     }
-    // The exit frame, taken while there is still a camera to take it from:
-    // everything below this releases the stream. Awaited rather than fired
-    // and forgotten, because the teardown that follows removes the only
-    // source it could come from -- but it cannot fail the exit, so the
-    // failure path is a shrug.
-    await exitPhotoRef.current();
+    // Capture is synchronous before upload starts. Release local controls while
+    // the upload runs, then await delivery before navigating away.
+    const exitPhoto = exitPhotoRef.current().catch(() => {});
 
     // The one place the camera is genuinely finished with: the exam is over
     // and the candidate is leaving the locked-down shell.
@@ -2017,6 +2014,7 @@ export default function ContestPageClient() {
     } else {
       setRestoreStatus(null);
     }
+    await exitPhoto;
     return released;
   }
 

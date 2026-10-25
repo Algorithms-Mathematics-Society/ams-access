@@ -19,20 +19,38 @@ export async function exitToHome(
     return;
   }
 
-  const win = tauri.window.getCurrentWindow();
-  await win.setFullscreen(false).catch(() => {});
-  // macOS onboarding covers the screen with simple full-screen, which
-  // setFullscreen(false) does not leave.
-  await win.setSimpleFullscreen(false).catch(() => {});
-  await win.setAlwaysOnTop(false).catch(() => {});
-  await win.setDecorations(true).catch(() => {});
+  let releaseFailed = false;
+  const attempt = async (release: () => Promise<unknown>) => {
+    try {
+      await release();
+    } catch {
+      releaseFailed = true;
+    }
+  };
 
-  await tauri.core.invoke("unlock_desktop").catch(() => {});
-  await tauri.core.invoke("disable_keyboard_intercept").catch(() => {});
-  await tauri.core.invoke("disable_network_lockdown").catch(() => {});
+  try {
+    const win = tauri.window.getCurrentWindow();
+    await attempt(() => win.setFullscreen(false));
+    // macOS onboarding covers the screen with simple full-screen, which
+    // setFullscreen(false) does not leave.
+    await attempt(() => win.setSimpleFullscreen(false));
+    await attempt(() => win.setAlwaysOnTop(false));
+    await attempt(() => win.setDecorations(true));
+  } catch {
+    releaseFailed = true;
+  }
 
-  const remaining = await tauri.core
-    .invoke<RestoreStatus>("get_lockdown_restore_status")
-    .catch(() => null);
-  router.push(remaining?.pending ? "/home?restore=pending" : destination);
+  await attempt(() => tauri.core.invoke("unlock_desktop"));
+  await attempt(() => tauri.core.invoke("disable_keyboard_intercept"));
+  await attempt(() => tauri.core.invoke("disable_network_lockdown"));
+
+  let remaining: RestoreStatus | null = null;
+  try {
+    remaining = await tauri.core.invoke<RestoreStatus>("get_lockdown_restore_status");
+  } catch {
+    // An unavailable status cannot confirm that the machine was restored.
+  }
+  router.push(
+    releaseFailed || remaining?.pending !== false ? "/home?restore=pending" : destination
+  );
 }
