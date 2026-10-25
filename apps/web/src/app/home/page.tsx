@@ -698,11 +698,10 @@ export default function HomePage() {
       // anyone else's, so ownership is enforced where it cannot be bypassed
       // rather than by the client checking a field the client was sent.
 
+      // The API's terminal statuses. The old list named ones it never sends,
+      // so a terminated session stayed resumable whenever `ended_at` was null.
       const status = String(data.status ?? "active").toLowerCase();
-      if (
-        ["submitted", "ended", "expired", "closed", "cancelled"].includes(status) ||
-        data.ended_at
-      ) {
+      if (["submitted", "terminated", "abandoned"].includes(status) || data.ended_at) {
         clearStoredActiveSession("Stored active session is no longer active.");
         appendSecurityEvent("SESSION: Inactive stored session cleared", "warn");
         return null;
