@@ -2328,9 +2328,9 @@ pub fn request_av_permissions() {
 
 /// The wireless interface, usually `en0` but not on every model.
 fn wifi_interface() -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/networksetup")
+    let output = Command::new("/usr/sbin/networksetup")
         .arg("-listallhardwareports")
-        .output()
+        .bounded_output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines().peekable();
@@ -2349,17 +2349,26 @@ fn wifi_interface() -> Option<String> {
     None
 }
 
-/// The SSID currently joined, if any.
+/// Shown as the joined network when macOS withholds its name.
+const HIDDEN_SSID: &str = "Wi-Fi connected";
+
+/// The SSID currently joined, if any. Since macOS 14.4 `-getairportnetwork`
+/// often says "not associated" while joined, because the name is withheld
+/// from apps without location access. An IPv4 address on the interface means
+/// joined all the same, so the panel must not claim there is no network.
 fn current_ssid(interface: &str) -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/networksetup")
+    let text = Command::new("/usr/sbin/networksetup")
         .args(["-getairportnetwork", interface])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    // "Current Wi-Fi Network: NAME", or "You are not associated ...".
-    let (_, name) = text.trim().split_once(": ")?;
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_string())
+        .bounded_output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    crate::wifi_parse::parse_airport_network(&text).or_else(|| {
+        Command::new("/usr/sbin/ipconfig")
+            .args(["getifaddr", interface])
+            .bounded_output()
+            .is_ok_and(|output| output.status.success() && !output.stdout.trim_ascii().is_empty())
+            .then(|| HIDDEN_SSID.to_string())
+    })
 }
 
 /// Saved networks, with the joined one marked.
@@ -2368,9 +2377,9 @@ pub fn wifi_scan() -> crate::WifiScan {
         return crate::WifiScan::default();
     };
     let current = current_ssid(&interface);
-    let Ok(output) = std::process::Command::new("/usr/sbin/networksetup")
+    let Ok(output) = Command::new("/usr/sbin/networksetup")
         .args(["-listpreferredwirelessnetworks", &interface])
-        .output()
+        .bounded_output()
     else {
         return crate::WifiScan::default();
     };
@@ -2379,8 +2388,9 @@ pub fn wifi_scan() -> crate::WifiScan {
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut rows = crate::wifi_parse::parse_networksetup_list(&text);
-    // The joined network is not always in the preferred list.
-    if let Some(name) = current.as_deref() {
+    // The joined network is not always in the preferred list. A hidden
+    // name is not a network the candidate could pick.
+    if let Some(name) = current.as_deref().filter(|name| *name != HIDDEN_SSID) {
         if !rows.iter().any(|r| r.ssid == name) {
             rows.push(crate::WifiNetwork {
                 ssid: name.to_string(),
@@ -2402,12 +2412,18 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
     let Some(interface) = wifi_interface() else {
         return Err("No wireless interface on this Mac.".into());
     };
-    let mut command = std::process::Command::new("/usr/sbin/networksetup");
+    let mut command = Command::new("/usr/sbin/networksetup");
     command.args(["-setairportnetwork", &interface, ssid]);
+    // networksetup takes the password only as an argument, so other local
+    // processes can read it from `ps` while this command runs.
     if let Some(secret) = password.filter(|p| !p.is_empty()) {
         command.arg(secret);
     }
-    match command.output() {
+    // Joining waits for association and a DHCP lease, so allow longer than a
+    // query, but never hang the panel.
+    let result = command.bounded_output_with_timeout(std::time::Duration::from_secs(30));
+    drop(command); // its argv copy holds the password
+    match result {
         // networksetup exits 0 even when it failed, and says so on stdout.
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
