@@ -35,6 +35,7 @@ pub use network_path::network_path_warnings;
 pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
+pub use wifi::scan_helper_mode as wifi_scan_helper_mode;
 
 pub fn battery_status() -> Option<crate::BatteryStatus> {
     let output = Command::new("pmset").args(["-g", "batt"]).output().ok()?;
@@ -2216,7 +2217,7 @@ pub fn request_av_permissions() {
 
 // ── wireless ────────────────────────────────────────────────────────────────
 //
-// Saved-network listing uses networksetup; password joins use CoreWLAN.
+// CoreWLAN lists nearby networks; networksetup provides the saved fallback.
 
 /// The wireless interface, usually `en0` but not on every model.
 fn wifi_interface() -> Option<String> {
@@ -2263,38 +2264,44 @@ fn current_ssid(interface: &str) -> (Option<String>, bool) {
     (None, connected)
 }
 
-/// Saved networks, with the joined one marked.
+/// Networks in range, falling back to saved profiles when names are unavailable.
+/// Called on the Tauri worker, never the UI thread.
 pub fn wifi_scan() -> crate::WifiScan {
-    let Some(interface) = wifi_interface() else {
-        return crate::WifiScan::default();
-    };
-    let (current, connected) = current_ssid(&interface);
-    let Ok(output) = std::process::Command::new("/usr/sbin/networksetup")
-        .args(["-listpreferredwirelessnetworks", &interface])
-        .bounded_output()
+    let nearby = wifi::scan();
+    let Some(interface) = nearby
+        .as_ref()
+        .map(|scan| scan.interface.clone())
+        .or_else(wifi_interface)
     else {
         return crate::WifiScan::default();
     };
-    if !output.status.success() {
+    let (current, connected) = nearby
+        .as_ref()
+        .and_then(|scan| scan.current.clone())
+        .map(|name| (Some(name), true))
+        .unwrap_or_else(|| current_ssid(&interface));
+    let saved = Command::new("/usr/sbin/networksetup")
+        .args(["-listpreferredwirelessnetworks", &interface])
+        .bounded_checked_output()
+        .ok();
+    if nearby.as_ref().is_none_or(|scan| scan.networks.is_empty()) && saved.is_none() {
         return crate::WifiScan::default();
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut rows = crate::wifi_parse::parse_networksetup_list(&text);
-    // The joined network is not always in the preferred list.
-    if let Some(name) = current.as_deref() {
-        if !rows.iter().any(|r| r.ssid == name) {
-            rows.push(crate::WifiNetwork {
-                ssid: name.to_string(),
-                signal: None,
-                secured: true,
-                current: true,
-            });
-        }
-    }
+    let saved = saved
+        .map(|out| {
+            crate::wifi_parse::parse_networksetup_list(&String::from_utf8_lossy(&out.stdout))
+        })
+        .unwrap_or_default();
+    let (networks, saved_only) = crate::wifi_parse::macos_scan_rows(
+        nearby.map(|scan| scan.networks).unwrap_or_default(),
+        saved,
+        current.as_deref(),
+    );
     crate::WifiScan {
-        networks: crate::wifi_parse::tidy(rows, current.as_deref()),
-        current,
+        networks,
+        saved_only,
         connected,
+        current,
         supported: true,
     }
 }

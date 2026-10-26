@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Lock, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { Check, Lock, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
 
 /**
  * Changing network without leaving the exam.
@@ -21,6 +22,7 @@ type WifiNetwork = {
   ssid: string;
   signal: number | null;
   secured: boolean;
+  saved: boolean;
   current: boolean;
 };
 
@@ -28,6 +30,7 @@ type WifiScan = {
   networks: WifiNetwork[];
   current: string | null;
   connected: boolean;
+  saved_only: boolean;
   supported: boolean;
 };
 
@@ -37,6 +40,7 @@ const UNSUPPORTED_SCAN: WifiScan = {
   supported: false,
   current: null,
   connected: false,
+  saved_only: false,
   networks: [],
 };
 
@@ -50,6 +54,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const [scanError, setScanError] = useState("");
   const [note, setNote] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const scanPending = useRef(false);
   // Which way the menu opens, and how tall it may be.
   //
   // It was always dropped downward at a fixed height, which is wrong in the
@@ -62,10 +67,12 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   });
 
   const refresh = useCallback(async () => {
+    if (scanPending.current) return;
     if (!window.__TAURI__) {
       setScan(UNSUPPORTED_SCAN);
       return;
     }
+    scanPending.current = true;
     try {
       const next = await window.__TAURI__.core.invoke<WifiScan>("scan_wifi");
       setScan(next ?? UNSUPPORTED_SCAN);
@@ -73,6 +80,8 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     } catch {
       setScan(UNSUPPORTED_SCAN);
       setScanError("Could not load Wi-Fi networks. Rescan to try again.");
+    } finally {
+      scanPending.current = false;
     }
   }, []);
 
@@ -146,6 +155,10 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       // The OS takes a moment to associate; the heartbeat notices on its own.
       window.setTimeout(() => void refresh(), 2500);
     } catch (caught) {
+      if (network.saved && !secret) {
+        setSelected(network);
+        setPassword("");
+      }
       setError(
         typeof caught === "string"
           ? caught
@@ -238,7 +251,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
         >
           <HStack justify="between" align="center">
             <Text type="supporting" color="secondary">
-              Wi-Fi
+              {scan.supported ? (scan.saved_only ? "Saved networks" : "Nearby networks") : "Wi-Fi"}
             </Text>
             {nativeAvailable && (
               <button
@@ -275,9 +288,16 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
               {scanError}
             </Text>
           )}
+          {scan.supported && scan.saved_only && (
+            <Text type="supporting" color="secondary">
+              Nearby networks are unavailable. Saved networks may be out of range. Check macOS Wi-Fi
+              and Location access, then rescan.
+            </Text>
+          )}
           {scan.supported && scan.networks.length === 0 && (
             <Text type="supporting" color="secondary">
-              No Wi-Fi networks reported by your device. Rescan to try again.
+              {scan.saved_only ? "No saved networks found." : "No nearby networks found."} Rescan to
+              try again.
             </Text>
           )}
 
@@ -288,7 +308,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                 disabled={busy}
                 onClick={() => {
                   if (network.current) return;
-                  if (network.secured) {
+                  if (network.secured && !network.saved) {
                     setSelected(network);
                     setPassword("");
                     setError("");
@@ -319,12 +339,18 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                   {network.current ? " · connected" : ""}
                 </Text>
                 <HStack gap={1} align="center" style={{ flexShrink: 0 }}>
+                  {network.current && <Check size="var(--spacing-4)" aria-label="Connected" />}
+                  {network.saved && <Token label="Saved" size="sm" />}
                   {network.secured && (
                     <Lock size={12} aria-label="Secured" style={{ opacity: 0.6 }} />
                   )}
                   {network.signal !== null && (
-                    <Text type="code" color="secondary">
-                      {network.signal}
+                    <Text
+                      type="code"
+                      color="secondary"
+                      aria-label={`Signal strength ${network.signal}%`}
+                    >
+                      {network.signal}%
                     </Text>
                   )}
                 </HStack>

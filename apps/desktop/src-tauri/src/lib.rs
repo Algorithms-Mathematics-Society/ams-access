@@ -3729,12 +3729,13 @@ fn macos_webview_configuration(
 }
 
 /// The helper processes that share this binary: the macOS lockdown watchdog
-/// (restores the desktop if the app dies) and the login-time restore agent.
+/// (restores the desktop if the app dies), login-time restore, and Wi-Fi scan.
 /// Returns the exit code when this process is one of them; `None` means start
 /// the app normally.
 pub fn run_helper_mode() -> Option<i32> {
     #[cfg(target_os = "macos")]
-    return platform_rs::macos::helper_mode_from_args();
+    return platform_rs::macos::wifi_scan_helper_mode()
+        .or_else(platform_rs::macos::helper_mode_from_args);
     #[cfg(not(target_os = "macos"))]
     None
 }

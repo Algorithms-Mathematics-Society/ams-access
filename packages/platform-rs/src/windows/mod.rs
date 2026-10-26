@@ -2391,6 +2391,7 @@ pub fn wifi_scan() -> crate::WifiScan {
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
         connected: current.is_some(),
+        saved_only: false,
         current,
         supported: true,
     }
