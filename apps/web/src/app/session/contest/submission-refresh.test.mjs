@@ -59,6 +59,7 @@ function harness() {
     requests,
     writes,
     errors,
+    owner: () => ref.current,
     render: (session = "A", activeQ = 0, questions = [{ id: "A" }, { id: "B" }]) =>
       context.render(session, activeQ, questions),
     unmount: () => cleanup?.(),
@@ -225,4 +226,25 @@ test("missing session or active question does not fetch", async () => {
   await h.render("A", 0, [])();
   assert.equal(h.requests.length, 0);
   assert.equal(h.writes.length, 0);
+});
+
+test("an older history response cannot erase an accepted POST receipt", async () => {
+  const h = harness();
+  const refresh = h.render();
+  const pending = refresh();
+  await flush();
+  // The POST finishes while this earlier GET is still on the wire.
+  const receipt = { id: "new-attempt", status: "QUEUED", testcases: [] };
+  // Obtain the owner through the test's useRef so this is the real refresh path.
+  h.owner().accepted.set(receipt.id, receipt);
+  h.requests[0].resolve([]);
+  await pending;
+  assert.equal(h.state.attempts[0].id, receipt.id);
+  const next = refresh();
+  await flush();
+  h.requests[1].resolve([{ ...receipt, status: "COMPLETED" }]);
+  await next;
+  assert.equal(h.state.attempts.length, 1);
+  assert.equal(h.state.attempts[0].status, "COMPLETED");
+  assert.equal(h.owner().accepted.size, 0);
 });

@@ -97,6 +97,9 @@ type RunStatusView = {
 } | null;
 
 export interface TerminalPanelProps {
+  resultSelection?: { source: "run" | "submission" };
+  submissionPending?: boolean;
+  runBusy?: boolean;
   /** The candidate's own cases for the active problem, and how to change
    *  and run them. Rendered here rather than beside the editor so the cases
    *  and the output they produced stay in one place. */
@@ -113,7 +116,6 @@ export interface TerminalPanelProps {
   compilerDiagnostic?: CompilerDiagnostic | null;
   onJumpToCompilerError?: () => void;
   outputHeightPercent?: number;
-  runSourceChanged?: boolean;
   terminalCollapsed: boolean;
   setTerminalCollapsed: Dispatch<SetStateAction<boolean>>;
   shouldShowRunProgress: boolean;
@@ -121,7 +123,7 @@ export interface TerminalPanelProps {
   isRunning: boolean;
   runTimedOut: boolean;
   /** Re-polls the timed-out run by uid. Never starts a new run. */
-  onCheckRunAgain: () => void;
+  onCheckRunAgain: (mode: "all" | "custom") => void;
   runResultAttemptId: string | null;
   runSampleTests: any[] | null;
   /** The active problem's worked examples, for pairing with judged samples. */
@@ -150,6 +152,7 @@ export interface TerminalPanelProps {
    *  whichever ran last. */
   runViews: {
     all: {
+      sourceChanged?: boolean;
       result: any;
       error: string | null;
       timedOut: boolean;
@@ -157,6 +160,7 @@ export interface TerminalPanelProps {
       status: RunStatusView;
     };
     custom: {
+      sourceChanged?: boolean;
       result: any;
       error: string | null;
       timedOut: boolean;
@@ -171,6 +175,9 @@ export interface TerminalPanelProps {
 }
 
 export function TerminalPanel({
+  resultSelection,
+  submissionPending = false,
+  runBusy = false,
   runMode,
   customCases,
   onCustomCasesChange,
@@ -181,7 +188,6 @@ export function TerminalPanel({
   compilerDiagnostic,
   onJumpToCompilerError,
   outputHeightPercent = 34,
-  runSourceChanged = false,
   terminalCollapsed,
   setTerminalCollapsed,
   shouldShowRunProgress,
@@ -216,33 +222,12 @@ export function TerminalPanel({
 }: TerminalPanelProps) {
   const [activeTab, setActiveTab] = useState<"all" | "custom" | "attempts">("all");
   useEffect(() => {
-    // A run pulls the pane back to what it is about to produce. Without this
-    // a candidate who was reading their history watches the spinner run in a
-    // tab they cannot see.
-    if (isRunning) setActiveTab(runMode);
-  }, [isRunning, runMode]);
+    // Only a candidate action selects output. Poll replies must not replace
+    // a newer submission with an older Run or pull them out of another tab.
+    setActiveTab(resultSelection?.source === "run" ? runMode : "all");
+  }, [resultSelection, problemLabel, runMode]);
 
-  // Which of the two the result pane is showing. `runMode` is not this: it is
-  // "all cases or custom cases" and stays "all" whether the last thing the
-  // candidate pressed was Run or Submit, so reading it meant a finished
-  // submission rendered the *run* branch — empty — and the panel said "Run
-  // your code" directly underneath a badge counting six results.
-  //
-  // Whichever started most recently wins, which is what a candidate means by
-  // "the result".
-  const [resultSource, setResultSource] = useState<"run" | "submission">("run");
-  useEffect(() => {
-    if (isRunning || runResult || runError || runTimedOut) setResultSource("run");
-  }, [isRunning, runResult, runError, runTimedOut]);
-  useEffect(() => {
-    if (!latestAttempt?.id && !latestAttemptPending) return;
-    setResultSource("submission");
-    // Submitting is the moment a candidate most wants the verdict, so the
-    // pane comes to the front rather than waiting to be found.
-    setActiveTab("all");
-  }, [latestAttempt?.id, latestAttemptPending]);
-
-  const viewingRun = resultSource === "run";
+  const viewingRun = (resultSelection?.source ?? (latestAttempt ? "submission" : "run")) === "run";
   // The custom tab is always about the run that was started from it. A
   // submission's results belong under "Test Result", not beneath the inputs
   // that did not produce them -- and `resultSource` can still say
@@ -271,16 +256,6 @@ export function TerminalPanel({
       output: c.expected ?? undefined,
     }));
   }, [customCases]);
-  // Compiler messages follow the run when there is one, and otherwise fall back
-  // to the last submission -- the precedence the Compiler output tab used before
-  // the two output tabs were folded into this one pane.
-  const compilerText = runResult
-    ? (runResult.compile_output ?? null)
-    : (latestAttempt?.compile_output ?? null);
-  const compilerIsError = runResult
-    ? runResult.status === "CE"
-    : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE";
-
   // Attempts-list filter (ALL / FAILED / PASSED). Judged attempts split on the
   // final verdict; still-judging attempts only appear under ALL.
   const attemptMatchesFilter = (sub: SubmissionAttemptRecord) => {
@@ -331,7 +306,15 @@ export function TerminalPanel({
               variant="neutral"
             />
           )}
-          {runResult?.status === "CE" && <Badge label="CE" variant="error" />}
+          {(submissionPending || latestAttemptPending || isRunning) && (
+            <Text type="supporting" color="secondary" role="status">
+              {submissionPending
+                ? "Submitting…"
+                : latestAttemptPending
+                  ? "Submission judging…"
+                  : "Run in progress…"}
+            </Text>
+          )}
         </HStack>
         <IconButton
           label={
@@ -420,7 +403,10 @@ export function TerminalPanel({
             onRun={onRunCustom}
             isRunning={isRunning}
             readOnly={readOnly}
-            runDisabledReason={judgingUnavailableReason}
+            runDisabledReason={
+              judgingUnavailableReason ??
+              (runBusy && !isRunning ? "A run is still in progress on another problem." : null)
+            }
           />
         )}
         {/* The active tab's own run. "Test Result" is the official one --
@@ -439,7 +425,7 @@ export function TerminalPanel({
 
           return (
             <>
-              {view.result && runSourceChanged && (
+              {showRun && view.result && view.sourceChanged && (
                 <Banner
                   status="warning"
                   container="section"
@@ -454,7 +440,7 @@ export function TerminalPanel({
                   spinner and showed nothing at all. "Still running..." is
                   also the truthful message -- the worker is allowed far
                   longer than the client waits. */}
-              {status && (view.result || paneLive || view.error || view.timedOut) && (
+              {showRun && status && (view.result || paneLive || view.error || view.timedOut) && (
                 <HStack
                   gap={2}
                   align="center"
@@ -477,7 +463,7 @@ export function TerminalPanel({
                       size="sm"
                       variant="secondary"
                       label="Check again"
-                      onClick={onCheckRunAgain}
+                      onClick={() => onCheckRunAgain(custom ? "custom" : "all")}
                     />
                   )}
                 </HStack>
@@ -495,19 +481,33 @@ export function TerminalPanel({
                 }
                 runtimeMs={showRun ? view.result?.runtime_ms : latestAttempt?.runtime_ms}
                 memoryKb={showRun ? view.result?.memory_kb : latestAttempt?.memory_kb}
-                isRunning={showRun ? paneLive : latestAttemptPending}
+                isRunning={showRun ? paneLive : submissionPending || latestAttemptPending}
                 submitted={!showRun}
-                progressLabel={runProgressSteps[runProgressPhase] ?? runMetrics}
-                error={
-                  view.timedOut
-                    ? "Still running on the judge. Press Check again in a moment."
-                    : view.error
+                progressLabel={
+                  showRun
+                    ? (runProgressSteps[runProgressPhase] ?? runMetrics)
+                    : submissionPending
+                      ? "Submitting…"
+                      : "Judging…"
                 }
-                compilerText={compilerText}
-                compilerIsError={compilerIsError}
-                onJumpToCompilerError={onJumpToCompilerError}
+                error={
+                  !showRun
+                    ? null
+                    : view.timedOut
+                      ? "Still running on the judge. Press Check again in a moment."
+                      : view.error
+                }
+                compilerText={showRun ? view.result?.compile_output : latestAttempt?.compile_output}
+                compilerIsError={
+                  showRun
+                    ? view.result?.status === "CE"
+                    : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE"
+                }
+                onJumpToCompilerError={
+                  showRun && activeTab === runMode ? onJumpToCompilerError : undefined
+                }
                 examples={custom ? customExamples : sampleExamples}
-                stale={showRun && runSourceChanged}
+                stale={showRun && Boolean(view.sourceChanged)}
                 emptyHint={
                   custom
                     ? "Run your custom cases to see their output."

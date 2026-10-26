@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { attemptLimitError } from "./attempt-limits.ts";
+import { toAttemptRecords } from "./attempt-adapter.ts";
 
 const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const start = client.indexOf("  async function handleSubmitSolution()");
@@ -26,6 +27,16 @@ function fixture(shared = { accepted: new Map(), posts: [], store: new Map(), ne
     selectedLanguage: "cpp17",
     latestActiveDraftRef: { current: null },
     submitInFlightRef: { current: false },
+    submissionRefreshRef: {
+      current: { active: true, sessionId: "session-1", accepted: new Map() },
+    },
+    allSubmissionsList: [],
+    setAllSubmissionsList: (update) => {
+      state.allSubmissionsList = update(state.allSubmissionsList);
+    },
+    setTestResults: () => {},
+    setResultSelections: () => {},
+    toAttemptRecords,
     exitInFlightRef: { current: false },
     submitKeyRef: { current: null },
     acknowledgedSubmitKeysRef: { current: {} },
@@ -51,7 +62,14 @@ function fixture(shared = { accepted: new Map(), posts: [], store: new Map(), ne
       posts.push({ sessionId, ...payload });
       const existing = accepted.get(payload.idempotencyKey);
       if (existing) return existing;
-      const created = { uid: `attempt-${accepted.size + 1}`, ...payload };
+      const created = {
+        uid: `attempt-${accepted.size + 1}`,
+        ...payload,
+        problem_label: payload.problemLabel,
+        status: "queued",
+        created_at: new Date().toISOString(),
+        testcases: [],
+      };
       accepted.set(payload.idempotencyKey, created);
       if (state.loseResponse) {
         state.loseResponse = false;
@@ -79,6 +97,52 @@ test("accepted submission with a lost response retries the same key without dupl
   assert.match(f.state.error, /Confirmed an earlier submission request/);
   await f.submit();
   assert.equal(f.accepted.size, 2, "a new acknowledged click is a new attempt");
+});
+
+test("accepted receipt stays visible while the post-submit history request stalls", async () => {
+  const f = fixture();
+  f.state.loseResponse = false;
+  const history = deferred();
+  f.state.fetchSubmissions = () => history.promise;
+  const pending = f.submit();
+  await Promise.resolve();
+  assert.equal(f.state.allSubmissionsList[0].status, "QUEUED");
+  assert.equal(f.state.allSubmissionsList[0].problem_id, "A");
+  assert.equal(f.state.submissionRefreshRef.current.accepted.size, 1);
+  history.resolve();
+  await pending;
+});
+
+test("late Submit errors stay with the initiating question and session", () => {
+  const start = client.indexOf("  const [submissionErrors, setSubmissionErrors]");
+  const end = client.indexOf("\n", client.indexOf("[runQuestionKey]: error", start));
+  assert.ok(start >= 0 && end > start);
+  const code = ts.transpileModule(client.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  let errors = {};
+  const useState = () => [
+    errors,
+    (update) => {
+      errors = update(errors);
+    },
+  ];
+  const render = (key) =>
+    new Function(
+      "useState",
+      "runQuestionKey",
+      `${code}; return { error: submissionError, setError: setSubmissionError };`
+    )(useState, key);
+  const original = render("session-1:A");
+  assert.equal(render("session-1:B").error, null);
+  original.setError("Connection lost");
+  assert.equal(render("session-1:B").error, null);
+  assert.equal(render("session-2:A").error, null);
+  assert.equal(render("session-1:A").error, "Connection lost");
+  render("session-1:B").setError(null);
+  assert.equal(render("session-1:A").error, "Connection lost");
+  render("session-1:A").setError(null);
+  assert.equal(render("session-1:A").error, null);
 });
 
 test("accepted submission with a lost response survives a remount without a second attempt", async () => {
@@ -267,9 +331,9 @@ test("a finishing session cannot start another submission", async () => {
   assert.equal(f.posts.length, 0);
 });
 
-test("a failed final Run poll cannot time out the next problem", async () => {
+test("a failed final Run poll cannot time out a newer visit", async () => {
   const start = client.indexOf("  async function pollRun(");
-  const end = client.indexOf("\n  // Status-only re-poll", start);
+  const end = client.indexOf("\n  // Recheck the pane", start);
   assert.ok(start >= 0 && end > start);
   const code = ts.transpileModule(client.slice(start, end), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
@@ -295,7 +359,7 @@ test("a failed final Run poll cannot time out the next problem", async () => {
   const pending = poll("all", "session", "attempt", 1, [0]);
   await Promise.resolve();
   assert.equal(polls, 1);
-  context.runVisitRef.current = 2; // switchQuestion invalidates the old run
+  context.runVisitRef.current = 2; // a new run/session invalidates the old poll
   rejectRun(new Error("connection lost"));
   await pending;
   assert.deepEqual(writes, []);

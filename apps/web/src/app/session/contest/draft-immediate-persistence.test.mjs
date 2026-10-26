@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import { attemptLimitError } from "./attempt-limits.ts";
+import { defaultStarterFor } from "./components/language.ts";
 
 const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile(
@@ -28,6 +29,7 @@ const handlers = ts.transpileModule(
   [
     "handleLanguageChange",
     "handleCodeChange",
+    "handleResetCode",
     "activeDraftSnapshot",
     "writeLocalAnswerBuffer",
     "doSave",
@@ -60,7 +62,7 @@ const commitSnapshot = ts.transpileModule(`const commit = ${committedSnapshot};`
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function fixture() {
+function fixture(overrides = {}) {
   const entries = new Map();
   const retryEntries = new Map();
   const pending = [];
@@ -77,6 +79,9 @@ function fixture() {
     editorFiles: files,
     activeFileId: "A:main",
     selectedLanguage: "C++23",
+    editorLocked: false,
+    formatSource: (source) => source,
+    resolveLanguageBundle: (language) => language,
     latestActiveDraftRef: {
       current: {
         sessionId: "session-1",
@@ -102,7 +107,7 @@ function fixture() {
     normalizeLanguageLabel: (value) => value,
     questionFileName: (_question, language) => (language === "Python 3" ? "main.py" : "main.cpp"),
     isPristineStarter: () => false,
-    defaultStarterFor: () => "starter",
+    defaultStarterFor,
     setSelectedLanguage: () => {},
     isRunning: false,
     runInFlightRef: { current: false },
@@ -131,16 +136,19 @@ function fixture() {
       return { uid: "submission-1" };
     },
     setSubmittedSources: () => {},
+    setResultSelections: () => {},
+    submissionRefreshRef: { current: null },
     fetchSubmissions: async () => {},
     localStorage: {
       getItem: (key) => retryEntries.get(key) ?? null,
       setItem: (key, value) => retryEntries.set(key, String(value)),
       removeItem: (key) => retryEntries.delete(key),
     },
+    ...overrides,
   };
   const api = new Function(
     ...Object.keys(state),
-    `${handlers}; return { handleLanguageChange, handleCodeChange, handleSave, writeLocalAnswerBuffer, triggerRun, handleSubmitSolution };`
+    `${handlers}; return { handleLanguageChange, handleCodeChange, handleResetCode, handleSave, writeLocalAnswerBuffer, triggerRun, handleSubmitSolution };`
   )(...Object.values(state));
   return {
     api,
@@ -160,6 +168,42 @@ function fixture() {
     flush: () =>
       pending.splice(0).forEach((update) => (state.questionFiles = update(state.questionFiles))),
   };
+}
+
+test("reset restores the question template immediately without changing scratch files", () => {
+  const { api, entries, state, flush } = fixture();
+  state.questions[0].starter_code = "question template";
+  api.handleCodeChange("edited answer");
+  api.handleResetCode();
+  const draft = entries.get("session-1:A");
+  assert.equal(draft.files[0].content, "question template");
+  assert.equal(draft.files[1].content, "notes");
+  flush();
+  assert.equal(state.questionFiles.A[0].content, "question template");
+});
+
+test("reset falls back to the language starter when the question has no template", () => {
+  const { api, entries } = fixture();
+  api.handleResetCode();
+  assert.equal(entries.get("session-1:A").files[0].content, defaultStarterFor("C++23"));
+});
+
+for (const language of ["Python3", "PyPy3", "C"]) {
+  test(`reset uses the ${language} template rather than the question's C++ starter`, () => {
+    const { api, entries, state } = fixture({ selectedLanguage: language });
+    state.questions[0].starter_code = "using namespace std;";
+    api.handleResetCode();
+    assert.equal(entries.get("session-1:A").files[0].content, defaultStarterFor(language));
+    assert.doesNotMatch(entries.get("session-1:A").files[0].content, /using namespace std/);
+  });
+}
+
+for (const overrides of [{ editorLocked: true }, { activeFileId: "A:scratch" }]) {
+  test(`reset rejects locked or scratch context: ${JSON.stringify(overrides)}`, () => {
+    const { api, entries } = fixture(overrides);
+    api.handleResetCode();
+    assert.equal(entries.size, 0);
+  });
 }
 
 test("each edit reaches the local buffer before React commits, preserving scratch tabs", async () => {

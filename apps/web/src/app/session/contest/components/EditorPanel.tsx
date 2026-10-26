@@ -24,6 +24,7 @@ import {
 } from "../editor-pane";
 import { type ContestMeta } from "./questions";
 import { type SubmitButtonView } from "../submit-button";
+import { AccessDialog } from "@/components/AccessDialog";
 
 // Module-scope so identity + the lazy chunk stay stable across renders (same
 // target module as before the move — only the relative import path changed).
@@ -78,6 +79,7 @@ export interface EditorPanelProps {
   activeFile: EditorFile | null;
   currentCode: string;
   handleCodeChange: (value: string) => void;
+  handleResetCode: () => void;
 }
 
 export function EditorPanel({
@@ -106,7 +108,14 @@ export function EditorPanel({
   activeFile,
   currentCode,
   handleCodeChange,
+  handleResetCode,
 }: EditorPanelProps) {
+  const [resetTarget, setResetTarget] = useState<string | null>(null);
+  const resetContext = JSON.stringify([sessionId, currentQId, activeFileId, selectedLanguage]);
+  const resetOpen = resetTarget === resetContext && !readOnly;
+  useEffect(() => {
+    setResetTarget(null);
+  }, [resetContext, readOnly]);
   const [preferences, setPreferences] = useState<EditorPreferences>(DEFAULT_EDITOR_PREFERENCES);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferencesStorageUnavailable, setPreferencesStorageUnavailable] = useState(false);
@@ -240,6 +249,14 @@ export function EditorPanel({
           </select>
         </HStack>
         <HStack gap={2} align="center" wrap="wrap">
+          {!readOnly && activeFileId.endsWith(":main") && (
+            <Button
+              label="Reset code"
+              variant="ghost"
+              size="sm"
+              onClick={() => setResetTarget(resetContext)}
+            />
+          )}
           {/* Indentation only, and the same command Ctrl/Cmd-S runs. Hidden
               once the bell has rung, when the document is read-only and the
               button could only fail. */}
@@ -469,6 +486,27 @@ export function EditorPanel({
         readOnly={readOnly}
         preferences={preferences}
       />
+      <AccessDialog
+        open={resetOpen}
+        onClose={() => setResetTarget(null)}
+        title="Reset code to template?"
+        subtitle="This replaces your code for the current question with its starter template. Your submissions and other questions are kept."
+        width="min(100%, calc(var(--spacing-10) * 12))"
+        labelId="reset-code-dialog"
+      >
+        <HStack gap={3} justify="end" wrap="wrap">
+          <Button label="Cancel" onClick={() => setResetTarget(null)} />
+          <Button
+            label="Reset code"
+            variant="destructive"
+            onClick={() => {
+              if (!resetOpen) return;
+              handleResetCode();
+              setResetTarget(null);
+            }}
+          />
+        </HStack>
+      </AccessDialog>
     </VStack>
   );
 }
