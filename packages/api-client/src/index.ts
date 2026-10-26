@@ -266,9 +266,9 @@ export function sessionPolicy(profile: EnforcementProfile, platform?: string): S
   return {
     profile,
     checks: POLICY_CHECKS.map((kind) => {
-      // macOS only: camera and microphone must both be permitted to enter,
-      // with no organizer override. Other platforms keep the rules below.
-      if (isMacos && (kind === "camera" || kind === "microphone")) {
+      // macOS only: the camera must be permitted to enter, with no organizer
+      // override. The microphone stays advisory, as everywhere else.
+      if (isMacos && kind === "camera") {
         return {
           kind,
           required: true,

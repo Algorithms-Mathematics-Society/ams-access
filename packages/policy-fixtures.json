@@ -111,9 +111,9 @@
       "unsupported_severity": "warning"
     },
     "microphone": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
       "unsupported_severity": "warning"
     },
     "network": {
@@ -629,9 +629,9 @@
       "unsupported_severity": "warning"
     },
     "microphone": {
-      "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
+      "organizer_override_allowed": true,
+      "required": false,
+      "severity": "warning",
       "unsupported_severity": "warning"
     },
     "network": {
@@ -1148,8 +1148,8 @@
     },
     "microphone": {
       "organizer_override_allowed": false,
-      "required": true,
-      "severity": "block",
+      "required": false,
+      "severity": "warning",
       "unsupported_severity": "warning"
     },
     "network": {
