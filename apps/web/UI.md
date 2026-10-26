@@ -326,3 +326,8 @@ Build preparation strips external CSS/SVG resource references and omits upstream
 JavaScript; bundle checks reject unsafe copied assets. Native top-level navigation
 is restricted to the app origin (or the configured development origin), and the
 external-browser command refuses requests while native exam lockdown is active.
+
+A native resume of an active session on the same device skips the introduction
+and reuses a passed face scan for at most five minutes when the camera is unchanged.
+Presence, media permissions, displays, applications, network and lockdown are
+checked again. Missing or invalid recovery data runs complete setup.

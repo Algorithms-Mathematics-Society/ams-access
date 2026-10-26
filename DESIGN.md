@@ -165,3 +165,7 @@ security/network and expiry flows. Keep the workspace mounted and background
 controls inert, with focus restored only on ordinary dismissal. Reference content
 is bounded plain text from the existing authenticated contest payload, with a
 fast, reduced-motion-aware opening transition and no network work on open.
+
+Recent same-device resumes may reuse a passed face scan for five minutes with
+the same camera. Setup says when it reuses the scan and performs a fresh presence
+check; volatile device checks and final entry policy remain authoritative.
