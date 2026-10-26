@@ -169,8 +169,27 @@ fn shared_app() -> Option<*mut AnyObject> {
 fn set_presentation(app: *mut AnyObject, options: usize) -> bool {
     guarded(|| unsafe {
         let _: () = msg_send![app, setPresentationOptions: options];
+        let applied: usize = msg_send![app, presentationOptions];
+        applied == options
     })
-    .is_some()
+    .unwrap_or(false)
+}
+
+fn prepare_window_on_main(app: *mut AnyObject, window: *mut AnyObject) -> bool {
+    guarded(|| unsafe {
+        let minimized: Bool = msg_send![window, isMiniaturized];
+        if minimized.as_bool() {
+            let _: () = msg_send![window, deminiaturize: std::ptr::null::<AnyObject>()];
+        }
+        let _: () = msg_send![app, activateIgnoringOtherApps: Bool::YES];
+        let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
+        // Not isKeyWindow: activation lands a run-loop turn later, and a system
+        // permission prompt can hold key status; neither means kiosk failed.
+        let visible: Bool = msg_send![window, isVisible];
+        let screen: *mut AnyObject = msg_send![window, screen];
+        visible.as_bool() && !screen.is_null()
+    })
+    .unwrap_or(false)
 }
 
 // ── Kiosk presentation ────────────────────────────────────────────────────────
@@ -184,19 +203,31 @@ pub fn apply_kiosk(ns_window: usize) -> Result<(), String> {
     if ns_window == 0 {
         return Err("Exam window handle unavailable".into());
     }
-    on_main(Duration::from_secs(3), move || {
-        // A job that timed out can still run after unlock; it must not lock
-        // the desktop again then.
-        if !super::lockdown_active() {
-            return Err("Lockdown is no longer active".to_string());
-        }
-        apply_on_main(ns_window)
-    })
-    .unwrap_or_else(|| Err("The main thread did not apply the kiosk presentation in time".into()))
+    let mut result = Err("Kiosk presentation was not verified".to_string());
+    crate::kiosk::retry_until_verified(
+        || {
+            result = on_main(Duration::from_secs(1), move || {
+                // A job that timed out can still run after unlock.
+                if !super::lockdown_active() {
+                    return Err("Lockdown is no longer active".to_string());
+                }
+                apply_on_main(ns_window)
+            })
+            .unwrap_or_else(|| {
+                Err("The main thread did not apply the kiosk presentation in time".into())
+            });
+            result.is_ok()
+        },
+        std::thread::sleep,
+    );
+    result
 }
 
 fn apply_on_main(ns_window: usize) -> Result<(), String> {
     let app = shared_app().ok_or("NSApplication is unavailable")?;
+    if !prepare_window_on_main(app, ns_window as *mut AnyObject) {
+        return Err("The exam window is not visible".into());
+    }
     let current: usize = guarded(|| unsafe { msg_send![app, presentationOptions] })
         .ok_or("Could not read the current presentation options")?;
     lock(&PRESENTATION).get_or_insert(current);
@@ -386,6 +417,57 @@ pub fn wait_native_fullscreen_exit(ns_window: usize, timeout: Duration) -> bool 
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Set and verify in the same main-thread turn, so Tauri cannot queue the setter
+/// behind our AppKit query. Backoff leaves the main run loop free to settle.
+pub fn engage_simple_fullscreen(
+    ns_window: usize,
+    set_fullscreen: impl Fn(bool) -> bool + Send + Sync + 'static,
+) -> bool {
+    if ns_window == 0 {
+        return false;
+    }
+    let set_fullscreen = std::sync::Arc::new(set_fullscreen);
+    crate::kiosk::retry_until_verified(
+        || {
+            let set_fullscreen = set_fullscreen.clone();
+            let pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let queued = pending.clone();
+            let verified = on_main(Duration::from_millis(500), move || {
+                // A timed-out queued attempt must not engage after rollback.
+                if !queued.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    return false;
+                }
+                let window = ns_window as *mut AnyObject;
+                let Some(app) = shared_app() else {
+                    return false;
+                };
+                let ready = prepare_window_on_main(app, window);
+                if !ready || guarded(|| set_fullscreen(true)) != Some(true) {
+                    return false;
+                }
+                let confirmed = simple_fullscreen_engaged(ns_window)
+                    && guarded(|| unsafe {
+                        let visible: Bool = msg_send![window, isVisible];
+                        let options: usize = msg_send![app, presentationOptions];
+                        visible.as_bool()
+                            && options & (HIDE_DOCK | AUTO_HIDE_DOCK) != 0
+                            && options & (HIDE_MENU_BAR | AUTO_HIDE_MENU_BAR) != 0
+                    })
+                    .unwrap_or(false);
+                if !confirmed {
+                    // tao caches simple-fullscreen state; reset it before retrying.
+                    let _ = guarded(|| set_fullscreen(false));
+                }
+                confirmed
+            })
+            .unwrap_or(false);
+            pending.store(false, std::sync::atomic::Ordering::SeqCst);
+            verified
+        },
+        std::thread::sleep,
+    )
 }
 
 /// Whether simple fullscreen actually took: no title bar, and the window

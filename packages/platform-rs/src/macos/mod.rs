@@ -27,8 +27,8 @@ mod watchdog;
 pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
 pub use kiosk_window::{
-    apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
-    top_safe_inset, wait_native_fullscreen_exit,
+    apply_kiosk, engage_simple_fullscreen, reapply_kiosk_later, restore_kiosk_window,
+    simple_fullscreen_engaged, top_safe_inset, wait_native_fullscreen_exit,
 };
 pub use network_path::network_path_warnings;
 pub use power::{install_power_observers, set_power_event_callback};
