@@ -165,3 +165,14 @@ security/network and expiry flows. Keep the workspace mounted and background
 controls inert, with focus restored only on ordinary dismissal. Reference content
 is bounded plain text from the existing authenticated contest payload, with a
 fast, reduced-motion-aware opening transition and no network work on open.
+
+Logged-out login support is a one-shot issue form with email, phone, name and
+message, followed by confirmation; it does not expose conversation access. Signed-in
+Help uses the larger shared conversation dialog on home and ContestOverlay
+inside an assessment. It asks only for a message; participant and organization
+context come from authentication. Show plain-text replies with sender
+and local timestamp, explicit delivery/reconnect feedback, and readable resolved
+history. Keep pending retries tied to their original identifiers. Support must
+yield to mandatory overlays without changing exam state. The organization portal
+owns the separate staff inbox. Device incident reporting with diagnostics remains
+a separate contest action.

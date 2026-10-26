@@ -238,11 +238,33 @@ do not become authentication errors; inaccessible recovery data remains an
 explicit warning. Cached contest search misses retain their stale-data notice
 and Clear search action.
 
-Help requests keep the original summary, contact and receipt across closing and
-reopening. Send another request starts a new composition after acknowledgement.
-Email uses native validation; an unacknowledged request is described as delivery
-not confirmed, without automatic resubmission. Draft text is retained only in the
-mounted dialog, not promised as durable storage.
+Logged-out login Help sends a one-shot issue with email, phone, name and message;
+organization code is not requested. It shows a sent confirmation and never opens
+a conversation. A pending request remains available for an idempotent retry, and
+editing it starts a new request identifier.
+
+Signed-in Help asks only for a message. Authentication supplies participant
+and contest organization, while organizers reply through
+the organization-wide Support inbox rather than a contest-only incident view.
+Conversation capabilities and pending request/message identifiers use this
+window's session storage so closing the dialog, navigating and reloading can
+resume the same signed-in conversation. A full window close ends local recovery;
+confirmed messages remain on the server. Storage failures show a warning and
+preserve the mounted conversation in memory; leaving the page, reloading or
+closing that chat may lose access. Unconfirmed sends retry with their original
+identifier. Replies refresh every 8–12 seconds while open and visible; errors
+retain the last history. Resolved conversations remain readable and keep any
+unconfirmed message visible for acknowledgement retry. Late responses preserve
+newer conversations and pending messages from other help surfaces. Forget chat /
+new request removes this window's access to the previous conversation.
+
+During an assessment, Help renders the same chat inside the existing
+ContestOverlay and focus trap. Mandatory security, network and expiry overlays
+suspend it; chat does not pause the exam clock or remount the workspace. The
+existing device incident report with diagnostics shares the chat action row,
+aligned left with Close and Send on the right; actions wrap in narrow windows.
+See [participant support](../../SUPPORT.md) for rollout and
+validation limits.
 
 Session-creation request deadlines cover response-body consumption. Submission
 history refreshes are serialized within a session, and equivalent testcase

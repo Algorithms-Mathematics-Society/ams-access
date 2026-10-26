@@ -3,6 +3,7 @@
 import { formatSource } from "./format-code";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
+import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { ContestSponsor } from "@/components/ContestSponsor";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -608,6 +609,7 @@ export default function ContestPageClient() {
   const lastFocusLossRef = useRef(0);
   const lastStatementCopyRef = useRef(0);
   const [showSupportModal, setShowSupportModal] = useState(false);
+  const [showSupportChat, setShowSupportChat] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
   const [customIssueDetail, setCustomIssueDetail] = useState("");
   const [isSendingReport, setIsSendingReport] = useState(false);
@@ -4360,6 +4362,15 @@ export default function ContestPageClient() {
     showMediaToggleWarning && !networkOverlayActive && timeUpState === "idle",
     cancelMediaToggle
   );
+  const supportChatActive =
+    showSupportChat &&
+    !criticalOverlayActive &&
+    !networkOverlayActive &&
+    !showMediaToggleWarning &&
+    !showSupportModal &&
+    timeUpState === "idle";
+  const closeSupportChat = useCallback(() => setShowSupportChat(false), []);
+  const supportChatDialogRef = useFocusTrap<HTMLDivElement>(supportChatActive, closeSupportChat);
   const supportDialogRef = useFocusTrap<HTMLDivElement>(
     showSupportModal && !criticalOverlayActive && !networkOverlayActive && timeUpState === "idle",
     closeSupport
@@ -4376,6 +4387,7 @@ export default function ContestPageClient() {
       networkOverlayActive ||
       submitConfirm ||
       showSupportModal ||
+      showSupportChat ||
       showMediaToggleWarning ||
       timeUpState !== "idle"
     )
@@ -4385,6 +4397,7 @@ export default function ContestPageClient() {
     networkOverlayActive,
     submitConfirm,
     showSupportModal,
+    showSupportChat,
     showMediaToggleWarning,
     timeUpState,
   ]);
@@ -4468,6 +4481,7 @@ export default function ContestPageClient() {
                 networkOverlayActive ||
                 submitConfirm ||
                 showSupportModal ||
+                showSupportChat ||
                 showMediaToggleWarning ||
                 timeUpState !== "idle"
               }
@@ -4480,7 +4494,7 @@ export default function ContestPageClient() {
           contest={contest}
           clock={clock}
           handleContestExpiry={onContestExpiry}
-          setShowSupportModal={setShowSupportModal}
+          setShowSupportModal={setShowSupportChat}
           submitConfirm={submitConfirm}
           setSubmitConfirm={setSubmitConfirm}
           submitError={submitError}
@@ -4513,6 +4527,7 @@ export default function ContestPageClient() {
             criticalOverlayActive ||
             networkOverlayActive ||
             showSupportModal ||
+            showSupportChat ||
             showMediaToggleWarning ||
             timeUpState !== "idle"
           }
@@ -5008,6 +5023,41 @@ export default function ContestPageClient() {
           )}
         </ContestOverlay>
       )}
+
+      <HelpRequestModal
+        open={supportChatActive}
+        contestId={contestId}
+        onClose={closeSupportChat}
+        kind="OTHER"
+        summary="I need help during my assessment."
+        secondaryAction={
+          <Button
+            type="button"
+            label="Report a device incident with diagnostics"
+            variant="secondary"
+            style={{
+              marginInlineEnd: "auto",
+              maxWidth: "100%",
+              flexShrink: 0,
+              height: "auto",
+              whiteSpace: "normal",
+              border: "var(--border-width) solid var(--color-border-emphasized)",
+            }}
+            onClick={() => {
+              setShowSupportChat(false);
+              setShowSupportModal(true);
+            }}
+          />
+        }
+        renderDialog={(content) => (
+          <ContestOverlay labelId="support-chat-title" dialogRef={supportChatDialogRef} wide>
+            <Heading level={2} id="support-chat-title">
+              Talk to your organizer
+            </Heading>
+            {content}
+          </ContestOverlay>
+        )}
+      />
 
       {showSupportModal && (
         <ContestOverlay labelId="support-modal-title" dialogRef={supportDialogRef} wide>

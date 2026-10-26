@@ -1,0 +1,133 @@
+# Participant support chat
+
+Implemented across the `feature/participant-support-chat` branches of `ams-access`,
+`ams-api`, and `amsaccess`. The candidate app is a static export: persistence and
+staff authorization live in the API, not a Next.js route in this repository.
+
+## Flow
+
+1. Logged-out **Get help** asks for email, phone, name and the issue. It sends a
+   one-way report to `POST /support/issues`, then shows confirmation. No
+   organization code or conversation access is requested or returned.
+2. Signed-in **Help** asks only for a message. The authenticated participant and
+   contest supply contact and organization context to
+   `POST /participant/support/conversations`.
+3. Staff see both kinds of issue under **Support** on the main dashboard. Guest
+   issues are contact-only: staff follow up by email or phone and cannot send
+   an unreadable chat reply. Signed-in issues support plain-text conversation.
+4. Signed-in conversations poll every 8–12 seconds while visible, using bounded
+   history pages. Staff can resolve/reopen issues.
+
+A random 256-bit capability grants participant access to exactly one thread.
+Only its SHA-256 hash is stored in the database. The client stores the capability
+and pending send identifiers in session storage, never in URLs. A support
+capability grants no account, contest, credential reset or timer authority.
+Contact details are explicitly unverified. Staff use existing signed portal
+sessions and organization participant-data roles; interns cannot access support.
+
+The participant's session-storage receipt survives dialog closure, navigation
+and reload in that window. It is removed by **Forget chat / new request**, or
+when the browser/app window's storage session ends. This is not cross-device or
+email-based recovery. Confirmed conversations remain on the server. If storage
+is blocked, access remains only in the mounted chat; navigating away, reloading
+or closing it may lose access, as its warning explains.
+Support requests and messages retain their UUID when retrying an uncertain send.
+The API rejects conflicting reuse and serializes sends and issue resolution.
+Late acknowledgements clear only their own saved operation, preserving newer
+conversations and pending messages opened from another help surface. Resolved
+threads keep unconfirmed messages visible for retry: committed messages can be
+acknowledged; an uncommitted message requires staff to reopen the issue or a new
+request.
+Signing out or changing participant tokens clears signed-in conversation access.
+Guest request drafts use separate storage and contain no chat capability.
+
+During an assessment, chat uses the existing ordinary ContestOverlay, yields to
+mandatory security/network/expiry overlays and preserves the editor and exam
+clock. **Report a device incident with diagnostics** retains the previous
+contest-scoped reporting workflow. New chat does not upload automatic device
+telemetry or passwords.
+
+## Deployment
+
+Apply `ams-api` migrations through `7ac291e0b46f` and deploy its support endpoints
+before releasing the matching admin portal and candidate app. The migration
+adds `chat_enabled`, preserving existing conversations while marking new guest
+issues as one-way. Private read/reply routes also enforce this flag.
+For multi-organization deployments, set server-side `AMS_SUPPORT_ORGANIZATION_SLUG`
+to the receiving inbox's existing organization slug (production SSM parameter:
+`/ams/prod/support_organization_slug`). A sole organization is used automatically.
+Ambiguous or invalid routing returns 503. Participants never enter this setting.
+Older server deployments return a visible failure without false delivery confirmation.
+
+The API bounds messages at 4000 characters, reads at 100 messages/page and inbox
+pages at 50 issues. Public creation defaults to a coarse 2000 requests/hour per observed source IP,
+receiving organization and contest bucket. Unknown guest context shares the
+unassigned bucket. Authenticated creation remains 100/hour per participant;
+sending remains 60 messages/minute per conversation. These database
+limits are shared across workers. Deploy the public endpoint behind the existing
+trusted ingress with request/body limits; forwarded headers from clients are
+not trusted. A shared proxy/NAT may share the creation bound. Do not use the
+support form as a source of verified identity.
+
+## Validation
+
+Candidate automated tests cover guest forms, capability isolation, safe retries,
+receipt recovery, storage failures, pagination, resolved history and alternate
+contest overlay hosting. Browser fixtures exercise narrow/desktop forms and
+chat, lost acknowledgements, incoming replies, reopen and resolution. Admin
+unit tests cover proxy authentication/path validation, per-thread draft recovery
+and reply/history response validation. Browser fixtures cover inbox/reply/
+resolution and narrow/desktop layouts. Fixtures do not prove API integration.
+
+The candidate production static export, typecheck and size budgets pass.
+API verification against disposable PostgreSQL completed with 748 passed and
+22 skipped; GitHub CI passed on Python 3.12 and 3.13, including migrations.
+The admin typecheck and all 18 test files passed, and its Vercel preview build
+succeeded. The local admin build was blocked by DNS while fetching its existing
+Google Fonts.
+Packaged desktop lockdown/focus acceptance remains a separate native check.
+
+## Integration follow-up
+
+Support reads use one in-flight request, randomized polling, failure backoff and
+Retry-After cooldowns. Closing/unmounting aborts reads. Sign-out/account changes
+invalidate pending callbacks and mounted history; saved receipts are scoped to
+the participant UID so failed storage cleanup cannot recover another account's
+chat. Unowned development receipts are not adopted. Writes keep their original
+UUID/payload after uncertain delivery and require an explicit retry.
+
+The API follow-up adds optional contest context and migration 7ac291e0b46f.
+Release order is API migration/code, portal, packaged proctor. Staff resolve/reopen
+retries preserve the original desired state, including after polling observes a
+committed change whose response was lost. Production qualification and native
+acceptance are documented in ams-api/SUPPORT-QUALIFICATION.md; their pending gates
+must not be described as passed.
+
+## Main integration and 3,000-participant review
+
+The integration preserves main's per-question run state, terminal navigation and
+editor-template reset fixes. The explicit web test list includes both those
+regressions and support authentication, retry and polling tests.
+
+Polling simulations cover 1,000 and 3,000 simultaneously visible chats. Each chat
+has one in-flight read and one scheduled timer; closing it removes the timer and
+listeners and aborts the read. Healthy polling waits 8–12 seconds after a read
+finishes. At 3,000 open chats this means approximately 300 reads/second on average
+with negligible latency, or at most 375 cycles/second averaged over repeated
+minimum-delay cycles. These are fleet estimates, not instantaneous burst limits.
+Each cycle fetches at most three sequential history pages (100 messages/page),
+so sustained history catch-up can triple that request cost. First opening a chat
+reads immediately; 3,000 synchronized opens can therefore cause an initial burst.
+Hidden/closed dialogs do not poll, focus wakeups are jittered, failures back off,
+and writes require user action with stable identifiers for explicit retries.
+Support reads and writes never enqueue judge jobs.
+
+Client simulations do not establish server capacity. Before release, extend the
+API's SUPPORT-QUALIFICATION.md staging procedure to 3,000 authenticated clients,
+including synchronized initial opens, history catch-up, disconnect/reconnect,
+health latency and concurrent contest traffic. Observe database connections,
+query latency and API CPU/memory. The default public-report quota remains 2,000
+per source IP/organization/contest/hour: 3,000 guest reports from one campus in
+one hour require an explicit capacity-reviewed server configuration change.
+Packaged Windows focus/lockdown, chat recovery and exam navigation acceptance
+also remain release gates.

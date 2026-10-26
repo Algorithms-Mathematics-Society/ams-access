@@ -15,6 +15,7 @@
  */
 
 import { resolveApiBase } from "./api-base.ts";
+import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import type { LockdownConfig } from "@ams/api-client";
 
 const API = resolveApiBase();
@@ -22,7 +23,7 @@ const API = resolveApiBase();
 /** Sent on every call. The server refuses builds older than its minimum with
  * a 426 naming the download, so a candidate on a stale installer gets a
  * sentence telling them what to do rather than a login that fails silently. */
-const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
+export const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
 
 // Long enough for a slow network at an exam centre; short enough that a dead
 // connection surfaces rather than hanging the UI.
@@ -163,10 +164,52 @@ function storage(): Storage | null {
   }
 }
 
+let authenticationGeneration = 0;
+const authChangeListeners = new Set<() => void>();
+export const authGeneration = () => authenticationGeneration;
+/** A local recovery namespace, never an authorization decision. The API still validates the bearer. */
+export function currentParticipantUid(): string | null {
+  try {
+    const encoded = currentToken()?.split(".")[0];
+    if (!encoded) return null;
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4)));
+    return typeof claims.sub === "string" &&
+      /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(claims.sub)
+      ? claims.sub
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeAuthChanges(listener: () => void): () => void {
+  authChangeListeners.add(listener);
+  return () => {
+    authChangeListeners.delete(listener);
+  };
+}
+
+function clearSignedInSupportReceipt(): void {
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(STORAGE_KEYS.SUPPORT_CONVERSATION);
+    }
+  } catch {
+    // Auth changes must remain effective if session storage is blocked.
+  }
+}
+
 export function setToken(value: string | null, expiresInSeconds?: number): void {
-  token = value;
-  if (value !== null) signedOut = false;
   const store = storage();
+  // `setToken` is used for successful sign-in and sign-out. Either boundary
+  // invalidates the previous participant's local chat capability, even when
+  // localStorage is unavailable and the prior identity cannot be compared.
+  clearSignedInSupportReceipt();
+  token = value;
+  authenticationGeneration += 1;
+  for (const listener of authChangeListeners) listener();
+  if (value !== null) signedOut = false;
   if (!store) return;
   try {
     if (value === null) {
@@ -731,7 +774,7 @@ export async function getPublishedReferenceSheet(
 export async function listAnnouncements(contestUid: string): Promise<unknown> {
   return request<unknown>(
     "GET",
-    `/participant/contests/${encodeURIComponent(contestUid)}/announcements`,
+    `/participant/contests/${encodeURIComponent(contestUid)}/announcements`
   );
 }
 
@@ -742,14 +785,14 @@ export async function listAnnouncements(contestUid: string): Promise<unknown> {
  * Returns whether the server accepted it. */
 export async function acknowledgeAnnouncement(
   contestUid: string,
-  announcementUid: string,
+  announcementUid: string
 ): Promise<boolean> {
   try {
     await request<void>(
       "POST",
       `/participant/contests/${encodeURIComponent(contestUid)}/announcements/` +
         `${encodeURIComponent(announcementUid)}/ack`,
-      {},
+      {}
     );
     return true;
   } catch {
