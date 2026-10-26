@@ -119,8 +119,7 @@ fn dns_resolvers() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `nameserver[0] : 192.168.1.1` lines; scoped IPv6 (`fe80::1%en0`) is skipped
-/// because the pf rules are IPv4-only.
+/// Parse resolver addresses; pf tables store IPv6 addresses without scope IDs.
 fn parse_scutil_resolvers(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines().map(str::trim) {
@@ -130,7 +129,7 @@ fn parse_scutil_resolvers(text: &str) -> Vec<String> {
         let Some((_, ip)) = line.split_once(':') else {
             continue;
         };
-        let ip = ip.trim();
+        let ip = ip.trim().split('%').next().unwrap_or_default();
         if ip.parse::<IpAddr>().is_ok() && !out.iter().any(|known| known == ip) {
             out.push(ip.to_string());
         }
@@ -149,6 +148,7 @@ mod tests {
             parse_scutil_resolvers(text),
             vec![
                 "192.168.1.1".to_string(),
+                "fe80::1".to_string(),
                 "2001:4860:4860::8888".to_string()
             ]
         );

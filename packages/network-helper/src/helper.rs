@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 
 #[cfg(target_os = "macos")]
 use std::os::fd::AsRawFd;
@@ -852,7 +852,7 @@ fn dispatch(json: &str) -> String {
 #[cfg(target_os = "macos")]
 fn firewall_enable(ips: &[String]) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
-    let ips = validate_ipv4_allowlist(ips)?;
+    let ips = validate_ip_allowlist(ips)?;
     pfctl_enable(&ips)
 }
 
@@ -964,19 +964,18 @@ fn json_err(msg: &str) -> String {
 // ── macOS firewall (pfctl) ────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn validate_ipv4_allowlist(ips: &[String]) -> Result<Vec<Ipv4Addr>, String> {
+fn validate_ip_allowlist(ips: &[String]) -> Result<Vec<IpAddr>, String> {
     let mut out = Vec::new();
     for raw in ips {
         match raw.parse::<IpAddr>() {
-            Ok(IpAddr::V4(ip)) if !out.contains(&ip) => out.push(ip),
-            Ok(IpAddr::V4(_)) => {}
-            Ok(IpAddr::V6(_)) => {}
+            Ok(ip) if !out.contains(&ip) => out.push(ip),
+            Ok(_) => {}
             Err(_) => return Err(format!("invalid allowed IP: {raw}")),
         }
     }
 
     if out.is_empty() {
-        Err("no IPv4 addresses available for lockdown allowlist".to_string())
+        Err("no IP addresses available for lockdown allowlist".to_string())
     } else {
         Ok(out)
     }
@@ -996,7 +995,7 @@ fn pfctl_load_anchor(anchor: &str, rules: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
+fn pfctl_enable(ips: &[IpAddr]) -> Result<(), String> {
     let enabled = command_output(Command::new(PFCTL).arg("-e"), None)
         .map_err(|error| format!("pfctl enable: {error}"))?;
     if !enabled.status.success()
@@ -1010,23 +1009,28 @@ fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
         ));
     }
 
+    // macOS' stock pf.conf evaluates com.apple/* anchors. Loading under that
+    // namespace avoids editing /etc/pf.conf while still making the rules active.
+    pfctl_load_anchor(ANCHOR, &pf_rules(ips))
+}
+
+// Router and neighbor discovery must work even when the peer is not an API host.
+#[cfg(target_os = "macos")]
+fn pf_rules(ips: &[IpAddr]) -> String {
     let ip_list = ips
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
 
-    let rules = format!(
+    format!(
         "table <ams_allowed> persist {{ {ip_list} }}\n\
          pass out quick on lo0 all\n\
-         pass out quick inet to <ams_allowed>\n\
+         pass out quick to <ams_allowed>\n\
+         pass out quick inet6 proto ipv6-icmp icmp6-type {{ 133, 135, 136 }}\n\
          block out quick inet all\n\
          block out quick inet6 all\n"
-    );
-
-    // macOS' stock pf.conf evaluates com.apple/* anchors. Loading under that
-    // namespace avoids editing /etc/pf.conf while still making the rules active.
-    pfctl_load_anchor(ANCHOR, &rules)
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -1324,7 +1328,7 @@ fn iptables_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
     // family this would build a loopback+established+DROP chain — a near-total
     // egress block that also cuts the exam's own API. Almost certainly a caller
     // bug; fail closed with an error rather than silently applying it (parity
-    // with the macOS validate_ipv4_allowlist empty-list rejection).
+    // with the macOS validate_ip_allowlist empty-list rejection).
     // Resolvers count toward "not degenerate": they are now a separate list, so
     // checking only `v4`/`v6` would reject a legitimate DNS-only allowlist that
     // previously passed.
@@ -1960,5 +1964,29 @@ mod bounded_firewall_tests {
             startup_action(MarkerState::Present(cleanup)),
             StartupAction::Flush
         );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod pf_tests {
+    use super::*;
+
+    #[test]
+    fn allowlist_preserves_both_families_and_rejects_invalid_or_empty_input() {
+        let ips = validate_ip_allowlist(&[
+            "192.0.2.1".into(),
+            "2001:db8::1".into(),
+            "2001:0db8:0:0:0:0:0:1".into(),
+        ])
+        .unwrap();
+        assert_eq!(ips.len(), 2);
+        assert!(validate_ip_allowlist(&["2001:db8::1".into()]).is_ok());
+        assert!(validate_ip_allowlist(&[]).is_err());
+        assert!(validate_ip_allowlist(&["192.0.2.1\npass out all".into()]).is_err());
+        let rules = pf_rules(&ips);
+        assert!(rules.contains("{ 192.0.2.1, 2001:db8::1 }"));
+        assert!(rules.contains("pass out quick to <ams_allowed>\n"));
+        assert!(rules.contains("icmp6-type { 133, 135, 136 }"));
+        assert!(rules.ends_with("block out quick inet all\nblock out quick inet6 all\n"));
     }
 }
