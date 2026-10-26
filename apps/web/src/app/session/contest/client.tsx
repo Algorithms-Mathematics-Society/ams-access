@@ -385,6 +385,7 @@ export default function ContestPageClient() {
   const [bellRung, setBellRung] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeQ, setActiveQ] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [questionFiles, setQuestionFiles] = useState<Record<string, EditorFile[]>>({});
   const [questionActiveFile, setQuestionActiveFile] = useState<Record<string, string>>({});
   const { theme: appTheme } = useTheme();
@@ -401,15 +402,21 @@ export default function ContestPageClient() {
   const [diagnosticNavigation, setDiagnosticNavigation] = useState<DiagnosticNavigation | null>(
     null
   );
-  const [runSourceSnapshot, setRunSourceSnapshot] = useState<
-    | (SourceSnapshot & {
-        questionId: string;
-        fileId: string;
-        filename: string;
-        problemTitle?: string;
-      })
-    | null
-  >(null);
+  const runQuestionKey = `${sessionId ?? ""}:${questions[activeQ]?.id ?? ""}`;
+  type RunSourceSnapshot = SourceSnapshot & {
+    questionId: string;
+    fileId: string;
+    filename: string;
+    problemTitle?: string;
+  };
+  const [runSources, setRunSources] = useState<
+    Record<string, Partial<Record<"all" | "custom", RunSourceSnapshot | null>>>
+  >({});
+  const setRunSourceSnapshot = (snapshot: RunSourceSnapshot | null, mode: "all" | "custom") =>
+    setRunSources((previous) => ({
+      ...previous,
+      [runQuestionKey]: { ...previous[runQuestionKey], [mode]: snapshot },
+    }));
   const [problemTab, setProblemTab] = useState<ProblemSectionKey>("statement");
   const [copiedSampleKey, setCopiedSampleKey] = useState<string | null>(null);
   // A sample run and a custom run are two different questions, so they keep
@@ -427,15 +434,29 @@ export default function ContestPageClient() {
     timedOut: boolean;
   };
   const EMPTY_RUN: RunSlice = { result: null, attemptId: null, error: null, timedOut: false };
-  const [runSlices, setRunSlices] = useState<Record<"all" | "custom", RunSlice>>({
-    all: EMPTY_RUN,
-    custom: EMPTY_RUN,
-  });
-  const patchRun = useCallback((mode: "all" | "custom", patch: Partial<RunSlice>) => {
-    setRunSlices((prev) => ({ ...prev, [mode]: { ...prev[mode], ...patch } }));
-  }, []);
+  type RunSlices = Record<"all" | "custom", RunSlice>;
+  const [questionRuns, setQuestionRuns] = useState<Record<string, RunSlices>>({});
+  const runSlices = questionRuns[runQuestionKey] ?? { all: EMPTY_RUN, custom: EMPTY_RUN };
+  const setRunSlices = (update: (previous: RunSlices) => RunSlices) =>
+    setQuestionRuns((previous) => ({
+      ...previous,
+      [runQuestionKey]: update(previous[runQuestionKey] ?? { all: EMPTY_RUN, custom: EMPTY_RUN }),
+    }));
+  const patchRun = useCallback(
+    (mode: "all" | "custom", patch: Partial<RunSlice>) => {
+      setRunSlices((prev) => ({ ...prev, [mode]: { ...prev[mode], ...patch } }));
+    },
+    [runQuestionKey]
+  );
   const [isRunning, setIsRunning] = useState(false);
-  const [runMode, setRunMode] = useState<"all" | "custom">("all");
+  const [runningQuestionKey, setRunningQuestionKey] = useState<string | null>(null);
+  const [questionRunModes, setQuestionRunModes] = useState<Record<string, "all" | "custom">>({});
+  const runMode = questionRunModes[runQuestionKey] ?? "all";
+  const runSourceSnapshot = runSources[runQuestionKey]?.[runMode] ?? null;
+  const setRunMode = (mode: "all" | "custom") => {
+    setRunningQuestionKey(runQuestionKey);
+    setQuestionRunModes((previous) => ({ ...previous, [runQuestionKey]: mode }));
+  };
   // What the lifecycle code means by "the run": whichever kind started last.
   // Display picks its own slice by tab -- see TerminalPanel.
   const runResult = runSlices[runMode].result;
@@ -448,15 +469,6 @@ export default function ContestPageClient() {
   // code itself -- there is no server copy of a draft any more, and a test
   // case someone typed is no more worth persisting than the code it tests.
   const [questionCustomCases, setQuestionCustomCases] = useState<Record<string, CustomCase[]>>({});
-  // Attempt id of the most recent "Run on Judge" (sample-only) run. Used to pull
-  // its per-test results out of `testResults` and render them LeetCode-style in
-  // the run pane. RUN attempts are excluded from the submissions endpoint, so the
-  // run pane above the attempts list is the only place their results surface.
-  // Kept synced via effect below so fetchSubmissions (a useCallback NOT keyed on
-  // runResultAttemptId) can read the LIVE value instead of a stale closure.
-  const runResultAttemptIdRef = useRef<string | null>(null);
-  // Same reason: recheckRun must re-poll the kind that actually timed out.
-  const runModeRef = useRef<"all" | "custom">("all");
   const [loading, setLoading] = useState(true);
   // What the organizers have told this contest, and which of it this
   // candidate has not yet read. `seenRevision` is the integer the heartbeat
@@ -595,7 +607,6 @@ export default function ContestPageClient() {
   const activeViolationDetailRef = useRef("");
   const lastFocusLossRef = useRef(0);
   const lastStatementCopyRef = useRef(0);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportCategory, setSupportCategory] = useState("camera_not_detected");
   const [customIssueDetail, setCustomIssueDetail] = useState("");
@@ -706,19 +717,14 @@ export default function ContestPageClient() {
     terminalCollapsedRef.current = terminalCollapsed;
     if (!terminalCollapsed) setTerminalUnread(false);
   }, [terminalCollapsed]);
+  // Leaving the session cancels any run poll still waiting on the judge.
   useEffect(() => {
-    runResultAttemptIdRef.current = runResultAttemptId;
-  }, [runResultAttemptId]);
-  useEffect(() => {
-    runModeRef.current = runMode;
-  }, [runMode]);
-  // Leaving the page cancels any run poll still waiting on the judge.
-  useEffect(
-    () => () => {
+    runInFlightRef.current = false;
+    setIsRunning(false);
+    return () => {
       runVisitRef.current += 1;
-    },
-    []
-  );
+    };
+  }, [sessionId]);
   // PRIMARY — auto-expand ONCE per NEW attempt result, keyed on the runResultAttemptId
   // transition (a new id), NOT on runResult presence. A candidate who reads the output and
   // deliberately re-collapses stays collapsed until the NEXT run's result. A same-attempt status
@@ -742,7 +748,11 @@ export default function ContestPageClient() {
     if (isSubmitting && !prevSubmittingRef.current) setTerminalCollapsed(false);
     prevSubmittingRef.current = isSubmitting;
   }, [isSubmitting]);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [submissionErrors, setSubmissionErrors] = useState<Record<string, string | null>>({});
+  const submissionError = submissionErrors[runQuestionKey] ?? null;
+  // Async Submit handlers retain their original session/question key.
+  const setSubmissionError = (error: string | null) =>
+    setSubmissionErrors((previous) => ({ ...previous, [runQuestionKey]: error }));
   // Timer expiry auto-submit overlay state.
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
     "idle"
@@ -754,6 +764,9 @@ export default function ContestPageClient() {
   redirectSaveRef.current = writeLocalAnswerBuffer;
   const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
   const [submittedSources, setSubmittedSources] = useState<Record<string, SourceSnapshot>>({});
+  const [resultSelections, setResultSelections] = useState<
+    Record<string, { source: "run" | "submission" }>
+  >({});
   const [dismissedRecoveryQuestions, setDismissedRecoveryQuestions] = useState<string[]>([]);
   const [finalDraftSaved, setFinalDraftSaved] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<
@@ -799,10 +812,17 @@ export default function ContestPageClient() {
     active: boolean;
     pending: Promise<void> | null;
     queued: Promise<void> | null;
+    accepted: Map<string, SubmissionAttemptRecord>;
   } | null>(null);
 
   useEffect(() => {
-    const owner = { sessionId, active: true, pending: null, queued: null };
+    const owner = {
+      sessionId,
+      active: true,
+      pending: null,
+      queued: null,
+      accepted: new Map<string, SubmissionAttemptRecord>(),
+    };
     submissionRefreshRef.current = owner;
     return () => {
       owner.active = false;
@@ -826,7 +846,10 @@ export default function ContestPageClient() {
           // and results intact; the active problem's history is derived below.
           const attempts = toAttemptRecords(await listMySubmissions(sessionId));
           if (!isCurrent()) return;
-          setAllSubmissionsList(attempts);
+          for (const attempt of attempts) owner.accepted.delete(attempt.id);
+          // A GET started before acceptance may not contain the new attempt.
+          // Retain the POST receipt until a fresh history response includes it.
+          setAllSubmissionsList([...attempts, ...owner.accepted.values()]);
           setTestResults((previous) => mergeAttemptTestResults(previous, attempts));
           setSubmissionHistoryStatus("available");
         } catch (err) {
@@ -1614,38 +1637,23 @@ export default function ContestPageClient() {
     loadQuestionWithAnswers(q, savedAnswers, language);
   }
 
-  // Every piece of run-panel state tied to the current question's run resets
-  // together. Single source of truth: two call sites (question switch, run
-  // start) each hand-maintained this list and one drifted — switchQuestion
-  // missed runTimedOut, leaving a ghost "Still running…" notice on the next
-  // question after a timed-out run.
-  /**
-   * Clear run results. One kind when starting a run of that kind, both when
-   * the results stop being about anything on screen.
-   *
-   * Starting a run used to clear both, which is what let a custom run wipe
-   * the sample results a candidate was still reading in the other tab.
-   * Changing question still clears both: those results belong to the problem
-   * being left.
-   */
+  // Starting another Run replaces only that question's selected output kind.
+  // Navigation retains its attempt and lets the existing bounded poll finish.
   function resetRunPanelState(mode?: "all" | "custom") {
     runVisitRef.current += 1;
-    setRunSourceSnapshot(null);
+    setRunSourceSnapshot(null, mode ?? runMode);
     setRunSlices((prev) =>
       mode ? { ...prev, [mode]: EMPTY_RUN } : { all: EMPTY_RUN, custom: EMPTY_RUN }
     );
   }
 
   function switchQuestion(idx: number) {
-    runInFlightRef.current = false;
-    setIsRunning(false);
     if (questions[activeQ] && sessionId) {
       handleSave();
     }
     setActiveQ(idx);
     if (!editorLocked) setHasUnsavedChanges(true);
     loadQuestion(questions[idx], selectedLanguage);
-    resetRunPanelState();
   }
 
   // Stable child prop, while question switching still saves the latest draft.
@@ -1685,6 +1693,18 @@ export default function ContestPageClient() {
     };
     writeLocalAnswerBuffer();
     setQuestionFiles((prev) => (prev[q.id] ? { ...prev, [q.id]: changeFiles(prev[q.id]) } : prev));
+  }
+
+  function handleResetCode() {
+    const question = questions[activeQ];
+    if (editorLocked || !question || !activeFileId.endsWith(":main")) return;
+    handleCodeChange(
+      formatSource(
+        (selectedLanguage.startsWith("C++") ? question.starter_code : null) ??
+          defaultStarterFor(selectedLanguage),
+        resolveLanguageBundle(selectedLanguage)
+      )
+    );
   }
 
   function handleCodeChange(value: string) {
@@ -1743,6 +1763,10 @@ export default function ContestPageClient() {
     if (runInFlightRef.current) return;
 
     const mode: "all" | "custom" = useCustomCases ? "custom" : "all";
+    setResultSelections((previous) => ({
+      ...previous,
+      [questions[activeQ].id]: { source: "run" },
+    }));
     const limitError = attemptLimitError(
       editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
       useCustomCases ? toWire(casesOverride ?? customCases) : null
@@ -1770,16 +1794,19 @@ export default function ContestPageClient() {
     // Dispatch the run. Unscored, judged against the samples only, and at a
     // higher priority than submissions — feedback that arrives after the
     // contest is not feedback.
-    let attemptId: string;
+    let attemptId: string | null = null;
     try {
-      setRunSourceSnapshot({
-        fileId: runDraft.fileId,
-        questionId: questions[activeQ].id,
-        problemTitle: questions[activeQ].title,
-        filename: runDraft.files.find((f) => f.id === runDraft.fileId)?.name ?? "main.cpp",
-        source: runDraft.source,
-        language: runDraft.language,
-      });
+      setRunSourceSnapshot(
+        {
+          fileId: runDraft.fileId,
+          questionId: questions[activeQ].id,
+          problemTitle: questions[activeQ].title,
+          filename: runDraft.files.find((f) => f.id === runDraft.fileId)?.name ?? "main.cpp",
+          source: runDraft.source,
+          language: runDraft.language,
+        },
+        mode
+      );
       const created = await runAgainstSamples(sessionId, {
         problemLabel: questions[activeQ].id,
         language: runDraft.language,
@@ -1828,9 +1855,7 @@ export default function ContestPageClient() {
       }
       return;
     } finally {
-      // The duplicate-POST window closes once the attempt request has resolved;
-      // the subsequent polling phase is already gated by isRunning.
-      if (runVisit === runVisitRef.current) runInFlightRef.current = false;
+      if (!attemptId && runVisit === runVisitRef.current) runInFlightRef.current = false;
     }
 
     // Poll for the result with exponential back-off (max ~87 s total).
@@ -1854,7 +1879,9 @@ export default function ContestPageClient() {
         600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500, 4000, 4000, 5000, 5000, 5000,
         5000, 6000, 6000, 6000, 6000, 6000, 6000,
       ]
-    );
+    ).finally(() => {
+      if (runVisit === runVisitRef.current) runInFlightRef.current = false;
+    });
   }
 
   // Polls one run by uid until it has a verdict or `delays` runs out. Out of
@@ -1904,17 +1931,19 @@ export default function ContestPageClient() {
     // attempts row to navigate to.
   }
 
-  // Status-only re-poll of the run that timed out. Never POSTs a new run, so a
-  // congested judge isn't handed a duplicate job. A new run or a question
-  // switch bumps runVisitRef, which cancels this like the original poll.
-  function recheckRun() {
-    const attemptId = runResultAttemptIdRef.current;
-    if (!sessionId || !attemptId || isRunning) return;
-    // Re-poll the kind that timed out, which is whichever ran last.
-    const mode = runModeRef.current;
+  // Recheck the pane the candidate selected, never POST a duplicate job.
+  function recheckRun(mode: "all" | "custom") {
+    const attemptId = runSlices[mode].attemptId;
+    if (!sessionId || !attemptId || isRunning || runInFlightRef.current) return;
+    runVisitRef.current += 1;
+    const runVisit = runVisitRef.current;
+    runInFlightRef.current = true;
+    setRunMode(mode);
     patchRun(mode, { timedOut: false });
     setIsRunning(true);
-    void pollRun(mode, sessionId, attemptId, runVisitRef.current, [0, 2000, 4000]);
+    void pollRun(mode, sessionId, attemptId, runVisit, [0, 2000, 4000]).finally(() => {
+      if (runVisitRef.current === runVisit) runInFlightRef.current = false;
+    });
   }
 
   // Persist the current editor content locally. Storage failures (quota,
@@ -2003,9 +2032,14 @@ export default function ContestPageClient() {
       return;
     }
     submitInFlightRef.current = true;
+    const submissionOwner = submissionRefreshRef.current;
 
     setIsSubmitting(true);
     setSubmissionError(null);
+    setResultSelections((previous) => ({
+      ...previous,
+      [questions[activeQ].id]: { source: "submission" },
+    }));
 
     try {
       const qId = questions[activeQ].id;
@@ -2126,6 +2160,26 @@ export default function ContestPageClient() {
           "Confirmed an earlier submission request. Check the attempt list before submitting again."
         );
       setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
+      if (
+        submissionOwner?.active &&
+        submissionOwner === submissionRefreshRef.current &&
+        submissionOwner.sessionId === sessionId
+      ) {
+        const receipt = toAttemptRecords([created])[0];
+        receipt.attempt_no =
+          Math.max(
+            0,
+            ...allSubmissionsList
+              .filter((entry) => entry.problem_id === receipt.problem_id)
+              .map((entry) => entry.attempt_no)
+          ) + 1;
+        submissionOwner.accepted.set(receipt.id, receipt);
+        setAllSubmissionsList((previous) => {
+          if (previous.some((attempt) => attempt.id === receipt.id)) return previous;
+          return [receipt, ...previous];
+        });
+        setTestResults((previous) => ({ ...previous, [receipt.id]: receipt.testcases }));
+      }
     } catch (err: any) {
       setSubmissionError(err.message || "An unexpected error occurred.");
       return;
@@ -3962,16 +4016,29 @@ export default function ContestPageClient() {
   const runStatus = runStatusFor(runSlices[runMode]);
   // One view per kind of run. The terminal picks by tab, so the two panes
   // never read each other's results.
+  function runSourceChanged(mode: "all" | "custom") {
+    const snapshot = runSources[runQuestionKey]?.[mode];
+    return Boolean(
+      snapshot &&
+      (snapshot.questionId !== currentQId ||
+        snapshot.fileId !== activeFileId ||
+        snapshot.filename !== (activeFile?.name ?? "main.cpp") ||
+        snapshot.source !== currentCode ||
+        snapshot.language !== toLanguageId(selectedLanguage))
+    );
+  }
   const runViews = {
     all: {
       ...runSlices.all,
       tests: testsFor(runSlices.all),
       status: runStatusFor(runSlices.all),
+      sourceChanged: runSourceChanged("all"),
     },
     custom: {
       ...runSlices.custom,
       tests: testsFor(runSlices.custom),
       status: runStatusFor(runSlices.custom),
+      sourceChanged: runSourceChanged("custom"),
     },
   };
   const runProgressPhase = runError
@@ -3995,7 +4062,10 @@ export default function ContestPageClient() {
           .filter(Boolean)
           .join(" · ")
       : "";
-  const shouldShowRunProgress = Boolean(isRunning || runResult || runError || runTimedOut);
+  const activeQuestionRunning = isRunning && runningQuestionKey === runQuestionKey;
+  const shouldShowRunProgress = Boolean(
+    activeQuestionRunning || runResult || runError || runTimedOut
+  );
   // Per-sample results for the most recent "Run on Judge". Pulled from the same
   // `testResults` cache the Attempts expansion uses, keyed by the run's attempt
   // id. Only populated once the run reaches a terminal (non-CE) verdict.
@@ -4237,9 +4307,7 @@ export default function ContestPageClient() {
   // now: it says what to do and goes away when they do it.
   // The oldest announcement this candidate has not acknowledged, if any.
   // Oldest first so a burst reads in the order it was issued.
-  const pendingAnnouncement = sessionId
-    ? nextToShow(announcements, localStorage, sessionId)
-    : null;
+  const pendingAnnouncement = sessionId ? nextToShow(announcements, localStorage, sessionId) : null;
 
   const acknowledgeCurrent = useCallback(() => {
     if (!pendingAnnouncement || !sessionId) return;
@@ -4260,8 +4328,7 @@ export default function ContestPageClient() {
   // Ranks with the lock violation: both are mandatory, and an announcement
   // that a lower-priority dialog could cover is an announcement missed.
   const announcementActive = pendingAnnouncement !== null;
-  const criticalOverlayActive =
-    (lockGraceActive && lockGraceCountdown === 0) || announcementActive;
+  const criticalOverlayActive = (lockGraceActive && lockGraceCountdown === 0) || announcementActive;
   const networkOverlayActive =
     networkDisconnected &&
     !criticalOverlayActive &&
@@ -4573,6 +4640,7 @@ export default function ContestPageClient() {
               activeFile={activeFile}
               currentCode={currentCode}
               handleCodeChange={handleCodeChange}
+              handleResetCode={handleResetCode}
             />
             {!terminalCollapsed && (
               <WorkspaceResizeHandle
@@ -4588,6 +4656,13 @@ export default function ContestPageClient() {
               />
             )}
             <TerminalPanel
+              resultSelection={resultSelections[currentQId]}
+              submissionPending={
+                isSubmitting &&
+                submitKeyRef.current?.sessionId === sessionId &&
+                submitKeyRef.current?.problemLabel === currentQId
+              }
+              runBusy={isRunning}
               runMode={runMode}
               customCases={customCases}
               onCustomCasesChange={mutateCustomCases}
@@ -4598,18 +4673,12 @@ export default function ContestPageClient() {
               compilerDiagnostic={compilerDiagnostic}
               onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
               outputHeightPercent={outputHeightPercent}
-              runSourceChanged={Boolean(
-                runSourceSnapshot &&
-                (runSourceSnapshot.questionId !== currentQId ||
-                  runSourceSnapshot.source !== currentCode ||
-                  runSourceSnapshot.language !== toLanguageId(selectedLanguage))
-              )}
               terminalCollapsed={terminalCollapsed}
               setTerminalCollapsed={setTerminalCollapsed}
               shouldShowRunProgress={shouldShowRunProgress}
               runResult={runResult}
               runViews={runViews}
-              isRunning={isRunning}
+              isRunning={activeQuestionRunning}
               runTimedOut={runTimedOut}
               onCheckRunAgain={recheckRun}
               runResultAttemptId={runResultAttemptId}
