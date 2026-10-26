@@ -1,4 +1,4 @@
-import type { ContestEntryPhase, InvitedContest } from "./types";
+import type { ActiveSession, ContestEntryPhase, InvitedContest } from "./types";
 
 /** Orders the home view only; the existing entry policy remains authoritative. */
 export function sortHomeContests(
@@ -27,4 +27,11 @@ export function sortHomeContests(
     })
     .sort((a, b) => a.priority - b.priority || a.time - b.time || a.index - b.index)
     .map(({ contest }) => contest);
+}
+
+export function preflightSessionTypeFor(
+  contestId: string | null,
+  session: Pick<ActiveSession, "id" | "contest_id"> | null
+): "new" | "resume" {
+  return session?.id && session.contest_id === contestId ? "resume" : "new";
 }

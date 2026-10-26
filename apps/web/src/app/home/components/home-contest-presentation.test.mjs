@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sortHomeContests } from "./home-contest-presentation.ts";
+import { preflightSessionTypeFor, sortHomeContests } from "./home-contest-presentation.ts";
 
 const contest = (id, phase, overrides = {}) => ({
   id,
@@ -13,29 +13,38 @@ const contest = (id, phase, overrides = {}) => ({
 const order = (items) => sortHomeContests(items, (item) => item.phase).map((item) => item.id);
 
 test("home prioritizes graded live and upcoming contests over practice and inactive records", () => {
-  assert.deepEqual(order([
-    contest("draft", "draft"),
-    contest("practice", "live", { is_practice: true }),
-    contest("ended", "ended"),
-    contest("unavailable", "metadata_unavailable"),
-    contest("upcoming", "too_early"),
-    contest("live", "live"),
-  ]), ["live", "upcoming", "practice", "unavailable", "ended", "draft"]);
+  assert.deepEqual(
+    order([
+      contest("draft", "draft"),
+      contest("practice", "live", { is_practice: true }),
+      contest("ended", "ended"),
+      contest("unavailable", "metadata_unavailable"),
+      contest("upcoming", "too_early"),
+      contest("live", "live"),
+    ]),
+    ["live", "upcoming", "practice", "unavailable", "ended", "draft"]
+  );
 });
 
 test("urgent live contests and nearest upcoming contests lead their groups", () => {
-  assert.deepEqual(order([
-    contest("upcoming-later", "too_early", { start_at: "2026-10-02T12:00:00Z" }),
-    contest("live-later", "live", { end_at: "2026-10-01T15:00:00Z" }),
-    contest("verification", "verification_open"),
-    contest("live-sooner", "live"),
-  ]), ["live-sooner", "live-later", "verification", "upcoming-later"]);
+  assert.deepEqual(
+    order([
+      contest("upcoming-later", "too_early", { start_at: "2026-10-02T12:00:00Z" }),
+      contest("live-later", "live", { end_at: "2026-10-01T15:00:00Z" }),
+      contest("verification", "verification_open"),
+      contest("live-sooner", "live"),
+    ]),
+    ["live-sooner", "live-later", "verification", "upcoming-later"]
+  );
 });
 
 test("sorting preserves source data and stable order for equal priority", () => {
   const items = Object.freeze([contest("b", "live"), contest("a", "live")]);
   const result = sortHomeContests(items, (item) => item.phase);
-  assert.deepEqual(result.map((item) => item.id), ["b", "a"]);
+  assert.deepEqual(
+    result.map((item) => item.id),
+    ["b", "a"]
+  );
   assert.notEqual(result, items);
   assert.equal(result[0], items[0]);
 });
@@ -47,9 +56,19 @@ test("a boundary phase change reorders only presentation", () => {
 });
 
 test("unavailable dates retain stable order and never override authoritative phases", () => {
-  assert.deepEqual(order([
-    contest("missing-1", "metadata_unavailable", { start_at: "", end_at: "" }),
-    contest("practice", "live", { is_practice: true, start_at: "", end_at: "" }),
-    contest("missing-2", "metadata_unavailable", { start_at: "bad", end_at: "bad" }),
-  ]), ["practice", "missing-1", "missing-2"]);
+  assert.deepEqual(
+    order([
+      contest("missing-1", "metadata_unavailable", { start_at: "", end_at: "" }),
+      contest("practice", "live", { is_practice: true, start_at: "", end_at: "" }),
+      contest("missing-2", "metadata_unavailable", { start_at: "bad", end_at: "bad" }),
+    ]),
+    ["practice", "missing-1", "missing-2"]
+  );
+});
+
+test("preflight resumes only a stored session for the selected contest", () => {
+  assert.equal(preflightSessionTypeFor("live", null), "new");
+  assert.equal(preflightSessionTypeFor("live", { id: "s", contest_id: "other" }), "new");
+  assert.equal(preflightSessionTypeFor("live", { id: "", contest_id: "live" }), "new");
+  assert.equal(preflightSessionTypeFor("live", { id: "s", contest_id: "live" }), "resume");
 });

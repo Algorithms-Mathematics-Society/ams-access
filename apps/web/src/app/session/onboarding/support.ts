@@ -271,7 +271,7 @@ export const STAGE_META: Record<number, { checking: string; todo: string | null;
     9: {
       checking: "Microphone access and audio signal",
       todo: "Allow microphone access when prompted",
-      onFail: "Microphone is optional — setup continues with an advisory warning",
+      onFail: "Required on macOS. Elsewhere optional: setup continues with a warning",
     },
     10: {
       checking: "Network connection and response time",

@@ -27,12 +27,18 @@ type WifiNetwork = {
 type WifiScan = {
   networks: WifiNetwork[];
   current: string | null;
+  connected: boolean;
   supported: boolean;
 };
 
 const REFRESH_MS = 20_000;
 
-const UNSUPPORTED_SCAN: WifiScan = { supported: false, current: null, networks: [] };
+const UNSUPPORTED_SCAN: WifiScan = {
+  supported: false,
+  current: null,
+  connected: false,
+  networks: [],
+};
 
 export function WifiControl({ online, inline = false }: { online: boolean; inline?: boolean }) {
   const [scan, setScan] = useState<WifiScan | null>(null);
@@ -156,7 +162,9 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const label = scan.supported
     ? scan.current
       ? `Network: ${scan.current}`
-      : "Not connected to Wi-Fi"
+      : scan.connected
+        ? "Connected to Wi-Fi (name unavailable)"
+        : "Not connected to Wi-Fi"
     : `Network connection: ${online ? "online" : "offline"}`;
 
   return (
@@ -250,6 +258,11 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
             )}
           </HStack>
 
+          {scan.supported && scan.connected && !scan.current && (
+            <Text type="supporting" color="secondary">
+              Connected to Wi-Fi (name unavailable)
+            </Text>
+          )}
           {!scan.supported && !scanError && (
             <Text type="supporting" color="secondary">
               {nativeAvailable
