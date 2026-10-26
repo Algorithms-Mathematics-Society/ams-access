@@ -1235,9 +1235,11 @@ async fn collect_device_state_inner(
         }
         // This IPC can block on the privileged helper, so it belongs on the
         // bounded blocking pool too. Policy still decides its consequence.
-        #[cfg(target_os = "linux")]
+        // macOS too: left unprobed, Home showed a green "Egress can be restricted"
+        // with no helper installed or running.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            state.network_helper_ready = Some(platform_rs::linux::network_helper_status().is_ok());
+            state.network_helper_ready = Some(native_network_helper_running());
         }
         Ok(state)
     }).await??;
