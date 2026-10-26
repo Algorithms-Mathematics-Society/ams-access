@@ -153,9 +153,58 @@ pub fn parse_networksetup_list(stdout: &str) -> Vec<WifiNetwork> {
         .collect()
 }
 
+/// Only the success label contains an SSID; errors can contain colons too.
+pub fn parse_networksetup_current(stdout: &str) -> Option<String> {
+    let name = stdout
+        .trim()
+        .strip_prefix("Current Wi-Fi Network: ")?
+        .trim();
+    (!name.is_empty() && name != "<redacted>").then(|| name.to_string())
+}
+
+/// Link status on this Wi-Fi interface survives SSID privacy redaction.
+pub fn parse_ipconfig_wifi_associated(stdout: &str) -> bool {
+    let field = |key: &str, value: &str| {
+        stdout
+            .lines()
+            .any(|line| line.trim().split_once(" : ") == Some((key, value)))
+    };
+    field("InterfaceType", "WiFi") && field("LinkStatusActive", "TRUE")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_current_name_requires_a_success_label_and_visible_name() {
+        assert_eq!(
+            parse_networksetup_current("Current Wi-Fi Network: Campus: 5G\n"),
+            Some("Campus: 5G".into())
+        );
+        for out in [
+            "You are not associated with an AirPort network.",
+            "Error: unavailable",
+            "Current Wi-Fi Network: ",
+            "Current Wi-Fi Network: <redacted>",
+        ] {
+            assert_eq!(parse_networksetup_current(out), None);
+        }
+    }
+
+    #[test]
+    fn macos_redacted_wifi_is_connected_only_with_an_active_wifi_link() {
+        let summary = "<dictionary> {\n  InterfaceType : WiFi\n  LinkStatusActive : TRUE\n  SSID : <redacted>\n}";
+        assert!(parse_ipconfig_wifi_associated(summary));
+        assert!(!parse_ipconfig_wifi_associated(
+            &summary.replace("TRUE", "FALSE")
+        ));
+        assert!(!parse_ipconfig_wifi_associated(
+            &summary.replace("WiFi", "Ethernet")
+        ));
+        assert!(!parse_ipconfig_wifi_associated("SSID : <redacted>"));
+        assert!(!parse_ipconfig_wifi_associated(""));
+    }
 
     #[test]
     fn nmcli_rows_carry_signal_security_and_the_active_network() {
