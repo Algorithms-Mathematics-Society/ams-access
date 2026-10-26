@@ -2,6 +2,12 @@
 
 Project-specific guidance for AI coding agents.
 
+Changes must account for at least 3,000 concurrent contest participants. Review
+request rates, bounded polling/retries, duplicate prevention, memory growth and
+backend/judge costs. Verify request bounds for affected flows; do not equate
+mocked client tests with production capacity. Record any required staging load
+verification in the PR.
+
 For current UI work, read [DESIGN.md](DESIGN.md) and
 [apps/web/UI.md](apps/web/UI.md). The shared AccessLogo/AccessMark components and
 the supplied monochrome brand artwork own product branding. Old migration plans

@@ -127,29 +127,30 @@ test("permanent authorization/not-found errors stop until an explicit new poller
     stop();
   }
 });
-test("a thousand visible chats spread their next read without multiplying pollers", async () => {
-  const fleet = Array.from({ length: 1000 }, (_, i) => fake(i / 1000));
-  let calls = 0;
-  const stops = fleet.map((clock) =>
-    startSupportPolling(
-      async () => {
-        calls++;
-      },
-      {},
-      clock.runtime
-    )
-  );
-  await flush();
-  assert.equal(calls, 1000);
-  const delays = fleet.map((clock) => {
-    assert.equal(clock.timers.size, 1);
-    return [...clock.timers.values()][0].ms;
+for (const size of [1000, 3000])
+  test(`${size} visible chats spread their next read without multiplying pollers`, async () => {
+    const fleet = Array.from({ length: size }, (_, i) => fake(i / size));
+    let calls = 0;
+    const stops = fleet.map((clock) =>
+      startSupportPolling(
+        async () => {
+          calls++;
+        },
+        {},
+        clock.runtime
+      )
+    );
+    await flush();
+    assert.equal(calls, size);
+    const delays = fleet.map((clock) => {
+      assert.equal(clock.timers.size, 1);
+      return [...clock.timers.values()][0].ms;
+    });
+    assert.ok(delays.every((ms) => ms >= 8000 && ms <= 12000));
+    assert.equal(new Set(delays).size, size);
+    stops.forEach((stop) => stop());
+    assert.ok(fleet.every((clock) => clock.timers.size === 0));
   });
-  assert.ok(delays.every((ms) => ms >= 8000 && ms <= 12000));
-  assert.equal(new Set(delays).size, 1000);
-  stops.forEach((stop) => stop());
-  assert.ok(fleet.every((clock) => clock.timers.size === 0));
-});
 test("cooldowns accept seconds or HTTP dates and reject malformed values", () => {
   assert.equal(supportRetryAfterMs("60", 0), 60000);
   assert.equal(supportRetryAfterMs("Thu, 01 Jan 1970 00:00:10 GMT", 0), 10000);

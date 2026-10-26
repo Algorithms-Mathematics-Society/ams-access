@@ -116,7 +116,8 @@ export function defaultPythonStarter(): string {
 }
 
 export function defaultStarterFor(language: string): string {
-  if (language === "Python3") return defaultPythonStarter();
+  if (language === "Python3" || language === "PyPy3") return defaultPythonStarter();
+  if (language === "C") return "#include <stdio.h>\n\nint main(void) {\n    return 0;\n}\n";
   return defaultCppStarter();
 }
 
@@ -129,15 +130,18 @@ export function isPristineStarter(content: string): boolean {
   return (
     content === "" ||
     content === defaultCppStarter() ||
+    content === defaultStarterFor("C") ||
     content === defaultPythonStarter()
   );
 }
 
 export const LANGUAGE_EXTENSIONS: Record<string, string> = {
+  C: "c",
   "C++17": "cpp",
   "C++20": "cpp",
   "C++23": "cpp",
   Python3: "py",
+  PyPy3: "py",
   Go: "go",
   Rust: "rs",
 };

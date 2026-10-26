@@ -318,6 +318,12 @@ not for judging. Unconfirmed finishes release device controls while retaining
 session recovery and offering Retry finish. Home keeps recovery data through
 transient verification failures and offers Retry verification.
 
+Run results survive question navigation. One bounded Run poll remains active
+per client, and output polling never changes the participant's selected tab.
+Accepted submission receipts remain visible while history refresh recovers.
+Reset code asks for confirmation, restores the current language's starter, and
+saves through the existing draft path without changing other questions or attempts.
+
 The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
 so network names and password controls stay inside the dialog at narrow sizes.
 The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.

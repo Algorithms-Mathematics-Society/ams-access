@@ -79,11 +79,12 @@ unit tests cover proxy authentication/path validation, per-thread draft recovery
 and reply/history response validation. Browser fixtures cover inbox/reply/
 resolution and narrow/desktop layouts. Fixtures do not prove API integration.
 
-The candidate production static export, typecheck and size budgets pass. The
-backend pure suite, lint and support type checks pass. Real
-API/database tests remain to run on a scratch Postgres because
-this sandbox prohibits server sockets. The admin typecheck passes; its full build is blocked here by DNS while fetching
-its existing Google Fonts.
+The candidate production static export, typecheck and size budgets pass.
+API verification against disposable PostgreSQL completed with 748 passed and
+22 skipped; GitHub CI passed on Python 3.12 and 3.13, including migrations.
+The admin typecheck and all 18 test files passed, and its Vercel preview build
+succeeded. The local admin build was blocked by DNS while fetching its existing
+Google Fonts.
 Packaged desktop lockdown/focus acceptance remains a separate native check.
 
 ## Integration follow-up
@@ -101,3 +102,32 @@ retries preserve the original desired state, including after polling observes a
 committed change whose response was lost. Production qualification and native
 acceptance are documented in ams-api/SUPPORT-QUALIFICATION.md; their pending gates
 must not be described as passed.
+
+## Main integration and 3,000-participant review
+
+The integration preserves main's per-question run state, terminal navigation and
+editor-template reset fixes. The explicit web test list includes both those
+regressions and support authentication, retry and polling tests.
+
+Polling simulations cover 1,000 and 3,000 simultaneously visible chats. Each chat
+has one in-flight read and one scheduled timer; closing it removes the timer and
+listeners and aborts the read. Healthy polling waits 8–12 seconds after a read
+finishes. At 3,000 open chats this means approximately 300 reads/second on average
+with negligible latency, or at most 375 cycles/second averaged over repeated
+minimum-delay cycles. These are fleet estimates, not instantaneous burst limits.
+Each cycle fetches at most three sequential history pages (100 messages/page),
+so sustained history catch-up can triple that request cost. First opening a chat
+reads immediately; 3,000 synchronized opens can therefore cause an initial burst.
+Hidden/closed dialogs do not poll, focus wakeups are jittered, failures back off,
+and writes require user action with stable identifiers for explicit retries.
+Support reads and writes never enqueue judge jobs.
+
+Client simulations do not establish server capacity. Before release, extend the
+API's SUPPORT-QUALIFICATION.md staging procedure to 3,000 authenticated clients,
+including synchronized initial opens, history catch-up, disconnect/reconnect,
+health latency and concurrent contest traffic. Observe database connections,
+query latency and API CPU/memory. The default public-report quota remains 2,000
+per source IP/organization/contest/hour: 3,000 guest reports from one campus in
+one hour require an explicit capacity-reviewed server configuration change.
+Packaged Windows focus/lockdown, chat recovery and exam navigation acceptance
+also remain release gates.
