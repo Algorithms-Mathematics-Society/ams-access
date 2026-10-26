@@ -2390,6 +2390,7 @@ pub fn wifi_scan() -> crate::WifiScan {
     let current = current_ssid();
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        connected: current.is_some(),
         current,
         supported: true,
     }

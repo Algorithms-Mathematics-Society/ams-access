@@ -23,6 +23,7 @@ mod power;
 mod remote_access;
 mod system_settings;
 mod watchdog;
+mod wifi;
 
 pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
@@ -2215,21 +2216,13 @@ pub fn request_av_permissions() {
 
 // ── wireless ────────────────────────────────────────────────────────────────
 //
-// `networksetup`, not `airport`: the private airport binary that everyone's
-// scripts used was removed in macOS 14, so a scan built on it reports nothing
-// on exactly the machines this is for.
-//
-// What `networksetup` lists is the *preferred* networks -- the ones already
-// saved on this Mac -- rather than everything in range. That is the case this
-// exists for: a candidate whose wifi has died reconnects to their own network
-// or their phone's hotspot, both of which they have joined before. Anything
-// new is typed in, which the UI allows.
+// Saved-network listing uses networksetup; password joins use CoreWLAN.
 
 /// The wireless interface, usually `en0` but not on every model.
 fn wifi_interface() -> Option<String> {
     let output = std::process::Command::new("/usr/sbin/networksetup")
         .arg("-listallhardwareports")
-        .output()
+        .bounded_output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines().peekable();
@@ -2248,17 +2241,26 @@ fn wifi_interface() -> Option<String> {
     None
 }
 
-/// The SSID currently joined, if any.
-fn current_ssid(interface: &str) -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/networksetup")
+/// Association and visible SSID are separate: modern macOS can hide the name.
+fn current_ssid(interface: &str) -> (Option<String>, bool) {
+    let output = Command::new("/usr/sbin/networksetup")
         .args(["-getairportnetwork", interface])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    // "Current Wi-Fi Network: NAME", or "You are not associated ...".
-    let (_, name) = text.trim().split_once(": ")?;
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_string())
+        .bounded_checked_output()
+        .ok();
+    let current = output.as_ref().and_then(|out| {
+        crate::wifi_parse::parse_networksetup_current(&String::from_utf8_lossy(&out.stdout))
+    });
+    if current.is_some() {
+        return (current, true);
+    }
+    let summary = Command::new("/usr/sbin/ipconfig")
+        .args(["getsummary", interface])
+        .bounded_checked_output()
+        .ok();
+    let connected = summary.is_some_and(|out| {
+        crate::wifi_parse::parse_ipconfig_wifi_associated(&String::from_utf8_lossy(&out.stdout))
+    });
+    (None, connected)
 }
 
 /// Saved networks, with the joined one marked.
@@ -2266,10 +2268,10 @@ pub fn wifi_scan() -> crate::WifiScan {
     let Some(interface) = wifi_interface() else {
         return crate::WifiScan::default();
     };
-    let current = current_ssid(&interface);
+    let (current, connected) = current_ssid(&interface);
     let Ok(output) = std::process::Command::new("/usr/sbin/networksetup")
         .args(["-listpreferredwirelessnetworks", &interface])
-        .output()
+        .bounded_output()
     else {
         return crate::WifiScan::default();
     };
@@ -2292,6 +2294,7 @@ pub fn wifi_scan() -> crate::WifiScan {
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
         current,
+        connected,
         supported: true,
     }
 }
@@ -2301,19 +2304,22 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
     let Some(interface) = wifi_interface() else {
         return Err("No wireless interface on this Mac.".into());
     };
+    if let Some(secret) = password.filter(|p| !p.is_empty()) {
+        return wifi::connect(&interface, ssid, secret);
+    }
     let mut command = std::process::Command::new("/usr/sbin/networksetup");
     command.args(["-setairportnetwork", &interface, ssid]);
-    if let Some(secret) = password.filter(|p| !p.is_empty()) {
-        command.arg(secret);
-    }
-    match command.output() {
+    // Associating plus DHCP routinely outlasts the 3 s default; a killed join reads as a failure.
+    match command.bounded_output_with_timeout(std::time::Duration::from_secs(20)) {
         // networksetup exits 0 even when it failed, and says so on stdout.
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if text.is_empty() {
+            if out.status.success() && text.is_empty() {
                 Ok(())
-            } else {
+            } else if !text.is_empty() {
                 Err(text)
+            } else {
+                Err("Could not join that Wi-Fi network.".into())
             }
         }
         Err(error) => Err(format!("Could not run networksetup: {error}")),
