@@ -10,11 +10,45 @@ use windows_core::Interface;
 
 static POLICY: tokio::sync::Mutex<Option<VerifiedRuntime>> = tokio::sync::Mutex::const_new(None);
 static HEALTH: PolicyHealth = PolicyHealth::new();
+static ENABLE_EPOCH: OperationEpoch = OperationEpoch::new();
+
+struct OperationEpoch(AtomicU64);
+
+impl OperationEpoch {
+    const fn new() -> Self {
+        Self(AtomicU64::new(0))
+    }
+
+    fn ticket(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn invalidate(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn check(&self, ticket: u64) -> Result<(), String> {
+        if self.ticket() == ticket {
+            Ok(())
+        } else {
+            Err("Network lockdown enable was cancelled by restoration".into())
+        }
+    }
+}
+
+pub fn enable_ticket() -> u64 {
+    ENABLE_EPOCH.ticket()
+}
+
+pub fn invalidate_pending_enable() {
+    ENABLE_EPOCH.invalidate();
+}
 
 struct PolicyHealth {
     generation: AtomicU64,
     requested: AtomicBool,
     healthy: AtomicBool,
+    recovery_pending: AtomicBool,
 }
 
 impl PolicyHealth {
@@ -23,6 +57,7 @@ impl PolicyHealth {
             generation: AtomicU64::new(0),
             requested: AtomicBool::new(false),
             healthy: AtomicBool::new(false),
+            recovery_pending: AtomicBool::new(false),
         }
     }
 
@@ -44,7 +79,16 @@ impl PolicyHealth {
     fn disabled(&self) {
         self.requested.store(false, Ordering::SeqCst);
         self.healthy.store(false, Ordering::SeqCst);
+        self.recovery_pending.store(false, Ordering::SeqCst);
         self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn cleanup_failed(&self) {
+        self.recovery_pending.store(true, Ordering::SeqCst);
+    }
+
+    fn recovery_needed(&self, build_expects_firewall: bool) -> bool {
+        build_expects_firewall || self.recovery_pending.load(Ordering::SeqCst)
     }
 
     fn observe(&self, generation: u64, healthy: bool) -> Option<bool> {
@@ -57,6 +101,20 @@ impl PolicyHealth {
 
 pub fn protection_ready() -> bool {
     HEALTH.protection_ready()
+}
+
+pub fn recovery_pending() -> bool {
+    HEALTH.recovery_pending.load(Ordering::SeqCst)
+}
+
+pub fn recovery_needed(build_expects_firewall: bool) -> bool {
+    HEALTH.recovery_needed(build_expects_firewall)
+}
+
+pub fn note_startup_cleanup(result: &Result<(), String>) {
+    if result.is_err() {
+        HEALTH.cleanup_failed();
+    }
 }
 
 async fn verify(app: &tauri::AppHandle, runtime: &VerifiedRuntime) -> Result<(), String> {
@@ -113,12 +171,14 @@ async fn verify(app: &tauri::AppHandle, runtime: &VerifiedRuntime) -> Result<(),
     runtime.verify_processes(browsers[0], &processes)
 }
 
-pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, String> {
+pub async fn enable(app: tauri::AppHandle, ips: Vec<String>, ticket: u64) -> Result<bool, String> {
     let mut policy = POLICY.lock().await;
+    ENABLE_EPOCH.check(ticket)?;
     HEALTH.installing();
     let folder = option_env!("AMS_PRIVATE_WEBVIEW2_FOLDER").unwrap_or("");
     let runtime = prepare_private_runtime(Path::new(folder))?;
     verify(&app, &runtime).await?;
+    ENABLE_EPOCH.check(ticket)?;
     let installed_runtime = runtime.clone();
     let install = tauri::async_runtime::spawn_blocking(move || {
         platform_rs::windows::enable_network_lockdown(&ips, &installed_runtime)
@@ -130,6 +190,8 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
         if policy.is_none() {
             *policy = Some(runtime);
         }
+        // Install errors include failed rollback; require verified cleanup before clearing recovery.
+        HEALTH.cleanup_failed();
         return Err(error);
     }
     // Process creation during installation must not produce a false success.
@@ -140,6 +202,7 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
                 .map_err(|error| error.to_string())?;
         if let Err(cleanup) = cleanup {
             *policy = Some(runtime); // Keep identity pins until recovery succeeds.
+            HEALTH.cleanup_failed();
             return Err(format!("{error}; rollback failed: {cleanup}"));
         }
         return Err(error);
@@ -187,19 +250,57 @@ pub async fn enable(app: tauri::AppHandle, ips: Vec<String>) -> Result<bool, Str
     Ok(true)
 }
 
-pub async fn disable() -> Result<bool, String> {
-    let mut policy = POLICY.lock().await;
-    tauri::async_runtime::spawn_blocking(platform_rs::windows::disable_network_lockdown)
-        .await
-        .map_err(|error| error.to_string())??;
+pub fn disable_blocking() -> Result<bool, String> {
+    invalidate_pending_enable();
+    let mut policy = POLICY.blocking_lock();
+    if let Err(error) = platform_rs::windows::disable_network_lockdown() {
+        HEALTH.cleanup_failed();
+        return Err(error);
+    }
     *policy = None;
     HEALTH.disabled();
     Ok(true)
 }
 
+pub async fn disable() -> Result<bool, String> {
+    invalidate_pending_enable();
+    tauri::async_runtime::spawn_blocking(disable_blocking)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PolicyHealth;
+    use super::{OperationEpoch, PolicyHealth};
+
+    #[test]
+    fn restore_during_resolution_cancels_late_install() {
+        use std::sync::{mpsc, Arc, Mutex};
+
+        let epoch = Arc::new(OperationEpoch::new());
+        let policy = Arc::new(Mutex::new(false));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let pending = {
+            let epoch = Arc::clone(&epoch);
+            let policy = Arc::clone(&policy);
+            std::thread::spawn(move || {
+                let ticket = epoch.ticket();
+                started_tx.send(()).unwrap();
+                continue_rx.recv().unwrap(); // The DNS lookup finishes after restore.
+                let mut installed = policy.lock().unwrap();
+                if epoch.check(ticket).is_ok() {
+                    *installed = true;
+                }
+            })
+        };
+        started_rx.recv().unwrap();
+        epoch.invalidate();
+        *policy.lock().unwrap() = false; // Verified restore found no rules.
+        continue_tx.send(()).unwrap();
+        pending.join().unwrap();
+        assert!(!*policy.lock().unwrap());
+    }
 
     #[test]
     fn disable_invalidates_old_guard_and_default_build_has_no_required_policy() {
@@ -227,5 +328,34 @@ mod tests {
         assert!(!health.protection_ready());
         assert_eq!(health.observe(retry, true), Some(false));
         assert!(health.protection_ready());
+    }
+
+    #[test]
+    fn failed_cleanup_remains_pending_until_verified_disable() {
+        let health = PolicyHealth::new();
+        assert!(!health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+        health.cleanup_failed();
+        assert!(health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+        health.installed();
+        assert!(health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+        health.disabled();
+        assert!(!health
+            .recovery_pending
+            .load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn ordinary_build_retries_only_when_prior_cleanup_failed() {
+        let health = PolicyHealth::new();
+        assert!(!health.recovery_needed(false));
+        assert!(health.recovery_needed(true));
+        health.cleanup_failed();
+        assert!(health.recovery_needed(false));
     }
 }

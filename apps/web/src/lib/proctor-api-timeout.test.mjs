@@ -1,10 +1,36 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getContest, latestResumeRequest, ProctorApiError } from "./proctor-api.ts";
+import {
+  getContest,
+  getPublishedReferenceSheet,
+  latestResumeRequest,
+  studentLogin,
+  logout,
+  ProctorApiError,
+} from "./proctor-api.ts";
 import { startResumePolling } from "../app/home/components/resume-polling.ts";
 const settle = async () => {
   for (let i = 0; i < 16; i++) await Promise.resolve();
 };
+
+test("login transport preserves identity and sends exactly one request per attempt", async (t) => {
+  const bodies = [];
+  t.mock.method(globalThis, "fetch", async (_, options) => {
+    bodies.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ detail: "Incorrect login ID or password." }), {
+      status: 401,
+    });
+  });
+  t.after(logout);
+  const ids = [" Candidate@access ", "john doe", "john+doe", "john@example.com", "a".repeat(65)];
+  for (const id of ids) {
+    await assert.rejects(studentLogin(id, "ABCD-EFGH-JKMN"), (error) => error.status === 401);
+  }
+  assert.deepEqual(
+    bodies,
+    ids.map((id) => ({ login_id: id.trim(), password: "ABCD-EFGH-JKMN" }))
+  );
+});
 
 test("stalled response body times out and the next resume polling tick can retry", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
@@ -64,6 +90,69 @@ test("HTTP errors retain their status and successful bodies clear the timeout", 
   assert.equal(signal.aborted, false);
 });
 
+test("503 Retry-After header survives a plain-text server error", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ detail: "The exam server is busy." }), {
+        status: 503,
+        headers: { "Retry-After": "5" },
+      })
+  );
+  await assert.rejects(
+    latestResumeRequest("session"),
+    (error) =>
+      error instanceof ProctorApiError &&
+      error.status === 503 &&
+      error.message === "The exam server is busy." &&
+      error.retryAfterSeconds === 5
+  );
+});
+
+test("Retry-After HTTP date uses the server Date, while structured wait keeps precedence", async (t) => {
+  let response = new Response(JSON.stringify({ detail: "Busy" }), {
+    status: 503,
+    headers: {
+      Date: "Sun, 06 Nov 1994 08:49:37 GMT",
+      "Retry-After": "Sun, 06 Nov 1994 08:49:42 GMT",
+    },
+  });
+  t.mock.method(globalThis, "fetch", async () => response);
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 5);
+  response = new Response(JSON.stringify({ detail: { error: "Slow down", retry_after: 7 } }), {
+    status: 429,
+    headers: { "Retry-After": "5" },
+  });
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 7);
+});
+
+test("malformed numeric Retry-After cannot become a future HTTP date", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ detail: "Busy" }), {
+        status: 503,
+        headers: { Date: "Sun, 06 Nov 1994 08:49:37 GMT", "Retry-After": "-5" },
+      })
+  );
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 0);
+});
+
+test("HTTP-date Retry-After without an exposed server Date does not trust device time", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ detail: "Busy" }), {
+        status: 503,
+        headers: { "Retry-After": "Sun, 06 Nov 2094 08:49:42 GMT" },
+      })
+  );
+  await assert.rejects(latestResumeRequest("session"), (error) => error.retryAfterSeconds === 0);
+});
+
 test("contest metadata reads opt out of reference text without changing workspace defaults", async (t) => {
   const urls = [];
   t.mock.method(globalThis, "fetch", async (url) => {
@@ -76,4 +165,18 @@ test("contest metadata reads opt out of reference text without changing workspac
   assert(urls[0].endsWith("/participant/contests/contest%2Fid"));
   assert.equal(urls[1], urls[0]);
   assert.equal(urls[2], `${urls[0]}?include_reference=false`);
+});
+
+test("published reference refresh reads only the narrow authenticated endpoint", async (t) => {
+  const urls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    urls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ revision: 0, reference_sheet: null }));
+  });
+  assert.deepEqual(await getPublishedReferenceSheet("contest/id"), {
+    revision: 0,
+    reference_sheet: null,
+  });
+  assert(urls[0].url.endsWith("/participant/contests/contest%2Fid/reference-sheet"));
+  assert.equal(urls[0].options.cache, "no-store");
 });

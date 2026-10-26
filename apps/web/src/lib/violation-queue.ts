@@ -9,7 +9,12 @@
  */
 
 import { reportEvents } from "./proctor-api";
-import { ViolationQueue, type QueuedEvent, type StoredEvent } from "./violation-queue-core";
+import {
+  LEGACY_STORAGE_KEY,
+  ViolationQueue,
+  type QueuedEvent,
+  type StoredEvent,
+} from "./violation-queue-core";
 
 // A queue is bound to one session, but the session id is only known after
 // login — so the queue is created lazily and rebound if the session changes.
@@ -27,10 +32,20 @@ const store =
         setItem: (k: string, v: string) => void memory.set(k, v),
       };
 
+try {
+  if (typeof localStorage !== "undefined") localStorage.removeItem(LEGACY_STORAGE_KEY);
+} catch {
+  // Storage blocked: nothing reads the legacy key any more, so it is inert.
+}
+
 function forSession(sessionUid: string): ViolationQueue {
   if (queue === null || boundSession !== sessionUid) {
     boundSession = sessionUid;
-    queue = new ViolationQueue(store, (events: StoredEvent[]) => reportEvents(sessionUid, events));
+    queue = new ViolationQueue(
+      store,
+      (events: StoredEvent[]) => reportEvents(sessionUid, events),
+      sessionUid
+    );
   }
   return queue;
 }

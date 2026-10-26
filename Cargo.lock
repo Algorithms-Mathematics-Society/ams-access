@@ -49,6 +49,7 @@ name = "ams-access"
 version = "4.7.0"
 dependencies = [
  "base64 0.22.1",
+ "brotli",
  "core-rs",
  "gtk",
  "hex",

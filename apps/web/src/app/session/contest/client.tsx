@@ -29,6 +29,7 @@ import { CONTEST_STYLES } from "./components/workspace-styles";
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
@@ -94,7 +95,7 @@ import {
 } from "./components/language";
 import { type Question, type ContestMeta } from "./components/questions";
 import { useFocusTrap } from "./components/hooks";
-import { BootScreen, ContestLoadErrorScreen } from "./components/GateScreens";
+import { BootScreen, ContestLoadErrorScreen, entryWaitPhase } from "./components/GateScreens";
 import { LockGraceToast, BlockedAppsOverlay } from "./components/BlockedOverlay";
 import { KioskBanner } from "./components/KioskBanner";
 import { FooterTrustStrip } from "./components/FooterTrustStrip";
@@ -117,14 +118,29 @@ import {
   type SourceSnapshot,
 } from "./contest-confidence";
 import { deriveSubmitButton } from "./submit-button";
-import { createDraftSaveQueue, restoreDraftWorkspace } from "./draft-workspace";
+import {
+  DRAFT_BACKUP_MS,
+  createDraftSaveQueue,
+  draftBackup,
+  restoreDraftWorkspace,
+  stopsDraftBackup,
+} from "./draft-workspace";
 import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
+import {
+  type Announcement,
+  nextToShow,
+  readAnnouncements,
+  rememberAck,
+  shouldFetch,
+} from "./announcements";
+import { AnnouncementOverlay } from "./components/AnnouncementOverlay";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
 import {
   enqueue as enqueueViolation,
   flush as flushViolationQueue,
+  flushBeforeExit as flushViolationsBeforeExit,
   report as reportViolation,
   setActiveSession as setViolationSession,
 } from "@/lib/violation-queue";
@@ -134,6 +150,8 @@ import {
   read as readAnswerBuffer,
   write as writeAnswerBuffer,
 } from "./answer-buffer";
+import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss";
+import { attemptLimitError, runCooldownMessage } from "./attempt-limits";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   connectionLevel,
@@ -143,11 +161,17 @@ import {
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
+  acknowledgeAnnouncement,
+  getPublishedReferenceSheet,
   getRun,
   getSession,
   heartbeat,
+  listAnnouncements,
+  listDrafts,
   listMySubmissions,
   logout,
+  saveDraft,
+  type Draft,
   run as runAgainstSamples,
   serverNow,
   startSession,
@@ -350,6 +374,10 @@ export default function ContestPageClient() {
   );
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
+  const activeContestIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    activeContestIdRef.current = contest?.id ?? null;
+  }, [contest?.id]);
   // The server's own view of where we are in the contest window. Outranks any
   // deadline arithmetic done here — see `isBell`.
   const [contestPhase, setContestPhase] = useState<ClockPhase>("running");
@@ -431,17 +459,41 @@ export default function ContestPageClient() {
   // Same reason: recheckRun must re-poll the kind that actually timed out.
   const runModeRef = useRef<"all" | "custom">("all");
   const [loading, setLoading] = useState(true);
+  // What the organizers have told this contest, and which of it this
+  // candidate has not yet read. `seenRevision` is the integer the heartbeat
+  // carries; the text is fetched only when it moves.
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [ackBusy, setAckBusy] = useState(false);
+  const seenRevisionRef = useRef(0);
+  const announcementFetchInFlightRef = useRef(false);
+  // How long entry has been waiting, so the boot screen can say something
+  // true about it. Ticks only while `loading` holds, and stops the moment
+  // the workspace mounts -- a timer left running behind the contest would
+  // re-render the editor every second for nothing.
+  const [bootWaitedMs, setBootWaitedMs] = useState(0);
+
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setBootWaitedMs(Date.now() - startedAt), 1_000);
+    return () => clearInterval(timer);
+  }, [loading]);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Bumped to re-run the load effect: by the backoff timer, or by Retry.
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadRetryable, setLoadRetryable] = useState(false);
   const autoLoadRetriesRef = useRef(0);
+  // When an unconfirmed 401 arrived; see `auth-loss.ts`. Shared by the loader
+  // and the heartbeat so either can confirm what the other first saw.
+  const unauthorizedAtRef = useRef<number | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const latestActiveDraftRef = useRef<{
+    sessionId: string | null;
     questionId: string;
     fileId: string;
     source: string;
     language: string;
+    files: EditorFile[];
   } | null>(null);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
   // even when the candidate has stopped typing (e.g. a transient network blip).
@@ -464,6 +516,10 @@ export default function ContestPageClient() {
   // Per-problem autosave revision. A ref rather than state: it is read and
   // bumped inside the save path and must never trigger a render.
   const draftRevisionsRef = useRef<Record<string, number>>({});
+  // What the server's backup copy holds per problem (see `draftBackup`), and
+  // whether backing up has been given up for this session.
+  const serverDraftRef = useRef<Record<string, string>>({});
+  const draftBackupOffRef = useRef(false);
   const submitInFlightRef = useRef(false);
   // Retain an unacknowledged request only for retries of its exact payload.
   const submitKeyRef = useRef<{
@@ -473,6 +529,7 @@ export default function ContestPageClient() {
     source: string;
     idempotencyKey: string;
   } | null>(null);
+  const acknowledgedSubmitKeysRef = useRef<Record<string, string>>({});
   // Guards finish/teardown against duplicate clicks and submissions during exit.
   // Failed acknowledgements reset it so the candidate can explicitly retry.
   const exitInFlightRef = useRef(false);
@@ -500,6 +557,8 @@ export default function ContestPageClient() {
   // when the browser thinks it is online and the server is still
   // unreachable -- a captive portal, or a network joined seconds ago.
   const retryBeatRef = useRef<() => void>(() => {});
+  const referenceRevisionRef = useRef(0);
+  const referenceFetchInFlightRef = useRef(false);
   // Set when the *server* says this session is over — terminated by an
   // invigilator, or finished elsewhere. Distinct from the bell.
   const [sessionEnded, setSessionEnded] = useState<"terminated" | "submitted" | null>(null);
@@ -1329,6 +1388,7 @@ export default function ContestPageClient() {
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
       let live = await getSession(stored.id);
       if (disposed) return;
+      unauthorizedAtRef.current = null;
       livePhase = live.phase;
 
       if (live.status === "submitted" || live.status === "terminated") {
@@ -1355,9 +1415,11 @@ export default function ContestPageClient() {
         (question.cxxprobe?.assets ?? []).map((asset) => asset.object_url).filter(Boolean)
       );
 
+      const initialReferenceSheet = readReferenceSheet(index.reference_sheet);
+      referenceRevisionRef.current = initialReferenceSheet?.revision ?? 0;
       setContest({
         id: index.uid,
-        reference_sheet: readReferenceSheet(index.reference_sheet),
+        reference_sheet: initialReferenceSheet,
         title: index.title,
         end_at: index.ends_at,
         status: index.phase === "running" ? "ACTIVE" : index.phase.toUpperCase(),
@@ -1391,20 +1453,27 @@ export default function ContestPageClient() {
 
       const answersMap: Record<string, { language: string; content: string }> = {};
       const restored: string[] = [];
-      // No server drafts: work is local only. `restoreDraftWorkspace` and
-      // `chooseRestore` already handle a null server copy by taking the
-      // buffer, so this is the path they were written for.
+      // The device buffer is primary. The server's backup copy only matters
+      // when it is newer or the buffer is gone (a spare machine), which
+      // `chooseRestore` decides; failing to fetch it must not stop the room.
+      const serverDrafts = await listDrafts(live.uid).catch(() => [] as Draft[]);
+      if (disposed) return;
       const restoredFiles: Record<string, EditorFile[]> = {};
       const restoredActiveFiles: Record<string, string> = {};
       // A first offline draft may have no server row at all. Enumerate the paper.
       for (const question of questions) {
         const buffered = readAnswerBuffer(localStorage, live.uid, question.id);
-        draftRevisionsRef.current[question.id] = buffered?.revision ?? 0;
+        const server = serverDrafts.find((draft) => draft.problem_label === question.id) ?? null;
+        draftRevisionsRef.current[question.id] = Math.max(
+          buffered?.revision ?? 0,
+          server?.client_revision ?? 0
+        );
+        if (server) serverDraftRef.current[question.id] = `${server.language}\n${server.source}`;
         const workspace = restoreDraftWorkspace(
           question.id,
           question.starter_filename ?? questionFileName(question, "C++23"),
           buffered,
-          null
+          server
         );
         if (workspace) {
           restoredFiles[question.id] = workspace.files;
@@ -1438,7 +1507,16 @@ export default function ContestPageClient() {
     })().catch((error) => {
       if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
       if (error instanceof ProctorApiError && error.status === 401) {
-        void redirectAfterRelease("/login");
+        const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
+        unauthorizedAtRef.current = step.firstAt;
+        if (step.signedOut) {
+          void redirectAfterRelease("/login");
+          return;
+        }
+        setLoadError("Checking your sign-in. This page will retry in a few seconds.");
+        setLoadRetryable(true);
+        setLoading(false);
+        retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), AUTH_RECHECK_MS);
         return;
       }
       if (error instanceof SessionBindingError) {
@@ -1586,23 +1664,29 @@ export default function ContestPageClient() {
     setHasUnsavedChanges(true);
     const q = questions[activeQ];
     if (!q) return;
-    setQuestionFiles((prev) => {
-      const files = prev[q.id];
-      if (!files) return prev;
-      return {
-        ...prev,
-        [q.id]: files.map((f) => {
-          if (!f.id.endsWith(":main")) return f;
-          return {
-            ...f,
-            name: questionFileName(q, normalizedLanguage),
-            content: isPristineStarter(f.content)
-              ? defaultStarterFor(normalizedLanguage)
-              : f.content,
-          };
-        }),
-      };
-    });
+    const changeFiles = (files: EditorFile[]) =>
+      files.map((f) => {
+        if (!f.id.endsWith(":main")) return f;
+        return {
+          ...f,
+          name: questionFileName(q, normalizedLanguage),
+          content: isPristineStarter(f.content) ? defaultStarterFor(normalizedLanguage) : f.content,
+        };
+      });
+    const latest = latestActiveDraftRef.current;
+    const files = changeFiles(
+      latest?.sessionId === sessionId && latest.questionId === q.id ? latest.files : editorFiles
+    );
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: q.id,
+      fileId: activeFileId,
+      source: files.find((f) => f.id === activeFileId)?.content ?? "",
+      language: toLanguageId(normalizedLanguage),
+      files,
+    };
+    writeLocalAnswerBuffer();
+    setQuestionFiles((prev) => (prev[q.id] ? { ...prev, [q.id]: changeFiles(prev[q.id]) } : prev));
   }
 
   function handleCodeChange(value: string) {
@@ -1614,12 +1698,40 @@ export default function ContestPageClient() {
     // actual outcome.
     const qId = questions[activeQ]?.id ?? "";
     const currentActiveId = questionActiveFile[qId] ?? questionFiles[qId]?.[0]?.id ?? "";
+    const latest = latestActiveDraftRef.current;
+    const files = (
+      latest?.sessionId === sessionId && latest.questionId === qId ? latest.files : editorFiles
+    ).map((f) => (f.id === currentActiveId ? { ...f, content: value } : f));
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: qId,
+      fileId: currentActiveId,
+      source: value,
+      language:
+        latest?.sessionId === sessionId && latest.questionId === qId
+          ? latest.language
+          : toLanguageId(selectedLanguage),
+      files,
+    };
+    writeLocalAnswerBuffer();
     setQuestionFiles((prev) => ({
       ...prev,
       [qId]: (prev[qId] ?? []).map((f) =>
         f.id === currentActiveId ? { ...f, content: value } : f
       ),
     }));
+  }
+
+  function activeDraftSnapshot() {
+    const latest = latestActiveDraftRef.current;
+    if (latest?.sessionId === sessionId && latest.questionId === questions[activeQ]?.id)
+      return latest;
+    return {
+      files: editorFiles,
+      fileId: activeFileId,
+      source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+      language: toLanguageId(selectedLanguage),
+    };
   }
 
   // `casesOverride` exists because this reads `customCases` out of the render
@@ -1631,9 +1743,19 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is already pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (runInFlightRef.current) return;
-    runInFlightRef.current = true;
 
     const mode: "all" | "custom" = useCustomCases ? "custom" : "all";
+    const limitError = attemptLimitError(
+      editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+      useCustomCases ? toWire(casesOverride ?? customCases) : null
+    );
+    if (limitError) {
+      setRunMode(mode);
+      resetRunPanelState(mode);
+      patchRun(mode, { error: limitError });
+      return;
+    }
+    runInFlightRef.current = true;
     setRunMode(mode);
     setIsRunning(true);
     resetRunPanelState(mode);
@@ -1643,6 +1765,7 @@ export default function ContestPageClient() {
     // Persist the current code before dispatching to the judge. A failed
     // device write is surfaced by the draft status; it does not block a run,
     // which sends the source to the judge directly.
+    const runDraft = activeDraftSnapshot();
     await handleSave();
     if (runVisit !== runVisitRef.current) return;
 
@@ -1652,17 +1775,17 @@ export default function ContestPageClient() {
     let attemptId: string;
     try {
       setRunSourceSnapshot({
-        fileId: activeFileId,
+        fileId: runDraft.fileId,
         questionId: questions[activeQ].id,
         problemTitle: questions[activeQ].title,
-        filename: activeFile?.name ?? "main.cpp",
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-        language: toLanguageId(selectedLanguage),
+        filename: runDraft.files.find((f) => f.id === runDraft.fileId)?.name ?? "main.cpp",
+        source: runDraft.source,
+        language: runDraft.language,
       });
       const created = await runAgainstSamples(sessionId, {
         problemLabel: questions[activeQ].id,
-        language: toLanguageId(selectedLanguage),
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
+        language: runDraft.language,
+        source: runDraft.source,
         // Only when the candidate pressed Run Custom. An ordinary Run must
         // send nothing here, or the samples are never reached.
         customCases: useCustomCases ? toWire(casesOverride ?? customCases) : null,
@@ -1678,13 +1801,27 @@ export default function ContestPageClient() {
       if (runVisit !== runVisitRef.current) return;
       setIsRunning(false);
       if (caught instanceof ProctorApiError && caught.status === 429) {
-        const wait = caught.retryAfterSeconds;
-        patchRun(mode, {
-          error: wait
-            ? `Please wait ~${wait}s before running again.`
-            : "Please wait a few seconds before running again.",
-        });
-      } else if (caught instanceof ProctorApiError && caught.status === 409) {
+        // A live countdown: "Please wait ~300s" was a number to do sums with.
+        // Stops when the candidate runs again or switches problem.
+        const until = Date.now() + (caught.retryAfterSeconds || 5) * 1000;
+        const code = caught.code;
+        const tick = () => {
+          const left = (until - Date.now()) / 1000;
+          if (runVisit !== runVisitRef.current) return clearInterval(timer);
+          if (left <= 0) {
+            clearInterval(timer);
+            patchRun(mode, { error: null });
+            return;
+          }
+          patchRun(mode, { error: runCooldownMessage(code, left) });
+        };
+        const timer = setInterval(tick, 1000);
+        tick();
+      } else if (caught instanceof ProctorApiError && caught.status === 503) {
+        patchRun(mode, { error: "The judge is temporarily unavailable. Try Run again shortly." });
+      } else if (caught instanceof ProctorApiError && caught.status >= 400) {
+        // The server said why (a closed session, a validation error, a server
+        // fault with its reference). "Could not reach the judge" was untrue.
         patchRun(mode, { error: caught.message });
       } else {
         patchRun(mode, {
@@ -1762,6 +1899,7 @@ export default function ContestPageClient() {
 
     // Polling window elapsed without a terminal verdict: the submission is still
     // queued on the judge. Surface that clearly instead of leaving a silent spinner.
+    if (runVisit !== runVisitRef.current) return;
     setIsRunning(false);
     patchRun(mode, { error: null, timedOut: true });
     // The timed-out state stays visible in the run pane — the run is never an
@@ -1792,13 +1930,14 @@ export default function ContestPageClient() {
     if (!sessionId) return false;
     const qId = questions[activeQ]?.id;
     if (!qId) return false;
+    const draft = activeDraftSnapshot();
     const saved = writeAnswerBuffer(localStorage, sessionId, qId, {
-      language: toLanguageId(selectedLanguage),
+      language: draft.language,
       // Every tab, not just the active one. Scratch tabs were persisted
       // nowhere at all — not locally and not on the server, which only ever
       // receives the active file.
-      files: editorFiles,
-      activeFileId,
+      files: draft.files,
+      activeFileId: draft.fileId,
       savedAtMs: Date.now(),
       revision: draftRevisionsRef.current[qId] ?? 0,
     });
@@ -1824,34 +1963,30 @@ export default function ContestPageClient() {
   // on restart, so a crash or reload recovers the code without the network
   // being involved at all.
   //
-  // What that costs is honest: work does not follow the candidate to another
-  // machine, and clearing site data loses it. What it buys is that a flaky
-  // connection can no longer put "Save failed — retry before submitting" in
-  // front of someone mid-contest about code that was never actually at risk.
+  // What it buys is that a flaky connection can no longer put "Save failed —
+  // retry before submitting" in front of someone mid-contest about code that
+  // was never actually at risk. So work can still follow the candidate to a
+  // spare machine, a silent background backup (below) copies the buffer to
+  // the server when it changes; this save never waits on it.
   async function doSave(): Promise<boolean> {
     if (!questions[activeQ] || !sessionId) return false;
     const qId = questions[activeQ].id;
     // A failed write leaves the work dirty: nothing durable holds it.
     if (!writeLocalAnswerBuffer()) return false;
+    const draft = activeDraftSnapshot();
     setSavedAnswers((prev) => ({
       ...prev,
       [qId]: {
-        language: toLanguageId(selectedLanguage),
-        content: editorFiles.find((f) => f.id === activeFileId)?.content || "",
+        language: draft.language,
+        content: draft.source,
       },
     }));
     setHasUnsavedChanges(false);
     return true;
   }
 
-  // Capture this render's immutable question/file/source closure at request time.
-  // Reading a live ref only when a deferred job starts loses the outgoing
-  // question if navigation happens while another save is in flight.
-  const saveQueueRef = useRef<ReturnType<typeof createDraftSaveQueue> | null>(null);
-  if (!saveQueueRef.current) saveQueueRef.current = createDraftSaveQueue();
   function handleSave(): Promise<boolean> {
-    writeLocalAnswerBuffer();
-    return saveQueueRef.current!(`${sessionId}:${questions[activeQ]?.id ?? ""}`, doSave);
+    return doSave();
   }
 
   async function handleSubmitSolution() {
@@ -1862,6 +1997,13 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (submitInFlightRef.current || exitInFlightRef.current) return;
+    const limitError = attemptLimitError(
+      editorFiles.find((f) => f.id === activeFileId)?.content ?? ""
+    );
+    if (limitError) {
+      setSubmissionError(limitError);
+      return;
+    }
     submitInFlightRef.current = true;
 
     setIsSubmitting(true);
@@ -1869,11 +2011,44 @@ export default function ContestPageClient() {
 
     try {
       const qId = questions[activeQ].id;
+      const draft = activeDraftSnapshot();
       const submittedSource = {
-        source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-        language: toLanguageId(selectedLanguage),
+        source: draft.source,
+        language: draft.language,
       };
-      const previousRequest = submitKeyRef.current;
+      const retryKey = `ams_pending_submission:${sessionId}:${qId}`;
+      let previousRequest = submitKeyRef.current;
+      let storedRaw: string | null;
+      try {
+        storedRaw = localStorage.getItem(retryKey);
+      } catch {
+        setSubmissionError(
+          "Could not read the submission retry record on this device. Ask an invigilator before submitting."
+        );
+        return;
+      }
+      let recoveredRetry = false;
+      try {
+        const stored = JSON.parse(storedRaw ?? "null");
+        if (
+          stored &&
+          stored.sessionId === sessionId &&
+          stored.problemLabel === qId &&
+          typeof stored.language === "string" &&
+          typeof stored.source === "string" &&
+          typeof stored.idempotencyKey === "string" &&
+          stored.idempotencyKey.length > 0 &&
+          stored.idempotencyKey.length <= 64 &&
+          stored.idempotencyKey !== acknowledgedSubmitKeysRef.current[retryKey]
+        ) {
+          previousRequest = stored;
+          recoveredRetry =
+            stored.language === submittedSource.language &&
+            stored.source === submittedSource.source;
+        }
+      } catch {
+        // Malformed stored data has no usable retry identity.
+      }
       if (
         !previousRequest ||
         previousRequest.sessionId !== sessionId ||
@@ -1881,16 +2056,27 @@ export default function ContestPageClient() {
         previousRequest.language !== submittedSource.language ||
         previousRequest.source !== submittedSource.source
       ) {
-        submitKeyRef.current = {
+        previousRequest = {
           sessionId,
           problemLabel: qId,
           ...submittedSource,
           idempotencyKey: newIdempotencyKey(),
         };
       }
+      // The key must survive a crash after server acceptance but before its
+      // response arrives. Refuse the POST if this device cannot retain it.
+      try {
+        localStorage.setItem(retryKey, JSON.stringify(previousRequest));
+      } catch {
+        setSubmissionError(
+          "Could not save the submission retry record on this device. Free storage or ask an invigilator before submitting."
+        );
+        return;
+      }
+      submitKeyRef.current = previousRequest;
       // A lost response must not make changed code (or another problem) reuse
       // the original attempt. Send the same snapshot used to select the key.
-      const request = submitKeyRef.current!;
+      const request = previousRequest;
       let created;
       try {
         created = await submitSolution(request.sessionId, {
@@ -1900,6 +2086,13 @@ export default function ContestPageClient() {
           idempotencyKey: request.idempotencyKey,
         });
       } catch (caught) {
+        if (caught instanceof ProctorApiError && caught.status === 503) {
+          // ams-api answers 503 here only after committing the submission row
+          // and failing to queue it, so the attempt exists. The key is kept,
+          // so pressing Submit again replays this attempt, not a new one.
+          setSubmissionError("Judging is temporarily unavailable; your attempt was recorded.");
+          return;
+        }
         if (caught instanceof ProctorApiError) {
           // 409 is a closed session, 429 a rate limit; both already carry a
           // sentence written for a candidate, so pass it through rather than
@@ -1913,6 +2106,27 @@ export default function ContestPageClient() {
       // Accepted, so this click is finished with. The next one is a new
       // attempt and must not be deduplicated against this.
       submitKeyRef.current = null;
+      acknowledgedSubmitKeysRef.current[retryKey] = request.idempotencyKey;
+      let cleanupFailed = false;
+      try {
+        localStorage.removeItem(retryKey);
+      } catch {
+        try {
+          // A small tombstone lets a restarted app distinguish an acknowledged
+          // attempt from one whose response was lost.
+          localStorage.setItem(retryKey, JSON.stringify({ acknowledged: true }));
+        } catch {
+          cleanupFailed = true;
+        }
+      }
+      if (cleanupFailed)
+        setSubmissionError(
+          "Submission accepted, but this device could not clear its retry record. A retry after restart may return this attempt; ask an invigilator if you need another."
+        );
+      else if (recoveredRetry)
+        setSubmissionError(
+          "Confirmed an earlier submission request. Check the attempt list before submitting again."
+        );
       setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
     } catch (err: any) {
       setSubmissionError(err.message || "An unexpected error occurred.");
@@ -1929,7 +2143,10 @@ export default function ContestPageClient() {
   // Exit teardown: release every OS-level lock and stop proctoring. This MUST run
   // on every exit path — confirmed or not — so a network failure can never trap a
   // candidate inside the locked-down shell. Every step is failure-tolerant.
-  async function runExitTeardown(preserveSession = false): Promise<boolean> {
+  async function runExitTeardown(
+    preserveSession = false,
+    startedExitPhoto?: Promise<void>
+  ): Promise<boolean> {
     let released = true;
     try {
       // Remember which session this was before dropping it. The results
@@ -1942,12 +2159,9 @@ export default function ContestPageClient() {
     } catch {
       // ignore storage errors
     }
-    // The exit frame, taken while there is still a camera to take it from:
-    // everything below this releases the stream. Awaited rather than fired
-    // and forgotten, because the teardown that follows removes the only
-    // source it could come from -- but it cannot fail the exit, so the
-    // failure path is a shrug.
-    await exitPhotoRef.current();
+    // Capture is synchronous before upload starts. Release local controls while
+    // the upload runs, then await delivery before navigating away.
+    const exitPhoto = startedExitPhoto ?? exitPhotoRef.current().catch(() => {});
 
     // The one place the camera is genuinely finished with: the exam is over
     // and the candidate is leaving the locked-down shell.
@@ -2018,27 +2232,39 @@ export default function ContestPageClient() {
     } else {
       setRestoreStatus(null);
     }
+    await exitPhoto;
     return released;
   }
 
   // Redirects release native controls without finishing the exam or removing
-  // its recovery record. Revoke upload credentials while retaining the native
-  // recording binding, so teardown evidence remains with the same session.
+  // its recovery record. Revoke upload credentials as soon as the exit-photo
+  // request starts; the native recording binding remains for teardown evidence.
   async function redirectAfterRelease(destination: string) {
     if (redirectInFlightRef.current || exitInFlightRef.current) return;
     redirectInFlightRef.current = true;
     setPendingRedirect(destination);
     setLoadError(null);
-    if (destination === "/login") {
-      logout();
-      clearQueryCache();
-    }
+    let signedOut = false;
+    const signOut = () => {
+      if (destination === "/login" && !signedOut) {
+        logout();
+        clearQueryCache();
+        signedOut = true;
+      }
+    };
     let revoked = true;
+    let exitPhoto: Promise<void> | undefined;
     try {
       try {
         redirectSaveRef.current();
       } catch {
         // Storage failures must never prevent releasing native controls.
+      }
+      if (destination === "/login") {
+        // The request reads its bearer synchronously before its first await.
+        // Sign out now, without waiting for the upload or native cleanup.
+        exitPhoto = exitPhotoRef.current().catch(() => {});
+        signOut();
       }
       try {
         if (window.__TAURI__) {
@@ -2056,7 +2282,7 @@ export default function ContestPageClient() {
       } catch {
         revoked = false;
       }
-      const released = await runExitTeardown(true);
+      const released = await runExitTeardown(true, exitPhoto);
       if (released && revoked) {
         router.replace(destination);
       } else {
@@ -2065,6 +2291,7 @@ export default function ContestPageClient() {
         );
       }
     } finally {
+      signOut();
       redirectInFlightRef.current = false;
     }
   }
@@ -2089,13 +2316,26 @@ export default function ContestPageClient() {
     const receipt = sessionId
       ? await requestFinish({
           save: handleSave,
-          finish: () =>
-            postJsonKeepalive(
-              `${API_URL}/participant/sessions/${sessionId}/finish`,
-              undefined,
-              { headers: authHeaders() },
-              { timeoutMs: 10000 }
-            ),
+          finish: async () => {
+            const controller = new AbortController();
+            try {
+              return await withTimeout(
+                (async () => {
+                  const response = await postJsonKeepalive(
+                    `${API_URL}/participant/sessions/${sessionId}/finish`,
+                    undefined,
+                    { headers: authHeaders(), signal: controller.signal }
+                  );
+                  const errorBody = response.ok ? null : await response.json().catch(() => null);
+                  return { ok: response.ok, json: async () => errorBody };
+                })(),
+                10000,
+                "Finish response timed out"
+              );
+            } finally {
+              controller.abort();
+            }
+          },
           wait: (attempt) =>
             new Promise<void>((resolve) =>
               setTimeout(
@@ -2155,6 +2395,18 @@ export default function ContestPageClient() {
   const expiryHandlerRef = useRef(handleContestExpiry);
   expiryHandlerRef.current = handleContestExpiry;
   const onContestExpiry = useCallback(() => expiryHandlerRef.current(), []);
+
+  // Ten minutes after the bell, leave as if Submit & Exit had been pressed.
+  // A candidate who walked away otherwise leaves a lab Mac locked until
+  // someone finds it; the paper is closed, so nothing can be lost. A ref, so
+  // the timer runs the current handler and its in-flight guards.
+  const finishHandlerRef = useRef(handleSubmitConfirmed);
+  finishHandlerRef.current = handleSubmitConfirmed;
+  useEffect(() => {
+    if (!bellRung) return;
+    const id = setTimeout(() => void finishHandlerRef.current(), 10 * 60_000);
+    return () => clearTimeout(id);
+  }, [bellRung]);
 
   // Leaving the contest room by any route ends the exam's use of the camera.
   // The submit teardown releases it too, but a redirect (session already
@@ -2369,9 +2621,115 @@ export default function ContestPageClient() {
   }, [loading, cameraPickKey]);
 
   useEffect(() => {
-    if (!sessionId || !browserOnline) return;
+    if (!sessionId) return;
 
     let cancelled = false;
+    let recheckTimer: ReturnType<typeof setTimeout> | null = null;
+    let latestRequest = 0;
+    let acceptedSuccess = 0;
+    let authExpired = false;
+    let terminal = false;
+    let requestedReferenceRevision = 0;
+    let referenceTimer: ReturnType<typeof setTimeout> | null = null;
+    let announcementTimer: ReturnType<typeof setTimeout> | null = null;
+    let requestedAnnouncementRevision = seenRevisionRef.current;
+
+    // Same shape as refreshReference below, for the same reasons: guarded
+    // against overlap, staggered so a thousand clients do not arrive at
+    // once, and leaving the revision unseen on failure so the next
+    // heartbeat retries rather than losing a postponement to one bad
+    // request.
+    const refreshAnnouncements = async () => {
+      announcementTimer = null;
+      if (
+        cancelled ||
+        authExpired ||
+        activeContestIdRef.current !== contestId ||
+        announcementFetchInFlightRef.current
+      )
+        return;
+      if (requestedAnnouncementRevision <= seenRevisionRef.current) return;
+      announcementFetchInFlightRef.current = true;
+      const expectedRevision = requestedAnnouncementRevision;
+      try {
+        const payload = await listAnnouncements(contestId);
+        if (cancelled || authExpired || activeContestIdRef.current !== contestId) return;
+        seenRevisionRef.current = expectedRevision;
+        setAnnouncements(readAnnouncements(payload));
+      } catch (caught) {
+        if (cancelled || authExpired) return;
+        if (caught instanceof ProctorApiError && caught.status === 401) unauthorized();
+        // Revision deliberately not advanced: retried on the next heartbeat.
+      } finally {
+        announcementFetchInFlightRef.current = false;
+      }
+    };
+
+    const refreshReference = async () => {
+      referenceTimer = null;
+      if (
+        cancelled ||
+        authExpired ||
+        terminal ||
+        activeContestIdRef.current !== contestId ||
+        referenceFetchInFlightRef.current
+      )
+        return;
+      if (requestedReferenceRevision === referenceRevisionRef.current) return;
+      referenceFetchInFlightRef.current = true;
+      const requestAtFetch = latestRequest;
+      const expectedRevision = requestedReferenceRevision;
+      try {
+        const latest = await getPublishedReferenceSheet(contestId);
+        if (
+          cancelled ||
+          authExpired ||
+          terminal ||
+          activeContestIdRef.current !== contestId ||
+          latest.revision !== expectedRevision ||
+          expectedRevision !== requestedReferenceRevision
+        )
+          return;
+        const sheet = readReferenceSheet(latest.reference_sheet);
+        if ((sheet?.revision ?? 0) !== latest.revision) return;
+        referenceRevisionRef.current = latest.revision;
+        setContest((prev) => (prev?.id === contestId ? { ...prev, reference_sheet: sheet } : prev));
+      } catch (caught) {
+        if (
+          cancelled ||
+          authExpired ||
+          terminal ||
+          activeContestIdRef.current !== contestId ||
+          requestAtFetch < acceptedSuccess
+        )
+          return;
+        if (caught instanceof ProctorApiError && caught.status === 401) unauthorized();
+        // Keep the last published sheet offline; retry a changed revision on the next heartbeat.
+      } finally {
+        referenceFetchInFlightRef.current = false;
+      }
+    };
+
+    // AUTH-1: one 401 is provisional; it signs out only if it repeats after a
+    // recheck (see `auth-loss.ts`). Every 401 path here goes through this.
+    const unauthorized = () => {
+      const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
+      unauthorizedAtRef.current = step.firstAt;
+      if (step.signedOut) {
+        authExpired = true;
+        // The token expired mid-exam. Keep `ams_active_session` so the
+        // resume path still has something to resume.
+        void redirectAfterRelease("/login");
+        return;
+      }
+      // Provisional: recheck soon rather than at the next minute's beat.
+      if (recheckTimer === null) {
+        recheckTimer = setTimeout(() => {
+          recheckTimer = null;
+          void beat();
+        }, AUTH_RECHECK_MS);
+      }
+    };
 
     /**
      * Liveness — and the only way the app learns anything changed.
@@ -2383,16 +2741,34 @@ export default function ContestPageClient() {
      * the failures.
      */
     const beat = async () => {
+      const request = ++latestRequest;
       try {
         const live = await heartbeat(sessionId);
-        if (cancelled) return;
+        if (cancelled || authExpired || request !== latestRequest) return;
+        acceptedSuccess = request;
 
+        unauthorizedAtRef.current = null;
+        // A server reply is stronger evidence than navigator.onLine's hint.
+        setBrowserOnline(true);
         setHeartbeatState((prev) => onHeartbeatSuccess(prev, Date.now()));
 
         // The server's word on where we are, once a minute. This corrects any
         // drift and is authoritative over local deadline arithmetic.
         setContestPhase(live.phase);
         setClockSynced(true);
+
+        // An announcement is waiting. Staggered like the reference refresh
+        // below: a thousand clients learning of the same publish within the
+        // same minute must not all fetch on the same tick.
+        if (shouldFetch(seenRevisionRef.current, live.announcement_revision)) {
+          requestedAnnouncementRevision = live.announcement_revision!;
+          if (announcementTimer === null && !announcementFetchInFlightRef.current) {
+            announcementTimer = setTimeout(
+              () => void refreshAnnouncements(),
+              Math.floor(Math.random() * 10_001)
+            );
+          }
+        }
         if (live.ends_at) setContest((prev) => (prev ? { ...prev, end_at: live.ends_at! } : prev));
         if (
           isBell(
@@ -2408,32 +2784,110 @@ export default function ContestPageClient() {
         }
 
         if (live.status === "terminated") {
+          terminal = true;
           setSessionEnded("terminated");
         } else if (live.status === "submitted") {
+          terminal = true;
           setSessionEnded("submitted");
         }
+        if (
+          activeContestIdRef.current === contestId &&
+          live.ends_at === null &&
+          live.status === "active"
+        ) {
+          // Older API deployments omit the revision. Keep the entry preload until the API is upgraded.
+          if (Number.isSafeInteger(live.reference_revision) && live.reference_revision! >= 0) {
+            requestedReferenceRevision = live.reference_revision!;
+            if (requestedReferenceRevision !== referenceRevisionRef.current) {
+              if (referenceTimer === null && !referenceFetchInFlightRef.current) {
+                referenceTimer = setTimeout(
+                  () => void refreshReference(),
+                  Math.floor(Math.random() * 10_001)
+                );
+              }
+            } else if (referenceTimer !== null) {
+              clearTimeout(referenceTimer);
+              referenceTimer = null;
+            }
+          }
+        } else if (referenceTimer !== null) {
+          clearTimeout(referenceTimer);
+          referenceTimer = null;
+        }
       } catch (caught) {
-        if (cancelled) return;
+        if (cancelled || authExpired) return;
         if (caught instanceof ProctorApiError && caught.status === 401) {
-          // The token expired mid-exam. Keep `ams_active_session` so the
-          // resume path still has something to resume.
-          void redirectAfterRelease("/login");
+          // A newer transport failure cannot invalidate an earlier auth rejection.
+          // A newer accepted server reply can: it proved the session is still valid.
+          if (request <= acceptedSuccess) return;
+          unauthorized();
           return;
         }
+        if (request !== latestRequest) return;
         setHeartbeatState(onHeartbeatFailure);
       }
     };
 
     // `beat` is defined above; expose it now that it exists.
-    retryBeatRef.current = () => void beat();
-    void beat();
+    const retry = () => void beat();
+    retryBeatRef.current = retry;
+    // A browser "offline" hint suppresses only the immediate request. The
+    // minute poll still checks for recovery if an online event never arrives.
+    if (browserOnline) void beat();
     const id = setInterval(() => void beat(), 60_000);
+    return () => {
+      cancelled = true;
+      if (referenceTimer !== null) clearTimeout(referenceTimer);
+      if (announcementTimer !== null) clearTimeout(announcementTimer);
+      if (retryBeatRef.current === retry) retryBeatRef.current = () => {};
+      clearInterval(id);
+      if (recheckTimer) clearTimeout(recheckTimer);
+    };
+    // Recheck immediately on reconnect; ignore the previous connection's replies.
+  }, [sessionId, contestId, contest?.id, router, browserOnline]);
+
+  // Background backup of the device buffer to the server, only for problems
+  // whose answer changed since the server last accepted one. It never blocks
+  // and never shows an error; a failure that will not clear by itself (no
+  // route to the server, or drafts closed) stops it for this session.
+  useEffect(() => {
+    if (!sessionId || questions.length === 0) return;
+    let cancelled = false;
+    const backup = async () => {
+      for (const question of questions) {
+        if (cancelled || draftBackupOffRef.current) return;
+        const next = draftBackup(
+          readAnswerBuffer(localStorage, sessionId, question.id),
+          serverDraftRef.current[question.id]
+        );
+        if (!next) continue;
+        try {
+          const saved = await saveDraft(sessionId, question.id, {
+            source: next.source,
+            language: next.language,
+            clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
+          });
+          // The server answers with what it holds, which is another device's
+          // copy when ours was stale; the next tick then supersedes it.
+          draftRevisionsRef.current[question.id] = Math.max(
+            draftRevisionsRef.current[question.id] ?? 0,
+            saved.client_revision
+          );
+          serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
+        } catch (caught) {
+          if (caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
+            draftBackupOffRef.current = true;
+          }
+          return;
+        }
+      }
+    };
+    const id = setInterval(() => void backup(), DRAFT_BACKUP_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-    // Recheck immediately on reconnect; ignore the previous connection's replies.
-  }, [sessionId, router, browserOnline]);
+  }, [sessionId, questions]);
 
   // Flush the moment the connection comes back, rather than waiting out the
   // autosave backoff. A candidate who reconnects with thirty seconds left
@@ -2957,6 +3411,12 @@ export default function ContestPageClient() {
     // sorts last in the strip however long the paper ran.
     photoSequenceRef.current += 1;
     await captureAndUploadIdentityPhoto(sessionId, "exit", photoSequenceRef.current);
+    // Unsent violation events leave with the exit frame, the last evidence
+    // this session sends. Bounded: whatever is left stays queued under this
+    // session's key and must never hold the candidate in the locked room.
+    await withTimeout(flushViolationsBeforeExit(sessionId), 3000, "Event flush timed out").catch(
+      () => {}
+    );
   };
   useEffect(() => {
     if (!sessionId || !cameraVideoReady || !cameraStream) return;
@@ -3341,12 +3801,18 @@ export default function ContestPageClient() {
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
   const isEditorEmpty = !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
-  latestActiveDraftRef.current = {
-    questionId: currentQId,
-    fileId: activeFileId,
-    source: currentCode,
-    language: toLanguageId(selectedLanguage),
-  };
+  // Event handlers persist immediately; a committed render then becomes the
+  // source for later saves, before the passive persistence effect runs.
+  useLayoutEffect(() => {
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: currentQId,
+      fileId: activeFileId,
+      source: currentCode,
+      language: toLanguageId(selectedLanguage),
+      files: editorFiles,
+    };
+  }, [questionFiles, questionActiveFile, selectedLanguage, currentQId, sessionId]);
 
   // The local buffer is the only persistence. Written on every change rather
   // than debounced: a localStorage write costs nothing, and the debounce only
@@ -3462,8 +3928,9 @@ export default function ContestPageClient() {
   const runStatusFor = (slice: RunSlice) =>
     slice.error
       ? {
-          // Client-side failure reaching the judge — distinct from a judge verdict.
-          label: "Couldn’t reach the judge",
+          // The run never reached a verdict; the message below says why (empty
+          // code, cooldown, offline), so the label must not claim it was the network.
+          label: "Run didn’t start",
           color: "var(--color-text-red)",
           bg: "var(--color-error-muted)",
           border: "color-mix(in srgb, var(--color-error) 28%, transparent)",
@@ -3770,7 +4237,33 @@ export default function ContestPageClient() {
   // keyboard, and the only button on it was Exit contest -- so a two-second
   // inconvenience offered abandoning the paper as its remedy. It is a toast
   // now: it says what to do and goes away when they do it.
-  const criticalOverlayActive = lockGraceActive && lockGraceCountdown === 0;
+  // The oldest announcement this candidate has not acknowledged, if any.
+  // Oldest first so a burst reads in the order it was issued.
+  const pendingAnnouncement = sessionId
+    ? nextToShow(announcements, localStorage, sessionId)
+    : null;
+
+  const acknowledgeCurrent = useCallback(() => {
+    if (!pendingAnnouncement || !sessionId) return;
+    setAckBusy(true);
+    // Recorded locally first. The server is the authority, but a candidate
+    // who acknowledged must not be shown the same postponement again while
+    // the request is still in flight or if it fails outright.
+    rememberAck(localStorage, sessionId, pendingAnnouncement.uid);
+    const uid = pendingAnnouncement.uid;
+    void acknowledgeAnnouncement(contestId, uid).finally(() => {
+      setAckBusy(false);
+      setAnnouncements((prev) =>
+        prev.map((row) => (row.uid === uid ? { ...row, acknowledged: true } : row))
+      );
+    });
+  }, [pendingAnnouncement, sessionId, contestId]);
+
+  // Ranks with the lock violation: both are mandatory, and an announcement
+  // that a lower-priority dialog could cover is an announcement missed.
+  const announcementActive = pendingAnnouncement !== null;
+  const criticalOverlayActive =
+    (lockGraceActive && lockGraceCountdown === 0) || announcementActive;
   const networkOverlayActive =
     networkDisconnected &&
     !criticalOverlayActive &&
@@ -3816,6 +4309,11 @@ export default function ContestPageClient() {
     closeSupport
   );
   const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle");
+  // No dismissal callback: Escape must not close an announcement. The only
+  // way out is the acknowledgement, which is the record staff rely on.
+  const announcementDialogRef = useFocusTrap<HTMLDivElement>(
+    announcementActive && timeUpState === "idle"
+  );
   useEffect(() => {
     if (
       criticalOverlayActive ||
@@ -3843,6 +4341,7 @@ export default function ContestPageClient() {
         loadError={loadError}
         router={router}
         onRetry={() => void redirectAfterRelease(pendingRedirect)}
+        exitTo={pendingRedirect}
       />
     ) : (
       <BootScreen label="Releasing device controls..." />
@@ -3857,7 +4356,8 @@ export default function ContestPageClient() {
   }
 
   if (loading) {
-    return <BootScreen label="Loading contest..." />;
+    const phase = entryWaitPhase(bootWaitedMs);
+    return <BootScreen label={phase.label} detail={phase.detail} />;
   }
 
   if (loadError) {
@@ -4317,6 +4817,18 @@ export default function ContestPageClient() {
         </VStack>
       )}
 
+      {/* Above the rest: whatever else is on screen, a postponement is the
+          thing the candidate most needs to read. Suppressed only once the
+          paper is over, when the finish receipt owns the screen. */}
+      {pendingAnnouncement && timeUpState === "idle" && (
+        <AnnouncementOverlay
+          announcement={pendingAnnouncement}
+          onAcknowledge={acknowledgeCurrent}
+          busy={ackBusy}
+          dialogRef={announcementDialogRef}
+        />
+      )}
+
       {showMediaToggleWarning && (
         <ContestOverlay labelId="media-toggle-warning-title" dialogRef={mediaWarningDialogRef}>
           <VStack gap={3}>
@@ -4445,6 +4957,7 @@ export default function ContestPageClient() {
 
       <HelpRequestModal
         open={supportChatActive}
+        contestId={contestId}
         onClose={closeSupportChat}
         kind="OTHER"
         summary="I need help during my assessment."

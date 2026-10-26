@@ -1,7 +1,5 @@
 use crate::process_runner::{Budget, CommandDeadlineExt};
-use core_rs::exam::{
-    CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
-};
+use core_rs::exam::{CloseAppsResult, DisplayScan, KeyboardInterceptResult, ProcessScanResult};
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -10,6 +8,7 @@ mod hook_delivery;
 mod hook_lifecycle;
 pub mod instance;
 mod keyboard_policy;
+mod power_request;
 mod registry_recovery;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
 pub use registry_recovery::RegistryLockdownStatus;
@@ -37,6 +36,7 @@ static HOOK_OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static HOOK_SESSION: std::sync::Mutex<Option<std::sync::Arc<hook_lifecycle::Session>>> =
     std::sync::Mutex::new(None);
 static SHIELD_ACTIVE: AtomicBool = AtomicBool::new(false);
+static VIRTUAL_DESKTOP_GUARD_EPOCH: AtomicU64 = AtomicU64::new(0);
 static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
 
 /// Processes that make a Windows device ineligible for a secured session.
@@ -494,28 +494,11 @@ fn reg_dword_nonzero(key: &str, value: &str) -> bool {
     false
 }
 
-fn reg_key_exists(key: &str) -> bool {
-    hidden_command("reg")
-        .args(["query", key])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .bounded_status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 // ── Sleep prevention ──────────────────────────────────────────────────────────
 
 fn set_sleep_prevention(enable: bool) {
-    use windows::Win32::System::Power::{
-        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
-    };
-    unsafe {
-        if enable {
-            SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
-        } else {
-            SetThreadExecutionState(ES_CONTINUOUS);
-        }
+    if let Err(error) = power_request::set(enable) {
+        eprintln!("AMS Access: sleep prevention update failed: {error}");
     }
 }
 
@@ -558,6 +541,129 @@ pub fn desktop_recovery_pending() -> bool {
 
 // ── Desktop lock / unlock ─────────────────────────────────────────────────────
 
+// Native-only gate: Tauri window/WebView callbacks must stay outside it.
+// Closing is terminal for this process; the next exam needs a new instance.
+struct TerminalGate {
+    closed: AtomicBool,
+    operation: std::sync::Mutex<()>,
+}
+
+impl TerminalGate {
+    const fn new() -> Self {
+        Self {
+            closed: AtomicBool::new(false),
+            operation: std::sync::Mutex::new(()),
+        }
+    }
+
+    fn enter(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        let guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (!self.closed.load(Ordering::SeqCst)).then_some(guard)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn close(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.closed.store(true, Ordering::SeqCst);
+        self.lock()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+}
+
+static DESKTOP_GATE: TerminalGate = TerminalGate::new();
+
+#[cfg(test)]
+mod terminal_gate_tests {
+    use super::TerminalGate;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn close_waits_for_active_native_change_then_restores() {
+        let gate = Arc::new(TerminalGate::new());
+        let changed = Arc::new(Mutex::new(false));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let worker = {
+            let gate = Arc::clone(&gate);
+            let changed = Arc::clone(&changed);
+            std::thread::spawn(move || {
+                let _guard = gate.enter().unwrap();
+                entered_tx.send(()).unwrap();
+                finish_rx.recv().unwrap();
+                *changed.lock().unwrap() = true;
+            })
+        };
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let closer = {
+            let gate = Arc::clone(&gate);
+            let changed = Arc::clone(&changed);
+            std::thread::spawn(move || {
+                let _guard = gate.close();
+                *changed.lock().unwrap() = false;
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !gate.is_closed() {
+            assert!(
+                Instant::now() < deadline,
+                "shutdown did not publish cancellation"
+            );
+            std::thread::yield_now();
+        }
+        finish_tx.send(()).unwrap();
+        worker.join().unwrap();
+        closer.join().unwrap();
+        assert!(!*changed.lock().unwrap());
+    }
+
+    #[test]
+    fn close_rejects_queued_native_change_and_keyboard_probe() {
+        let gate = Arc::new(TerminalGate::new());
+        let hook_operation = Arc::new(Mutex::new(()));
+        let held_hook = hook_operation.lock().unwrap();
+        let (native_queued_tx, native_queued_rx) = mpsc::channel();
+        let (native_continue_tx, native_continue_rx) = mpsc::channel();
+        let native = {
+            let gate = Arc::clone(&gate);
+            std::thread::spawn(move || {
+                native_queued_tx.send(()).unwrap();
+                native_continue_rx.recv().unwrap();
+                gate.enter().is_some()
+            })
+        };
+        let (queued_tx, queued_rx) = mpsc::channel();
+        let probe = {
+            let gate = Arc::clone(&gate);
+            let hook_operation = Arc::clone(&hook_operation);
+            std::thread::spawn(move || {
+                queued_tx.send(()).unwrap();
+                let _hook = hook_operation.lock().unwrap();
+                !gate.is_closed()
+            })
+        };
+        native_queued_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        queued_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        drop(gate.close());
+        native_continue_tx.send(()).unwrap();
+        drop(held_hook);
+        assert!(!native.join().unwrap());
+        assert!(!probe.join().unwrap());
+    }
+}
+
 pub fn lock_desktop() -> bool {
     lock_desktop_checked().unwrap_or(false)
 }
@@ -573,6 +679,9 @@ pub fn lock_desktop_checked() -> Result<bool, String> {
 
 /// Unelevated entry skips new registry policies, never unfinished recovery.
 pub fn lock_desktop_with_status() -> Result<DesktopLockdownStatus, String> {
+    let _operation = DESKTOP_GATE
+        .enter()
+        .ok_or("Windows desktop lockdown cannot start during shutdown")?;
     if !instance::owns_instance() {
         return Err("Windows lockdown requires instance ownership".into());
     }
@@ -592,6 +701,7 @@ pub fn lock_desktop_with_status() -> Result<DesktopLockdownStatus, String> {
         }
     };
     set_sleep_prevention(true);
+    VIRTUAL_DESKTOP_GUARD_EPOCH.fetch_add(1, Ordering::SeqCst);
     SHIELD_ACTIVE.store(true, Ordering::SeqCst);
     // The caller decides whether unavailable keyboard interception is advisory
     // and owns rollback when its entry policy requires the hook.
@@ -602,6 +712,16 @@ pub fn lock_desktop_with_status() -> Result<DesktopLockdownStatus, String> {
 }
 
 pub fn unlock_desktop() {
+    let _operation = DESKTOP_GATE.lock();
+    unlock_desktop_unlocked();
+}
+
+pub fn close_desktop_on_exit() {
+    let _operation = DESKTOP_GATE.close();
+    unlock_desktop_unlocked();
+}
+
+fn unlock_desktop_unlocked() {
     if !instance::owns_instance() {
         return;
     }
@@ -610,115 +730,6 @@ pub fn unlock_desktop() {
     disable_keyboard_intercept();
     if let Err(error) = recover_registry_if_crashed() {
         eprintln!("Windows registry restoration incomplete: {error}");
-    }
-}
-
-mod virtualization;
-
-// ── Virtualization detection (registry + CPUID + ACPI + firmware identity) ──
-
-pub fn detect_virtualization() -> VirtDetectionResult {
-    let _budget = Budget::new(std::time::Duration::from_secs(6));
-    // Method 1: Guest-specific tools/integration keys and firmware (<100 ms total).
-    // Host application install keys and host-only network adapters are not evidence.
-    // Hyper-V VM guest key is checked here — critical for the MicrosoftHyperV CPUID
-    // exclusion in Method 2 to be correct.
-    const VM_REGISTRY_KEYS: &[(&str, &str)] = &[
-        (r"HKLM\SOFTWARE\VMware, Inc.\VMware Tools", "vmware"),
-        (
-            r"HKLM\SOFTWARE\Oracle\VirtualBox Guest Additions",
-            "virtualbox",
-        ),
-        (
-            r"HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters",
-            "hyper-v",
-        ),
-        (r"HKLM\HARDWARE\ACPI\DSDT\VBOX__", "virtualbox"),
-        (r"HKLM\HARDWARE\ACPI\DSDT\BOCHS_", "bochs"),
-        (r"HKLM\HARDWARE\ACPI\DSDT\QEMU", "qemu"),
-        (r"HKLM\HARDWARE\ACPI\FADT\VBOX__", "virtualbox"),
-    ];
-    for (key, platform) in VM_REGISTRY_KEYS {
-        if reg_key_exists(key) {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(platform.to_string()),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    // Method 2: CPUID hypervisor present bit (~1µs, no I/O — fastest possible check).
-    //
-    // MicrosoftHyperV is intentionally excluded: Windows 11 enables Hyper-V VBS /
-    // Credential Guard / HVCI on bare-metal hardware, which sets the CPUID hypervisor
-    // bit with vendor "Microsoft Hv" but is NOT a VM. If this were a real Hyper-V VM,
-    // the Guest\Parameters registry key (Method 1) would have already matched and
-    // returned. Reaching this point means that key is absent → treat "Microsoft Hv" as
-    // VBS on bare metal and fall through.
-    {
-        let cpuid = raw_cpuid::CpuId::new();
-        if let Some(hv) = cpuid.get_hypervisor_info() {
-            let kind = hv.identify();
-            if !matches!(kind, raw_cpuid::Hypervisor::HyperV) {
-                let platform = match kind {
-                    raw_cpuid::Hypervisor::VMware => "vmware",
-                    raw_cpuid::Hypervisor::KVM => "kvm",
-                    raw_cpuid::Hypervisor::Xen => "xen",
-                    raw_cpuid::Hypervisor::QEMU => "qemu",
-                    raw_cpuid::Hypervisor::Bhyve => "bhyve",
-                    // Parallels has no dedicated raw-cpuid variant; it surfaces
-                    // as Unknown(..) and is still reported as detected.
-                    _ => "unknown_hypervisor",
-                };
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(platform.to_string()),
-                    confidence: "high".to_string(),
-                };
-            }
-        }
-    }
-
-    // Method 3: ACPI table name scan (~30ms) — catches QEMU / bochs without guest tools.
-    if let Ok(out) = hidden_command("reg")
-        .args(["query", r"HKLM\HARDWARE\ACPI\DSDT"])
-        .bounded_output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        for vm in &["vbox", "vmware", "qemu", "bochs", "xen", "bxpc"] {
-            if text.contains(vm) {
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(vm.to_string()),
-                    confidence: "high".to_string(),
-                };
-            }
-        }
-    }
-
-    // Method 4: firmware identity is available locally, without systeminfo's
-    // slow WMI/network enumeration or localized labels. Host-only adapters and
-    // VBS status are not guest hardware evidence. A failed required query still
-    // propagates through the enclosing scan budget rather than reporting clean.
-    if let Ok(out) = hidden_command("reg")
-        .args(["query", r"HKLM\HARDWARE\DESCRIPTION\System\BIOS"])
-        .bounded_checked_output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout);
-        if let Some(platform) = virtualization::registry_guest_platform(&text) {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(platform.to_string()),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "high".to_string(),
     }
 }
 
@@ -1034,6 +1045,9 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let _operation = HOOK_OPERATION
         .lock()
         .unwrap_or_else(|error| error.into_inner());
+    if DESKTOP_GATE.is_closed() {
+        return keyboard_intercept_result(false);
+    }
     let existing = HOOK_SESSION
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -1048,7 +1062,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     *HOOK_SESSION
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = Some(session.clone());
-    set_sleep_prevention(true);
     spawn_hook_thread(session.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while session.active.load(Ordering::SeqCst)
@@ -1060,7 +1073,6 @@ pub fn enable_keyboard_intercept() -> KeyboardInterceptResult {
     let installed = session.ready() && spawn_hook_watchdog(session.clone());
     if !installed {
         session.cancel();
-        set_sleep_prevention(false);
     }
     keyboard_intercept_result(installed)
 }
@@ -1117,7 +1129,6 @@ pub fn disable_keyboard_intercept() {
     }
     // The owner observes cancellation during its bounded pump. No TID-based
     // WM_QUIT can be lost before queue creation or target a reused thread ID.
-    set_sleep_prevention(false);
 }
 
 // ── Injected-input event callback (F11) ───────────────────────────────────────
@@ -1238,17 +1249,134 @@ unsafe extern "system" fn kbproc(
 
 // ── Virtual desktop guard ─────────────────────────────────────────────────────
 
+fn virtual_desktop_targets<T: Copy + Eq>(
+    original: T,
+    registry: Option<T>,
+    foreground: isize,
+    exam: isize,
+    mut on_current: impl FnMut(isize) -> bool,
+    mut desktop_id: impl FnMut(isize) -> Option<T>,
+) -> [Option<T>; 2] {
+    let registry = registry.filter(|id| *id != original);
+    let foreground = (foreground != 0 && foreground != exam && on_current(foreground))
+        .then(|| desktop_id(foreground))
+        .flatten()
+        .filter(|id| *id != original && Some(*id) != registry);
+    [registry, foreground]
+}
+
+fn move_exam_to_current<T: Copy>(
+    targets: impl IntoIterator<Item = T>,
+    original_id: T,
+    mut move_exam: impl FnMut(T) -> Result<(), String>,
+    mut is_current: impl FnMut() -> bool,
+) -> Result<(), String> {
+    let mut last_error = "current desktop ID unavailable".to_string();
+    for desktop_id in targets {
+        if let Err(error) = move_exam(desktop_id) {
+            last_error = error;
+            continue;
+        }
+        if is_current() {
+            return Ok(());
+        }
+        move_exam(original_id)
+            .map_err(|error| format!("stale desktop ID; rollback failed: {error}"))?;
+        last_error = "stale desktop ID; restored original desktop".into();
+    }
+    Err(last_error)
+}
+
+fn parse_virtual_desktop_id(value_type: u32, bytes: &[u8]) -> Option<windows::core::GUID> {
+    use windows::Win32::System::Registry::REG_BINARY;
+    if value_type != REG_BINARY.0 || bytes.len() != 16 {
+        return None;
+    }
+    let id = windows::core::GUID {
+        data1: u32::from_le_bytes(bytes[0..4].try_into().ok()?),
+        data2: u16::from_le_bytes(bytes[4..6].try_into().ok()?),
+        data3: u16::from_le_bytes(bytes[6..8].try_into().ok()?),
+        data4: bytes[8..16].try_into().ok()?,
+    };
+    (id != windows::core::GUID::zeroed()).then_some(id)
+}
+
+fn current_virtual_desktop_from_registry() -> Option<windows::core::GUID> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TokenSessionId, TOKEN_QUERY};
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, REG_VALUE_TYPE, RRF_RT_REG_BINARY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    fn read(path: &str) -> Option<windows::core::GUID> {
+        let path: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+        let mut bytes = [0u8; 16];
+        let mut size = bytes.len() as u32;
+        let mut value_type = REG_VALUE_TYPE(0);
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(path.as_ptr()),
+                windows::core::w!("CurrentVirtualDesktop"),
+                RRF_RT_REG_BINARY,
+                Some(&mut value_type),
+                Some(bytes.as_mut_ptr().cast()),
+                Some(&mut size),
+            )
+        };
+        (status == ERROR_SUCCESS)
+            .then(|| bytes.get(..size as usize))
+            .flatten()
+            .and_then(|value| parse_virtual_desktop_id(value_type.0, value))
+    }
+
+    let mut token = HANDLE::default();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_ok() {
+        let mut session_id = 0u32;
+        let mut returned = 0u32;
+        let session = unsafe {
+            GetTokenInformation(
+                token,
+                TokenSessionId,
+                Some((&mut session_id as *mut u32).cast()),
+                std::mem::size_of::<u32>() as u32,
+                &mut returned,
+            )
+        };
+        let _ = unsafe { CloseHandle(token) };
+        if session.is_ok() {
+            let path = format!(
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\{session_id}\VirtualDesktops"
+            );
+            if let Some(id) = read(&path) {
+                return Some(id);
+            }
+        }
+    }
+    // shortcut: Explorer's undocumented current-desktop value can lag a switch
+    // or disappear on a Windows update; validate after moving and roll back.
+    read(r"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops")
+}
+
+fn report_virtual_desktop_guard_failure(last_report: &mut Option<std::time::Instant>, error: &str) {
+    if last_report.is_none_or(|last| last.elapsed() >= std::time::Duration::from_secs(5)) {
+        eprintln!("AMS Access: virtual desktop recovery failed: {error}");
+        *last_report = Some(std::time::Instant::now());
+    }
+}
+
 /// Spawn a background thread that detects when the exam window is no longer on
 /// the current virtual desktop (e.g. touchpad 3-finger swipe on non-WPT devices)
-/// and moves it back within 250 ms.
+/// and attempts to move it back every 250 ms.
 ///
-/// Strategy: `GetForegroundWindow()` always returns a window on the active desktop.
-/// We get its desktop GUID via `IVirtualDesktopManager::GetWindowDesktopId`, then
-/// call `MoveWindowToDesktop(exam_hwnd, that_guid)` so the exam follows the user
-/// to whichever desktop they switch to — they cannot escape by switching desktops.
+/// Read Explorer's current desktop ID when available; otherwise use a current
+/// foreground window's GUID. Verify the move and roll it back if the ID was stale.
 ///
 /// Stops when `SHIELD_ACTIVE` is false (set by `unlock_desktop()`).
 pub fn spawn_virtual_desktop_guard(hwnd_raw: isize) {
+    let epoch = VIRTUAL_DESKTOP_GUARD_EPOCH.load(Ordering::SeqCst);
     let _ = std::thread::Builder::new()
         .name("ams-vd-guard".into())
         .spawn(move || {
@@ -1265,6 +1393,7 @@ pub fn spawn_virtual_desktop_guard(hwnd_raw: isize) {
             // STA required for shell COM objects
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
             if hr.is_err() {
+                eprintln!("AMS Access: virtual desktop guard COM initialization failed: {hr:?}");
                 return;
             }
 
@@ -1277,41 +1406,226 @@ pub fn spawn_virtual_desktop_guard(hwnd_raw: isize) {
             };
             let vdm: windows::core::Result<IVirtualDesktopManager> =
                 unsafe { CoCreateInstance(&CLSID_VDM, None, CLSCTX_INPROC_SERVER) };
-            let Ok(vdm) = vdm else {
-                unsafe { CoUninitialize() };
-                return;
+            let vdm = match vdm {
+                Ok(vdm) => vdm,
+                Err(error) => {
+                    eprintln!("AMS Access: virtual desktop guard COM object unavailable: {error}");
+                    unsafe { CoUninitialize() };
+                    return;
+                }
             };
 
             let hwnd = HWND(hwnd_raw as *mut _);
+            let mut last_report = None;
 
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(250));
-                if !SHIELD_ACTIVE.load(Ordering::SeqCst) {
+                if !SHIELD_ACTIVE.load(Ordering::SeqCst)
+                    || VIRTUAL_DESKTOP_GUARD_EPOCH.load(Ordering::SeqCst) != epoch
+                {
                     break;
                 }
 
                 // Check if our window is still on the active virtual desktop
-                let on_current = unsafe { vdm.IsWindowOnCurrentVirtualDesktop(hwnd) };
-                let escaped = matches!(on_current, Ok(b) if !b.as_bool());
-                if !escaped {
-                    continue;
+                match unsafe { vdm.IsWindowOnCurrentVirtualDesktop(hwnd) } {
+                    Ok(current) if !current.as_bool() => {}
+                    Ok(_) => continue,
+                    Err(error) => {
+                        report_virtual_desktop_guard_failure(
+                            &mut last_report,
+                            &format!("current-desktop query: {error}"),
+                        );
+                        continue;
+                    }
                 }
 
-                // GetForegroundWindow() returns a window that IS on the current desktop —
-                // get its desktop GUID and move the exam window to that same desktop.
                 let fg = unsafe { GetForegroundWindow() };
-                if fg.0.is_null() || fg == hwnd {
+                if !fg.0.is_null() {
+                    let name = foreground_process_name(fg);
+                    if name.is_none() || is_secure_or_system_process(name.as_deref()) {
+                        continue; // unknown ownership may be a protected system dialog
+                    }
+                }
+                // Serialize target selection and the final move with teardown.
+                let Some(_operation) = DESKTOP_GATE.enter() else {
+                    break;
+                };
+                if !SHIELD_ACTIVE.load(Ordering::SeqCst)
+                    || VIRTUAL_DESKTOP_GUARD_EPOCH.load(Ordering::SeqCst) != epoch
+                {
+                    break;
+                }
+                if !matches!(
+                    unsafe { vdm.IsWindowOnCurrentVirtualDesktop(hwnd) },
+                    Ok(current) if !current.as_bool()
+                ) {
                     continue;
                 }
-                if let Ok(desktop_id) = unsafe { vdm.GetWindowDesktopId(fg) } {
-                    unsafe { vdm.MoveWindowToDesktop(hwnd, &desktop_id) }.ok();
-                    // Bring exam window to front on the new desktop
-                    let _ = unsafe { SetForegroundWindow(hwnd) }.ok();
+                let Ok(original_id) = (unsafe { vdm.GetWindowDesktopId(hwnd) }) else {
+                    report_virtual_desktop_guard_failure(
+                        &mut last_report,
+                        "exam desktop ID unavailable",
+                    );
+                    continue;
+                };
+                if original_id == windows::core::GUID::zeroed() {
+                    report_virtual_desktop_guard_failure(
+                        &mut last_report,
+                        "exam desktop ID is zero",
+                    );
+                    continue;
+                }
+                let targets = virtual_desktop_targets(
+                    original_id,
+                    current_virtual_desktop_from_registry(),
+                    fg.0 as isize,
+                    hwnd_raw,
+                    |candidate| {
+                        unsafe { vdm.IsWindowOnCurrentVirtualDesktop(HWND(candidate as *mut _)) }
+                            .is_ok_and(|current| current.as_bool())
+                    },
+                    |candidate| {
+                        unsafe { vdm.GetWindowDesktopId(HWND(candidate as *mut _)) }
+                            .ok()
+                            .filter(|id| *id != windows::core::GUID::zeroed())
+                    },
+                );
+                if let Err(error) = move_exam_to_current(
+                    targets.into_iter().flatten(),
+                    original_id,
+                    |id| {
+                        unsafe { vdm.MoveWindowToDesktop(hwnd, &id) }
+                            .map_err(|error| error.to_string())
+                    },
+                    || {
+                        unsafe { vdm.IsWindowOnCurrentVirtualDesktop(hwnd) }
+                            .is_ok_and(|current| current.as_bool())
+                    },
+                ) {
+                    report_virtual_desktop_guard_failure(&mut last_report, &error);
+                } else {
+                    last_report = None;
+                    let current_fg = unsafe { GetForegroundWindow() };
+                    if !current_fg.0.is_null() {
+                        let name = foreground_process_name(current_fg);
+                        if name.is_some() && !is_secure_or_system_process(name.as_deref()) {
+                            if let Err(error) = unsafe { SetForegroundWindow(hwnd) }.ok() {
+                                report_virtual_desktop_guard_failure(
+                                    &mut last_report,
+                                    &format!("foreground activation: {error}"),
+                                );
+                            }
+                        }
+                    }
                 }
             }
 
             unsafe { CoUninitialize() };
         });
+}
+
+#[cfg(test)]
+mod virtual_desktop_guard_tests {
+    use super::{move_exam_to_current, parse_virtual_desktop_id, virtual_desktop_targets};
+    use windows::Win32::System::Registry::{REG_BINARY, REG_SZ};
+
+    #[test]
+    fn registry_target_covers_missing_or_stale_foreground() {
+        for foreground in [0, 7] {
+            let targets = virtual_desktop_targets(
+                41,
+                Some(42),
+                foreground,
+                9,
+                |_| false,
+                |_| panic!("stale foreground must not supply an ID"),
+            );
+            assert_eq!(targets, [Some(42), None]);
+        }
+    }
+
+    #[test]
+    fn absent_or_stale_registry_requires_valid_current_foreground() {
+        let targets = virtual_desktop_targets(
+            41,
+            None,
+            7,
+            9,
+            |_| false,
+            |_| panic!("stale foreground must not supply an ID"),
+        );
+        assert_eq!(targets, [None, None]);
+
+        let targets = virtual_desktop_targets(41, Some(41), 7, 9, |_| true, |_| Some(43));
+        assert_eq!(targets, [None, Some(43)]);
+        let targets = virtual_desktop_targets(41, Some(41), 7, 9, |_| true, |_| Some(41));
+        assert_eq!(targets, [None, None]);
+    }
+
+    #[test]
+    fn failed_move_does_not_verify_or_retry_without_another_target() {
+        let result = move_exam_to_current(
+            [42],
+            41,
+            |_| Err("move denied".into()),
+            || panic!("failed move cannot be current"),
+        );
+        assert_eq!(result.err().as_deref(), Some("move denied"));
+    }
+
+    #[test]
+    fn stale_registry_target_rolls_back_then_tries_valid_foreground_target() {
+        let moved = std::cell::RefCell::new(Vec::new());
+        let targets = virtual_desktop_targets(41, Some(42), 7, 9, |_| true, |_| Some(43));
+        assert_eq!(targets, [Some(42), Some(43)]);
+        let result = move_exam_to_current(
+            targets.into_iter().flatten(),
+            41,
+            |id| {
+                moved.borrow_mut().push(id);
+                Ok(())
+            },
+            || moved.borrow().last() == Some(&43),
+        );
+        assert!(result.is_ok());
+        assert_eq!(*moved.borrow(), vec![42, 41, 43]);
+    }
+
+    #[test]
+    fn rollback_failure_aborts_before_second_target() {
+        let moved = std::cell::RefCell::new(Vec::new());
+        let result = move_exam_to_current(
+            [42, 43],
+            41,
+            |id| {
+                moved.borrow_mut().push(id);
+                if id == 41 {
+                    Err("rollback denied".into())
+                } else {
+                    Ok(())
+                }
+            },
+            || false,
+        );
+        assert!(result.err().unwrap().contains("rollback failed"));
+        assert_eq!(*moved.borrow(), vec![42, 41]);
+    }
+
+    #[test]
+    fn registry_guid_requires_binary_16_bytes_and_nonzero() {
+        let bytes = [
+            0x43, 0xdd, 0xc4, 0x28, 0xf9, 0x46, 0x02, 0x46, 0xba, 0x2f, 0xe7, 0xe7, 0x72, 0xa2,
+            0xd3, 0x30,
+        ];
+        let id = parse_virtual_desktop_id(REG_BINARY.0, &bytes).unwrap();
+        assert_eq!(
+            id,
+            windows::core::GUID::from_u128(0x28c4dd43_46f9_4602_ba2f_e7e772a2d330)
+        );
+        assert!(parse_virtual_desktop_id(REG_SZ.0, &bytes).is_none());
+        assert!(parse_virtual_desktop_id(REG_BINARY.0, &bytes[..15]).is_none());
+        assert!(parse_virtual_desktop_id(REG_BINARY.0, &[0; 16]).is_none());
+    }
 }
 
 // ── Foreground-window predicate ───────────────────────────────────────────────
@@ -1362,7 +1676,7 @@ pub fn harden_dll_search_path() {
 
 // ── Network lockdown (process-scoped, not global policy) ─────────────────────
 
-static NETWORK_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static NETWORK_GATE: TerminalGate = TerminalGate::new();
 
 /// Restrict this executable's outbound destinations without overlapping blocks
 /// and allows: explicit Windows firewall blocks always take precedence.
@@ -1377,9 +1691,9 @@ pub fn enable_network_lockdown(
     }
     // Validate before removing any existing policy.
     let plan = firewall_policy::plan(allowed_ips)?;
-    let _policy_owner = NETWORK_POLICY_LOCK
-        .lock()
-        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    let _policy_owner = NETWORK_GATE
+        .enter()
+        .ok_or("Windows firewall lockdown cannot start during shutdown")?;
     runtime.revalidate_layout()?;
     // Firewall program identities use DOS paths; canonicalize returns the
     // extended-length prefix, which is not part of the executable identity.
@@ -1464,13 +1778,19 @@ pub fn disable_network_lockdown() -> Result<(), String> {
     if !instance::owns_instance() {
         return Err("Windows firewall recovery requires instance ownership".into());
     }
-    let _policy_owner = NETWORK_POLICY_LOCK
-        .lock()
-        .map_err(|_| "Windows firewall operation lock poisoned")?;
+    let _policy_owner = NETWORK_GATE.lock();
     disable_network_lockdown_unlocked()
 }
 
-// The public operation retains NETWORK_POLICY_LOCK through installation and
+pub fn close_network_lockdown_on_exit() -> Result<(), String> {
+    let _policy_owner = NETWORK_GATE.close();
+    if !instance::owns_instance() {
+        return Err("Windows firewall recovery requires instance ownership".into());
+    }
+    disable_network_lockdown_unlocked()
+}
+
+// The public operation retains NETWORK_GATE through installation and
 // rollback, including when the bounded rollback runs on a separate worker.
 fn disable_network_lockdown_unlocked() -> Result<(), String> {
     let _budget = Budget::new(std::time::Duration::from_secs(8));

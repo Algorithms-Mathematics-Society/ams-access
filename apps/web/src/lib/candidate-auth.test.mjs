@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { authHeaders, participantToken } from "./candidate-auth.ts";
 import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import { bufferKey, isBufferKey } from "../app/session/contest/answer-buffer.ts";
+import { AUTH_RECHECK_MS, onUnauthorized } from "../app/session/contest/auth-loss.ts";
 import {
   currentToken,
   hasToken,
@@ -25,6 +26,7 @@ import {
   logout,
   restoreToken,
   setToken,
+  uploadIdentityPhoto,
 } from "./proctor-api.ts";
 
 const TOKEN_KEY = "ams_participant_token";
@@ -92,16 +94,36 @@ test("no Authorization when nobody is signed in", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(headers, "Authorization"), false);
 });
 
+test("every header map names the client version, signed in or not", () => {
+  assert.equal(
+    authHeaders()["X-AMS-Client-Version"],
+    process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0"
+  );
+  setToken("versioned");
+  assert.ok(authHeaders()["X-AMS-Client-Version"]);
+});
+
 test("signing out drops the Authorization header", () => {
   setToken("temporary");
   setToken(null);
   assert.equal(Object.prototype.hasOwnProperty.call(authHeaders(), "Authorization"), false);
 });
 
-test("an expired stored token is not used", () => {
-  localStorage.setItem(TOKEN_KEY, "stale");
-  localStorage.setItem("ams_participant_token_expires_at", String(Date.now() - 1000));
-  assert.equal(participantToken(), null);
+test("a fast device clock cannot discard a server-valid token on reload", () => {
+  localStorage.setItem(TOKEN_KEY, "server-valid");
+  localStorage.setItem(EXPIRY_KEY, String(Date.now() - 1000));
+  assert.equal(participantToken(), "server-valid");
+  assert.equal(authHeaders().Authorization, "Bearer server-valid");
+});
+
+test("a restored token still obeys the server's authentication rejection", async (t) => {
+  localStorage.setItem(TOKEN_KEY, "expired-on-server");
+  localStorage.setItem(EXPIRY_KEY, String(Date.now() - 1000));
+  t.mock.method(globalThis, "fetch", async (_url, init) => {
+    assert.equal(init.headers.Authorization, "Bearer expired-on-server");
+    return new Response(JSON.stringify({ detail: "Token expired" }), { status: 401 });
+  });
+  await assert.rejects(listContests(), (error) => error.status === 401);
 });
 
 test("a stored token with no recorded expiry is still used", () => {
@@ -214,6 +236,7 @@ function homeSignOutHandler(context, name = "signOut") {
     withTelemetryTimeout: (promise) => promise,
     setResumeStatus() {},
     setActiveNav() {},
+    recoveryEpochRef: { current: 0 },
     DEVICE_SCOPED_KEYS: new Set([STORAGE_KEYS.DEVICE_ID, STORAGE_KEYS.THEME]),
     isBufferKey,
     ...context,
@@ -557,6 +580,96 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
   return { ...contestExitHandlers(context), calls, context, error: () => error };
 }
 
+test("exit releases native controls while the captured identity photo is still uploading", async () => {
+  const fixture = contestExitFixture();
+  let finishUpload;
+  fixture.context.exitPhotoRef.current = () => {
+    fixture.calls.push("identity-photo");
+    return new Promise((resolve) => {
+      finishUpload = resolve;
+    });
+  };
+  const exiting = fixture.runExitTeardown(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const releasedBeforeUpload = fixture.calls.includes("get_lockdown_restore_status");
+  finishUpload();
+  await exiting;
+  assert.equal(releasedBeforeUpload, true);
+  assert.ok(fixture.calls.indexOf("identity-photo") < fixture.calls.indexOf("camera"));
+});
+
+test("login redirect starts the exit-photo request with the current token before logout", async () => {
+  setToken("exit-photo-token", 3600);
+  const fixture = contestExitFixture();
+  const originalFetch = globalThis.fetch;
+  let uploadHeaders;
+  let finishUpload;
+  let uploadStarted;
+  const started = new Promise((resolve) => {
+    uploadStarted = resolve;
+  });
+  const pending = new Promise((resolve) => {
+    finishUpload = resolve;
+  });
+  globalThis.fetch = async (_url, options) => {
+    uploadHeaders = options.headers;
+    uploadStarted();
+    await pending;
+    return { ok: true, text: async () => "{}" };
+  };
+  fixture.context.exitPhotoRef.current = () =>
+    uploadIdentityPhoto("session", "exit", "photo", 1).then(() => {});
+  try {
+    const exiting = fixture.redirectAfterRelease("/login");
+    await started;
+    assert.equal(uploadHeaders.Authorization, "Bearer exit-photo-token");
+    assert.equal(currentToken(), null);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(fixture.calls.includes("get_lockdown_restore_status"));
+    assert.ok(!fixture.calls.includes("redirect:/login"));
+    finishUpload();
+    await exiting;
+    assert.equal(currentToken(), null);
+    assert.equal(fixture.calls.at(-1), "redirect:/login");
+  } finally {
+    finishUpload?.();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("failed device release still discards login credentials after the photo attempt", async () => {
+  setToken("exit-photo-token", 3600);
+  const fixture = contestExitFixture("unlock_desktop");
+  await fixture.redirectAfterRelease("/login");
+  assert.equal(currentToken(), null);
+  assert.ok(!fixture.calls.includes("redirect:/login"));
+  assert.match(fixture.error(), /cleanup could not be confirmed/);
+});
+
+test("a server-expired token cannot make the exit photo appear delivered", async () => {
+  setToken("rejected-token", 3600);
+  const fixture = contestExitFixture();
+  const originalFetch = globalThis.fetch;
+  let delivered;
+  let authorization;
+  globalThis.fetch = async (_url, options) => {
+    authorization = options.headers.Authorization;
+    return { ok: false, status: 401, text: async () => '{"detail":"expired"}' };
+  };
+  fixture.context.exitPhotoRef.current = async () => {
+    delivered = await uploadIdentityPhoto("session", "exit", "photo", 1);
+  };
+  try {
+    await fixture.redirectAfterRelease("/login");
+    assert.equal(authorization, "Bearer rejected-token");
+    assert.equal(delivered, false);
+    assert.equal(currentToken(), null);
+    assert.equal(fixture.calls.at(-1), "redirect:/login");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("auth redirect releases all native controls before navigation and retains recovery", async () => {
   setToken("expired-but-cached");
   localStorage.setItem("ams_active_session", "recoverable");
@@ -565,10 +678,10 @@ test("auth redirect releases all native controls before navigation and retains r
   await fixture.redirectAfterRelease("/login");
   assert.deepEqual(fixture.calls, [
     "save",
-    "configure_event_stream",
     // Before "camera": the exit frame has to be taken while there is still
     // a stream to take it from.
     "identity-photo",
+    "configure_event_stream",
     "camera",
     "setFullscreen",
     "setAlwaysOnTop",
@@ -688,6 +801,19 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
     // ask for one immediately. Bound as a plain box: this test is about the
     // 401 path, not about who else can trigger a heartbeat.
     retryBeatRef: { current: () => {} },
+    // A first 401 already seen long ago, so this one confirms the sign-out
+    // (see auth-loss.ts); the provisional first one is covered there.
+    unauthorizedAtRef: { current: 0 },
+    onUnauthorized,
+    AUTH_RECHECK_MS,
+    // Announcements share this heartbeat. Inert here: the heartbeat throws
+    // before any of it runs, and this test is about the 401 path.
+    seenRevisionRef: { current: 0 },
+    announcementFetchInFlightRef: { current: false },
+    shouldFetch: () => false,
+    listAnnouncements: async () => [],
+    readAnnouncements: () => [],
+    setAnnouncements() {},
   };
   const cleanup = new Function(...Object.keys(bindings), `${js}; return effect();`)(
     ...Object.values(bindings)

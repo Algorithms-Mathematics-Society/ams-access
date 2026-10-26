@@ -35,15 +35,18 @@ test("a pasted handle keeps only the part before @access", () => {
   assert.equal(formatHandle("Ayush.S-Kqmwd@Access"), "ayush.s-kqmwd");
 });
 
-test("a half-typed @access does not eat the handle", () => {
-  // They type the @ themselves out of habit; the field must not blank.
-  assert.equal(formatHandle("ayush.s-kqmwd@"), "ayush.s-kqmwd");
-  assert.equal(formatHandle("ayush.s-kqmwd@acc"), "ayush.s-kqmwd");
+test("a partial or unknown suffix stays visible until corrected", () => {
+  for (const suffix of ["@", "@acc", "@example.com", "@access.invalid"]) {
+    assert.equal(formatHandle(`ayush.s-kqmwd${suffix}`), `ayush.s-kqmwd${suffix}`);
+  }
 });
 
-test("spaces and stray punctuation are dropped rather than rejected", () => {
+test("only surrounding whitespace is removed", () => {
   assert.equal(formatHandle("  ayush.s-kqmwd  "), "ayush.s-kqmwd");
-  assert.equal(formatHandle("ayush.s kqmwd!"), "ayush.skqmwd");
+  assert.equal(formatHandle("ayush.s kqmwd!"), "ayush.s kqmwd!");
+  assert.equal(formatHandle("john doe"), "john doe");
+  assert.equal(formatHandle("john+doe"), "john+doe");
+  assert.equal(formatHandle("john\u200bdoe"), "john\u200bdoe");
 });
 
 test("digits and underscores survive, since reused usernames carry them", () => {
@@ -65,8 +68,8 @@ test("a partial handle is left alone while it is being typed", () => {
   assert.equal(formatHandle("ayush.s-"), "ayush.s-");
 });
 
-test("an absurdly long paste is bounded", () => {
-  assert.equal(formatHandle("a".repeat(200)).length, 64);
+test("an overlong ID is never truncated into a different valid ID", () => {
+  assert.equal(formatHandle("a".repeat(200)), "a".repeat(200));
 });
 
 test("the optional full-handle suffix gets stripped", () => {

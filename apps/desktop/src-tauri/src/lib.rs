@@ -1,4 +1,5 @@
 mod blocking_probe;
+mod cppref;
 mod event_recorder;
 mod event_store;
 #[cfg(any(target_os = "linux", test))]
@@ -11,6 +12,7 @@ mod lockdown_lifecycle;
 #[cfg(target_os = "linux")]
 static LINUX_NETWORK: linux_network::Coordinator = linux_network::Coordinator::new();
 mod network_probe;
+mod reference_navigation;
 mod shutdown;
 #[cfg(target_os = "windows")]
 mod windows_firewall;
@@ -19,12 +21,12 @@ use base64::Engine as _;
 use core_rs::exam::{
     evaluate_readiness, CheckOutcome, DeviceState, EnforcementDecision, KeyboardInterceptResult,
     LockdownConfig, NetworkCheckResult, ProcessScanResult, ReadinessReport, SessionPolicy,
-    VirtDetectionResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future as _;
+#[cfg(not(target_os = "macos"))]
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -667,6 +669,27 @@ fn acknowledge_current_event_batch(
     Ok(true)
 }
 
+/// What one upload response means for the batch it carried.
+#[derive(Debug, PartialEq)]
+enum UploadVerdict {
+    Delivered,
+    /// The server will never accept this batch (e.g. 422). Retrying it would
+    /// block every later event, sleep and focus evidence included.
+    Refused(u16),
+    Unauthorized,
+    Retry,
+}
+
+fn upload_verdict(status: u16) -> UploadVerdict {
+    match status {
+        200..=299 => UploadVerdict::Delivered,
+        401 => UploadVerdict::Unauthorized,
+        408 | 429 => UploadVerdict::Retry,
+        400..=499 => UploadVerdict::Refused(status),
+        _ => UploadVerdict::Retry,
+    }
+}
+
 fn spawn_event_sync_task(app: tauri::AppHandle) {
     let store = local_event_store(Some(&app));
     let dir = proctoring_log_dir(Some(&app));
@@ -764,10 +787,10 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                 "{}/participant/sessions/{}/events",
                 config.api_url, config.session_id
             );
-            let delivered = if batch.events.is_empty() {
+            let verdict = if batch.events.is_empty() {
                 // Only preserved quarantine bytes moved the cursor; no server
                 // event is falsely acknowledged and no empty POST is needed.
-                true
+                UploadVerdict::Delivered
             } else {
                 let request = client
                     .post(&url)
@@ -777,34 +800,56 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                     .send();
                 match while_event_lease_active(&config, request).await {
                     None => continue,
-                    Some(Ok(response)) if response.status().is_success() => true,
                     Some(Ok(response)) => {
-                        note_event_error(
-                            "upload event batch",
-                            format!("HTTP {}", response.status().as_u16()),
-                        );
-                        false
+                        let status = response.status().as_u16();
+                        let verdict = upload_verdict(status);
+                        if verdict != UploadVerdict::Delivered {
+                            note_event_error("upload event batch", format!("HTTP {status}"));
+                        }
+                        verdict
                     }
                     Some(Err(error)) => {
                         note_event_error("upload event batch", error.without_url());
-                        false
+                        UploadVerdict::Retry
                     }
                 }
             };
-            if delivered {
-                match tauri::async_runtime::spawn_blocking(move || {
-                    acknowledge_current_event_batch(store, &config, &batch)
-                })
-                .await
-                {
-                    Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
-                    error => {
-                        note_event_error("acknowledge event batch", format!("{error:?}"));
-                        delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+            match verdict {
+                UploadVerdict::Delivered | UploadVerdict::Refused(_) => {
+                    let refused = match verdict {
+                        UploadVerdict::Refused(status) => Some(format!("HTTP {status}")),
+                        _ => None,
+                    };
+                    match tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(reason) = &refused {
+                            store.quarantine_refused(&config.binding, &batch, reason)?;
+                            event_status()
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .quarantine_notices += 1;
+                            note_event_error(
+                                "audit evidence quarantined / refused by server",
+                                reason,
+                            );
+                        }
+                        acknowledge_current_event_batch(store, &config, &batch)
+                    })
+                    .await
+                    {
+                        Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
+                        error => {
+                            note_event_error("acknowledge event batch", format!("{error:?}"));
+                            delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                        }
                     }
                 }
-            } else {
-                delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                // Retrying a token the server rejects only spins. Wait until
+                // configure_event_stream arms a new one; it revokes this lease.
+                UploadVerdict::Unauthorized => {
+                    let _ = config.lease.subscribe().wait_for(|revoked| *revoked).await;
+                    delay = EVENT_SYNC_INTERVAL_SECS;
+                }
+                UploadVerdict::Retry => delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS),
             }
         }
     });
@@ -1107,7 +1152,6 @@ fn collect_fast_device_state() -> DeviceState {
     };
     #[cfg(not(target_os = "macos"))]
     let restricted_processes = Some(native_scan_processes());
-    let virtualization = Some(native_detect_virtualization());
 
     // Windows-only native probes for the readiness policy: extra/wireless displays
     // and an active inbound RDP listener. Linux leaves them None so the policy
@@ -1129,7 +1173,6 @@ fn collect_fast_device_state() -> DeviceState {
         network: None,
         keyboard: None,
         restricted_processes,
-        virtualization,
         external_displays,
         rdp_server,
         // Populated for real in collect_device_state_inner (Linux only); the fast
@@ -1271,7 +1314,7 @@ fn enrich_report(report: &mut ReadinessReport, device_state: &DeviceState) {
             .map(|_| cache.displays.describe());
         let remote_detail = device_state
             .rdp_server
-            .filter(|found| *found == !cache.remote_tools.is_empty())
+            .filter(|found| *found != cache.remote_tools.is_empty())
             .map(|found| {
                 if found {
                     // Built-in services are not apps to quit; they are switches
@@ -1333,6 +1376,10 @@ async fn start_secure_session(
     token: Option<String>,
     lockdown_config: Option<LockdownConfig>,
 ) -> Result<ReadinessReport, String> {
+    let entry_generation = lockdown_lifecycle()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .generation;
     let policy = policy.unwrap_or_default();
     let mut report = evaluate_readiness(&policy, contest_id, device_id, &device_state);
     enrich_report(&mut report, &device_state);
@@ -1357,7 +1404,7 @@ async fn start_secure_session(
         );
     }
     let require_keyboard = lockdown_lifecycle::keyboard_required(&policy, &device_state);
-    engage_desktop(app, require_keyboard).await.map_err(|reason| format!(
+    engage_desktop(app, require_keyboard, entry_generation).await.map_err(|reason| format!(
         "We couldn't prepare the required desktop protections. In Settings, select Restore system settings, then run device setup again. If it still fails, ask your invigilator for help. Details: {reason}"
     ))?;
     Ok(report)
@@ -1404,7 +1451,7 @@ async fn deliver_readiness_report(
     // The kind is serialised rather than formatted: `CheckKind` is
     // `rename_all = "snake_case"`, so serde produces exactly the identifier
     // the server stores and the override client matches on. `Debug` would
-    // give `Virtualization` where every other layer says `virtualization`.
+    // give `RestrictedApps` where every other layer says `restricted_apps`.
     let failed_checks: Vec<serde_json::Value> = report
         .checks
         .iter()
@@ -1510,29 +1557,33 @@ fn native_scan_processes() -> ProcessScanResult {
 /// Only https, and only the hosts that serve the client. A command that
 /// takes an arbitrary string from the web layer and hands it to the shell is
 /// a way out of the lockdown, so this one does not.
-#[tauri::command]
-async fn open_external_url(url: String) -> Result<(), String> {
-    let parsed = url.trim();
-    if !parsed.starts_with("https://") {
-        return Err("only https URLs may be opened".into());
-    }
-    let host = parsed
-        .trim_start_matches("https://")
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let allowed = host == "amsaccess.com" || host.ends_with(".amsaccess.com");
-    if !allowed {
+fn validated_external_url(input: &str) -> Result<tauri::Url, String> {
+    let url = tauri::Url::parse(input.trim()).map_err(|_| "invalid URL".to_string())?;
+    let host = url.host_str().unwrap_or_default();
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || !(host == "amsaccess.com" || host.ends_with(".amsaccess.com"))
+    {
         return Err(format!("refusing to open {host}"));
     }
+    Ok(url)
+}
+
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), String> {
+    if LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        return Err("external URLs are unavailable during an active exam".into());
+    }
+    let parsed = validated_external_url(&url)?;
 
     #[cfg(target_os = "linux")]
-    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![parsed]);
+    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![parsed.as_str()]);
     #[cfg(target_os = "macos")]
-    let (program, args): (&str, Vec<&str>) = ("open", vec![parsed]);
+    let (program, args): (&str, Vec<&str>) = ("open", vec![parsed.as_str()]);
     #[cfg(target_os = "windows")]
-    let (program, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", parsed]);
+    let (program, args): (&str, Vec<&str>) = ("explorer.exe", vec![parsed.as_str()]);
 
     std::process::Command::new(program)
         .args(args)
@@ -1541,18 +1592,32 @@ async fn open_external_url(url: String) -> Result<(), String> {
         .map_err(|error| format!("could not open browser: {error}"))
 }
 
-/// Detect virtualisation / VM environment.
-#[tauri::command]
-async fn detect_virtualization() -> Result<VirtDetectionResult, String> {
-    checked_informational_probe(native_detect_virtualization).await
-}
+#[cfg(test)]
+mod external_url_tests {
+    use super::validated_external_url;
 
-fn native_detect_virtualization() -> VirtDetectionResult {
-    platform_dispatch!(detect_virtualization(), else VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "unknown".to_string(),
-    })
+    #[test]
+    fn external_url_validation_uses_canonical_https_hosts() {
+        for allowed in [
+            "https://amsaccess.com/download",
+            "https://www.amsaccess.com/download",
+            "  https://updates.amsaccess.com/client?channel=stable  ",
+        ] {
+            assert!(validated_external_url(allowed).is_ok(), "{allowed}");
+        }
+
+        for denied in [
+            "http://amsaccess.com/",
+            "https://amsaccess.com.evil.invalid/",
+            "https://amsaccess.com@evil.invalid/",
+            "https://evil.invalid\\@foo.amsaccess.com/",
+            "https://foo.amsaccess.com:444/",
+            "https://user@foo.amsaccess.com/",
+            "https://foo.amsaccess.com@evil.invalid/",
+        ] {
+            assert!(validated_external_url(denied).is_err(), "{denied}");
+        }
+    }
 }
 
 /// Install platform-level keyboard intercept.
@@ -1953,6 +2018,32 @@ fn relaunch_as_admin(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Warnings for a system proxy or a full-tunnel VPN, which lockdown would cut
+/// off. Empty when the path is direct, and on other platforms.
+#[tauri::command]
+async fn get_network_path_warnings() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(platform_rs::macos::network_path_warnings)
+        .await
+        .unwrap_or_default();
+    #[cfg(not(target_os = "macos"))]
+    Vec::new()
+}
+
+/// Set on a relaunched process. Tauri starts it just before this one exits,
+/// so on macOS it waits for the instance lock instead of taking the old
+/// process for a second instance and quitting.
+const RELAUNCH_ENV: &str = "AMS_ACCESS_RELAUNCHED";
+
+/// Quit and start AMS Access again, e.g. so a permission macOS grants only to
+/// new processes takes effect. The web side releases lockdown first; the
+/// normal exit path (window teardown, finish_shutdown) still runs.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    std::env::set_var(RELAUNCH_ENV, "1");
+    app.request_restart();
+}
+
 /// Deep-link into the OS privacy settings page for `section`. Windows opens
 /// the matching ms-settings page ("camera" / "microphone"). macOS opens the
 /// System Settings pane: "accessibility", "input_monitoring",
@@ -1988,7 +2079,8 @@ fn lockdown_restore_status() -> LockdownRestoreStatus {
     #[cfg(target_os = "windows")]
     if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
         return LockdownRestoreStatus {
-            pending: platform_rs::windows::desktop_recovery_pending(),
+            pending: platform_rs::windows::desktop_recovery_pending()
+                || windows_firewall::recovery_pending(),
             items: vec![],
         };
     }
@@ -2052,7 +2144,13 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
         #[cfg(target_os = "windows")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
             let mut owner = _owner;
-            owner.stop(&mut DesktopOperations::new(app, false))?;
+            let desktop = owner.stop(&mut DesktopOperations::new(app, false));
+            let network = if windows_firewall::recovery_needed(WANTS_FIREWALL) {
+                windows_firewall::disable_blocking().map(|_| ())
+            } else {
+                Ok(())
+            };
+            lockdown_lifecycle::combine_cleanup(desktop, network)?;
         }
         #[cfg(target_os = "linux")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
@@ -2228,10 +2326,8 @@ pub struct FullTelemetry {
     pub env: SecurityEnvironment,
     // Optional because a probe that could not run is not a probe that found
     // nothing. In a proctoring tool those must not look alike: reporting an
-    // unscanned machine as "no restricted apps" is a false negative, and
-    // reporting it as "not virtualised" is worse.
+    // unscanned machine as "no restricted apps" is a false negative.
     pub processes: Option<ProcessScanResult>,
-    pub virt: Option<VirtDetectionResult>,
     pub network: Option<NetworkCheckResult>,
     /// Why a probe did not produce a result, named per probe. Empty when
     /// everything ran.
@@ -2251,7 +2347,7 @@ async fn get_full_telemetry(
     // items said "The scan could not complete" together, and a diagnostics
     // page where even the operating system was "Not available". Retrying
     // could not help, because nothing about it was transient.
-    let (platform, env, processes, virt, scan_errors) =
+    let (platform, env, processes, scan_errors) =
         blocking_probe::run(blocking_probe::Priority::Informational, || {
             let _budget = platform_rs::process_runner::Budget::new(Duration::from_secs(20));
             let mut scan_errors: Vec<String> = Vec::new();
@@ -2270,13 +2366,7 @@ async fn get_full_telemetry(
             }
             let processes = processes_error.is_none().then_some(processes);
 
-            let (virt, virt_error) = isolated_probe(native_detect_virtualization);
-            if let Some(reason) = &virt_error {
-                scan_errors.push(format!("virtual machine check: {reason}"));
-            }
-            let virt = virt_error.is_none().then_some(virt);
-
-            Ok::<_, String>((platform, env, processes, virt, scan_errors))
+            Ok::<_, String>((platform, env, processes, scan_errors))
         })
         .await??;
     let network = match network_host.filter(|host| !host.trim().is_empty()) {
@@ -2288,7 +2378,6 @@ async fn get_full_telemetry(
         platform,
         env,
         processes,
-        virt,
         network,
         scan_errors,
     })
@@ -2501,9 +2590,13 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
 /// evaluated policy (including unsupported-platform and organizer exceptions).
 #[tauri::command]
 async fn lock_desktop(app: tauri::AppHandle) -> bool {
+    let entry_generation = lockdown_lifecycle()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .generation;
     #[cfg(target_os = "macos")]
     platform_rs::macos::set_lockdown_config(LockdownConfig::default());
-    engage_desktop(app, !cfg!(target_os = "macos"))
+    engage_desktop(app, !cfg!(target_os = "macos"), entry_generation)
         .await
         .is_ok()
 }
@@ -2548,15 +2641,19 @@ fn release_native_desktop() -> Result<(), String> {
     Ok(())
 }
 
-async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result<(), String> {
+async fn engage_desktop(
+    app: tauri::AppHandle,
+    require_keyboard: bool,
+    entry_generation: u64,
+) -> Result<(), String> {
     KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut operations = DesktopOperations::new(app.clone(), require_keyboard);
-        match state.start(&mut operations) {
-            Ok(started) => {
+        match state.start_if_current(entry_generation, &mut operations) {
+            Ok(Some(started)) => {
                 LOCKDOWN_GENERATION.store(state.generation, Ordering::SeqCst);
                 #[cfg(target_os = "windows")]
                 if started {
@@ -2571,6 +2668,7 @@ async fn engage_desktop(app: tauri::AppHandle, require_keyboard: bool) -> Result
                 let _ = started;
                 Ok(())
             }
+            Ok(None) => Err("Desktop entry was cancelled by restoration".into()),
             Err(error) => {
                 LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
                 record_proctoring_event(
@@ -2940,7 +3038,22 @@ async fn enable_network_lockdown(
         .await
         .map_err(|error| error.to_string())?
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        // Resolvers are included and the API host is re-resolved while the
+        // lockdown is live; see platform_rs::macos::allowlist.
+        tauri::async_runtime::spawn_blocking(move || {
+            let ips = platform_rs::macos::resolve_allowlist(&allowed_domains);
+            if ips.is_empty() {
+                return Err("Could not resolve any allowed domains to IPs".to_string());
+            }
+            platform_rs::macos::enable_and_follow(&allowed_domains, &ips).map(|_| true)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         // A build that never asked for elevation cannot raise a firewall, so say
         // so instead of resolving every allowlist host and then handing netsh a
@@ -2951,6 +3064,8 @@ async fn enable_network_lockdown(
         if !WANTS_FIREWALL {
             return Ok(false);
         }
+        #[cfg(target_os = "windows")]
+        let enable_ticket = windows_firewall::enable_ticket();
 
         #[cfg(not(target_os = "windows"))]
         let _ = app;
@@ -2999,7 +3114,7 @@ async fn enable_network_lockdown(
         // gate; the earlier readiness policy treats CheckKind::Network as advisory.
         // The frontend's decideNetworkLockdown applies the final platform policy.
         #[cfg(target_os = "windows")]
-        return windows_firewall::enable(app, ips).await;
+        return windows_firewall::enable(app, ips, enable_ticket).await;
         #[cfg(not(target_os = "windows"))]
         platform_dispatch!(
             enable_network_lockdown(&ips),
@@ -3576,6 +3691,9 @@ fn finish_shutdown() {
         *shutting_down = true;
         // Restore input and stop native producers before waiting on the disk.
         // Receiver closure handles callbacks already in flight.
+        #[cfg(target_os = "windows")]
+        platform_rs::windows::close_desktop_on_exit();
+        #[cfg(not(target_os = "windows"))]
         platform_dispatch!(unlock_desktop(), else ());
         if let Some(Ok(recorder)) = EVENT_RECORDER.get() {
             if let Err(error) = recorder.drain_on_exit(Duration::from_secs(5)) {
@@ -3585,7 +3703,9 @@ fn finish_shutdown() {
         // Even a failed/timed-out drain must restore network access.
         #[cfg(target_os = "linux")]
         let _ = LINUX_NETWORK.close(platform_rs::linux::disable_network_lockdown);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        let _ = platform_rs::windows::close_network_lockdown_on_exit();
+        #[cfg(target_os = "macos")]
         let _ = platform_dispatch!(disable_network_lockdown(), else Ok(()));
     });
 }
@@ -3668,6 +3788,44 @@ pub fn run() {
             return;
         }
     };
+    // On macOS a second launch brings the first forward and exits without
+    // touching its lockdown.
+    #[cfg(target_os = "macos")]
+    let _macos_instance = match platform_rs::macos::instance::acquire(
+        if std::env::var_os(RELAUNCH_ENV).is_some() {
+            Duration::from_secs(10)
+        } else {
+            Duration::ZERO
+        },
+    ) {
+        Ok(owner) => owner,
+        Err(platform_rs::macos::instance::Refused::Running(pid)) => {
+            eprintln!("AMS Access is already running; leaving it in charge");
+            if let Some(pid) = pid {
+                platform_rs::macos::activate_process(pid);
+            }
+            return;
+        }
+        Err(platform_rs::macos::instance::Refused::Failed(error)) => {
+            eprintln!("AMS Access cannot acquire instance ownership: {error}");
+            platform_rs::macos::show_startup_message(
+                "AMS Access could not start",
+                &format!("{error}\n\nIf AMS Access is already open, use that window. Otherwise, check that your Library/Application Support folder is writable."),
+            );
+            return;
+        }
+    };
+    // The network helper pins this executable's path, so a copy on the disk
+    // image or under App Translocation must be moved before setup can work.
+    // Stop before recovery: this copy cannot reach the helper anyway.
+    #[cfg(target_os = "macos")]
+    if std::env::current_exe().is_ok_and(|exe| platform_rs::macos::unstable_bundle_path(&exe)) {
+        platform_rs::macos::show_startup_message(
+            "Move AMS Access to Applications",
+            "AMS Access is running from its disk image or from a temporary copy macOS made, so it cannot set up exam protection.\n\nIn Finder, drag AMS Access into the Applications folder, eject the AMS Access disk image, then open AMS Access from Applications.",
+        );
+        return;
+    }
     // F5: harden the DLL search path before anything else loads a library, so a
     // malicious DLL planted in the launch directory or %CWD% can never be
     // preferred over the system copy (DLL preloading / search-order hijack).
@@ -3775,7 +3933,9 @@ pub fn run() {
         }
         // Finish stale-rule cleanup before entry can create new rules. A
         // detached cleanup could otherwise remove this instance's own lockdown.
-        if let Err(error) = platform_rs::windows::disable_network_lockdown() {
+        let network_recovery = platform_rs::windows::disable_network_lockdown();
+        windows_firewall::note_startup_cleanup(&network_recovery);
+        if let Err(error) = network_recovery {
             eprintln!("Windows startup firewall recovery incomplete: {error}");
         }
     }
@@ -3794,12 +3954,25 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // Plugin navigation hooks apply to config-created windows as well as
+        // windows built in setup. Keep every top-level navigation on the app
+        // origin so content references cannot replace the exam shell.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("reference-navigation")
+                .on_navigation(|webview, url| {
+                    reference_navigation::is_allowed_app_navigation(
+                        url,
+                        webview.app_handle().config().build.dev_url.as_ref(),
+                    )
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
+            cppref::read_cppref_asset,
             collect_device_state,
             evaluate_session_readiness,
             start_secure_session,
             scan_processes,
-            detect_virtualization,
             open_external_url,
             enable_keyboard_intercept,
             disable_keyboard_intercept,
@@ -3826,6 +3999,8 @@ pub fn run() {
             open_accessibility_settings,
             is_process_elevated,
             relaunch_as_admin,
+            relaunch_app,
+            get_network_path_warnings,
             open_privacy_settings,
             check_screen_sharing,
             get_screen_capture_permitted_apps,
@@ -3879,6 +4054,7 @@ pub fn run() {
                 tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
                     .with_webview_configuration(macos_webview_configuration()?)
                     .initialization_script(BLOCK_NATIVE_CONTEXT_MENU)
+                    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                     .build()?;
             }
 
@@ -4058,9 +4234,9 @@ pub fn run() {
                 #[cfg(target_os = "windows")]
                 {
                     // unlock_desktop covers keyboard, sleep prevention, registry, shield, game bar
-                    platform_rs::windows::unlock_desktop();
+                    platform_rs::windows::close_desktop_on_exit();
                     // Firewall rules must be cleared even on crash — intentional persistence
-                    let _ = platform_rs::windows::disable_network_lockdown();
+                    let _ = platform_rs::windows::close_network_lockdown_on_exit();
                 }
                 #[cfg(target_os = "macos")]
                 {
@@ -4192,6 +4368,18 @@ mod pinning_tests {
 #[cfg(test)]
 mod event_integration_tests {
     use super::*;
+    #[test]
+    fn upload_refusals_move_on_and_transient_failures_retry() {
+        assert_eq!(upload_verdict(200), UploadVerdict::Delivered);
+        assert_eq!(upload_verdict(202), UploadVerdict::Delivered);
+        assert_eq!(upload_verdict(400), UploadVerdict::Refused(400));
+        assert_eq!(upload_verdict(413), UploadVerdict::Refused(413));
+        assert_eq!(upload_verdict(422), UploadVerdict::Refused(422));
+        assert_eq!(upload_verdict(401), UploadVerdict::Unauthorized);
+        for status in [408, 429, 500, 502, 503] {
+            assert_eq!(upload_verdict(status), UploadVerdict::Retry);
+        }
+    }
     #[test]
     fn chains_are_session_bound_and_resume_without_unbound_gaps() {
         let mut chains = HashMap::new();

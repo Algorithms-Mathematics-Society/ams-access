@@ -139,7 +139,11 @@ export function SessionReadinessModal({
             ? { status: "allowed", reason: null }
             : {
                 status: "blocked",
-                reason: blockedMessage(decision) ?? "Contest entry window is not open.",
+                // Onboarding's copy promises automatic entry; this dialog only re-checks on demand.
+                reason:
+                  decision.kind === "too_early"
+                    ? "Check-in has not opened yet. Run checks again once it opens."
+                    : (blockedMessage(decision) ?? "Contest entry window is not open."),
               }
         );
       })
@@ -157,7 +161,6 @@ export function SessionReadinessModal({
   }, [contestId, entryWindowRefreshIndex, sessionType]);
 
   const score = calculateReadinessScore(readiness);
-  const requiredReportChecks = activeReport?.required_checks ?? [];
   const context = useMemo(
     () =>
       deriveContestantReadiness({
@@ -204,10 +207,13 @@ export function SessionReadinessModal({
             }
           : { color: c.accentText, bg: c.accentLight, border: c.accentBorder };
 
-  const requiredPolicyChecks = requiredReportChecks;
-  const requiredChecksPassed =
-    !!activeReport &&
-    requiredPolicyChecks.every((check) => check.outcome === "pass" && !check.blocking);
+  // A blocking probe that could not conclude (timed out, device checks busy,
+  // clock skew not measurable) is fixed by running it again, not in Settings.
+  const rescanFixesBlock =
+    activeReport?.decision === "blocked" &&
+    activeReport.checks
+      .filter((check) => check.blocking)
+      .every((check) => check.outcome === "unknown");
 
   // Readiness is evaluated natively, so running the client in a browser
   // produces no report at all and entry could never be offered — which made
@@ -223,9 +229,11 @@ export function SessionReadinessModal({
   // It is deliberately loud. A session entered this way is unproctored, and
   // the modal says so rather than looking like a normal pass.
   const unproctoredDevSession = !hasNativeBridge();
+  // The native decision, not a stricter "every required check passed": that
+  // turned away candidates the policy had already allowed with warnings.
   const policyAllowsProceed = unproctoredDevSession
     ? true
-    : !!activeReport && activeReport.decision !== "blocked" && requiredChecksPassed;
+    : !!activeReport && activeReport.decision !== "blocked";
   const entryWindowAllowed = entryWindow.status === "allowed";
   const canProceed = scanStatus === "done" && entryWindowAllowed && policyAllowsProceed;
   const primaryActionLabel = canProceed
@@ -234,9 +242,11 @@ export function SessionReadinessModal({
       : "Enter contest"
     : scanStatus === "scanning"
       ? "Checking..."
-      : context.status === "needs_action" || context.status === "advisory_warning"
-        ? "Open settings"
-        : "Back to contests";
+      : context.status === "needs_action" && rescanFixesBlock
+        ? "Run checks again"
+        : context.status === "needs_action" || context.status === "advisory_warning"
+          ? "Open settings"
+          : "Back to contests";
   const requiredPreflightItems = activeReport
     ? activeReport.required_checks.map((check) => toPreflightPolicyItem(check, "required"))
     : [
@@ -319,7 +329,6 @@ export function SessionReadinessModal({
       checkLog("network", "NET", "Network connectivity"),
       checkLog("microphone", "AUD", "Microphone"),
       checkLog("camera", "CAM", "Camera"),
-      checkLog("virtualization", "SEC", "Virtual machine check"),
       checkLog("keyboard_lockdown", "SEC", "Keyboard lockdown"),
       checkLog("restricted_apps", "SEC", "Restricted app check"),
       checkLog("platform", "SEC", "Platform compatibility"),
@@ -503,6 +512,11 @@ export function SessionReadinessModal({
                   Settings, enable AMS Access under Privacy &amp; Security → {permissionPane}, then
                   re-run the checks.
                 </Text>
+                <Text color="secondary">
+                  Still failing after you turn it on? Quit and reopen AMS Access, since macOS
+                  applies some grants only to a new launch. If it is already on, select it, click –,
+                  add it again with +, then reopen.
+                </Text>
                 <HStack gap={2} wrap="wrap">
                   <Button
                     theme={theme}
@@ -520,6 +534,14 @@ export function SessionReadinessModal({
                     disabled={isRescanning}
                   >
                     Run checks again
+                  </Button>
+                  {/* Home holds no lockdown, so a plain relaunch is safe here. */}
+                  <Button
+                    theme={theme}
+                    variant="secondary"
+                    onClick={() => void invoke("relaunch_app").catch(() => {})}
+                  >
+                    Quit &amp; reopen AMS Access
                   </Button>
                 </HStack>
               </VStack>
@@ -616,6 +638,15 @@ export function SessionReadinessModal({
               <Button theme={theme} variant="primary" disabled>
                 {primaryActionLabel}
               </Button>
+            ) : primaryActionLabel === "Run checks again" ? (
+              <Button
+                theme={theme}
+                variant="primary"
+                onClick={handleRescan}
+                disabled={isRescanning}
+              >
+                {primaryActionLabel}
+              </Button>
             ) : context.status === "needs_action" || context.status === "advisory_warning" ? (
               <Button theme={theme} variant="primary" onClick={onSettingsRedirect}>
                 {primaryActionLabel}
@@ -626,7 +657,7 @@ export function SessionReadinessModal({
               </Button>
             )}
             {/* §3 — Secondary buttons: flat muted text, no border/bg */}
-            {scanStatus !== "scanning" && (
+            {scanStatus !== "scanning" && primaryActionLabel !== "Run checks again" && (
               <Button
                 theme={theme}
                 variant="secondary"

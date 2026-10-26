@@ -2,17 +2,17 @@
  * Reading pages out of the packed cppreference book.
  *
  * The book ships as 321 brotli blocks under `public/cppref/` plus an index
- * saying which block holds each page and where in it. Nothing here
- * decompresses anything: the blocks are served with `Content-Encoding: br`,
- * so `fetch` hands back plain bytes and the browser did the work in its
- * network layer. That is the whole reason the format is what it is -- a
- * decoder in the bundle would have cost more than the pages do.
+ * saying which block holds each page and where in it. Installed apps read
+ * embedded bytes through native IPC, where Brotli is decoded explicitly.
+ * Development servers use `Content-Encoding: br` and browser decompression.
  *
  * A block is 1 MB of pages, so reading one page warms its neighbours too.
  * Candidates read sideways -- `vector`, then `vector::insert`, then
  * `vector::erase` -- and those are adjacent in the index, so they land in the
  * same block and the second lookup is free.
  */
+
+import { invoke } from "@ams/api-client";
 
 const BASE = "/cppref";
 
@@ -34,11 +34,55 @@ let indexPromise: Promise<Index> | null = null;
 const blocks = new Map<number, Promise<Uint8Array>>();
 const decoder = new TextDecoder();
 
+async function readAsset(name: string): Promise<Uint8Array> {
+  const installed =
+    typeof window !== "undefined" &&
+    window.__TAURI__ &&
+    (window.location.protocol === "tauri:" || window.location.hostname === "tauri.localhost");
+  if (installed) {
+    try {
+      return new Uint8Array(await invoke<ArrayBuffer>("read_cppref_asset", { name }));
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  const response = await fetch(`${BASE}/${name}`);
+  if (!response.ok) {
+    throw new Error(
+      `Offline reference asset unavailable (${response.status}). Prepare the reference bundle and rebuild the app.`
+    );
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 export function loadIndex(): Promise<Index> {
-  indexPromise ??= fetch(`${BASE}/index.json`).then((res) => {
-    if (!res.ok) throw new Error(`cppref index unavailable (${res.status})`);
-    return res.json() as Promise<Index>;
-  });
+  indexPromise ??= readAsset("index.json")
+    .then((bytes) => {
+      let index: Index;
+      try {
+        index = JSON.parse(decoder.decode(bytes)) as Index;
+      } catch {
+        throw new Error(
+          "The offline reference bundle is missing or invalid. Prepare it and rebuild the app."
+        );
+      }
+      if (
+        !index ||
+        index.codec !== "brotli" ||
+        !Array.isArray(index.blocks) ||
+        !index.blocks.every((name) => typeof name === "string" && /^b\d{4}\.br$/.test(name)) ||
+        !index.files ||
+        typeof index.files !== "object" ||
+        Array.isArray(index.files)
+      ) {
+        throw new Error("The offline reference index is invalid. Prepare it and rebuild the app.");
+      }
+      return index;
+    })
+    .catch((error: unknown) => {
+      indexPromise = null;
+      throw error;
+    });
   return indexPromise;
 }
 
@@ -49,17 +93,12 @@ function blockBytes(index: Index, which: number): Promise<Uint8Array> {
   const name = index.blocks[which];
   if (!name) return Promise.reject(new Error(`no such block ${which}`));
 
-  const pending = fetch(`${BASE}/${name}`)
-    .then(async (res) => {
-      if (!res.ok) throw new Error(`cppref block ${name} unavailable (${res.status})`);
-      return new Uint8Array(await res.arrayBuffer());
-    })
-    .catch((error: unknown) => {
-      // A failed block must not poison the cache, or one flaky fetch makes
-      // every page in that block permanently unreadable for the session.
-      blocks.delete(which);
-      throw error;
-    });
+  const pending = readAsset(name).catch((error: unknown) => {
+    // A failed block must not poison the cache, or one flaky fetch makes
+    // every page in that block permanently unreadable for the session.
+    if (blocks.get(which) === pending) blocks.delete(which);
+    throw error;
+  });
 
   blocks.set(which, pending);
   // Insertion-ordered, so the first key is the oldest.
@@ -84,7 +123,8 @@ export const HOME_PAGE = "reference/en/cpp.html";
  */
 export function resolveHref(href: string, from: string = HOME_PAGE): string | null {
   const raw = href.trim();
-  if (!raw || raw.startsWith("#") || raw.startsWith("javascript:")) return null;
+  if (!raw || raw.startsWith("#") || raw.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(raw))
+    return null;
 
   let path: string;
   if (/^https?:\/\//i.test(raw)) {
@@ -95,22 +135,25 @@ export function resolveHref(href: string, from: string = HOME_PAGE): string | nu
       return null;
     }
     // Only the book's own host, and only its article namespace.
-    if (url.hostname !== "en.cppreference.com") return null;
+    if (url.hostname !== "en.cppreference.com" || url.port || url.username || url.password)
+      return null;
     if (!url.pathname.startsWith("/w/")) return null;
     path = `reference/en/${url.pathname.slice("/w/".length)}`;
   } else if (raw.startsWith("/")) {
     path = raw.replace(/^\/+/, "");
     if (path.startsWith("w/")) path = `reference/en/${path.slice(2)}`;
   } else {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
     // Relative to the page it was found on.
     const base = from.slice(0, from.lastIndexOf("/") + 1);
     path = normalise(base + raw);
   }
 
   path = path.split("#")[0].split("?")[0];
+  path = normalise(path);
   if (!path) return null;
   if (!path.endsWith(".html")) path = `${path}.html`;
-  return path;
+  return path.startsWith("reference/en/") ? path : null;
 }
 
 /** Collapse `.` and `..` without touching the host, which there isn't one of. */
@@ -133,6 +176,18 @@ export async function readPage(path: string): Promise<Page> {
   if (!entry) throw new Error(`not in the reference: ${path}`);
   const [which, offset, length] = entry;
   const bytes = await blockBytes(index, which);
+  if (
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(length) ||
+    offset < 0 ||
+    length < 1 ||
+    offset + length > bytes.length
+  ) {
+    blocks.delete(which);
+    throw new Error(
+      "The offline reference page is incomplete. Prepare the bundle and rebuild the app."
+    );
+  }
   return { path, html: decoder.decode(bytes.subarray(offset, offset + length)) };
 }
 

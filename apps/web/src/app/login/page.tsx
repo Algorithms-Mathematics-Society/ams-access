@@ -25,6 +25,9 @@ import { AccessLogo } from "@/components/AccessLogo";
 import { invoke } from "@ams/api-client";
 import { describeUnreachable } from "@/lib/network-error";
 import { ProctorApiError, studentLogin } from "@/lib/proctor-api";
+import { DEFAULT_DOWNLOAD_URL } from "@/lib/client-update";
+import { openExternal } from "@/lib/open-external";
+import { UpdateRequiredDialog } from "./UpdateRequiredDialog";
 import { BrandPane } from "./components/BrandPane";
 import { SlipForm } from "./components/SlipForm";
 import styles from "./login.module.css";
@@ -35,6 +38,7 @@ export default function LoginPage() {
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<"handle" | "password" | null>(null);
   // `host · CODE` for a status-0. Shown small and quiet under the error: the
@@ -42,7 +46,21 @@ export default function LoginPage() {
   // without it. See `network-error.ts`.
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Set on a 426: the server refuses this build, so the only way on is to install.
+  const [upgrade, setUpgrade] = useState<{ version: string; url: string } | null>(null);
   const homePrefetched = useRef(false);
+  const loginInFlightRef = useRef(false);
+  const cooldownUntil = useRef(0);
+  const coolingDown = cooldownSeconds > 0;
+  useEffect(() => {
+    if (!coolingDown) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds(
+        Math.max(0, Math.ceil((cooldownUntil.current - performance.now()) / 1000))
+      );
+    }, 250);
+    return () => clearInterval(timer);
+  }, [coolingDown]);
   useEffect(() => {
     if (!loginId || homePrefetched.current) return;
     homePrefetched.current = true;
@@ -51,7 +69,7 @@ export default function LoginPage() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (loading) return;
+    if (loading || loginInFlightRef.current || performance.now() < cooldownUntil.current) return;
     setError(null);
     setDiagnostic(null);
     setInvalidField(null);
@@ -67,6 +85,9 @@ export default function LoginPage() {
       input?.focus();
       return;
     }
+    // State updates are not synchronous: a second submit can run before the
+    // button rerenders. Own this attempt immediately, through navigation.
+    loginInFlightRef.current = true;
     setLoading(true);
 
     try {
@@ -90,9 +111,20 @@ export default function LoginPage() {
           // Home can render without these labels; authentication already succeeded.
         }
       }
+      if (!result.contest) {
+        // No contest named: drop the last sign-in's, which may be someone else's.
+        for (const key of [STORAGE_KEYS.ACTIVE_CONTEST, STORAGE_KEYS.ACTIVE_CONTEST_TITLE]) {
+          try {
+            localStorage.removeItem(key);
+          } catch {
+            // As above: a label, not authentication.
+          }
+        }
+      }
 
       router.push("/home");
     } catch (caught) {
+      loginInFlightRef.current = false;
       setLoading(false);
       if (!(caught instanceof ProctorApiError)) {
         setError("Something went wrong signing in. Try again, or ask an invigilator.");
@@ -101,9 +133,21 @@ export default function LoginPage() {
 
       if (caught.needsUpgrade) {
         // The one error where telling them exactly what to do is the whole
-        // point: a version mismatch is unfixable from inside the app.
+        // point: a version mismatch is unfixable from inside the app, so give
+        // them the server's download link rather than a sentence about it.
+        const { min_version, download_url } = caught.detail ?? {};
         setError(caught.message);
+        setUpgrade({
+          version: typeof min_version === "string" ? min_version : "",
+          url:
+            typeof download_url === "string" && download_url ? download_url : DEFAULT_DOWNLOAD_URL,
+        });
         return;
+      }
+      const wait = caught.retryAfterSeconds;
+      if (wait > 0) {
+        cooldownUntil.current = performance.now() + wait * 1000;
+        setCooldownSeconds(wait);
       }
       if (caught.status === 0) {
         // No HTTP response at all. Distinguish "wait" from "get help", and
@@ -197,6 +241,7 @@ export default function LoginPage() {
                 password={password}
                 setPassword={setPassword}
                 loading={loading}
+                cooldownSeconds={cooldownSeconds}
                 error={error}
                 invalidField={invalidField}
                 diagnostic={diagnostic}
@@ -223,6 +268,15 @@ export default function LoginPage() {
           <BrandPane />
         </HStack>
       </VStack>
+
+      {upgrade && (
+        <UpdateRequiredDialog
+          currentVersion={process.env.NEXT_PUBLIC_APP_VERSION ?? ""}
+          latestVersion={upgrade.version}
+          downloadUrl={upgrade.url}
+          onInstall={openExternal}
+        />
+      )}
 
       <HelpRequestModal
         open={helpOpen}

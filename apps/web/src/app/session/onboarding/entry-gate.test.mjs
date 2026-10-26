@@ -101,6 +101,9 @@ test("an unknown phase is treated as not-yet-open, never as live", () => {
 test("the start gate uses synchronized server time and has no client-side admission delay", () => {
   const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
   assert.match(source, /const now = serverNow\(\);\s*setWaitMs\(Math\.max\(0, startMs - now\)\)/);
-  assert.match(source, /if \(waitMs <= 0 && readyForStart\) \{\s*void finalizeSecureStart\(\)/);
+  assert.match(
+    source,
+    /if \(readyForStart && new Date\(contestWindow\.startAt\)\.getTime\(\) <= serverNow\(\)\) \{\s*void finalizeSecureStart\(\)/
+  );
   assert.doesNotMatch(source, /START_JITTER_MS|startJitter|jitterElapsed/);
 });

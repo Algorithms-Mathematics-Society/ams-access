@@ -3,6 +3,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/Stack";
 import { CheckLine, StageHeader } from "../ui";
+import { PowerAdvice } from "../PowerAdvice";
 import { REVIEW_STAGE, STAGES, type StageStatus } from "../../support";
 
 /**
@@ -155,11 +156,14 @@ export function Stage12_IntegrityConfirmation({
       {/* On macOS, switching apps, Spaces or desktops while the secure
           workspace loads can leave AMS Access frozen. */}
       {!blocked && platform?.toLowerCase() === "macos" && (
-        <Banner
-          status="error"
-          title="Do not leave this screen"
-          description="After clicking Continue, stay on this screen until your contest opens. Do not switch apps, press Cmd+Tab, or swipe to another desktop."
-        />
+        <VStack gap={5}>
+          <PowerAdvice />
+          <Banner
+            status="error"
+            title="Do not leave this screen"
+            description="After clicking Continue, stay on this screen until your contest opens. Do not switch apps, press Cmd+Tab, or swipe to another desktop."
+          />
+        </VStack>
       )}
       {!blocked && (
         <Button
@@ -178,9 +182,8 @@ const WARNING_GUIDANCE: Record<number, string> = {
   1: "Full-screen setup needs attention. Keep this app in the foreground. Your contest’s required screen controls are checked again before entry.",
   3: "Keyboard controls need attention. Check your system permissions or ask an invigilator. Required keyboard controls are verified before entry.",
   5: "The application check reported a warning. Close other apps before entry and ask an invigilator if you need help.",
-  6: "Virtualization was detected. Ask your invigilator whether this device is permitted. Continuing does not bypass contest entry requirements.",
-  8: "The face scan used the invigilator review option. Ask an invigilator for help if you need to confirm your setup.",
-  9: "Presence could not be confirmed cleanly. Stay alone in the camera frame with your face clearly visible, and ask an invigilator if needed.",
-  10: "Microphone access was unavailable. Check microphone permissions and close other apps using it. Ask your invigilator if access remains unavailable.",
-  11: "The connection or network controls reported a warning. Check your connection and ask an invigilator for help with any system permission request. Required network controls are verified before entry.",
+  7: "The face scan used the invigilator review option. Ask an invigilator for help if you need to confirm your setup.",
+  8: "Presence could not be confirmed cleanly. Stay alone in the camera frame with your face clearly visible, and ask an invigilator if needed.",
+  9: "Microphone access was unavailable. Check microphone permissions and close other apps using it. Ask your invigilator if access remains unavailable.",
+  10: "The connection or network controls reported a warning. Check your connection and ask an invigilator for help with any system permission request. Required network controls are verified before entry.",
 };

@@ -44,7 +44,6 @@ export type ReadinessState = {
   networkLockdown: ReadinessStatus;
   keyboard: ReadinessStatus;
   restrictedApps: ReadinessStatus;
-  vm: ReadinessStatus;
   platform: ReadinessStatus;
 };
 
@@ -80,12 +79,6 @@ export type ProcessScanResult = {
   advisory?: string[];
 };
 
-export type VirtDetectionResult = {
-  detected: boolean;
-  platform: string | null;
-  confidence: string;
-};
-
 export type NetworkCheckResult = {
   reachable: boolean;
   latency_ms: number | null;
@@ -97,7 +90,6 @@ export type SecurityScanSnapshot = {
   platform: PlatformInfo | null;
   env: SecurityEnvironment | null;
   processes: ProcessScanResult | null;
-  virt: VirtDetectionResult | null;
   network: NetworkCheckResult | null;
 };
 
@@ -119,10 +111,9 @@ export type FullTelemetry = {
   platform: PlatformInfo;
   env: SecurityEnvironment;
   // Null means the probe could not run, which is not the same as running and
-  // finding nothing. Showing an unscanned machine as "no restricted apps" or
-  // "not virtualised" would be a false negative in a proctoring tool.
+  // finding nothing. Showing an unscanned machine as "no restricted apps"
+  // would be a false negative in a proctoring tool.
   processes: ProcessScanResult | null;
-  virt: VirtDetectionResult | null;
   network: NetworkCheckResult | null;
   /** Why a probe produced no result, named per probe. Empty when all ran. */
   scan_errors: string[];

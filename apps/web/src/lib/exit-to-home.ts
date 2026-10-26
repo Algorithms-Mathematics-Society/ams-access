@@ -9,6 +9,24 @@
  */
 import type { RestoreStatus } from "@ams/api-client";
 
+const STEP_TIMEOUT_MS = 10_000;
+
+/** The promise's value, or `fallback` when it fails or outlasts the timeout. */
+function within<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  // A native call stuck behind the lockdown mutex must not trap the candidate
+  // on the very button meant to get them out.
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), STEP_TIMEOUT_MS)),
+  ]);
+}
+
+const ok = (promise: Promise<unknown>) =>
+  within(
+    promise.then(() => true),
+    false
+  );
+
 export async function exitToHome(
   router: { push: (href: string) => void },
   destination = "/home"
@@ -19,20 +37,31 @@ export async function exitToHome(
     return;
   }
 
-  const win = tauri.window.getCurrentWindow();
-  await win.setFullscreen(false).catch(() => {});
-  // macOS onboarding covers the screen with simple full-screen, which
-  // setFullscreen(false) does not leave.
-  await win.setSimpleFullscreen(false).catch(() => {});
-  await win.setAlwaysOnTop(false).catch(() => {});
-  await win.setDecorations(true).catch(() => {});
+  // Any step that fails or times out counts: a window still fullscreen or
+  // on top is as stranding as a firewall left up.
+  const results: boolean[] = [];
+  try {
+    const win = tauri.window.getCurrentWindow();
+    results.push(await ok(win.setFullscreen(false)));
+    // macOS onboarding covers the screen with simple full-screen, which
+    // setFullscreen(false) does not leave.
+    results.push(await ok(win.setSimpleFullscreen(false)));
+    results.push(await ok(win.setAlwaysOnTop(false)));
+    results.push(await ok(win.setDecorations(true)));
+  } catch {
+    results.push(false);
+  }
 
-  await tauri.core.invoke("unlock_desktop").catch(() => {});
-  await tauri.core.invoke("disable_keyboard_intercept").catch(() => {});
-  await tauri.core.invoke("disable_network_lockdown").catch(() => {});
-
-  const remaining = await tauri.core
-    .invoke<RestoreStatus>("get_lockdown_restore_status")
-    .catch(() => null);
-  router.push(remaining?.pending ? "/home?restore=pending" : destination);
+  results.push(await ok(tauri.core.invoke("unlock_desktop")));
+  results.push(await ok(tauri.core.invoke("disable_keyboard_intercept")));
+  // The macOS restore status does not cover the pf firewall, so a failed
+  // network release has to send the candidate to Restore on its own.
+  results.push(await ok(tauri.core.invoke("disable_network_lockdown")));
+  // An unavailable status cannot confirm that the machine was restored.
+  const status = await within<RestoreStatus | null>(
+    tauri.core.invoke<RestoreStatus>("get_lockdown_restore_status"),
+    null
+  );
+  const pending = results.includes(false) || status?.pending !== false;
+  router.push(pending ? "/home?restore=pending" : destination);
 }

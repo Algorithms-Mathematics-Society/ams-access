@@ -29,6 +29,37 @@ export const CLIENT_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0";
 // connection surfaces rather than hanging the UI.
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+/**
+ * Entry is allowed to be slow. It must not be allowed to look broken.
+ *
+ * Opening a session is the one request that queues behind everybody else:
+ * a thousand candidates pressing Enter at the same second were measured at
+ * 11s on average and 27s at the worst, because every sync route holds a
+ * pooled connection for its whole request. At the 20s default the client
+ * aborted first and showed "Unable to load contest. Check connection and
+ * retry." -- a connection error for a server that was working and about to
+ * answer. The candidate then retried, which added load to the queue that
+ * was already the problem.
+ *
+ * Sized above the measured worst case with room to spare. The waiting is
+ * made honest in the UI rather than hidden: see the boot screen's phases.
+ */
+const ENTRY_TIMEOUT_MS = 75_000;
+
+function retryAfterSeconds(headers: Headers): number {
+  const value = headers.get("Retry-After")?.trim();
+  if (!value) return 0;
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) ? seconds : 0;
+  }
+  if (/^[+-]?\d+(?:\.\d+)?$/.test(value)) return 0;
+  const deadline = Date.parse(value);
+  const serverDate = Date.parse(headers.get("Date") ?? "");
+  if (!Number.isFinite(deadline) || !Number.isFinite(serverDate)) return 0;
+  return Math.max(0, Math.ceil((deadline - serverDate) / 1000));
+}
+
 export class ProctorApiError extends Error {
   // Declared and assigned rather than written as constructor parameter
   // properties. Node's `--experimental-strip-types` — which is how this
@@ -133,6 +164,32 @@ function storage(): Storage | null {
   }
 }
 
+let authenticationGeneration = 0;
+const authChangeListeners = new Set<() => void>();
+export const authGeneration = () => authenticationGeneration;
+/** A local recovery namespace, never an authorization decision. The API still validates the bearer. */
+export function currentParticipantUid(): string | null {
+  try {
+    const encoded = currentToken()?.split(".")[0];
+    if (!encoded) return null;
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4)));
+    return typeof claims.sub === "string" &&
+      /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(claims.sub)
+      ? claims.sub
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeAuthChanges(listener: () => void): () => void {
+  authChangeListeners.add(listener);
+  return () => {
+    authChangeListeners.delete(listener);
+  };
+}
+
 function clearSignedInSupportReceipt(): void {
   try {
     if (typeof sessionStorage !== "undefined") {
@@ -150,6 +207,8 @@ export function setToken(value: string | null, expiresInSeconds?: number): void 
   // localStorage is unavailable and the prior identity cannot be compared.
   clearSignedInSupportReceipt();
   token = value;
+  authenticationGeneration += 1;
+  for (const listener of authChangeListeners) listener();
   if (value !== null) signedOut = false;
   if (!store) return;
   try {
@@ -179,15 +238,8 @@ export function restoreToken(): boolean {
     const saved = store.getItem(TOKEN_KEY);
     if (!saved) return false;
 
-    const expiresAt = Number(store.getItem(TOKEN_EXPIRY_KEY) ?? "0");
-    // Treat an unknown expiry as usable: the server is the authority and will
-    // answer 401 if it is not. Discarding it here would force a re-login for a
-    // token that still works.
-    if (expiresAt && expiresAt <= Date.now()) {
-      setToken(null);
-      return false;
-    }
-
+    // The stored expiry was computed from the device clock. On a hard reload
+    // there is no server clock yet, so let the server accept or reject it.
     token = saved;
     return true;
   } catch {
@@ -279,27 +331,58 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    // The login overload response carries its wait in Retry-After while its
+    // JSON detail is a sentence. Keep that wait available to the UI.
+    const headerWait = retryAfterSeconds(res.headers);
+    const retryDetail = headerWait > 0 ? { retry_after: headerWait } : null;
     // `detail` is a string for most errors and an object for the ones the
     // client has to act on — 426 (too old, here is the download) and 429
     // (cooling down, here is how long).
     const raw = (data as { detail?: unknown; error?: unknown } | null)?.detail ?? null;
+    // FastAPI's validation errors: a list of `{loc, msg, type}`. The first
+    // `msg` is the readable part; "Request failed (422)" told nobody anything.
+    if (Array.isArray(raw)) {
+      const first = raw[0] as { msg?: unknown } | undefined;
+      throw new ProctorApiError(
+        typeof first?.msg === "string" ? first.msg : `Request failed (${res.status}).`,
+        res.status,
+        "VALIDATION"
+      );
+    }
+    // The server's unhandled-error body. Its request id is the only thing
+    // that ties what the candidate saw to the server log, so keep it.
+    const requestId = (data as { request_id?: unknown } | null)?.request_id;
+    if (res.status >= 500 && typeof requestId === "string") {
+      throw new ProctorApiError(
+        `Something went wrong on the server (ref ${requestId.slice(0, 8)}).`,
+        res.status,
+        "",
+        { request_id: requestId }
+      );
+    }
     if (raw && typeof raw === "object") {
       const structured = raw as { error?: string; code?: string; retry_after?: number };
+      const detail =
+        retryDetail && typeof structured.retry_after !== "number"
+          ? { ...structured, ...retryDetail }
+          : structured;
       throw new ProctorApiError(
         structured.error ?? `Request failed (${res.status}).`,
         res.status,
         structured.code ?? "",
-        structured
+        detail
       );
     }
     const detail =
       (raw as string | null) ??
       ((data as { error?: string } | null)?.error as string | undefined) ??
       `Request failed (${res.status}).`;
-    throw new ProctorApiError(String(detail), res.status);
+    throw new ProctorApiError(String(detail), res.status, "", retryDetail);
   }
 
-  noteServerTime((data as { server_time?: string } | null)?.server_time);
+  noteServerTime(
+    (data as { server_time?: string } | null)?.server_time ?? res.headers?.get("Date") ?? undefined
+  );
   return data as T;
 }
 
@@ -354,6 +437,12 @@ export type ProctorSession = {
   remaining_ms: number | null;
   ends_at: string | null;
   phase: SessionPhase;
+  /** Bumped when staff publish an announcement. Optional so a server that
+   *  predates the feature simply never reports one, rather than breaking
+   *  the heartbeat the whole exam depends on. */
+  announcement_revision?: number;
+  /** Absent until the reference-revision API is deployed; 0 means unpublished. */
+  reference_revision?: number;
 };
 
 export type SymbolicRule = {
@@ -520,9 +609,9 @@ export type ViolationEvent = {
 /** Exchange the printed login id and password for a session token. */
 export async function studentLogin(loginId: string, password: string): Promise<LoginResult> {
   const result = await request<LoginResult>("POST", "/participant/login", {
-    // Normalised here so a candidate typing lowercase, or with the spaces
-    // they see on the printed slip, is not told their credentials are wrong.
-    login_id: loginId.trim().toUpperCase().replace(/\s+/g, ""),
+    // The server normalises case and the supported full-handle suffixes.
+    // Preserve internal characters so a typo cannot select another identity.
+    login_id: loginId.trim(),
     password: password.trim(),
   });
   setToken(result.token, result.expires_in);
@@ -543,16 +632,26 @@ export async function startSession(input: {
   osName?: string;
   appVersion?: string;
 }): Promise<ProctorSession> {
-  return request<ProctorSession>("POST", "/participant/sessions", {
-    contest_uid: input.contestUid,
-    device_fingerprint: input.deviceFingerprint ?? "",
-    os_name: input.osName ?? "",
-    app_version: input.appVersion ?? "",
-  });
+  return request<ProctorSession>(
+    "POST",
+    "/participant/sessions",
+    {
+      contest_uid: input.contestUid,
+      device_fingerprint: input.deviceFingerprint ?? "",
+      os_name: input.osName ?? "",
+      app_version: input.appVersion ?? "",
+    },
+    ENTRY_TIMEOUT_MS
+  );
 }
 
 export async function getSession(sessionUid: string): Promise<ProctorSession> {
-  return request<ProctorSession>("GET", `/participant/sessions/${encodeURIComponent(sessionUid)}`);
+  return request<ProctorSession>(
+    "GET",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}`,
+    undefined,
+    ENTRY_TIMEOUT_MS
+  );
 }
 
 /** Liveness, and a clock resync. Also how the app learns it was terminated. */
@@ -647,8 +746,58 @@ export async function getContest(
   const query = options.includeReference === false ? "?include_reference=false" : "";
   return request<ContestIndex>(
     "GET",
-    `/participant/contests/${encodeURIComponent(contestUid)}${query}`
+    `/participant/contests/${encodeURIComponent(contestUid)}${query}`,
+    undefined,
+    ENTRY_TIMEOUT_MS
   );
+}
+
+export type PublishedReferenceResponse = {
+  revision: number;
+  reference_sheet: import("@/app/session/contest/reference-sheet").ReferenceSheet | null;
+};
+
+export async function getPublishedReferenceSheet(
+  contestUid: string
+): Promise<PublishedReferenceResponse> {
+  return request<PublishedReferenceResponse>(
+    "GET",
+    `/participant/contests/${encodeURIComponent(contestUid)}/reference-sheet`
+  );
+}
+
+/** Everything the organizers have told this contest, newest first.
+ *
+ * Fetched only when `announcement_revision` moves on the heartbeat, so the
+ * cost in the steady state is zero. The caller validates: see
+ * `app/session/contest/announcements.ts`. */
+export async function listAnnouncements(contestUid: string): Promise<unknown> {
+  return request<unknown>(
+    "GET",
+    `/participant/contests/${encodeURIComponent(contestUid)}/announcements`
+  );
+}
+
+/** Record that this candidate read one. Never throws.
+ *
+ * A failed acknowledgement must not interrupt an exam, and the next
+ * heartbeat brings the announcement back anyway, so the retry is free.
+ * Returns whether the server accepted it. */
+export async function acknowledgeAnnouncement(
+  contestUid: string,
+  announcementUid: string
+): Promise<boolean> {
+  try {
+    await request<void>(
+      "POST",
+      `/participant/contests/${encodeURIComponent(contestUid)}/announcements/` +
+        `${encodeURIComponent(announcementUid)}/ack`,
+      {}
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The statement, samples, limits and marking scheme for one problem.
@@ -658,14 +807,42 @@ export async function getContest(
 export async function getProblem(contestUid: string, label: string): Promise<ProblemProjection> {
   const body = await request<{ problem: ProblemProjection }>(
     "GET",
-    `/participant/contests/${encodeURIComponent(contestUid)}/problems/${encodeURIComponent(label)}`
+    `/participant/contests/${encodeURIComponent(contestUid)}/problems/${encodeURIComponent(label)}`,
+    undefined,
+    ENTRY_TIMEOUT_MS
   );
   return body.problem;
 }
 
-// Drafts are not sent to the server. Work is written to the device on every
-// change and read back on restart (see contest/answer-buffer.ts), so there is
-// no draft endpoint to call and no save that can fail mid-contest.
+// Drafts live on the device first: written on every change and read back on
+// restart (see contest/answer-buffer.ts). The server copy is a background
+// backup so work can follow the candidate to a spare machine; nothing waits
+// on it and its failures are never shown.
+
+export async function listDrafts(sessionUid: string): Promise<Draft[]> {
+  return request<Draft[]>(
+    "GET",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts`,
+    undefined,
+    // Short: the room is loading, and the device copy does not need this.
+    8_000
+  );
+}
+
+/** A `clientRevision` at or below the server's is a no-op that returns the
+ * stored copy, so a retried save can never reinstate older code. */
+export async function saveDraft(
+  sessionUid: string,
+  label: string,
+  draft: { source: string; language: string; clientRevision: number }
+): Promise<Draft> {
+  return request<Draft>(
+    "PUT",
+    `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts/${encodeURIComponent(label)}`,
+    { source: draft.source, language: draft.language, client_revision: draft.clientRevision },
+    8_000
+  );
+}
 
 // ── running and submitting ────────────────────────────────────────────────
 
@@ -837,4 +1014,35 @@ export async function consumeResume(sessionUid: string): Promise<ProctorSession>
     `/participant/sessions/${encodeURIComponent(sessionUid)}/resume-consume`,
     {}
   );
+}
+
+/** Anchor the clock from the contest list, and say whether it could.
+ *
+ * `request` reads `server_time` off the response body, and this body is an
+ * array, so a copy carried by each item never reaches it. Today's server
+ * sends none at all, which is why the caller has a fallback. */
+export function noteListServerTime(items: readonly object[]): boolean {
+  const iso = (items[0] as { server_time?: string } | undefined)?.server_time;
+  noteServerTime(iso);
+  return Boolean(iso && !Number.isNaN(Date.parse(iso)));
+}
+
+/** This participant's most recent session for a contest, or null when the
+ * server has none. Results use it when this device kept no record (another
+ * Mac, or after sign-out). A server without the route answers 404 or 405,
+ * which means the same thing to the caller. */
+export async function getMyContestSession(contestUid: string): Promise<{
+  uid: string;
+  status: SessionStatus;
+  started_at: string | null;
+  ended_at: string | null;
+} | null> {
+  try {
+    return await request("GET", `/participant/contests/${encodeURIComponent(contestUid)}/session`);
+  } catch (error) {
+    if (error instanceof ProctorApiError && (error.status === 404 || error.status === 405)) {
+      return null;
+    }
+    throw error;
+  }
 }

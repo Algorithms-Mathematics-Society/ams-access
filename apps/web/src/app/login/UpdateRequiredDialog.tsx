@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * "A newer AMS Access is available."
+ * "This AMS Access is too old for the exam server."
  *
- * Blocking, and deliberately so. The app cannot update itself and the exam
- * machine's network lockdown reaches one host, so a candidate who dismisses
- * this sits their contest on the old build and finds out what was fixed the
- * hard way. There is no close button and no overlay click-through: the way
- * past it is to install, or to quit the app.
+ * Blocking, and deliberately so: it is only raised for a build below the
+ * server's minimum, which the server refuses with 426 anyway. There is no
+ * close button and no overlay click-through: the way past it is to install,
+ * or to quit the app.
  *
- * Only ever raised for a newer *minor* release -- see lib/client-update.ts
- * for why patches say nothing.
+ * A newer *advisory* release never raises this -- see lib/client-update.ts.
+ * Locking a candidate out over a version the server still accepts is how a
+ * release published the night before ruins contest morning.
  *
  * Deliberately short. It said which account the download page wanted (it
  * wants none, the page is public) and why installing mattered, to someone
@@ -56,7 +56,7 @@ export function UpdateRequiredDialog({
           <Heading level={2} id="update-required-title">
             Update AMS Access
           </Heading>
-          <Text>A newer version is available. Install it to continue.</Text>
+          <Text>This version is no longer supported. Install the update to continue.</Text>
           <Text type="supporting" color="secondary">
             {currentVersion} &rarr; {latestVersion}
           </Text>

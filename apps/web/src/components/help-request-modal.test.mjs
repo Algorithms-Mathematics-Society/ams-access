@@ -1,3 +1,4 @@
+import { startSupportPolling } from "../lib/support-poll.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -24,6 +25,7 @@ const { outputText } = ts.transpileModule(
   }
 );
 const ACCESS = { uid: "11111111-1111-4111-8111-111111111111", token: "a".repeat(64) };
+const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MESSAGE_UID = "22222222-2222-4222-8222-222222222222";
 const message = (uid = MESSAGE_UID, body = "I can help") => ({
   uid,
@@ -60,10 +62,13 @@ function harness({
     timers = new Map(),
     listeners = new Map();
   const storage =
-    sharedStorage ?? new Map(stored ? [[SUPPORT_STORAGE_KEY, JSON.stringify(stored)]] : []);
+    sharedStorage ??
+    new Map(stored ? [[SUPPORT_STORAGE_KEY, JSON.stringify({ owner: OWNER, ...stored })]] : []);
   let stateIndex = 0,
     refIndex = 0,
     effectIndex = 0,
+    clockNow = 0,
+    authVersion = 0,
     timerId = 0,
     dirty = false;
   let props = {
@@ -77,6 +82,7 @@ function harness({
     exports: {},
     Error,
     Date,
+    AbortController,
     crypto: { randomUUID: () => MESSAGE_UID },
     sessionStorage: {
       getItem: (key) => storage.get(key) ?? null,
@@ -85,6 +91,12 @@ function harness({
         storage.set(key, value);
       },
       removeItem: (key) => storage.delete(key),
+    },
+    window: {
+      addEventListener: (name, fn) => listeners.set(name, fn),
+      removeEventListener: (name, fn) => {
+        if (listeners.get(name) === fn) listeners.delete(name);
+      },
     },
     document: {
       hidden: false,
@@ -128,7 +140,28 @@ function harness({
         };
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name.endsWith("api-base")) return { resolveApiBase: () => "https://example.test" };
-      if (name.endsWith("proctor-api")) return { currentToken: () => participantToken };
+      if (name.endsWith("proctor-api"))
+        return {
+          currentToken: () => participantToken,
+          authGeneration: () => authVersion,
+          currentParticipantUid: () => (participantToken ? OWNER : null),
+          subscribeAuthChanges: (fn) => {
+            listeners.set("auth", fn);
+            return () => listeners.delete("auth");
+          },
+        };
+      if (name.endsWith("support-poll"))
+        return {
+          startSupportPolling: (task, options) =>
+            startSupportPolling(task, options, {
+              document: context.document,
+              window: context.window,
+              now: () => clockNow,
+              random: () => 0,
+              setTimeout: context.setTimeout,
+              clearTimeout: context.clearTimeout,
+            }),
+        };
       if (name.endsWith("support-chat"))
         return {
           SUPPORT_STORAGE_KEY,
@@ -212,10 +245,18 @@ function harness({
     receipt() {
       return JSON.parse(storage.get(SUPPORT_STORAGE_KEY));
     },
+    authChange(nextToken) {
+      participantToken = nextToken;
+      authVersion += 1;
+      storage.delete(SUPPORT_STORAGE_KEY);
+      listeners.get("auth")?.();
+      h.render();
+    },
     timer() {
-      const entry = [...timers.entries()].find(([, t]) => t.ms === 4000);
+      const entry = [...timers.entries()].find(([, t]) => t.ms >= 4000);
       assert.ok(entry, "Expected poll timer");
       timers.delete(entry[0]);
+      clockNow += entry[1].ms;
       entry[1].fn();
     },
     unmount() {
@@ -262,7 +303,7 @@ test("signed-out form has required contact fields in requested order and native 
   h.unmount();
 });
 
-test("first query and trimmed contacts create a private conversation without account auth", async () => {
+test("guest issue uses trimmed contacts and never opens or polls a chat", async () => {
   const h = harness();
   contact(h);
   h.send();
@@ -442,7 +483,7 @@ test("reopening adopts another help surface's saved chat without mixing historie
   h.field("Message", "Draft for the first issue");
   h.render({ open: false });
   const other = { uid: "44444444-4444-4444-8444-444444444444", token: "b".repeat(64) };
-  h.storage.set(SUPPORT_STORAGE_KEY, JSON.stringify({ access: other }));
+  h.storage.set(SUPPORT_STORAGE_KEY, JSON.stringify({ owner: OWNER, access: other }));
   h.render({ open: true });
   assert.equal(h.requests.at(-1).access.token, other.token);
   assert.doesNotMatch(h.text(), /I can help/);
@@ -549,7 +590,9 @@ test("late creation acknowledgement cannot replace a newer help surface's conver
 });
 
 test("late message acknowledgement cannot replace an adopted conversation or its pending creation", async () => {
-  const sharedStorage = new Map([[SUPPORT_STORAGE_KEY, JSON.stringify({ access: ACCESS })]]);
+  const sharedStorage = new Map([
+    [SUPPORT_STORAGE_KEY, JSON.stringify({ owner: OWNER, access: ACCESS })],
+  ]);
   const a = harness({ sharedStorage, kind: "OTHER" });
   await active(a);
   a.field("Message", "Old message");
@@ -577,7 +620,9 @@ test("late message acknowledgement cannot replace an adopted conversation or its
 });
 
 test("late duplicate acknowledgement preserves a newer pending message on the same conversation", async () => {
-  const sharedStorage = new Map([[SUPPORT_STORAGE_KEY, JSON.stringify({ access: ACCESS })]]);
+  const sharedStorage = new Map([
+    [SUPPORT_STORAGE_KEY, JSON.stringify({ owner: OWNER, access: ACCESS })],
+  ]);
   const a = harness({ sharedStorage, kind: "OTHER" });
   await active(a);
   a.field("Message", "First message");
@@ -610,7 +655,7 @@ test("a late failure does not attach the old request's error to an adopted conve
   h.send();
   const late = h.requests.at(-1);
   h.render({ open: false });
-  h.storage.set(SUPPORT_STORAGE_KEY, JSON.stringify({ access: NEW_ACCESS }));
+  h.storage.set(SUPPORT_STORAGE_KEY, JSON.stringify({ owner: OWNER, access: NEW_ACCESS }));
   h.render({ open: true });
   h.requests.at(-1).resolve(history([], { uid: NEW_ACCESS.uid }));
   await flush();
@@ -655,5 +700,55 @@ test("resolved conversation keeps an uncommitted retry and its rejection visible
   assert.equal(h.receipt().pendingMessage.body, pendingMessage.body);
   assert.match(h.text(), /Ask staff to reopen/);
   assert.equal(h.all("TextArea")[0].props.value, pendingMessage.body);
+  h.unmount();
+});
+
+test("logout clears mounted history and rejects late replies even when storage is unavailable", async () => {
+  const h = harness({ stored: { access: ACCESS } });
+  await active(h, [message()]);
+  h.timer();
+  const oldRead = h.requests.at(-1);
+  h.authChange(null);
+  assert.doesNotMatch(h.text(), /I can help/);
+  oldRead.resolve(history([message(MESSAGE_UID, "Private old reply")]));
+  await flush();
+  h.render();
+  assert.doesNotMatch(h.text(), /Private old reply/);
+  assert.equal(h.storage.has(SUPPORT_STORAGE_KEY), false);
+  h.unmount();
+});
+
+test("account switch during creation never resurrects the old conversation", async () => {
+  const h = harness({ kind: "OTHER" });
+  contact(h);
+  h.send();
+  const oldCreate = h.requests.at(-1);
+  h.authChange("other-participant-token");
+  oldCreate.resolve({ uid: ACCESS.uid });
+  await flush();
+  h.render();
+  assert.equal(h.storage.has(SUPPORT_STORAGE_KEY), false);
+  assert.equal(h.all("form").length, 1);
+  assert.doesNotMatch(h.text(), new RegExp(ACCESS.uid));
+  h.unmount();
+});
+
+test("a receipt for another account cannot be recovered even when storage cannot be cleared", () => {
+  const stale = new Map([
+    [
+      SUPPORT_STORAGE_KEY,
+      JSON.stringify({
+        owner: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        access: ACCESS,
+      }),
+    ],
+  ]);
+  stale.delete = () => {
+    throw new Error("storage blocked");
+  };
+  const h = harness({ kind: "OTHER", sharedStorage: stale, storageFails: true });
+  assert.equal(h.requests.length, 0, "never fetch another account's capability");
+  assert.equal(h.all("form").length, 1);
+  assert.doesNotMatch(h.text(), new RegExp(ACCESS.uid));
   h.unmount();
 });

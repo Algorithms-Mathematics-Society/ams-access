@@ -15,7 +15,7 @@ staff authorization live in the API, not a Next.js route in this repository.
 3. Staff see both kinds of issue under **Support** on the main dashboard. Guest
    issues are contact-only: staff follow up by email or phone and cannot send
    an unreadable chat reply. Signed-in issues support plain-text conversation.
-4. Signed-in conversations poll every four seconds while visible, using bounded
+4. Signed-in conversations poll every 8–12 seconds while visible, using bounded
    history pages. Staff can resolve/reopen issues.
 
 A random 256-bit capability grants participant access to exactly one thread.
@@ -49,7 +49,7 @@ telemetry or passwords.
 
 ## Deployment
 
-Apply `ams-api` migrations through `3b4e8a2c1d90` and deploy its support endpoints
+Apply `ams-api` migrations through `7ac291e0b46f` and deploy its support endpoints
 before releasing the matching admin portal and candidate app. The migration
 adds `chat_enabled`, preserving existing conversations while marking new guest
 issues as one-way. Private read/reply routes also enforce this flag.
@@ -60,8 +60,10 @@ Ambiguous or invalid routing returns 503. Participants never enter this setting.
 Older server deployments return a visible failure without false delivery confirmation.
 
 The API bounds messages at 4000 characters, reads at 100 messages/page and inbox
-pages at 50 issues. Creation is bounded at 100 requests/hour per observed source
-address, and sending at 60 messages/minute per conversation. These database
+pages at 50 issues. Public creation defaults to a coarse 2000 requests/hour per observed source IP,
+receiving organization and contest bucket. Unknown guest context shares the
+unassigned bucket. Authenticated creation remains 100/hour per participant;
+sending remains 60 messages/minute per conversation. These database
 limits are shared across workers. Deploy the public endpoint behind the existing
 trusted ingress with request/body limits; forwarded headers from clients are
 not trusted. A shared proxy/NAT may share the creation bound. Do not use the
@@ -80,6 +82,22 @@ resolution and narrow/desktop layouts. Fixtures do not prove API integration.
 The candidate production static export, typecheck and size budgets pass. The
 backend pure suite, lint and support type checks pass. Real
 API/database tests remain to run on a scratch Postgres because
-this sandbox prohibits server sockets. The admin full build/typecheck requires
-restoring the repository's already-declared missing CodeMirror dependencies.
+this sandbox prohibits server sockets. The admin typecheck passes; its full build is blocked here by DNS while fetching
+its existing Google Fonts.
 Packaged desktop lockdown/focus acceptance remains a separate native check.
+
+## Integration follow-up
+
+Support reads use one in-flight request, randomized polling, failure backoff and
+Retry-After cooldowns. Closing/unmounting aborts reads. Sign-out/account changes
+invalidate pending callbacks and mounted history; saved receipts are scoped to
+the participant UID so failed storage cleanup cannot recover another account's
+chat. Unowned development receipts are not adopted. Writes keep their original
+UUID/payload after uncertain delivery and require an explicit retry.
+
+The API follow-up adds optional contest context and migration 7ac291e0b46f.
+Release order is API migration/code, portal, packaged proctor. Staff resolve/reopen
+retries preserve the original desired state, including after polling observes a
+committed change whose response was lost. Production qualification and native
+acceptance are documented in ams-api/SUPPORT-QUALIFICATION.md; their pending gates
+must not be described as passed.

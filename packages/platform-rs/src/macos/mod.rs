@@ -8,27 +8,29 @@
 
 use crate::process_runner::{Budget, CommandDeadlineExt};
 use block2::RcBlock;
-use core_rs::exam::{
-    CloseAppsResult, KeyboardInterceptResult, LockdownConfig, ProcessScanResult,
-    VirtDetectionResult,
-};
+use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, LockdownConfig, ProcessScanResult};
 use std::ffi::c_void;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+mod allowlist;
 mod displays;
+pub mod instance;
 mod kiosk_window;
+mod network_path;
 mod power;
 mod remote_access;
 mod system_settings;
 mod watchdog;
 
+pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
 pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
     top_safe_inset, wait_native_fullscreen_exit,
 };
+pub use network_path::network_path_warnings;
 pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
@@ -1170,12 +1172,18 @@ pub fn retry_restore() -> RestoreStatus {
 /// thread run it inline.
 fn refocus_our_app() {
     let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), || {
-        kiosk_window::guarded(|| unsafe { refocus_on_main() })
+        kiosk_window::guarded(|| unsafe { refocus_on_main(std::process::id()) })
     });
 }
 
-unsafe fn refocus_on_main() {
-    let our_pid = std::process::id() as i32;
+/// Bring another running app forward, best effort. A second launch calls this
+/// on its main thread, before it starts any UI, to show the instance that
+/// already owns the exam.
+pub fn activate_process(pid: u32) {
+    let _ = kiosk_window::guarded(|| unsafe { refocus_on_main(pid) });
+}
+
+unsafe fn refocus_on_main(pid: u32) {
     let cls = objc_getClass(c"NSRunningApplication".as_ptr());
     if cls.is_null() {
         return;
@@ -1188,7 +1196,7 @@ unsafe fn refocus_on_main() {
     // +[NSRunningApplication runningApplicationWithProcessIdentifier:pid]
     type FnForPid = unsafe extern "C" fn(*mut c_void, *const c_void, i32) -> *mut c_void;
     let send_for_pid: FnForPid = std::mem::transmute(objc_msgSend as *const ());
-    let app = send_for_pid(cls, sel_for_pid, our_pid);
+    let app = send_for_pid(cls, sel_for_pid, pid as i32);
     if app.is_null() {
         return;
     }
@@ -1588,106 +1596,6 @@ fn restricted_in(running: &[String], scan_complete: bool) -> ProcessScanResult {
     }
 }
 
-/// Detect whether the process is running inside a VM or hypervisor.
-///
-/// Checks CPUID hypervisor leaf first (cannot be spoofed without paravirt config),
-/// then `kern.hv_vmm_present`, then `system_profiler SPHardwareDataType` and the
-/// `IOPlatformExpertDevice` registry node for hypervisor markers.
-pub fn detect_virtualization() -> VirtDetectionResult {
-    let _budget = Budget::new(std::time::Duration::from_secs(6));
-    // CPUID leaf 0x40000000 — x86/x86_64 only; ARM Macs skip this path
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        let cpuid = raw_cpuid::CpuId::with_cpuid_fn(raw_cpuid::CpuIdReaderNative);
-        if let Some(hv) = cpuid.get_hypervisor_info() {
-            let platform = match hv.identify() {
-                raw_cpuid::Hypervisor::VMware => "vmware",
-                raw_cpuid::Hypervisor::KVM => "kvm",
-                raw_cpuid::Hypervisor::Xen => "xen",
-                raw_cpuid::Hypervisor::HyperV => "hyperv",
-                raw_cpuid::Hypervisor::Bhyve => "bhyve",
-                _ => "unknown_hypervisor",
-            };
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(platform.to_string()),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    // kern.hv_vmm_present is 1 inside any guest of Hypervisor.framework or
-    // Virtualization.framework (UTM, Parallels, Docker, Tart) on both Apple
-    // Silicon and Intel. Unlike kern.hv_support it says nothing about the host.
-    // Older macOS lacks the key and sysctl exits nonzero, which means "absent"
-    // rather than a failed probe, so this one is not checked.
-    let hv_vmm_present = Command::new("/usr/sbin/sysctl")
-        .args(["-n", "kern.hv_vmm_present"])
-        .bounded_output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
-        .unwrap_or(false);
-    if hv_vmm_present {
-        return VirtDetectionResult {
-            detected: true,
-            platform: Some("Apple Hypervisor".to_string()),
-            confidence: "high".to_string(),
-        };
-    }
-
-    let hw_output = Command::new("/usr/sbin/system_profiler")
-        .arg("SPHardwareDataType")
-        .bounded_checked_output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default();
-
-    // Only the platform expert node: model, manufacturer and board strings are
-    // where VMs identify themselves. `ioreg -l` dumps the whole registry, which
-    // is several MB on real hardware, overran MAX_OUTPUT, and failed the probe.
-    let ioreg_output = Command::new("/usr/sbin/ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .bounded_checked_output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default();
-
-    let combined = format!("{hw_output}{ioreg_output}");
-
-    // Use specific substrings that only appear in actual VM environments.
-    // "xen" alone is too broad — ioreg -l is enormous and can contain "xen" in
-    // unrelated device or property names on real hardware. kern.hv_support is
-    // always 1 on Apple Silicon (native CPU capability), not a VM indicator.
-    let vm_markers: &[(&str, &str)] = &[
-        ("vmware", "VMware"),
-        ("parallels", "Parallels"),
-        ("virtualbox", "VirtualBox"),
-        ("qemu", "QEMU"),
-        ("hyperv", "Hyper-V"),
-        // Require xen-specific driver/vendor strings, not just "xen" substring
-        ("xenbus", "Xen"),
-        ("xensource", "Xen"),
-        ("xen hypervisor", "Xen"),
-        ("utm ", "UTM"),
-        ("apple virtualization framework", "Apple Virtualization"),
-        // Virtualization.framework guests report model "VirtualMac2,1"
-        ("virtualmac", "Apple Virtualization"),
-    ];
-
-    for (marker, platform) in vm_markers {
-        if combined.contains(marker) {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(platform.to_string()),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "high".to_string(),
-    }
-}
-
 /// Check whether any remote desktop or screen-sharing session is active.
 pub fn detect_remote_desktop() -> bool {
     let _budget = Budget::new(std::time::Duration::from_secs(5));
@@ -1709,6 +1617,18 @@ const HELPER_PLIST_DEST: &str = "/Library/LaunchDaemons/com.ams.access.networkhe
 const HELPER_CLIENT_CONFIG_DEST: &str =
     "/Library/Application Support/AMS Access/network-helper-client.conf";
 const HELPER_CONFIG_DIR: &str = "/Library/Application Support/AMS Access";
+
+/// Whether this copy of the app runs from a path the helper cannot pin. The
+/// helper authorizes its client by executable path, and a copy run from the
+/// mounted disk image or translocated by Gatekeeper (a random path on every
+/// launch) would ask for the admin password again each time, or fail lockdown.
+/// shortcut: any bundle under /Volumes counts, including an install on an
+/// external drive; check that the volume is read-only if labs need that.
+pub fn unstable_bundle_path(exe: &std::path::Path) -> bool {
+    let path = exe.to_string_lossy();
+    path.contains(".app/Contents/MacOS/")
+        && (path.contains("/AppTranslocation/") || path.starts_with("/Volumes/"))
+}
 
 /// Check whether the helper daemon socket is reachable and accepts this app.
 pub fn network_helper_running() -> bool {
@@ -1781,6 +1701,21 @@ do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchc
     Err("helper installed but socket not ready within 3 s".to_string())
 }
 
+/// A native alert before any window exists, for problems that stop startup.
+/// osascript draws it without the app's run loop, as `install_network_helper`
+/// already relies on, and it gives up after five minutes so a candidate who
+/// walks away does not leave a stuck process behind.
+pub fn show_startup_message(title: &str, message: &str) {
+    let script = format!(
+        r#"display alert "{}" message "{}" as critical buttons {{"OK"}} default button "OK" giving up after 300"#,
+        applescript_string(title),
+        applescript_string(message)
+    );
+    let _ = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .bounded_output_with_timeout(std::time::Duration::from_secs(310));
+}
+
 fn applescript_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -1837,6 +1772,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 
 /// Lift the network lockdown via the privileged helper.
 pub fn disable_network_lockdown() -> Result<(), String> {
+    allowlist::forget();
     if !network_helper_running() {
         // pf rules outlive the helper, so an unreachable helper only means
         // "nothing to flush" when no lockdown was recorded this boot.
@@ -2388,14 +2324,22 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// A recorded failure turns the whole result into an error upstream and
-    /// the readiness screen shows every field as Unknown. `ioreg -l` did that
-    /// on every real Mac by overrunning the output limit.
     #[test]
-    fn virtualization_probe_records_no_failure() {
-        let budget = Budget::new(std::time::Duration::from_secs(20));
-        let result = detect_virtualization();
-        assert_eq!(budget.failure(), None);
-        assert_eq!(result.confidence, "high");
+    fn disk_image_and_translocated_copies_are_unstable() {
+        let unstable = |path: &str| unstable_bundle_path(std::path::Path::new(path));
+        assert!(unstable(
+            "/Volumes/AMS Access/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(unstable("/private/var/folders/x/T/AppTranslocation/1A2B/d/AMS Access.app/Contents/MacOS/ams-access"));
+        assert!(!unstable(
+            "/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(!unstable(
+            "/Users/me/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        // A dev build is not a bundle, wherever the checkout lives.
+        assert!(!unstable(
+            "/Volumes/Work/ams-access/target/debug/ams-access"
+        ));
     }
 }

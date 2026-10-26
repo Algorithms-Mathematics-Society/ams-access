@@ -9,8 +9,14 @@ import { TextArea } from "@astryxdesign/core/TextArea";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { startSupportPolling } from "@/lib/support-poll";
 import { resolveApiBase } from "@/lib/api-base";
-import { currentToken } from "@/lib/proctor-api";
+import {
+  currentToken,
+  authGeneration,
+  subscribeAuthChanges,
+  currentParticipantUid,
+} from "@/lib/proctor-api";
 import {
   SUPPORT_STORAGE_KEY,
   matchesGuestIssueDraft,
@@ -46,6 +52,7 @@ export function HelpRequestModal({
   onClose,
   kind,
   defaultEmail,
+  contestId,
   renderDialog,
   secondaryAction,
 }: HelpRequestModalProps) {
@@ -67,12 +74,33 @@ export function HelpRequestModal({
   const [error, setError] = useState("");
   const [syncError, setSyncError] = useState("");
   const [storageWarning, setStorageWarning] = useState(false);
+  const [recoveryNotice, setRecoveryNotice] = useState("");
   const [guestSent, setGuestSent] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const inFlight = useRef(false);
   const storageFailed = useRef(false);
   const messagesRef = useRef<SupportThread["messages"]>([]);
   const streamRef = useRef<HTMLElement | null>(null);
+  const [identityVersion, setIdentityVersion] = useState(0);
+  const writeController = useRef<AbortController | null>(null);
+  useEffect(
+    () =>
+      subscribeAuthChanges(() => {
+        if (guestRequest) return;
+        writeController.current?.abort();
+        receiptRef.current = null;
+        messagesRef.current = [];
+        setReceipt(null);
+        setThread(null);
+        setDraft("");
+        setQuery("");
+        setError("");
+        setSyncError("");
+        setRecoveryNotice("");
+        setIdentityVersion((version) => version + 1);
+      }),
+    [guestRequest]
+  );
 
   function save(next: SupportReceipt | null) {
     receiptRef.current = next;
@@ -99,7 +127,7 @@ export function HelpRequestModal({
   }
 
   function acknowledge(expected: SupportReceipt): boolean {
-    const next = { access: expected.access };
+    const next = { access: expected.access, owner: expected.owner };
     // Another mounted help surface may have started a new chat or queued a
     // later message while this request was awaiting its response. Neither
     // that recovery record nor an adopted local conversation belongs to it.
@@ -166,7 +194,14 @@ export function HelpRequestModal({
         return;
       }
       const saved = parseSupportReceipt(sessionStorage.getItem(storageKey));
-      const usable = saved;
+      const owner = currentParticipantUid();
+      const usable = owner && saved?.owner === owner ? saved : null;
+      if (saved && !usable) {
+        setRecoveryNotice(
+          "That saved chat could not be matched to this sign-in. Start a new request for this account."
+        );
+        sessionStorage.removeItem(storageKey);
+      }
       if (receiptRef.current?.access.uid !== usable?.access.uid) {
         messagesRef.current = [];
         setThread(null);
@@ -200,23 +235,29 @@ export function HelpRequestModal({
   useEffect(() => {
     if (!open || !uid || pendingStart) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let polling = false;
-    const poll = async () => {
-      if (stopped || polling || document.hidden) return;
-      polling = true;
+    const generation = authGeneration();
+    const stop = startSupportPolling(async (signal) => {
       try {
         let more = true;
-        while (more && !stopped) {
+        for (let page = 0; more && page < 3 && !stopped; page += 1) {
           const access = receiptRef.current?.access;
           if (!access || access.uid !== uid) return;
           const last = messagesRef.current.at(-1)?.uid;
           const data: SupportThread = await supportRequest<SupportThread>(
             API_URL,
             `/support/conversations/${uid}${last ? `?after=${last}` : ""}`,
-            access
+            access,
+            undefined,
+            undefined,
+            { signal }
           );
-          if (stopped) return;
+          if (
+            stopped ||
+            signal.aborted ||
+            generation !== authGeneration() ||
+            receiptRef.current?.access.uid !== uid
+          )
+            return;
           if (
             data.uid !== uid ||
             !Array.isArray(data.messages) ||
@@ -226,44 +267,32 @@ export function HelpRequestModal({
               (message) =>
                 typeof message.uid === "string" &&
                 typeof message.body === "string" &&
+                message.body.length <= 4000 &&
                 ["staff", "participant"].includes(message.sender) &&
-                typeof message.created_at === "string" &&
                 Number.isFinite(Date.parse(message.created_at))
             )
           ) {
             throw new Error("The conversation response was incomplete. Reopen chat to retry.");
           }
           const nextMessages = mergeSupportMessages(messagesRef.current, data.messages);
-          if (data.has_more && nextMessages.at(-1)?.uid === last) {
+          if (data.has_more && nextMessages.at(-1)?.uid === last)
             throw new Error("Chat history did not advance. Reopen chat to retry.");
-          }
           messagesRef.current = nextMessages;
-          setThread({ ...data, messages: messagesRef.current });
+          setThread({ ...data, messages: nextMessages });
           setSyncError("");
           more = data.has_more;
         }
-      } catch (e) {
-        if (!stopped)
-          setSyncError(e instanceof Error ? e.message : "Unable to refresh conversation.");
-      } finally {
-        polling = false;
-        if (!stopped) {
-          clearTimeout(timer);
-          timer = setTimeout(() => void poll(), 4000);
-        }
+      } catch (error) {
+        if (!stopped && generation === authGeneration())
+          setSyncError(error instanceof Error ? error.message : "Unable to refresh conversation.");
+        throw error;
       }
-    };
-    const visible = () => {
-      if (!document.hidden) void poll();
-    };
-    void poll();
-    document.addEventListener("visibilitychange", visible);
+    });
     return () => {
       stopped = true;
-      clearTimeout(timer);
-      document.removeEventListener("visibilitychange", visible);
+      stop();
     };
-  }, [open, uid, pendingStart, refresh]);
+  }, [open, uid, pendingStart, refresh, identityVersion]);
 
   useEffect(() => {
     const stream = streamRef.current;
@@ -274,6 +303,10 @@ export function HelpRequestModal({
     event.preventDefault();
     if (!ready || inFlight.current || !event.currentTarget.reportValidity()) return;
     inFlight.current = true;
+    const generation = authGeneration();
+    const validIdentity = () => guestRequest || generation === authGeneration();
+    const controller = new AbortController();
+    writeController.current = controller;
     setBusy(true);
     setError("");
     if (guestRequest) {
@@ -286,6 +319,7 @@ export function HelpRequestModal({
             phone: phone.trim(),
             name: name.trim(),
             category: kind,
+            ...(contestId ? { contest_uid: contestId } : {}),
             body: query.trim().slice(0, 4000),
           };
           saveGuestIssue(guestOperation);
@@ -296,6 +330,7 @@ export function HelpRequestModal({
           undefined,
           guestOperation
         );
+        if (!validIdentity()) return;
         if (ack.received !== true)
           throw new Error("The server did not confirm this request. Retry safely.");
         if (matchesGuestIssueDraft(guestIssueRef.current, guestOperation)) {
@@ -319,14 +354,17 @@ export function HelpRequestModal({
       if (!current || current.pendingStart || current.pendingParticipantStart) {
         if (!current) {
           const access = newSupportAccess();
+          setRecoveryNotice("");
           const participantToken = currentToken();
           if (!participantToken)
             throw new Error("Your sign-in has expired. Sign in again to contact support.");
           current = {
             access,
+            owner: currentParticipantUid() ?? undefined,
             pendingParticipantStart: {
               ...access,
               category: kind,
+              ...(contestId ? { contest_uid: contestId } : {}),
               body: query.trim().slice(0, 4000),
             },
           };
@@ -359,8 +397,10 @@ export function HelpRequestModal({
             : "/support/conversations",
           undefined,
           pendingStartBody,
-          participantToken
+          participantToken,
+          { signal: controller.signal }
         );
+        if (!validIdentity()) return;
         if (ack.uid !== current.access.uid)
           throw new Error("The server did not confirm this request. Retry safely.");
         acknowledge(operation);
@@ -373,15 +413,21 @@ export function HelpRequestModal({
           API_URL,
           `/support/conversations/${current.access.uid}/messages`,
           current.access,
-          message
+          message,
+          undefined,
+          { signal: controller.signal }
         );
+        if (!validIdentity()) return;
         if (ack.uid !== message.uid)
           throw new Error("The server did not confirm this message. Retry safely.");
         if (acknowledge(operation)) setDraft("");
       }
       setRefresh((n) => n + 1);
     } catch (e) {
-      if (!operation || matchesSupportOperation(receiptRef.current, operation)) {
+      if (
+        validIdentity() &&
+        (!operation || matchesSupportOperation(receiptRef.current, operation))
+      ) {
         setError(e instanceof Error ? e.message : "Unable to send. Retry safely.");
       }
     } finally {
@@ -420,6 +466,13 @@ export function HelpRequestModal({
     busy || Boolean(guestIssue || receipt?.pendingStart || receipt?.pendingParticipantStart);
   const content = (
     <VStack gap={5} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+      {recoveryNotice && (
+        <Banner
+          status="warning"
+          title="Saved conversation unavailable"
+          description={recoveryNotice}
+        />
+      )}
       {storageWarning && (
         <Banner
           status="warning"
@@ -438,7 +491,7 @@ export function HelpRequestModal({
           <Banner
             status="success"
             title="Request sent"
-            description="The support team received your message."
+            description="The support team received your issue. Staff can follow up by email or phone; this form does not open a chat."
           />
           <HStack justify="end">
             <Button type="button" variant="primary" label="Done" onClick={onClose} />
@@ -504,7 +557,7 @@ export function HelpRequestModal({
               value={query}
               onChange={setQuery}
               rows={3}
-              maxLength={3000}
+              maxLength={4000}
               isRequired
               isDisabled={locked}
               ref={(el) => {

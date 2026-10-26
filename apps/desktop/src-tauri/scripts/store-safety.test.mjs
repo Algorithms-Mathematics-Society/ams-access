@@ -117,14 +117,29 @@ test("Windows restore failure stays visible and retry uses the journal", async (
     desktop.indexOf("fn get_lockdown_restore_status()")
   );
   assert.match(status, /cfg\(target_os = "windows"\)[\s\S]*?desktop_recovery_pending\(\)/);
+  assert.match(
+    status,
+    /desktop_recovery_pending\(\)\s*\|\| windows_firewall::recovery_pending\(\)/
+  );
   const retry = desktop.slice(
     desktop.indexOf("async fn retry_lockdown_restore("),
     desktop.indexOf("async fn check_network_stability(")
   );
-  assert.match(
-    retry,
-    /cfg\(target_os = "windows"\)[\s\S]*?!LOCKDOWN_ENGAGED[\s\S]*?owner\.stop\(&mut DesktopOperations::new\(app, false\)\)\?/
+  const windowsRetry = retry.slice(
+    retry.indexOf('#[cfg(target_os = "windows")]'),
+    retry.indexOf('#[cfg(target_os = "linux")]')
   );
+  assert.match(windowsRetry, /if !LOCKDOWN_ENGAGED\.load\(Ordering::SeqCst\)/);
+  assert.match(
+    windowsRetry,
+    /let desktop = owner\.stop\(&mut DesktopOperations::new\(app, false\)\);/
+  );
+  assert.match(
+    windowsRetry,
+    /let network = if windows_firewall::recovery_needed\(WANTS_FIREWALL\)/
+  );
+  assert.match(windowsRetry, /windows_firewall::disable_blocking\(\)\.map\(\|_\| \(\)\)/);
+  assert.match(windowsRetry, /lockdown_lifecycle::combine_cleanup\(desktop, network\)\?;/);
   assert.match(
     desktop,
     /cfg\(target_os = "windows"\)\]\s*let protected = \{\s*let status = platform_rs::windows::lock_desktop_with_status\(\)\?/
@@ -211,7 +226,8 @@ test("Windows firewall installation is scoped, validated and serialized with cle
     assert.ok(position >= 0 && position < install);
   }
   assert.match(enable, /\&\[\(native, ""\), \(browser, "_WEBVIEW2"\)\]/);
-  assert.match(enable, /NETWORK_POLICY_LOCK\s*\.lock\(\)/);
+  assert.match(enable, /NETWORK_GATE\s*\.enter\(\)/);
+  assert.ok(enable.indexOf("NETWORK_GATE") < install);
   assert.match(enable, /remoteip=\{addresses\}/);
   assert.match(enable, /std::thread::spawn\(disable_network_lockdown_unlocked\)/);
   assert.match(enable, /program=/);
@@ -219,12 +235,46 @@ test("Windows firewall installation is scoped, validated and serialized with cle
     windows.indexOf("pub fn disable_network_lockdown()"),
     windows.indexOf("fn disable_network_lockdown_unlocked()")
   );
-  assert.match(disable, /NETWORK_POLICY_LOCK\s*\.lock\(\)/);
+  assert.match(disable, /NETWORK_GATE\.lock\(\)/);
+  assert.match(disable, /pub fn close_network_lockdown_on_exit\(\)[\s\S]*?NETWORK_GATE\.close\(\)/);
   assert.doesNotMatch(enable, /set.*firewallpolicy|outbound.*block/i);
   assert.match(
     desktop,
     /cfg\(target_os = "windows"\)\]\s*if !WANTS_FIREWALL \{\s*return Ok\(false\);/
   );
+});
+
+test("Windows shutdown closes native gates without waiting on UI-owned lifecycle locks", async () => {
+  const [windows, desktop] = await Promise.all([
+    read("packages/platform-rs/src/windows/mod.rs"),
+    read("apps/desktop/src-tauri/src/lib.rs"),
+  ]);
+  const entry = windows.slice(
+    windows.indexOf("pub fn lock_desktop_with_status()"),
+    windows.indexOf("pub fn unlock_desktop()")
+  );
+  assert.match(entry, /DESKTOP_GATE\s*\.enter\(\)/);
+  assert.ok(entry.indexOf("DESKTOP_GATE") < entry.indexOf("registry_recovery::engage("));
+  const probe = windows.slice(
+    windows.indexOf("pub fn enable_keyboard_intercept()"),
+    windows.indexOf("fn keyboard_intercept_result(")
+  );
+  assert.ok(probe.indexOf("HOOK_OPERATION") >= 0);
+  assert.ok(probe.indexOf("HOOK_OPERATION") < probe.indexOf("DESKTOP_GATE.is_closed()"));
+  assert.ok(probe.indexOf("DESKTOP_GATE.is_closed()") < probe.indexOf("spawn_hook_thread("));
+  const shutdown = desktop.slice(
+    desktop.indexOf("fn finish_shutdown()"),
+    desktop.indexOf("const BLOCK_NATIVE_CONTEXT_MENU")
+  );
+  const destroyed = desktop.slice(
+    desktop.indexOf(".on_window_event("),
+    desktop.indexOf(".build(tauri::generate_context!())")
+  );
+  for (const callback of [shutdown, destroyed]) {
+    assert.match(callback, /windows::close_desktop_on_exit\(\)/);
+    assert.match(callback, /windows::close_network_lockdown_on_exit\(\)/);
+    assert.doesNotMatch(callback, /lockdown_lifecycle\(\)|windows_firewall::disable_blocking/);
+  }
 });
 
 test("Windows hook diagnostics only read evidence and stay unavailable elsewhere", async () => {

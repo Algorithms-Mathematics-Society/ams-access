@@ -104,7 +104,7 @@ test("timeout remains armed until JSON body completes and always clears afterwar
   fire();
   assert.equal(signal.aborted, true);
   finish(JSON.stringify({ uid: access.uid }));
-  assert.deepEqual(await request, { uid: access.uid });
+  await assert.rejects(request, /Delivery is not confirmed/);
   assert.equal(cleared, true);
 });
 

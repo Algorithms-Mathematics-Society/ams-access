@@ -1,3 +1,4 @@
+import { SupportRequestError, supportRetryAfterMs } from "./support-poll.ts";
 import { CLIENT_VERSION } from "./proctor-api.ts";
 import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 
@@ -20,6 +21,7 @@ export type SupportThread = {
 };
 export type SupportAccess = { uid: string; token: string };
 export type SupportStart = SupportAccess & {
+  contest_uid?: string;
   email: string;
   phone: string;
   name: string;
@@ -28,12 +30,20 @@ export type SupportStart = SupportAccess & {
   organization: string;
 };
 export type SupportReceipt = {
+  owner?: string;
   access: SupportAccess;
   pendingStart?: SupportStart;
-  pendingParticipantStart?: { uid: string; token: string; category: string; body: string };
+  pendingParticipantStart?: {
+    contest_uid?: string;
+    uid: string;
+    token: string;
+    category: string;
+    body: string;
+  };
   pendingMessage?: { uid: string; body: string };
 };
 export type GuestIssueDraft = {
+  contest_uid?: string;
   uid: string;
   email: string;
   phone: string;
@@ -58,6 +68,7 @@ export function parseGuestIssueDraft(value: string | null): GuestIssueDraft | nu
     if (
       !data ||
       !UUID.test(data.uid) ||
+      (data.contest_uid !== undefined && !UUID.test(data.contest_uid)) ||
       !bounded(data.email, 3, 320) ||
       !bounded(data.phone, 5, 40) ||
       !bounded(data.name, 1, 120) ||
@@ -78,6 +89,7 @@ export function matchesGuestIssueDraft(
   return Boolean(
     current &&
     current.uid === expected.uid &&
+    current.contest_uid === expected.contest_uid &&
     current.email === expected.email &&
     current.phone === expected.phone &&
     current.name === expected.name &&
@@ -95,12 +107,18 @@ export function parseSupportReceipt(value: string | null): SupportReceipt | null
   if (!value) return null;
   try {
     const data = JSON.parse(value) as SupportReceipt;
-    if (!data || !UUID.test(data.access?.uid) || !/^[a-f0-9]{64}$/.test(data.access?.token))
+    if (
+      !data ||
+      (data.owner !== undefined && !UUID.test(data.owner)) ||
+      !UUID.test(data.access?.uid) ||
+      !/^[a-f0-9]{64}$/.test(data.access?.token)
+    )
       return null;
     const start = data.pendingStart;
     if (
       start &&
-      (start.uid !== data.access.uid ||
+      ((start.contest_uid !== undefined && !UUID.test(start.contest_uid)) ||
+        start.uid !== data.access.uid ||
         start.token !== data.access.token ||
         !bounded(start.email, 3, 320) ||
         !bounded(start.phone, 5, 40) ||
@@ -113,7 +131,8 @@ export function parseSupportReceipt(value: string | null): SupportReceipt | null
     const participantStart = data.pendingParticipantStart;
     if (
       participantStart &&
-      (participantStart.uid !== data.access.uid ||
+      ((participantStart.contest_uid !== undefined && !UUID.test(participantStart.contest_uid)) ||
+        participantStart.uid !== data.access.uid ||
         participantStart.token !== data.access.token ||
         !bounded(participantStart.body, 1, 4000) ||
         !categories.has(participantStart.category))
@@ -134,6 +153,7 @@ export function matchesSupportOperation(
   expected: SupportReceipt
 ): boolean {
   if (
+    current?.owner !== expected.owner ||
     current?.access.uid !== expected.access.uid ||
     current?.access.token !== expected.access.token
   )
@@ -144,6 +164,7 @@ export function matchesSupportOperation(
     return Boolean(
       saved &&
       saved.uid === sent.uid &&
+      saved.contest_uid === sent.contest_uid &&
       saved.token === sent.token &&
       saved.email === sent.email &&
       saved.phone === sent.phone &&
@@ -159,6 +180,7 @@ export function matchesSupportOperation(
     return Boolean(
       saved &&
       saved.uid === sent.uid &&
+      saved.contest_uid === sent.contest_uid &&
       saved.token === sent.token &&
       saved.body === sent.body &&
       saved.category === sent.category
@@ -185,10 +207,14 @@ export async function supportRequest<T>(
   path: string,
   access?: SupportAccess,
   body?: unknown,
-  participantToken?: string
+  participantToken?: string,
+  options: { signal?: AbortSignal } = {}
 ): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
+  const abort = () => controller.abort();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) abort();
+  const timer = setTimeout(abort, 10000);
   try {
     const response = await fetch(`${base}${path}`, {
       method: body === undefined ? "GET" : "POST",
@@ -203,6 +229,7 @@ export async function supportRequest<T>(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const responseBody = await response.text();
+    if (controller.signal.aborted) throw new DOMException("Request aborted", "AbortError");
     let data: { detail?: unknown };
     try {
       const parsed: unknown = responseBody ? JSON.parse(responseBody) : {};
@@ -221,7 +248,11 @@ export async function supportRequest<T>(
           : response.status === 429
             ? "Too many requests. Retry later."
             : "Check your contact details and retry.";
-      throw new Error(detail);
+      throw new SupportRequestError(
+        detail,
+        response.status,
+        supportRetryAfterMs(response.headers?.get("Retry-After") ?? null)
+      );
     }
     return data as T;
   } catch (error) {
@@ -231,6 +262,7 @@ export async function supportRequest<T>(
       "Connection interrupted. Delivery is not confirmed. Retry safely when connected."
     );
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     clearTimeout(timer);
   }
 }

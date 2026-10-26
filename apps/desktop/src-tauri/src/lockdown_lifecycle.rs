@@ -13,6 +13,17 @@ pub(crate) trait Operations {
 }
 
 impl Lifecycle {
+    pub fn start_if_current(
+        &mut self,
+        expected_generation: u64,
+        operations: &mut impl Operations,
+    ) -> Result<Option<bool>, String> {
+        if self.generation != expected_generation {
+            return Ok(None);
+        }
+        self.start(operations).map(Some)
+    }
+
     pub fn start(&mut self, operations: &mut impl Operations) -> Result<bool, String> {
         if self.active {
             return Ok(false);
@@ -221,6 +232,16 @@ mod tests {
         assert_eq!(ops.calls, vec!["release"]);
     }
     #[test]
+    fn completed_restore_cancels_pending_start_without_engaging() {
+        let mut state = Lifecycle::default();
+        let ticket = state.generation;
+        let mut ops = Fake::default();
+        state.stop(&mut ops).unwrap();
+        assert_eq!(state.start_if_current(ticket, &mut ops), Ok(None));
+        assert_eq!(ops.calls, vec!["release"]);
+        assert!(!state.active);
+    }
+    #[test]
     fn cleanup_reports_both_independent_failures() {
         assert_eq!(
             combine_cleanup(Err("native".into()), Err("window".into())),
@@ -241,7 +262,6 @@ mod tests {
                 platform: "macos".into(),
             }),
             restricted_processes: None,
-            virtualization: None,
             external_displays: None,
             rdp_server: None,
             network_helper_ready: None,
@@ -306,7 +326,6 @@ mod tests {
                 platform: "linux".into(),
             }),
             restricted_processes: None,
-            virtualization: None,
             external_displays: None,
             rdp_server: None,
             network_helper_ready: None,
@@ -350,7 +369,6 @@ mod tests {
                 platform: "windows".into(),
             }),
             restricted_processes: None,
-            virtualization: None,
             external_displays: None,
             rdp_server: None,
             network_helper_ready: None,

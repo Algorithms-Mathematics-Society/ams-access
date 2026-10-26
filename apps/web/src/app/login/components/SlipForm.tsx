@@ -19,6 +19,7 @@ export function SlipForm({
   password,
   setPassword,
   loading,
+  cooldownSeconds = 0,
   error,
   invalidField,
   diagnostic,
@@ -29,6 +30,7 @@ export function SlipForm({
   password: string;
   setPassword: (value: string) => void;
   loading: boolean;
+  cooldownSeconds?: number;
   error: string | null;
   invalidField?: "handle" | "password" | null;
   /** `host · CODE` for a connection that produced no HTTP response. Rendered
@@ -63,7 +65,9 @@ export function SlipForm({
               autoCorrect="off"
               spellCheck={false}
               inputMode="text"
-              maxLength={64}
+              // Leave room for a full handle and keep overlong IDs invalid
+              // instead of truncating them into a valid 64-character ID.
+              maxLength={256}
               aria-describedby={errorDescription}
               aria-invalid={invalidField === "handle" || undefined}
               autoFocus
@@ -135,11 +139,17 @@ export function SlipForm({
 
         <Button
           type="submit"
-          label={loading ? "Signing in…" : "Sign in"}
+          label={
+            loading
+              ? "Signing in…"
+              : cooldownSeconds > 0
+                ? `Try again in ${cooldownSeconds}s`
+                : "Sign in"
+          }
           variant="primary"
           size="lg"
           width="100%"
-          isDisabled={loading}
+          isDisabled={loading || cooldownSeconds > 0}
           isLoading={loading}
           style={{ minHeight: "calc(var(--spacing-10) + var(--spacing-1))" }}
         />
