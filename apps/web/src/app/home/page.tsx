@@ -131,18 +131,36 @@ export default function HomePage() {
   // No contest runs while Home is showing, so an engaged lockdown here is
   // left over: release it as "exit to home" does, and open the Settings
   // restore card if anything could not be put back.
+  // Rechecked while Home shows: a secure start cancelled by Exit setup can
+  // finish late and engage full screen after this page mounted.
   useEffect(() => {
     if (!hasNativeBridge()) return;
-    invoke<boolean>("is_lockdown_engaged")
-      .then((engaged) => {
-        if (!engaged) return;
-        return exitToHome({
-          push: (href) => {
-            if (href.includes("restore=pending")) setActiveNav("settings");
-          },
+    let inFlight = false;
+    const check = () => {
+      if (inFlight) return;
+      inFlight = true;
+      invoke<boolean>("is_lockdown_engaged")
+        .then(async (engaged) => {
+          if (engaged) {
+            await exitToHome({
+              push: (href) => {
+                if (href.includes("restore=pending")) setActiveNav("settings");
+              },
+            });
+            return;
+          }
+          // Home is never full screen.
+          const win = window.__TAURI__?.window.getCurrentWindow();
+          await Promise.all([win?.setSimpleFullscreen(false), win?.setFullscreen(false)]);
+        })
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
         });
-      })
-      .catch(() => {});
+    };
+    check();
+    const id = setInterval(check, 5_000);
+    return () => clearInterval(id);
   }, []);
   const [signingOut, setSigningOut] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
