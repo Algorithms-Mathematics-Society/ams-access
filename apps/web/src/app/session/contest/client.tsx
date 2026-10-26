@@ -126,6 +126,14 @@ import {
 } from "./draft-workspace";
 import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
+import {
+  type Announcement,
+  nextToShow,
+  readAnnouncements,
+  rememberAck,
+  shouldFetch,
+} from "./announcements";
+import { AnnouncementOverlay } from "./components/AnnouncementOverlay";
 import { releaseCandidateQuestionAssets } from "./candidate-question-projection";
 import { mergeAttemptTestResults, toAttemptRecords } from "./attempt-adapter";
 import {
@@ -152,10 +160,12 @@ import {
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
+  acknowledgeAnnouncement,
   getPublishedReferenceSheet,
   getRun,
   getSession,
   heartbeat,
+  listAnnouncements,
   listDrafts,
   listMySubmissions,
   logout,
@@ -448,6 +458,13 @@ export default function ContestPageClient() {
   // Same reason: recheckRun must re-poll the kind that actually timed out.
   const runModeRef = useRef<"all" | "custom">("all");
   const [loading, setLoading] = useState(true);
+  // What the organizers have told this contest, and which of it this
+  // candidate has not yet read. `seenRevision` is the integer the heartbeat
+  // carries; the text is fetched only when it moves.
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [ackBusy, setAckBusy] = useState(false);
+  const seenRevisionRef = useRef(0);
+  const announcementFetchInFlightRef = useRef(false);
   // How long entry has been waiting, so the boot screen can say something
   // true about it. Ticks only while `loading` holds, and stops the moment
   // the workspace mounts -- a timer left running behind the contest would
@@ -2612,6 +2629,39 @@ export default function ContestPageClient() {
     let terminal = false;
     let requestedReferenceRevision = 0;
     let referenceTimer: ReturnType<typeof setTimeout> | null = null;
+    let announcementTimer: ReturnType<typeof setTimeout> | null = null;
+    let requestedAnnouncementRevision = seenRevisionRef.current;
+
+    // Same shape as refreshReference below, for the same reasons: guarded
+    // against overlap, staggered so a thousand clients do not arrive at
+    // once, and leaving the revision unseen on failure so the next
+    // heartbeat retries rather than losing a postponement to one bad
+    // request.
+    const refreshAnnouncements = async () => {
+      announcementTimer = null;
+      if (
+        cancelled ||
+        authExpired ||
+        activeContestIdRef.current !== contestId ||
+        announcementFetchInFlightRef.current
+      )
+        return;
+      if (requestedAnnouncementRevision <= seenRevisionRef.current) return;
+      announcementFetchInFlightRef.current = true;
+      const expectedRevision = requestedAnnouncementRevision;
+      try {
+        const payload = await listAnnouncements(contestId);
+        if (cancelled || authExpired || activeContestIdRef.current !== contestId) return;
+        seenRevisionRef.current = expectedRevision;
+        setAnnouncements(readAnnouncements(payload));
+      } catch (caught) {
+        if (cancelled || authExpired) return;
+        if (caught instanceof ProctorApiError && caught.status === 401) unauthorized();
+        // Revision deliberately not advanced: retried on the next heartbeat.
+      } finally {
+        announcementFetchInFlightRef.current = false;
+      }
+    };
 
     const refreshReference = async () => {
       referenceTimer = null;
@@ -2704,6 +2754,19 @@ export default function ContestPageClient() {
         // drift and is authoritative over local deadline arithmetic.
         setContestPhase(live.phase);
         setClockSynced(true);
+
+        // An announcement is waiting. Staggered like the reference refresh
+        // below: a thousand clients learning of the same publish within the
+        // same minute must not all fetch on the same tick.
+        if (shouldFetch(seenRevisionRef.current, live.announcement_revision)) {
+          requestedAnnouncementRevision = live.announcement_revision!;
+          if (announcementTimer === null && !announcementFetchInFlightRef.current) {
+            announcementTimer = setTimeout(
+              () => void refreshAnnouncements(),
+              Math.floor(Math.random() * 10_001)
+            );
+          }
+        }
         if (live.ends_at) setContest((prev) => (prev ? { ...prev, end_at: live.ends_at! } : prev));
         if (
           isBell(
@@ -2773,6 +2836,7 @@ export default function ContestPageClient() {
     return () => {
       cancelled = true;
       if (referenceTimer !== null) clearTimeout(referenceTimer);
+      if (announcementTimer !== null) clearTimeout(announcementTimer);
       if (retryBeatRef.current === retry) retryBeatRef.current = () => {};
       clearInterval(id);
       if (recheckTimer) clearTimeout(recheckTimer);
@@ -4171,7 +4235,33 @@ export default function ContestPageClient() {
   // keyboard, and the only button on it was Exit contest -- so a two-second
   // inconvenience offered abandoning the paper as its remedy. It is a toast
   // now: it says what to do and goes away when they do it.
-  const criticalOverlayActive = lockGraceActive && lockGraceCountdown === 0;
+  // The oldest announcement this candidate has not acknowledged, if any.
+  // Oldest first so a burst reads in the order it was issued.
+  const pendingAnnouncement = sessionId
+    ? nextToShow(announcements, localStorage, sessionId)
+    : null;
+
+  const acknowledgeCurrent = useCallback(() => {
+    if (!pendingAnnouncement || !sessionId) return;
+    setAckBusy(true);
+    // Recorded locally first. The server is the authority, but a candidate
+    // who acknowledged must not be shown the same postponement again while
+    // the request is still in flight or if it fails outright.
+    rememberAck(localStorage, sessionId, pendingAnnouncement.uid);
+    const uid = pendingAnnouncement.uid;
+    void acknowledgeAnnouncement(contestId, uid).finally(() => {
+      setAckBusy(false);
+      setAnnouncements((prev) =>
+        prev.map((row) => (row.uid === uid ? { ...row, acknowledged: true } : row))
+      );
+    });
+  }, [pendingAnnouncement, sessionId, contestId]);
+
+  // Ranks with the lock violation: both are mandatory, and an announcement
+  // that a lower-priority dialog could cover is an announcement missed.
+  const announcementActive = pendingAnnouncement !== null;
+  const criticalOverlayActive =
+    (lockGraceActive && lockGraceCountdown === 0) || announcementActive;
   const networkOverlayActive =
     networkDisconnected &&
     !criticalOverlayActive &&
@@ -4208,6 +4298,11 @@ export default function ContestPageClient() {
     closeSupport
   );
   const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle");
+  // No dismissal callback: Escape must not close an announcement. The only
+  // way out is the acknowledgement, which is the record staff rely on.
+  const announcementDialogRef = useFocusTrap<HTMLDivElement>(
+    announcementActive && timeUpState === "idle"
+  );
   useEffect(() => {
     if (
       criticalOverlayActive ||
@@ -4705,6 +4800,18 @@ export default function ContestPageClient() {
             description={faceBlockMessage}
           />
         </VStack>
+      )}
+
+      {/* Above the rest: whatever else is on screen, a postponement is the
+          thing the candidate most needs to read. Suppressed only once the
+          paper is over, when the finish receipt owns the screen. */}
+      {pendingAnnouncement && timeUpState === "idle" && (
+        <AnnouncementOverlay
+          announcement={pendingAnnouncement}
+          onAcknowledge={acknowledgeCurrent}
+          busy={ackBusy}
+          dialogRef={announcementDialogRef}
+        />
       )}
 
       {showMediaToggleWarning && (

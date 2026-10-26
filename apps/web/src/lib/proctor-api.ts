@@ -394,6 +394,10 @@ export type ProctorSession = {
   remaining_ms: number | null;
   ends_at: string | null;
   phase: SessionPhase;
+  /** Bumped when staff publish an announcement. Optional so a server that
+   *  predates the feature simply never reports one, rather than breaking
+   *  the heartbeat the whole exam depends on. */
+  announcement_revision?: number;
   /** Absent until the reference-revision API is deployed; 0 means unpublished. */
   reference_revision?: number;
 };
@@ -717,6 +721,40 @@ export async function getPublishedReferenceSheet(
     "GET",
     `/participant/contests/${encodeURIComponent(contestUid)}/reference-sheet`
   );
+}
+
+/** Everything the organizers have told this contest, newest first.
+ *
+ * Fetched only when `announcement_revision` moves on the heartbeat, so the
+ * cost in the steady state is zero. The caller validates: see
+ * `app/session/contest/announcements.ts`. */
+export async function listAnnouncements(contestUid: string): Promise<unknown> {
+  return request<unknown>(
+    "GET",
+    `/participant/contests/${encodeURIComponent(contestUid)}/announcements`,
+  );
+}
+
+/** Record that this candidate read one. Never throws.
+ *
+ * A failed acknowledgement must not interrupt an exam, and the next
+ * heartbeat brings the announcement back anyway, so the retry is free.
+ * Returns whether the server accepted it. */
+export async function acknowledgeAnnouncement(
+  contestUid: string,
+  announcementUid: string,
+): Promise<boolean> {
+  try {
+    await request<void>(
+      "POST",
+      `/participant/contests/${encodeURIComponent(contestUid)}/announcements/` +
+        `${encodeURIComponent(announcementUid)}/ack`,
+      {},
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The statement, samples, limits and marking scheme for one problem.

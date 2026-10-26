@@ -41,6 +41,11 @@ function harness(random = 0.5) {
   const retryBeatRef = { current: () => {} };
   const referenceRevisionRef = { current: 0 };
   const referenceFetchInFlightRef = { current: false };
+  // Announcements ride the same heartbeat and the same staggered-refresh
+  // shape as the reference sheet, so the effect needs their bindings too.
+  const seenRevisionRef = { current: 0 };
+  const announcementFetchInFlightRef = { current: false };
+  const announcementRequests = [];
   const activeContestIdRef = { current: "contest-A" };
   const unauthorizedAtRef = { current: null };
   const clock = { now: Date.now() };
@@ -57,6 +62,7 @@ function harness(random = 0.5) {
     ended: null,
     bell: true,
     contest: { id: "contest-A", end_at: null, reference_sheet: null },
+    announcements: [],
   };
   const set = (key) => (update) => {
     state[key] = typeof update === "function" ? update(state[key]) : update;
@@ -67,6 +73,13 @@ function harness(random = 0.5) {
     retryBeatRef,
     referenceRevisionRef,
     referenceFetchInFlightRef,
+    seenRevisionRef,
+    announcementFetchInFlightRef,
+    shouldFetch: (seen, live) => Number.isSafeInteger(live) && live > 0 && live > seen,
+    listAnnouncements: () =>
+      new Promise((resolve, reject) => announcementRequests.push({ resolve, reject })),
+    readAnnouncements: (rows) => (Array.isArray(rows) ? rows : []),
+    setAnnouncements: set("announcements"),
     activeContestIdRef,
     heartbeat: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
     getPublishedReferenceSheet: () =>
@@ -116,6 +129,9 @@ function harness(random = 0.5) {
     timers,
     referenceRevisionRef,
     referenceFetchInFlightRef,
+    seenRevisionRef,
+    announcementFetchInFlightRef,
+    announcementRequests,
     activeContestIdRef,
     ProctorApiError,
     retryBeatRef,

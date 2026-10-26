@@ -806,6 +806,14 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
     unauthorizedAtRef: { current: 0 },
     onUnauthorized,
     AUTH_RECHECK_MS,
+    // Announcements share this heartbeat. Inert here: the heartbeat throws
+    // before any of it runs, and this test is about the 401 path.
+    seenRevisionRef: { current: 0 },
+    announcementFetchInFlightRef: { current: false },
+    shouldFetch: () => false,
+    listAnnouncements: async () => [],
+    readAnnouncements: () => [],
+    setAnnouncements() {},
   };
   const cleanup = new Function(...Object.keys(bindings), `${js}; return effect();`)(
     ...Object.values(bindings)
