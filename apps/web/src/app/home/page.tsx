@@ -82,6 +82,7 @@ import { ResolveModal } from "./components/ResolveModal";
 import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
 import { dateTimeFormatter } from "@/lib/date-time-format";
 import { exitToHome } from "@/lib/exit-to-home";
+import { preflightSessionTypeFor } from "./components/home-contest-presentation";
 import { deriveContestantReadiness } from "./components/readiness-context";
 
 // Keys that belong to the machine, not the candidate, so sign-out keeps them.
@@ -188,7 +189,7 @@ export default function HomePage() {
   const [displayName, setDisplayName] = useState("");
   const [identityHydrated, setIdentityHydrated] = useState(false);
   const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
-  const [preflightSessionType, setPreflightSessionType] = useState<"new" | "resume">("new");
+  const preflightSessionType = preflightSessionTypeFor(preflightContestId, activeSession);
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
   const resumeInFlightRef = useRef(false);
   const resumeConsumeInFlightRef = useRef(false);
@@ -408,9 +409,8 @@ export default function HomePage() {
   const refreshContests = useCallback(() => {
     void loadContests();
   }, [loadContests]);
-  const openPreflight = useCallback((contestId: string, type: "new" | "resume") => {
+  const openPreflight = useCallback((contestId: string) => {
     setPreflightContestId(contestId);
-    setPreflightSessionType(type);
   }, []);
 
   async function runIntegrityScan(cancelledRef?: { current: boolean }, contestId?: string | null) {
@@ -921,7 +921,6 @@ export default function HomePage() {
       }
       if (requestStatus === "PENDING") return;
       setPreflightContestId(verifiedSession.contest_id);
-      setPreflightSessionType("resume");
     } finally {
       resumeInFlightRef.current = false;
     }
@@ -1152,8 +1151,6 @@ export default function HomePage() {
           theme={theme}
           onClose={() => setPreflightContestId(null)}
           onProceed={
-            // The card's "resume" comes from the contest phase, not from a
-            // session; only the stored session for this contest may resume.
             // The server reopens an active or pending session without an
             // invigilator, so those go straight to onboarding (the modal's own
             // link); only a submitted or terminated one needs approval.
