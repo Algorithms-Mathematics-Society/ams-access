@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Lock, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -40,16 +40,58 @@ const UNSUPPORTED_SCAN: WifiScan = {
   networks: [],
 };
 
+type JoinStatus = {
+  phase: "idle" | "joining" | "connected" | "error";
+  busy: boolean;
+  error: string;
+  note: string;
+  ssid: string | null;
+};
+const EMPTY_JOIN_STATUS: JoinStatus = {
+  phase: "idle",
+  busy: false,
+  error: "",
+  note: "",
+  ssid: null,
+};
+let joinStatus = EMPTY_JOIN_STATUS;
+const joinListeners = new Set<() => void>();
+const clearUnusedJoin = () => {
+  void Promise.resolve().then(() => {
+    if (!joinListeners.size && !joinStatus.busy) joinStatus = EMPTY_JOIN_STATUS;
+  });
+};
+const subscribeJoin = (listener: () => void) => {
+  joinListeners.add(listener);
+  return () => {
+    joinListeners.delete(listener);
+    if (!joinListeners.size) clearUnusedJoin();
+  };
+};
+const getJoinStatus = () => joinStatus;
+const setJoinStatus = (next: JoinStatus) => {
+  joinStatus = next;
+  joinListeners.forEach((listener) => listener());
+  if (!joinListeners.size) clearUnusedJoin();
+};
+
 export function WifiControl({ online, inline = false }: { online: boolean; inline?: boolean }) {
   const [scan, setScan] = useState<WifiScan | null>(null);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<WifiNetwork | null>(null);
   const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const {
+    phase,
+    busy,
+    error,
+    note,
+    ssid: joiningSsid,
+  } = useSyncExternalStore(subscribeJoin, getJoinStatus, () => EMPTY_JOIN_STATUS);
   const [scanError, setScanError] = useState("");
-  const [note, setNote] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(true);
+  const scanRef = useRef<Promise<WifiScan | null> | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
   // Which way the menu opens, and how tall it may be.
   //
   // It was always dropped downward at a fixed height, which is wrong in the
@@ -61,26 +103,77 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     maxHeight: 320,
   });
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback((): Promise<WifiScan | null> => {
+    if (scanRef.current) return scanRef.current;
     if (!window.__TAURI__) {
-      setScan(UNSUPPORTED_SCAN);
-      return;
+      if (mountedRef.current) setScan(UNSUPPORTED_SCAN);
+      return Promise.resolve(null);
     }
-    try {
-      const next = await window.__TAURI__.core.invoke<WifiScan>("scan_wifi");
-      setScan(next ?? UNSUPPORTED_SCAN);
-      setScanError("");
-    } catch {
-      setScan(UNSUPPORTED_SCAN);
-      setScanError("Could not load Wi-Fi networks. Rescan to try again.");
-    }
+    const statusAtStart = joinStatus;
+    const request = window.__TAURI__.core
+      .invoke<WifiScan>("scan_wifi")
+      .then((next) => {
+        if (mountedRef.current) {
+          setScan(next ?? UNSUPPORTED_SCAN);
+          setScanError("");
+          if (
+            joinStatus === statusAtStart &&
+            next?.current === joinStatus.ssid &&
+            joinStatus.phase === "joining" &&
+            !joinStatus.busy
+          ) {
+            setJoinStatus({
+              phase: "connected",
+              busy: false,
+              error: "",
+              note: `Connected to ${next.current}.`,
+              ssid: next.current,
+            });
+          } else if (
+            joinStatus === statusAtStart &&
+            joinStatus.phase === "connected" &&
+            next?.current !== joinStatus.ssid
+          ) {
+            setJoinStatus(EMPTY_JOIN_STATUS);
+          }
+        }
+        return next ?? null;
+      })
+      .catch(() => {
+        if (mountedRef.current) {
+          setScan(UNSUPPORTED_SCAN);
+          setScanError("Could not load Wi-Fi networks. Rescan to try again.");
+        }
+        return null;
+      })
+      .finally(() => {
+        scanRef.current = null;
+      });
+    scanRef.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     // One scan on mount, to learn whether this machine can list networks at
     // all, so an unsupported environment never displays invented networks.
     void refresh();
+    return () => {
+      mountedRef.current = false;
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+    };
   }, [refresh]);
+
+  useEffect(() => {
+    if (inline && (busy || error || note)) setOpen(true);
+  }, [inline, busy, error, note]);
+
+  useEffect(() => {
+    if (phase === "connected" && joiningSsid && (!selected || selected.ssid === joiningSsid)) {
+      setSelected(null);
+      setPassword("");
+    }
+  }, [phase, joiningSsid, selected]);
 
   useEffect(() => {
     // Rescan only while the menu is open or the connection is down. Every
@@ -129,9 +222,14 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const nativeAvailable = Boolean(window.__TAURI__);
 
   const join = async (network: WifiNetwork, secret: string) => {
-    setBusy(true);
-    setError("");
-    setNote("");
+    if (joinStatus.busy) return;
+    setJoinStatus({
+      phase: "joining",
+      busy: true,
+      error: "",
+      note: `Joining ${network.ssid}…`,
+      ssid: network.ssid,
+    });
     try {
       if (!window.__TAURI__ || !scan.supported) {
         throw new Error("Changing network is not supported here.");
@@ -140,21 +238,36 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
         ssid: network.ssid,
         password: secret || null,
       });
-      setNote(`Joining ${network.ssid}…`);
-      setSelected(null);
-      setPassword("");
-      // The OS takes a moment to associate; the heartbeat notices on its own.
-      window.setTimeout(() => void refresh(), 2500);
+      setJoinStatus({
+        phase: "joining",
+        busy: false,
+        error: "",
+        note: `Joining ${network.ssid}…`,
+        ssid: network.ssid,
+      });
+      // Other platforms may accept a join before association finishes.
+      if (mountedRef.current) {
+        if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = window.setTimeout(() => {
+          refreshTimerRef.current = null;
+          void refresh();
+        }, 2500);
+      }
     } catch (caught) {
-      setError(
-        typeof caught === "string"
-          ? caught
-          : caught instanceof Error
-            ? caught.message
-            : "Could not join that network."
-      );
+      setJoinStatus({
+        phase: "error",
+        busy: false,
+        note: "",
+        ssid: network.ssid,
+        error:
+          typeof caught === "string"
+            ? caught
+            : caught instanceof Error
+              ? caught.message
+              : "Could not join that network.",
+      });
     } finally {
-      setBusy(false);
+      if (joinStatus.busy) setJoinStatus({ ...joinStatus, busy: false });
     }
   };
 
@@ -291,7 +404,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                   if (network.secured) {
                     setSelected(network);
                     setPassword("");
-                    setError("");
+                    setJoinStatus(EMPTY_JOIN_STATUS);
                   } else {
                     void join(network, "");
                   }
@@ -330,16 +443,21 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                 </HStack>
               </button>
 
-              {selected?.ssid === network.ssid && (
+              {(selected?.ssid === network.ssid ||
+                (inline &&
+                  phase !== "connected" &&
+                  joiningSsid === network.ssid &&
+                  network.secured)) && (
                 <VStack gap={2}>
                   <input
                     type="password"
                     autoFocus
+                    disabled={busy}
                     value={password}
                     placeholder="Network password"
                     onChange={(event) => setPassword(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" && !busy) void join(network, password);
+                      if (event.key === "Enter") void join(network, password);
                     }}
                     style={{
                       width: "100%",
@@ -354,9 +472,11 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                     <Button
                       label="Cancel"
                       variant="secondary"
+                      isDisabled={busy}
                       onClick={() => {
                         setSelected(null);
                         setPassword("");
+                        setJoinStatus(EMPTY_JOIN_STATUS);
                       }}
                     />
                     <Button
@@ -372,12 +492,12 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
           ))}
 
           {error && (
-            <Text color="inherit" style={{ color: "var(--color-text-error)" }}>
+            <Text role="alert" color="inherit" style={{ color: "var(--color-text-error)" }}>
               {error}
             </Text>
           )}
           {note && !error && (
-            <Text type="supporting" color="secondary">
+            <Text role="status" type="supporting" color="secondary">
               {note}
             </Text>
           )}
