@@ -283,3 +283,72 @@ test("polling scans cannot overlap and timers clean up on unmount", async () => 
   ui.unmount();
   assert.equal(app.timers.size, 0);
 });
+
+test("password reveal and retry form survive an empty refresh and failed join", async () => {
+  let current = base;
+  const join = deferred();
+  const app = mountPair(base, (command) =>
+    command === "scan_wifi" ? Promise.resolve(current) : join.promise
+  );
+  const ui = app.instance();
+  choose(ui);
+  ui.find((node) => node.type === "input").props.onChange({ target: { value: "secret123" } });
+  ui.render();
+  const reveal = () => ui.find((node) => node.props?.label === "Show password");
+  assert.ok(reveal());
+  reveal().props.onClick();
+  ui.render();
+  assert.equal(ui.find((node) => node.type === "input").props.type, "text");
+  ui.find((node) => node.props?.label === "Join").props.onClick();
+  await tick();
+  current = { ...base, networks: [] };
+  ui.find((node) => node.props?.["aria-label"] === "Rescan networks").props.onClick();
+  await tick();
+  ui.render();
+  assert.equal(ui.find((node) => node.type === "input").props.value, "secret123");
+  assert.ok(ui.find((node) => node.props?.label === "Hide password"));
+  ui.find((node) => node.props?.["aria-expanded"] !== undefined).props.onClick();
+  ui.render();
+  join.reject("Windows rejected the password.");
+  await tick();
+  ui.render();
+  ui.render();
+  assert.ok(ui.find((node) => node.props?.role === "alert"));
+  assert.equal(ui.find((node) => node.type === "input").props.value, "secret123");
+  ui.find((node) => node.props?.label === "Hide password").props.onClick();
+  ui.render();
+  assert.equal(ui.find((node) => node.type === "input").props.type, "password");
+  ui.unmount();
+});
+
+test("verified native success clears password even when scans cannot expose the SSID", async () => {
+  let hidden = { ...base, current: null, connected: true };
+  const app = mountPair(base, (command) =>
+    Promise.resolve(command === "scan_wifi" ? hidden : true)
+  );
+  const ui = app.instance();
+  choose(ui);
+  ui.find((node) => node.type === "input").props.onChange({ target: { value: "secret123" } });
+  ui.render();
+  ui.find((node) => node.props?.label === "Join").props.onClick();
+  await tick();
+  ui.render();
+  ui.render();
+  assert.match(JSON.stringify(ui.tree), /Connected to Campus/);
+  assert.equal(
+    ui.find((node) => node.type === "input"),
+    null
+  );
+  for (const callback of app.timers.values()) callback();
+  await tick();
+  assert.match(JSON.stringify(ui.render()), /Connected to Campus/);
+  hidden = { supported: false, connected: false, current: null, networks: [] };
+  ui.find((node) => node.props?.["aria-label"] === "Rescan networks").props.onClick();
+  await tick();
+  assert.match(JSON.stringify(ui.render()), /Connected to Campus/);
+  hidden = base;
+  ui.find((node) => node.props?.["aria-label"] === "Rescan networks").props.onClick();
+  await tick();
+  assert.doesNotMatch(JSON.stringify(ui.render()), /Connected to Campus/);
+  ui.unmount();
+});

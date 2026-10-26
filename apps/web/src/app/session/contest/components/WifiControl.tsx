@@ -45,14 +45,14 @@ type JoinStatus = {
   busy: boolean;
   error: string;
   note: string;
-  ssid: string | null;
+  network: WifiNetwork | null;
 };
 const EMPTY_JOIN_STATUS: JoinStatus = {
   phase: "idle",
   busy: false,
   error: "",
   note: "",
-  ssid: null,
+  network: null,
 };
 let joinStatus = EMPTY_JOIN_STATUS;
 const joinListeners = new Set<() => void>();
@@ -80,13 +80,15 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<WifiNetwork | null>(null);
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const {
     phase,
     busy,
     error,
     note,
-    ssid: joiningSsid,
+    network: joiningNetwork,
   } = useSyncExternalStore(subscribeJoin, getJoinStatus, () => EMPTY_JOIN_STATUS);
+  const joiningSsid = joiningNetwork?.ssid;
   const [scanError, setScanError] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
@@ -118,7 +120,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
           setScanError("");
           if (
             joinStatus === statusAtStart &&
-            next?.current === joinStatus.ssid &&
+            next?.current === joinStatus.network?.ssid &&
             joinStatus.phase === "joining" &&
             !joinStatus.busy
           ) {
@@ -127,12 +129,13 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
               busy: false,
               error: "",
               note: `Connected to ${next.current}.`,
-              ssid: next.current,
+              network: joinStatus.network,
             });
           } else if (
             joinStatus === statusAtStart &&
             joinStatus.phase === "connected" &&
-            next?.current !== joinStatus.ssid
+            next?.supported &&
+            (!next.connected || (next.current && next.current !== joinStatus.network?.ssid))
           ) {
             setJoinStatus(EMPTY_JOIN_STATUS);
           }
@@ -141,7 +144,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       })
       .catch(() => {
         if (mountedRef.current) {
-          setScan(UNSUPPORTED_SCAN);
+          setScan((previous) => previous ?? UNSUPPORTED_SCAN);
           setScanError("Could not load Wi-Fi networks. Rescan to try again.");
         }
         return null;
@@ -165,13 +168,14 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   }, [refresh]);
 
   useEffect(() => {
-    if (inline && (busy || error || note)) setOpen(true);
+    if ((inline && (busy || note)) || error) setOpen(true);
   }, [inline, busy, error, note]);
 
   useEffect(() => {
     if (phase === "connected" && joiningSsid && (!selected || selected.ssid === joiningSsid)) {
       setSelected(null);
       setPassword("");
+      setShowPassword(false);
     }
   }, [phase, joiningSsid, selected]);
 
@@ -228,22 +232,22 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       busy: true,
       error: "",
       note: `Joining ${network.ssid}…`,
-      ssid: network.ssid,
+      network,
     });
     try {
       if (!window.__TAURI__ || !scan.supported) {
         throw new Error("Changing network is not supported here.");
       }
-      await window.__TAURI__.core.invoke("connect_wifi", {
+      const confirmed = await window.__TAURI__.core.invoke<boolean>("connect_wifi", {
         ssid: network.ssid,
         password: secret || null,
       });
       setJoinStatus({
-        phase: "joining",
+        phase: confirmed === true ? "connected" : "joining",
         busy: false,
         error: "",
-        note: `Joining ${network.ssid}…`,
-        ssid: network.ssid,
+        note: confirmed === true ? `Connected to ${network.ssid}.` : `Joining ${network.ssid}…`,
+        network,
       });
       // Other platforms may accept a join before association finishes.
       if (mountedRef.current) {
@@ -258,7 +262,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
         phase: "error",
         busy: false,
         note: "",
-        ssid: network.ssid,
+        network,
         error:
           typeof caught === "string"
             ? caught
@@ -271,6 +275,9 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     }
   };
 
+  const passwordNetwork =
+    selected ??
+    (inline && phase !== "connected" && joiningNetwork?.secured ? joiningNetwork : null);
   const Icon = online ? Wifi : WifiOff;
   const label = scan.supported
     ? scan.current
@@ -371,6 +378,17 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
             )}
           </HStack>
 
+          {error && (
+            <Text role="alert" color="inherit" style={{ color: "var(--color-text-error)" }}>
+              {error}
+            </Text>
+          )}
+          {note && !error && (
+            <Text role="status" type="supporting" color="secondary">
+              {note}
+            </Text>
+          )}
+
           {scan.supported && scan.connected && !scan.current && (
             <Text type="supporting" color="secondary">
               Connected to Wi-Fi (name unavailable)
@@ -394,6 +412,57 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
             </Text>
           )}
 
+          {passwordNetwork && (
+            <VStack gap={2}>
+              <Text type="supporting">{passwordNetwork.ssid}</Text>
+              <input
+                type={showPassword ? "text" : "password"}
+                aria-label={`Password for ${passwordNetwork.ssid}`}
+                autoFocus
+                disabled={busy}
+                value={password}
+                placeholder="Network password"
+                onChange={(event) => setPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void join(passwordNetwork, password);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "var(--spacing-2)",
+                  borderRadius: "var(--radius-control)",
+                  border: "var(--border-width) solid var(--color-border)",
+                  background: "var(--color-background-page)",
+                  color: "var(--color-text-primary)",
+                }}
+              />
+              <Button
+                label={showPassword ? "Hide password" : "Show password"}
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowPassword((shown) => !shown)}
+              />
+              <HStack gap={2} justify="end">
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  isDisabled={busy}
+                  onClick={() => {
+                    setSelected(null);
+                    setPassword("");
+                    setShowPassword(false);
+                    setJoinStatus(EMPTY_JOIN_STATUS);
+                  }}
+                />
+                <Button
+                  label={busy ? "Joining…" : "Join"}
+                  variant="primary"
+                  isDisabled={busy}
+                  onClick={() => void join(passwordNetwork, password)}
+                />
+              </HStack>
+            </VStack>
+          )}
+
           {scan.networks.map((network) => (
             <VStack key={network.ssid} gap={2}>
               <button
@@ -404,6 +473,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                   if (network.secured) {
                     setSelected(network);
                     setPassword("");
+                    setShowPassword(false);
                     setJoinStatus(EMPTY_JOIN_STATUS);
                   } else {
                     void join(network, "");
@@ -442,65 +512,8 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
                   )}
                 </HStack>
               </button>
-
-              {(selected?.ssid === network.ssid ||
-                (inline &&
-                  phase !== "connected" &&
-                  joiningSsid === network.ssid &&
-                  network.secured)) && (
-                <VStack gap={2}>
-                  <input
-                    type="password"
-                    autoFocus
-                    disabled={busy}
-                    value={password}
-                    placeholder="Network password"
-                    onChange={(event) => setPassword(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") void join(network, password);
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "var(--spacing-2)",
-                      borderRadius: "var(--radius-control)",
-                      border: "var(--border-width) solid var(--color-border)",
-                      background: "var(--color-background-page)",
-                      color: "var(--color-text-primary)",
-                    }}
-                  />
-                  <HStack gap={2} justify="end">
-                    <Button
-                      label="Cancel"
-                      variant="secondary"
-                      isDisabled={busy}
-                      onClick={() => {
-                        setSelected(null);
-                        setPassword("");
-                        setJoinStatus(EMPTY_JOIN_STATUS);
-                      }}
-                    />
-                    <Button
-                      label={busy ? "Joining…" : "Join"}
-                      variant="primary"
-                      isDisabled={busy}
-                      onClick={() => void join(network, password)}
-                    />
-                  </HStack>
-                </VStack>
-              )}
             </VStack>
           ))}
-
-          {error && (
-            <Text role="alert" color="inherit" style={{ color: "var(--color-text-error)" }}>
-              {error}
-            </Text>
-          )}
-          {note && !error && (
-            <Text role="status" type="supporting" color="secondary">
-              {note}
-            </Text>
-          )}
         </VStack>
       )}
     </VStack>

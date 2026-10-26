@@ -2392,9 +2392,24 @@ pub fn wifi_scan() -> crate::WifiScan {
     let text = String::from_utf8_lossy(&output.stdout);
     let rows = crate::wifi_parse::parse_netsh(&text);
     let current = current_ssid();
+    wifi_scan_result(rows, current, wifi::is_connected)
+}
+
+fn wifi_scan_result(
+    rows: Vec<crate::WifiNetwork>,
+    current: Option<String>,
+    association: impl FnOnce() -> Option<bool>,
+) -> crate::WifiScan {
+    let connected = if current.is_some() {
+        true
+    } else if let Some(connected) = association() {
+        connected
+    } else {
+        return crate::WifiScan::default();
+    };
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
-        connected: current.is_some(),
+        connected,
         current,
         supported: true,
     }

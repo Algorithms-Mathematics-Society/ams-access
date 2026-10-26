@@ -1102,7 +1102,7 @@ async fn scan_wifi() -> platform_rs::WifiScan {
 /// Joining takes longer than scanning: the OS associates, gets a lease and
 /// may prompt. Off the main thread for the same reason.
 #[tauri::command]
-async fn connect_wifi(ssid: String, password: Option<String>) -> Result<(), String> {
+async fn connect_wifi(ssid: String, password: Option<String>) -> Result<bool, String> {
     if ssid.trim().is_empty() {
         return Err("Choose a network first.".into());
     }
@@ -1111,7 +1111,9 @@ async fn connect_wifi(ssid: String, password: Option<String>) -> Result<(), Stri
         platform_dispatch!(
             wifi_connect(&ssid, password.as_deref()),
             else Err("Changing network is not supported on this system.".to_string())
-        )
+        )?;
+        // Windows waits for association; other platforms may only accept the request.
+        Ok(cfg!(target_os = "windows"))
     })
     .await
     .unwrap_or_else(|error| Err(format!("Network change did not complete: {error}")))
