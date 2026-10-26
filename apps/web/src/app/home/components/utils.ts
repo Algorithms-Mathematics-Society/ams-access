@@ -202,7 +202,9 @@ export function readinessCheckCopy(kind: ReadinessCheck["kind"]) {
         // does not is the common Linux case — the app runs unelevated so the
         // desktop session works at all — and a candidate told only "network
         // problem" cannot tell that from being offline.
-        fail: "Your connection works, but egress cannot be restricted",
+        // Usually just "not installed yet": setup installs the helper after an
+        // administrator prompt. It never blocks entry (network-gate.ts), so say so.
+        fail: "Not set up yet; setup turns it on (admin approval). Does not block entry",
       };
     case "microphone":
       return { label: "Microphone", success: "Microphone ready", fail: "Microphone not available" };

@@ -107,7 +107,9 @@ export async function ensureNetworkHelper({
     const ready = await checkRunning();
     update({
       phase: ready ? "pass" : "warn",
-      message: ready ? READY : "Network lockdown helper unavailable",
+      message: ready
+        ? READY
+        : "The network lockdown helper was installed but did not start. Retry, or continue: you can still enter, and the invigilator is told.",
     });
     return ready;
   } catch (error) {
