@@ -41,6 +41,7 @@ export function Stage7_CameraInit({
   );
   const [selectionPending, setSelectionPending] = useState(false);
   const { state: cameraDevices, refresh: refreshCameras } = useCameraDevices();
+  const locationRequested = useRef(false);
   const generationRef = useRef(0);
   const completedRef = useRef(false);
   const passTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -127,6 +128,13 @@ export function Stage7_CameraInit({
   }, [onCameraReady, refreshCameras, retryKey]);
 
   useEffect(() => {
+    if (!isMac || phase !== "pass" || locationRequested.current) return;
+    locationRequested.current = true;
+    // Optional: permission results never affect camera readiness or contest entry.
+    void invoke("request_wifi_location").catch(() => {});
+  }, [isMac, phase]);
+
+  useEffect(() => {
     cancelPass();
     if (phase !== "pass" || readinessAction(policy, "camera", "pass").decision !== "pass") return;
     const generation = generationRef.current;
@@ -203,6 +211,13 @@ export function Stage7_CameraInit({
       </VStack>
 
       <SetupPermissionInfo kind="camera" />
+      {isMac && (
+        <Text color="secondary">
+          macOS also asks for optional Location access to show Wi-Fi networks near you, including
+          after a disconnection. Your location is never recorded or sent. Denying this does not
+          block contest entry.
+        </Text>
+      )}
       <Selector
         label="Camera"
         description="Choose the camera to use for setup and during the contest."

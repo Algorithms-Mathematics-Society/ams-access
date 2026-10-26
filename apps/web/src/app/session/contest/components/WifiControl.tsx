@@ -34,6 +34,8 @@ type WifiScan = {
   supported: boolean;
 };
 
+type LocationStatus = "not_determined" | "denied" | "restricted" | "authorized";
+
 const REFRESH_MS = 20_000;
 
 const UNSUPPORTED_SCAN: WifiScan = {
@@ -53,6 +55,10 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const [error, setError] = useState("");
   const [scanError, setScanError] = useState("");
   const [note, setNote] = useState("");
+  const [locationStatus, setLocationStatus] = useState<LocationStatus | null>(null);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const locationPending = useRef(false);
+  const rescanRequested = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const scanPending = useRef(false);
   // Which way the menu opens, and how tall it may be.
@@ -77,11 +83,29 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       const next = await window.__TAURI__.core.invoke<WifiScan>("scan_wifi");
       setScan(next ?? UNSUPPORTED_SCAN);
       setScanError("");
+      if (next?.saved_only) {
+        try {
+          const platform = await window.__TAURI__.core.invoke<{ os: string }>("get_platform");
+          setLocationStatus(
+            platform.os.toLowerCase().startsWith("mac")
+              ? await window.__TAURI__.core.invoke<LocationStatus>("wifi_location_status")
+              : null
+          );
+        } catch {
+          setLocationStatus(null);
+        }
+      } else {
+        setLocationStatus(null);
+      }
     } catch {
       setScan(UNSUPPORTED_SCAN);
       setScanError("Could not load Wi-Fi networks. Rescan to try again.");
     } finally {
       scanPending.current = false;
+      if (rescanRequested.current) {
+        rescanRequested.current = false;
+        void refresh();
+      }
     }
   }, []);
 
@@ -168,6 +192,25 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       );
     } finally {
       setBusy(false);
+    }
+  };
+
+  const requestLocation = async () => {
+    if (locationPending.current || !window.__TAURI__) return;
+    locationPending.current = true;
+    setLocationBusy(true);
+    setError("");
+    try {
+      setLocationStatus(
+        await window.__TAURI__.core.invoke<LocationStatus>("request_wifi_location")
+      );
+      if (scanPending.current) rescanRequested.current = true;
+      else await refresh();
+    } catch {
+      setError("Could not request Location access. Try again or use System Settings.");
+    } finally {
+      locationPending.current = false;
+      setLocationBusy(false);
     }
   };
 
@@ -290,10 +333,32 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
           )}
           {scan.supported && scan.saved_only && (
             <Text type="supporting" color="secondary">
-              Nearby networks are unavailable. Saved networks may be out of range. Check macOS Wi-Fi
-              and Location access, then rescan.
+              Nearby networks are unavailable. Saved networks may be out of range. Rescan to try
+              again.
             </Text>
           )}
+          {scan.supported && scan.saved_only && locationStatus === "not_determined" && (
+            <VStack gap={2}>
+              <Text type="supporting" color="secondary">
+                Location access lets macOS show nearby Wi-Fi names. It is optional; your location is
+                never recorded or sent.
+              </Text>
+              <Button
+                label="Show networks near you"
+                variant="secondary"
+                isLoading={locationBusy}
+                onClick={() => void requestLocation()}
+              />
+            </VStack>
+          )}
+          {scan.supported &&
+            scan.saved_only &&
+            (locationStatus === "denied" || locationStatus === "restricted") && (
+              <Text type="supporting" color="secondary">
+                To show nearby Wi-Fi names, allow AMS Access in System Settings &gt; Privacy &amp;
+                Security &gt; Location Services, then rescan.
+              </Text>
+            )}
           {scan.supported && scan.networks.length === 0 && (
             <Text type="supporting" color="secondary">
               {scan.saved_only ? "No saved networks found." : "No nearby networks found."} Rescan to

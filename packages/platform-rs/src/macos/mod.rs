@@ -36,6 +36,9 @@ pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
 pub use wifi::scan_helper_mode as wifi_scan_helper_mode;
+pub use wifi::{
+    finish_location_request, location_status as wifi_location_status, request_location,
+};
 
 pub fn battery_status() -> Option<crate::BatteryStatus> {
     let output = Command::new("pmset").args(["-g", "batt"]).output().ok()?;

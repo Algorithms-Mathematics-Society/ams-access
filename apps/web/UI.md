@@ -302,7 +302,14 @@ The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
 Wi-Fi names and the connected network come only from the native OS integration.
 Browser builds show guidance to use system Wi-Fi settings, without sample networks,
 password prompts, simulated joins or background scan polling. Native scan failures
-show a retry message rather than a fallback network list.
+show a retry message rather than invented networks. On macOS, CoreWLAN scans nearby
+networks with a saved-only fallback that warns profiles may be out of range.
+Stage 7 requests optional Location access after the camera preview is ready; denial
+never changes readiness or entry policy. The saved-only picker offers **Show networks
+near you** for undetermined access, or points to Location Services in System Settings
+when denied or restricted. Granting access rescans. No location updates are started,
+and location coordinates are never recorded or sent. If a child scan still cannot
+see names after authorization, a single in-app worker retries within the scan deadline.
 
 Device setup lets AppShell own page scrolling to avoid nested viewport-height
 scroll regions. The MediaPipe loader routes its exact CPU delegate startup

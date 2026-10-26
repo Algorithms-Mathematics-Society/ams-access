@@ -1098,6 +1098,46 @@ async fn scan_wifi() -> platform_rs::WifiScan {
     .unwrap_or_default()
 }
 
+/// Location access is optional and is used only to reveal nearby Wi-Fi names.
+#[tauri::command]
+fn wifi_location_status() -> &'static str {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::wifi_location_status();
+    #[cfg(not(target_os = "macos"))]
+    "authorized"
+}
+
+#[tauri::command]
+async fn request_wifi_location(app: tauri::AppHandle) -> Result<&'static str, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Serialize callers so one timeout cannot release another request's manager.
+        static REQUEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _request = REQUEST.lock().await;
+        let (send, receive) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            platform_rs::macos::request_location();
+            let _ = send.send(());
+        })
+        .map_err(|error| error.to_string())?;
+        receive.await.map_err(|error| error.to_string())?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while wifi_location_status() == "not_determined" && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let (send, receive) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            platform_rs::macos::finish_location_request();
+            let _ = send.send(());
+        })
+        .map_err(|error| error.to_string())?;
+        receive.await.map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(wifi_location_status())
+}
+
 /// Join a wireless network. `password` is None or empty for an open one.
 /// Joining takes longer than scanning: the OS associates, gets a lease and
 /// may prompt. Off the main thread for the same reason.
@@ -3975,6 +4015,8 @@ pub fn run() {
             log_proctoring_event,
             count_monitors,
             scan_wifi,
+            wifi_location_status,
+            request_wifi_location,
             connect_wifi,
             check_network_stability,
             get_full_telemetry,

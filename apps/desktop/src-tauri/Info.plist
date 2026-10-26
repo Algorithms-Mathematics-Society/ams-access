@@ -7,5 +7,9 @@
   <string>AMS Access requires camera access for identity verification and proctoring during exam sessions.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>AMS Access requires microphone access for proctoring during exam sessions.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>macOS shows Wi-Fi network names only to apps with Location access. AMS Access uses it only to list Wi-Fi networks near you; your location is never recorded or sent.</string>
+  <key>NSLocationUsageDescription</key>
+  <string>macOS shows Wi-Fi network names only to apps with Location access. AMS Access uses it only to list Wi-Fi networks near you; your location is never recorded or sent.</string>
 </dict>
 </plist>

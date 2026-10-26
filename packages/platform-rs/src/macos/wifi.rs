@@ -6,6 +6,48 @@ use objc2::{class, msg_send};
 #[link(name = "CoreWLAN", kind = "framework")]
 extern "C" {}
 
+#[link(name = "CoreLocation", kind = "framework")]
+extern "C" {}
+
+thread_local! {
+    static LOCATION_MANAGER: std::cell::RefCell<Option<Retained<AnyObject>>> = const { std::cell::RefCell::new(None) };
+}
+
+fn authorization_status(status: i32) -> &'static str {
+    match status {
+        0 => "not_determined",
+        1 => "restricted",
+        3 | 4 => "authorized", // Always / WhenInUse
+        _ => "denied",
+    }
+}
+
+pub fn location_status() -> &'static str {
+    // SAFETY: CLLocationManager's class authorizationStatus returns CLAuthorizationStatus (int).
+    unsafe { authorization_status(msg_send![class!(CLLocationManager), authorizationStatus]) }
+}
+
+/// Must run on the app main thread; never requests location updates.
+pub fn request_location() {
+    assert!(objc2::MainThreadMarker::new().is_some());
+    if location_status() != "not_determined" {
+        return;
+    }
+    LOCATION_MANAGER.with(|slot| {
+        // SAFETY: the manager is created, retained and released on the main run loop.
+        unsafe {
+            let manager: Retained<AnyObject> = msg_send![class!(CLLocationManager), new];
+            let _: () = msg_send![&*manager, requestWhenInUseAuthorization];
+            *slot.borrow_mut() = Some(manager);
+        }
+    });
+}
+
+pub fn finish_location_request() {
+    assert!(objc2::MainThreadMarker::new().is_some());
+    LOCATION_MANAGER.with(|slot| slot.borrow_mut().take());
+}
+
 const SCAN_FLAG: &str = "--wifi-scan";
 const SCAN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
@@ -20,14 +62,53 @@ pub(super) fn scan() -> Option<Scan> {
     use crate::process_runner::CommandDeadlineExt;
     // CoreWLAN cannot cancel a synchronous scan. Process isolation lets the
     // deadline runner kill and reap a hung scan without leaking worker threads.
-    let output = std::process::Command::new(std::env::current_exe().ok()?)
+    let started = std::time::Instant::now();
+    let nearby = std::process::Command::new(std::env::current_exe().ok()?)
         .arg(SCAN_FLAG)
         .bounded_output_with_timeout(SCAN_TIMEOUT)
-        .ok()?;
-    if !output.status.success() {
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| serde_json::from_slice::<Scan>(&output.stdout).ok());
+    if nearby
+        .as_ref()
+        .is_some_and(|scan| !scan.networks.is_empty())
+        || location_status() != "authorized"
+    {
+        return nearby;
+    }
+    // A child can lack the foreground app's TCC attribution. Retry with the
+    // app's identity, within the same deadline and with at most one live worker.
+    let remaining = SCAN_TIMEOUT.checked_sub(started.elapsed())?;
+    scan_in_process(remaining).or(nearby)
+}
+
+fn scan_in_process(timeout: std::time::Duration) -> Option<Scan> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::AcqRel) {
         return None;
     }
-    serde_json::from_slice(&output.stdout).ok()
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            RUNNING.store(false, Ordering::Release);
+        }
+    }
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    if std::thread::Builder::new()
+        .name("wifi-scan-app".into())
+        .spawn(move || {
+            let _reset = Reset;
+            let _ = send.send(scan_native());
+        })
+        .is_err()
+    {
+        RUNNING.store(false, Ordering::Release);
+        return None;
+    }
+    // CoreWLAN cannot cancel a scan. A hung worker prevents further workers,
+    // but never blocks the UI or accumulates threads on subsequent retries.
+    receive.recv_timeout(timeout).ok().flatten()
 }
 
 /// Recognized before Tauri/AppKit startup, like the existing watchdog mode.
@@ -177,6 +258,20 @@ pub(super) fn connect(interface: &str, ssid: &str, password: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn location_authorization_mapping() {
+        for (raw, expected) in [
+            (0, "not_determined"),
+            (1, "restricted"),
+            (2, "denied"),
+            (3, "authorized"),
+            (4, "authorized"),
+            (99, "denied"),
+        ] {
+            assert_eq!(authorization_status(raw), expected);
+        }
+    }
 
     #[test]
     fn native_names_drop_nil_blank_and_redacted_but_preserve_unicode() {

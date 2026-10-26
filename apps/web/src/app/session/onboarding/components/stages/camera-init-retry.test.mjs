@@ -104,3 +104,46 @@ test("camera retry replaces a live but muted handle after the user repairs acces
   assert.equal(tracks.audio[0].stopped, false);
   assert.equal(session.current()?.getVideoTracks()[0], tracks.video[1]);
 });
+
+test("setup requests Location only after macOS camera readiness and never gates entry", async () => {
+  let effect;
+  function find(node) {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes('invoke("request_wifi_location")')
+    ) {
+      effect = node.arguments[0].getText(ast);
+    }
+    ts.forEachChild(node, find);
+  }
+  find(ast);
+  assert.ok(effect);
+  assert.match(source.replace(/\s+/g, " "), /Denying this does not block contest entry/);
+  const code = ts.transpileModule(`const effect = ${effect};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  for (const [isMac, phase, alreadyRequested, expected] of [
+    [false, "pass", false, 0],
+    [true, "checking", false, 0],
+    [true, "fail", false, 0],
+    [true, "pass", true, 0],
+    [true, "pass", false, 1],
+  ]) {
+    const calls = [];
+    const run = new Function(
+      "isMac",
+      "phase",
+      "locationRequested",
+      "invoke",
+      `${code}; return effect;`
+    )(isMac, phase, { current: alreadyRequested }, (command) => {
+      calls.push(command);
+      return Promise.reject(new Error("optional permission unavailable"));
+    });
+    assert.equal(run(), undefined, "entry does not await optional access");
+    await new Promise(setImmediate);
+    assert.equal(calls.length, expected);
+    if (expected) assert.equal(calls[0], "request_wifi_location");
+  }
+});
