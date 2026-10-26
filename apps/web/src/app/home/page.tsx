@@ -137,6 +137,9 @@ export default function HomePage() {
   useEffect(() => {
     if (!hasNativeBridge()) return;
     let inFlight = false;
+    const macos = invoke<{ os?: string }>("get_platform")
+      .then((platform) => platform?.os === "macos")
+      .catch(() => false);
     const check = () => {
       if (inFlight) return;
       inFlight = true;
@@ -150,9 +153,13 @@ export default function HomePage() {
             });
             return;
           }
-          // Home is never full screen.
+          // Home is never kiosk full screen. On macOS that is simple full screen
+          // only; native full screen there is the candidate's own green button.
           const win = window.__TAURI__?.window.getCurrentWindow();
-          await Promise.all([win?.setSimpleFullscreen(false), win?.setFullscreen(false)]);
+          await Promise.all([
+            win?.setSimpleFullscreen(false),
+            (await macos) ? undefined : win?.setFullscreen(false),
+          ]);
         })
         .catch(() => {})
         .finally(() => {
