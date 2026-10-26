@@ -15,8 +15,8 @@ export function Stage10_AudioVerification({
   onPass(): void;
   onWarn?(detail: string): void;
 }) {
-  // macOS only: a missing microphone blocks entry. Other platforms keep the
-  // advisory "continue with warning" behavior.
+  // Advisory everywhere. macOS gets its own wording because a newly granted
+  // permission only takes effect after the app is reopened.
   const [isMac, setIsMac] = useState(false);
   const [missing, setMissing] = useState(false);
   const [level, setLevel] = useState(0);
@@ -140,8 +140,8 @@ export function Stage10_AudioVerification({
           <Text color="secondary">
             {isMac
               ? missing
-                ? "No microphone was found. Connect a microphone, then try again. A microphone is required to enter the contest."
-                : "Microphone access is unavailable. Allow microphone access in System Settings, then try again. A microphone is required to enter the contest."
+                ? "No microphone was found. Connect a microphone and try again, or continue without it."
+                : "Microphone access is unavailable. Allow microphone access in System Settings and try again, or continue without it."
               : warning}
           </Text>
           {isMac && !missing && (
@@ -169,13 +169,11 @@ export function Stage10_AudioVerification({
                 }
               />
             )}
-            {!isMac && (
-              <Button
-                label="Continue with warning"
-                variant="primary"
-                onClick={() => (onWarn ? onWarn(warning) : onPass())}
-              />
-            )}
+            <Button
+              label="Continue with warning"
+              variant="primary"
+              onClick={() => (onWarn ? onWarn(warning) : onPass())}
+            />
           </HStack>
         </VStack>
       )}
