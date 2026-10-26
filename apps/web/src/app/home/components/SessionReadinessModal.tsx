@@ -512,6 +512,11 @@ export function SessionReadinessModal({
                   Settings, enable AMS Access under Privacy &amp; Security → {permissionPane}, then
                   re-run the checks.
                 </Text>
+                <Text color="secondary">
+                  Still failing after you turn it on? Quit and reopen AMS Access, since macOS
+                  applies some grants only to a new launch. If it is already on, select it, click –,
+                  add it again with +, then reopen.
+                </Text>
                 <HStack gap={2} wrap="wrap">
                   <Button
                     theme={theme}
@@ -529,6 +534,14 @@ export function SessionReadinessModal({
                     disabled={isRescanning}
                   >
                     Run checks again
+                  </Button>
+                  {/* Home holds no lockdown, so a plain relaunch is safe here. */}
+                  <Button
+                    theme={theme}
+                    variant="secondary"
+                    onClick={() => void invoke("relaunch_app").catch(() => {})}
+                  >
+                    Quit &amp; reopen AMS Access
                   </Button>
                 </HStack>
               </VStack>

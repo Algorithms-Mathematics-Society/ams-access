@@ -1118,15 +1118,6 @@ export default function OnboardingPage() {
   }, [canRunChecks, transitioning, policyBlock, finalizeSecureStart]);
   const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
   const showWaitLock = currentStage === FINAL_STAGE && readyForStart;
-  // The keyboard intercept's method names the missing macOS permission.
-  const macPermissionBlock =
-    platform !== "macos" || !policyBlock
-      ? null
-      : policyBlock.includes("accessibility_denied")
-        ? ({ section: "accessibility", pane: "Accessibility" } as const)
-        : policyBlock.includes("input_monitoring_denied")
-          ? ({ section: "input_monitoring", pane: "Input Monitoring" } as const)
-          : null;
 
   // Frame budget: 1120px page, 248px progress rail, 40px gutter and a
   // flexible check panel. Below 960px, progress becomes a compact top region.
@@ -1200,12 +1191,8 @@ export default function OnboardingPage() {
             />
             {policyBlock && (
               <Banner
-                status={macPermissionBlock ? "warning" : "error"}
-                title={
-                  macPermissionBlock
-                    ? `Grant ${macPermissionBlock.pane} permission`
-                    : "Setup needs your attention"
-                }
+                status="error"
+                title="Setup needs your attention"
                 role="alert"
                 endContent={
                   entryRetryAvailable ? (
@@ -1220,47 +1207,9 @@ export default function OnboardingPage() {
                   ) : undefined
                 }
                 description={
-                  macPermissionBlock ? (
-                    <VStack gap={4}>
-                      <Text>
-                        AMS Access needs {macPermissionBlock.pane} permission to block exam keyboard
-                        shortcuts. Open System Settings, find AMS Access under Privacy &amp;
-                        Security → {macPermissionBlock.pane}, and toggle it on. Then quit and reopen
-                        AMS Access so macOS applies it.
-                      </Text>
-                      <Text>
-                        If AMS Access is already switched on, select it, click –, then add it again
-                        with +, and reopen.
-                      </Text>
-                      <HStack gap={3} wrap="wrap">
-                        <Button
-                          label={`Open ${macPermissionBlock.pane} settings`}
-                          onClick={() =>
-                            void invoke("open_privacy_settings", {
-                              section: macPermissionBlock.section,
-                            })
-                          }
-                        />
-                        <Button
-                          label="Quit & reopen AMS Access"
-                          variant="secondary"
-                          onClick={() => void quitAndReopen()}
-                        />
-                        <Button
-                          label="Run checks again"
-                          variant="secondary"
-                          onClick={() => {
-                            setPolicyBlock(null);
-                            setCurrentStage(4);
-                          }}
-                        />
-                      </HStack>
-                    </VStack>
-                  ) : (
-                    <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
-                      {policyBlock}
-                    </Text>
-                  )
+                  <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                    {policyBlock}
+                  </Text>
                 }
               />
             )}
@@ -1592,7 +1541,13 @@ export default function OnboardingPage() {
                             />
                           )}
                           {currentStage === 3 && (
-                            <Stage3_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
+                            <Stage3_KeyboardLockdown
+                              onPass={advancePass}
+                              onWarn={advanceWarn}
+                              onQuitAndReopen={
+                                platform === "macos" ? () => void quitAndReopen() : undefined
+                              }
+                            />
                           )}
                           {currentStage === 4 && (
                             <Stage4_EnvironmentValidation onPass={advancePass} />
