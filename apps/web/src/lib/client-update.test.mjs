@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { minorUpgradeAvailable, parseMajorMinor } from "./client-update.ts";
+import { belowMinimum, minorUpgradeAvailable, parseMajorMinor } from "./client-update.ts";
 
 test("a newer minor release prompts", () => {
   assert.equal(minorUpgradeAvailable("3.1.2", "3.2.0"), true);
@@ -33,4 +33,20 @@ test("unparseable versions never prompt", () => {
 test("a pre-release is read by its numbers", () => {
   assert.deepEqual(parseMajorMinor("3.2.0-rc.1"), { major: 3, minor: 2 });
   assert.equal(minorUpgradeAvailable("3.1.2", "3.2.0-rc.1"), true);
+});
+
+test("only a build below the server's minimum is below it", () => {
+  assert.equal(belowMinimum("3.1.2", "3.2.0"), true);
+  assert.equal(belowMinimum("3.2.0", "3.2.1"), true);
+  assert.equal(belowMinimum("3.2.0", "3.2.0"), false);
+  assert.equal(belowMinimum("3.10.0", "3.9.0"), false);
+  assert.equal(belowMinimum("4.0.0", "3.9.9"), false);
+  // As on the server: a pre-release of the minimum predates it.
+  assert.equal(belowMinimum("3.2.0-rc.1", "3.2.0"), true);
+  assert.equal(belowMinimum("3.2.0", "3.2.0-rc.1"), false);
+});
+
+test("an unparseable or unset minimum never blocks", () => {
+  assert.equal(belowMinimum("3.1.2", ""), false);
+  assert.equal(belowMinimum("dev", "3.2.0"), false);
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isGatingRelaxed, warnGatingRelaxed, RELAXED_MODE_BADGE } from "@/lib/gating";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
 import { CheckLine, Spinner, StageHeader } from "../ui";
@@ -25,6 +26,9 @@ export function Stage11_NetworkValidation({
     "skipped" | "checking" | "installing" | "pass" | "warn"
   >("skipped");
   const [helperMessage, setHelperMessage] = useState("Network lockdown helper ready");
+  // Proxy or VPN routes the native check reports. Lockdown allows only the
+  // exam server's own addresses, so traffic sent through either is cut off.
+  const [pathWarnings, setPathWarnings] = useState<string[]>([]);
   const [retryKey, setRetryKey] = useState(0);
   const completedRef = useRef(false);
 
@@ -44,6 +48,12 @@ export function Stage11_NetworkValidation({
       setQuality(null);
       setHelperPhase("skipped");
       setHelperMessage("Network lockdown helper ready");
+      setPathWarnings([]);
+      // Asked before lockdown is ever enabled, and in relaxed builds too.
+      const warningsCheck = withNullableTimeout(
+        invoke<string[]>("get_network_path_warnings"),
+        3000
+      );
       // TEST-ONLY relaxation (build-time flag). Default builds run the real
       // probe + helper install below. Never a hardcoded bypass in a ship build.
       if (isGatingRelaxed()) {
@@ -52,12 +62,15 @@ export function Stage11_NetworkValidation({
         setQuality("excellent");
         setHelperPhase("skipped");
         setHelperMessage(RELAXED_MODE_BADGE);
+        const warnings = (await warningsCheck) ?? [];
+        if (controller.signal.aborted) return;
+        setPathWarnings(warnings);
         setPhase("pass");
-        scheduleAdvance(onPass);
+        if (warnings.length === 0) scheduleAdvance(onPass);
         return;
       }
 
-      const [result, helperReady] = await Promise.all([
+      const [result, helperReady, warnings] = await Promise.all([
         withNullableTimeout(
           invoke<{
             reachable: boolean;
@@ -76,9 +89,11 @@ export function Stage11_NetworkValidation({
               },
             })
           : Promise.resolve(true),
+        warningsCheck,
       ]);
 
       if (controller.signal.aborted) return;
+      setPathWarnings(warnings ?? []);
       let nextPhase: "pass" | "warn";
       if (result?.reachable) {
         setLatency(result.latency_ms);
@@ -91,7 +106,8 @@ export function Stage11_NetworkValidation({
         nextPhase = "warn";
         setPhase("warn");
       }
-      if (nextPhase === "pass") scheduleAdvance(onPass);
+      // Warnings hold the stage until the candidate has read them and continues.
+      if (nextPhase === "pass" && !warnings?.length) scheduleAdvance(onPass);
     }
     void go();
     return () => {
@@ -118,6 +134,13 @@ export function Stage11_NetworkValidation({
             : "Network readiness could not be verified.";
     onWarn?.(`Network readiness warning: ${detail}`);
     if (!onWarn) onPass();
+  };
+
+  const continueDespitePath = () => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    if (onWarn) onWarn(`Network route warning: ${pathWarnings.join(" ")}`);
+    else onPass();
   };
 
   return (
@@ -165,6 +188,29 @@ export function Stage11_NetworkValidation({
           )}
           {phase === "pass" && (
             <CheckLine label="Server connection established" status="pass" delay={600} />
+          )}
+          {pathWarnings.length > 0 && (
+            <Banner
+              status="warning"
+              title="This network may be cut off during the contest"
+              description={
+                <VStack gap={2}>
+                  {pathWarnings.map((warning) => (
+                    <Text key={warning}>{warning}</Text>
+                  ))}
+                  <Text>
+                    During the contest this Mac may only reach the exam server directly. Turn off
+                    the proxy or VPN now if you can, then retry. You can still continue.
+                  </Text>
+                </VStack>
+              }
+            />
+          )}
+          {phase === "pass" && pathWarnings.length > 0 && (
+            <HStack gap={3} wrap="wrap">
+              <Button variant="secondary" label="Retry connection check" onClick={retry} />
+              <Button variant="primary" label="Continue" onClick={continueDespitePath} />
+            </HStack>
           )}
           {phase === "warn" && (
             <HStack gap={3} wrap="wrap">

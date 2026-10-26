@@ -18,10 +18,13 @@ import {
   type ContestSummary,
   ProctorApiError,
   consumeResume,
+  getContest,
   getSession,
+  hasToken,
   latestResumeRequest,
   listContests,
   logout,
+  noteListServerTime,
   requestResume,
   restoreToken,
 } from "@/lib/proctor-api";
@@ -62,6 +65,7 @@ import { DashboardShell, DashboardColumns } from "./components/DashboardShell";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { Banner } from "@astryxdesign/core/Banner";
 import { AccessDialog } from "@/components/AccessDialog";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { isBufferKey } from "@/app/session/contest/answer-buffer";
@@ -77,6 +81,7 @@ import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
 import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
 import { dateTimeFormatter } from "@/lib/date-time-format";
+import { exitToHome } from "@/lib/exit-to-home";
 import { deriveContestantReadiness } from "./components/readiness-context";
 
 // Keys that belong to the machine, not the candidate, so sign-out keeps them.
@@ -121,6 +126,41 @@ export default function HomePage() {
     if (new URLSearchParams(window.location.search).get("restore") === "pending") {
       setActiveNav("settings");
     }
+  }, []);
+  // Backstop for any screen that reaches Home without releasing the lockdown.
+  // No contest runs while Home is showing, so an engaged lockdown here is
+  // left over: release it as "exit to home" does, and open the Settings
+  // restore card if anything could not be put back.
+  // Rechecked while Home shows: a secure start cancelled by Exit setup can
+  // finish late and engage full screen after this page mounted.
+  useEffect(() => {
+    if (!hasNativeBridge()) return;
+    let inFlight = false;
+    const check = () => {
+      if (inFlight) return;
+      inFlight = true;
+      invoke<boolean>("is_lockdown_engaged")
+        .then(async (engaged) => {
+          if (engaged) {
+            await exitToHome({
+              push: (href) => {
+                if (href.includes("restore=pending")) setActiveNav("settings");
+              },
+            });
+            return;
+          }
+          // Home is never full screen.
+          const win = window.__TAURI__?.window.getCurrentWindow();
+          await Promise.all([win?.setSimpleFullscreen(false), win?.setFullscreen(false)]);
+        })
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    check();
+    const id = setInterval(check, 5_000);
+    return () => clearInterval(id);
   }, []);
   const [signingOut, setSigningOut] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
@@ -317,6 +357,14 @@ export default function HomePage() {
       // string, which made it both spoofable and dependent on an address the
       // platform does not have for a slip-authenticated candidate.
       const contests = await listContests();
+      // Cards decide Enter, "Ended" and "Not open yet" by `serverNow()`, and
+      // nothing anchors it after an app restart or a night's sleep, so they
+      // ran on the Mac's own clock. Re-anchor on every load: from the list
+      // when the server sends `server_time` there, otherwise from one contest's
+      // detail, which carries it. A failed anchor must not hide the list.
+      if (!noteListServerTime(contests) && contests[0]) {
+        await getContest(contests[0].uid, { includeReference: false }).catch(() => {});
+      }
       return contests.map(toInvitedContest);
     },
     { enabled: identityHydrated, staleMs: 30_000, retries: 0 }
@@ -707,11 +755,10 @@ export default function HomePage() {
       // anyone else's, so ownership is enforced where it cannot be bypassed
       // rather than by the client checking a field the client was sent.
 
+      // The API's terminal statuses. The old list named ones it never sends,
+      // so a terminated session stayed resumable whenever `ended_at` was null.
       const status = String(data.status ?? "active").toLowerCase();
-      if (
-        ["submitted", "ended", "expired", "closed", "cancelled"].includes(status) ||
-        data.ended_at
-      ) {
+      if (["submitted", "terminated", "abandoned"].includes(status) || data.ended_at) {
         clearStoredActiveSession("Stored active session is no longer active.");
         appendSecurityEvent("SESSION: Inactive stored session cleared", "warn");
         return null;
@@ -943,7 +990,32 @@ export default function HomePage() {
       (resumeVerification === "verified" &&
         String(activeSession.resume_request_status ?? "").toUpperCase() !== "PENDING"))
   );
-  const contestsPanel = (
+  // A token that expired, was revoked or is missing (a signed-out exit lands
+  // here too) made Refresh fail for ever with no way to sign in. Drafts and
+  // the saved session stay on the device for after sign-in.
+  const signInExpired =
+    identityHydrated &&
+    (!hasToken() ||
+      (invitedContestsQuery.error instanceof ProctorApiError &&
+        invitedContestsQuery.error.status === 401));
+  const contestsPanel = signInExpired ? (
+    <Banner
+      key="contests"
+      status="warning"
+      title="Your sign-in expired"
+      description="Sign in again to see your contests. Work saved on this device is kept."
+      endContent={
+        <AstryxButton
+          label="Sign in"
+          onClick={() => {
+            logout();
+            clearQueryCache();
+            router.push("/login");
+          }}
+        />
+      }
+    />
+  ) : (
     <ContestsPanel
       key="contests"
       onRefresh={refreshContests}
@@ -1082,9 +1154,13 @@ export default function HomePage() {
           onProceed={
             // The card's "resume" comes from the contest phase, not from a
             // session; only the stored session for this contest may resume.
+            // The server reopens an active or pending session without an
+            // invigilator, so those go straight to onboarding (the modal's own
+            // link); only a submitted or terminated one needs approval.
             preflightSessionType === "resume" &&
             activeSession &&
-            activeSession.contest_id === preflightContestId
+            activeSession.contest_id === preflightContestId &&
+            !["active", "pending"].includes(String(activeSession.status ?? "").toLowerCase())
               ? async () => {
                   setPreflightContestId(null);
                   await submitResumeRequest(activeSession);

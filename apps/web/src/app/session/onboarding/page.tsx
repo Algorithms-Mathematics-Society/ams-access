@@ -26,13 +26,14 @@ import {
   strictContestPolicy,
   type OrganizerOverride,
 } from "@ams/api-client";
-import { fetchJson, SessionBindingError } from "@/lib/api-client";
-import { authHeaders, participantToken } from "@/lib/candidate-auth";
-import { getContest, serverNow, type ContestIndex } from "@/lib/proctor-api";
+import { SessionBindingError } from "@/lib/api-client";
+import { participantToken } from "@/lib/candidate-auth";
+import { getContest, serverNow, startSession, type ContestIndex } from "@/lib/proctor-api";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { exitToHome } from "@/lib/exit-to-home";
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import { decideNetworkLockdown } from "./network-gate";
 import { effectiveReadinessPolicy } from "./effective-policy";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
@@ -87,6 +88,8 @@ import {
   type Stage,
   type StageStatus,
 } from "./support";
+
+const TOO_EARLY_MESSAGE = blockedMessage({ kind: "too_early", opensInMs: 0 });
 
 // Astryx Kbd uses modifier glyphs; this shortcut intentionally spells out its keys.
 function SetupExitShortcut() {
@@ -182,10 +185,18 @@ export default function OnboardingPage() {
   const [transitioning, setTransitioning] = useState(false);
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
   const [faceReviewSaveFailed, setFaceReviewSaveFailed] = useState(false);
-  const [contestWindow, setContestWindow] = useState<ContestWindowMeta | null>(null);
   // The server's own view of the window, including `phase`. The entry gate is
   // derived from this rather than from local clock arithmetic.
   const [contestIndex, setContestIndex] = useState<ContestIndex | null>(null);
+  // Derived from every fresh index, not just the first: a start postponed after
+  // the page loaded left the countdown at zero, and entry re-ran ~70 times a second.
+  const startAt = contestIndex?.starts_at;
+  const endAt = contestIndex?.ends_at ?? null;
+  const windowMinutes = contestIndex?.verification_window_minutes ?? null;
+  const contestWindow = useMemo<ContestWindowMeta | null>(
+    () => (startAt ? { startAt, endAt, verificationWindowMinutes: windowMinutes } : null),
+    [startAt, endAt, windowMinutes]
+  );
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const preparedSessionIdRef = useRef<string | null>(null);
@@ -354,11 +365,6 @@ export default function OnboardingPage() {
       .then((index) => {
         if (cancelled) return;
         setContestIndex(index);
-        setContestWindow({
-          startAt: index.starts_at,
-          endAt: index.ends_at,
-          verificationWindowMinutes: index.verification_window_minutes,
-        });
       })
       .catch(() => {
         if (!cancelled)
@@ -571,23 +577,15 @@ export default function OnboardingPage() {
         const body = await wait(
           "session creation",
           () =>
-            fetchJson<{ uid?: string }>(
-              `${API_URL}/participant/sessions`,
-              {
-                method: "POST",
-                headers: authHeaders({ "Content-Type": "application/json" }),
-                body: JSON.stringify({
-                  // The contest uid, and the machine. Identity comes from the
-                  // participant token — the old body sent a candidate email,
-                  // which was both unverified and no longer a thing this system
-                  // has.
-                  contest_uid: contestId,
-                  device_fingerprint: getOrCreateDeviceId(),
-                  os_name: navigator.platform,
-                }),
-              },
-              { dedupeKey: `session:create:${contestId}`, retries: 2 }
-            ),
+            // `startSession` sends the client version and throws the server's
+            // own sentence ("not registered for this contest"), where the
+            // generic fetch said "HTTP 403". It also does not retry: a create
+            // that times out may have landed, and the next entry attempt resumes it.
+            startSession({
+              contestUid: contestId,
+              deviceFingerprint: getOrCreateDeviceId(),
+              osName: navigator.platform,
+            }),
           60000
         );
         if (body?.uid) {
@@ -960,7 +958,8 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!contestWindow) return;
     if (currentStage !== FINAL_STAGE) return;
-    if (waitMs <= 0 && readyForStart) {
+    // The clock, not `waitMs`: that is a tick behind a freshly postponed start.
+    if (readyForStart && new Date(contestWindow.startAt).getTime() <= serverNow()) {
       void finalizeSecureStart();
     }
   }, [contestWindow, currentStage, waitMs, contestId, readyForStart, finalizeSecureStart]);
@@ -1041,14 +1040,25 @@ export default function OnboardingPage() {
     [advanceController, stageRun, dryRun]
   );
 
-  const emergencyExit = useCallback(async () => {
+  const leaveSetup = useCallback(async (nav: { push: (href: string) => void }) => {
     entryAttemptsRef.current.cancel();
     cameraSession.release();
     cameraStreamRef.current = null;
     setCameraStream(null);
 
-    await exitToHome(router);
-  }, [router]);
+    await exitToHome(nav);
+  }, []);
+  const emergencyExit = useCallback(() => leaveSetup(router), [leaveSetup, router]);
+
+  // macOS applies an Input Monitoring grant, and sometimes Accessibility, only
+  // to a new process. Release everything setup changed, then relaunch.
+  const quitAndReopen = useCallback(async () => {
+    let destination = "/home";
+    await leaveSetup({ push: (href) => (destination = href) });
+    await invokeStrict("relaunch_app").catch(() => {});
+    // Still here: this build cannot relaunch. Go home released, to quit by hand.
+    router.push(destination);
+  }, [leaveSetup, router]);
 
   useEffect(() => {
     function handleEmergencyKey(e: KeyboardEvent) {
@@ -1071,18 +1081,43 @@ export default function OnboardingPage() {
   const isTooEarly = isTestAccount ? false : entry.kind === "too_early";
   const isEnded = isTestAccount ? false : entry.kind === "ended";
   const verifyOpensInMs = entry.kind === "too_early" ? entry.opensInMs : 0;
+  // The phase is the server's, so while too early it has to be asked again:
+  // otherwise the countdown sits at 00:00:00 and the promised automatic entry
+  // never comes. Re-asked when check-in should open (with jitter, so a hall
+  // does not ask in the same second) and every 30 s besides.
+  const opensInRef = useRef(verifyOpensInMs);
+  opensInRef.current = verifyOpensInMs;
+  const [tooEarlyPoll, setTooEarlyPoll] = useState(0);
+  useEffect(() => {
+    if (!isTooEarly || !contestId) return;
+    let cancelled = false;
+    const opensIn = opensInRef.current;
+    const delayMs = (opensIn > 0 ? Math.min(opensIn, 30_000) : 5_000) + Math.random() * 5_000;
+    const id = setTimeout(() => {
+      getContest(contestId, { includeReference: false })
+        .then((index) => {
+          if (!cancelled) setContestIndex(index);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setTooEarlyPoll((n) => n + 1);
+        });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [isTooEarly, contestId, tooEarlyPoll]);
   const canRunChecks = isTestAccount || shouldRunChecks(entry);
+  // An entry refused as too early leaves its block up; once the poll above sees
+  // check-in open, retry it, or the promised automatic entry needs a click.
+  useEffect(() => {
+    if (canRunChecks && !transitioning && policyBlock === TOO_EARLY_MESSAGE) {
+      void finalizeSecureStart();
+    }
+  }, [canRunChecks, transitioning, policyBlock, finalizeSecureStart]);
   const entryBlockedMessage = isTestAccount ? null : blockedMessage(entry);
   const showWaitLock = currentStage === FINAL_STAGE && readyForStart;
-  // The keyboard intercept's method names the missing macOS permission.
-  const macPermissionBlock =
-    platform !== "macos" || !policyBlock
-      ? null
-      : policyBlock.includes("accessibility_denied")
-        ? ({ section: "accessibility", pane: "Accessibility" } as const)
-        : policyBlock.includes("input_monitoring_denied")
-          ? ({ section: "input_monitoring", pane: "Input Monitoring" } as const)
-          : null;
 
   // Frame budget: 1120px page, 248px progress rail, 40px gutter and a
   // flexible check panel. Below 960px, progress becomes a compact top region.
@@ -1156,12 +1191,8 @@ export default function OnboardingPage() {
             />
             {policyBlock && (
               <Banner
-                status={macPermissionBlock ? "warning" : "error"}
-                title={
-                  macPermissionBlock
-                    ? `Grant ${macPermissionBlock.pane} permission`
-                    : "Setup needs your attention"
-                }
+                status="error"
+                title="Setup needs your attention"
                 role="alert"
                 endContent={
                   entryRetryAvailable ? (
@@ -1176,38 +1207,9 @@ export default function OnboardingPage() {
                   ) : undefined
                 }
                 description={
-                  macPermissionBlock ? (
-                    <VStack gap={4}>
-                      <Text>
-                        AMS Access needs {macPermissionBlock.pane} permission to block exam keyboard
-                        shortcuts. Open System Settings, find AMS Access under Privacy &amp;
-                        Security → {macPermissionBlock.pane}, and toggle it on. Then run the device
-                        check again.
-                      </Text>
-                      <HStack gap={3} wrap="wrap">
-                        <Button
-                          label={`Open ${macPermissionBlock.pane} settings`}
-                          onClick={() =>
-                            void invoke("open_privacy_settings", {
-                              section: macPermissionBlock.section,
-                            })
-                          }
-                        />
-                        <Button
-                          label="Run checks again"
-                          variant="secondary"
-                          onClick={() => {
-                            setPolicyBlock(null);
-                            setCurrentStage(4);
-                          }}
-                        />
-                      </HStack>
-                    </VStack>
-                  ) : (
-                    <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
-                      {policyBlock}
-                    </Text>
-                  )
+                  <Text style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                    {policyBlock}
+                  </Text>
                 }
               />
             )}
@@ -1397,10 +1399,7 @@ export default function OnboardingPage() {
                           title="Verification not open yet"
                           description={
                             <VStack gap={2}>
-                              <Text>
-                                Opens in {formatCountdown(verifyOpensInMs)} (
-                                {contestWindow?.timezone || "UTC"})
-                              </Text>
+                              <Text>Opens in {formatCountdown(verifyOpensInMs)}</Text>
                               <Text>
                                 You can start setup only in the configured verification window
                                 before contest start.
@@ -1414,6 +1413,13 @@ export default function OnboardingPage() {
                           status="error"
                           title="Contest has ended"
                           description="Return home to review your contests."
+                          endContent={
+                            <Button
+                              label="Back to contests"
+                              variant="secondary"
+                              clickAction={emergencyExit}
+                            />
+                          }
                         />
                       )}
                       {canRunChecks && (
@@ -1478,7 +1484,11 @@ export default function OnboardingPage() {
                                     {formatCountdown(waitMs)}
                                   </Text>
                                   <Text type="supporting" color="secondary">
-                                    {contestWindow.timezone || "UTC"}
+                                    at{" "}
+                                    {dateTimeFormatter({
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    }).format(new Date(contestWindow.startAt))}
                                   </Text>
                                 </VStack>
                               </VStack>
@@ -1531,7 +1541,13 @@ export default function OnboardingPage() {
                             />
                           )}
                           {currentStage === 3 && (
-                            <Stage3_KeyboardLockdown onPass={advancePass} onWarn={advanceWarn} />
+                            <Stage3_KeyboardLockdown
+                              onPass={advancePass}
+                              onWarn={advanceWarn}
+                              onQuitAndReopen={
+                                platform === "macos" ? () => void quitAndReopen() : undefined
+                              }
+                            />
                           )}
                           {currentStage === 4 && (
                             <Stage4_EnvironmentValidation onPass={advancePass} />

@@ -18,10 +18,15 @@ const compile = (source) =>
   }).outputText;
 const handlerCode = compile(page.slice(start, end));
 class ProctorApiError extends Error {
-  constructor(message, status, retryAfterSeconds = 0) {
+  // A number is the 503's retry wait; an object is the structured detail (426).
+  constructor(message, status, extra = null) {
     super(message);
     this.status = status;
-    this.retryAfterSeconds = retryAfterSeconds;
+    this.detail = typeof extra === "number" ? null : extra;
+    this.retryAfterSeconds = typeof extra === "number" ? extra : 0;
+  }
+  get needsUpgrade() {
+    return this.status === 426;
   }
 }
 function harness({
@@ -30,6 +35,7 @@ function harness({
   failKey,
   failure,
   loading = false,
+  contest = { uid: "contest", title: "Contest" },
   request,
 } = {}) {
   const state = {},
@@ -57,6 +63,10 @@ function harness({
     setLoading: (value) => {
       state.loading = value;
     },
+    setUpgrade: (value) => {
+      state.upgrade = value;
+    },
+    DEFAULT_DOWNLOAD_URL: "https://default.test",
     setCooldownSeconds: (value) => {
       state.cooldownSeconds = value;
     },
@@ -64,7 +74,7 @@ function harness({
       calls.push(args);
       if (request) return request(...args);
       if (failure) throw failure;
-      return { user: { display_name: "Candidate" }, contest: { uid: "contest", title: "Contest" } };
+      return { user: { display_name: "Candidate" }, contest };
     },
     STORAGE_KEYS: {
       DISPLAY_NAME: "display",
@@ -76,6 +86,7 @@ function harness({
         writes.push([key, value]);
         if (key === failKey || failKey === "all") throw new Error("storage blocked");
       },
+      removeItem: (key) => writes.push([key, null]),
     },
     router: { push: (path) => routes.push(path) },
     describeUnreachable: () => ({ message: "Connection failed", diagnostic: "fixture" }),
@@ -135,6 +146,36 @@ test("nonempty password is passed unchanged and server rejection remains authori
   assert.equal(h.state.invalidField, null);
   assert.equal(h.state.loading, false);
   assert.deepEqual(h.routes, []);
+});
+test("a sign-in with no contest clears the previous contest labels", async () => {
+  const h = harness({ contest: null });
+  await h.submit();
+  assert.deepEqual(h.routes, ["/home"]);
+  assert.deepEqual(
+    h.writes.map((write) => [...write]),
+    [
+      ["display", "Candidate"],
+      ["contest", null],
+      ["title", null],
+    ]
+  );
+});
+test("a 426 opens the update dialog with the server's download link", async () => {
+  const h = harness({
+    failure: new ProctorApiError("Too old", 426, {
+      min_version: "4.2.0",
+      download_url: "https://server.test/download",
+    }),
+  });
+  await h.submit();
+  assert.deepEqual(
+    { ...h.state.upgrade },
+    { version: "4.2.0", url: "https://server.test/download" }
+  );
+  assert.deepEqual(h.routes, []);
+  const bare = harness({ failure: new ProctorApiError("Too old", 426) });
+  await bare.submit();
+  assert.deepEqual({ ...bare.state.upgrade }, { version: "", url: "https://default.test" });
 });
 test("a rapid keyboard/click burst sends only one pending sign-in request", async () => {
   let reject;

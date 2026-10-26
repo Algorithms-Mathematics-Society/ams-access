@@ -12,12 +12,19 @@ const code = ts.transpileModule(source, {
   },
 }).outputText;
 const deferred = () => {
-  let resolve;
-  const promise = new Promise((r) => {
+  let resolve, reject;
+  const promise = new Promise((r, j) => {
     resolve = r;
+    reject = j;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
+class ProctorApiError extends Error {
+  constructor(status) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
@@ -25,13 +32,33 @@ function harness(token = true) {
   const version = deferred(),
     contests = deferred(),
     states = [],
-    routes = [];
+    routes = [],
+    cleanup = [],
+    timers = [];
   let index = 0,
     effect,
     calls = 0;
+  // Like Storage: items are the own enumerable keys, methods are not.
+  const store = Object.defineProperties(
+    {
+      ams_display_name: "Ada Lovelace",
+      ams_participant_token: "token",
+      ams_active_contest: "contest-A",
+      ams_device_id: "device",
+      ams_theme: "dark",
+      "ams_contest_answer_buffer:session-A:p1": "draft",
+    },
+    {
+      getItem: { value: (key) => store[key] ?? null },
+      removeItem: { value: (key) => delete store[key] },
+    }
+  );
   const jsx = (type, props) => ({ type, props });
   const context = {
     exports: {},
+    localStorage: store,
+    setTimeout: (fn) => timers.push(fn),
+    clearTimeout: () => {},
     process: { env: { NEXT_PUBLIC_APP_VERSION: "4.1.0" } },
     require(name) {
       if (name === "react")
@@ -62,6 +89,7 @@ function harness(token = true) {
         return {
           fetchClientVersion: () => version.promise,
           minorUpgradeAvailable: (_, latest) => latest !== "4.1.0",
+          belowMinimum: (_, minimum) => minimum === "4.2.0",
         };
       if (name.endsWith("proctor-api"))
         return {
@@ -70,7 +98,27 @@ function harness(token = true) {
             calls++;
             return contests.promise;
           },
+          logout: () => cleanup.push("logout"),
+          ProctorApiError,
         };
+      if (name.endsWith("api-client"))
+        return {
+          clearQueryCache: () => cleanup.push("cache"),
+          invoke: (command, args) => {
+            cleanup.push([command, args.sessionId]);
+            return Promise.resolve();
+          },
+        };
+      if (name.endsWith("storage-keys"))
+        return {
+          STORAGE_KEYS: {
+            DISPLAY_NAME: "ams_display_name",
+            DEVICE_ID: "ams_device_id",
+            THEME: "ams_theme",
+          },
+        };
+      if (name.endsWith("answer-buffer"))
+        return { isBufferKey: (key) => key.startsWith("ams_contest_answer_buffer:") };
       if (name.endsWith("api-base")) return { resolveApiBase: () => "fixture" };
       return new Proxy({}, { get: (_, key) => (key === "default" ? name : key) });
     },
@@ -81,12 +129,27 @@ function harness(token = true) {
     contests,
     routes,
     calls: () => calls,
+    store,
+    cleanup,
+    timers,
     mount: () => effect(),
     render: () => {
       index = 0;
       return context.exports.default();
     },
   };
+}
+function find(node, label) {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child, label);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (node.props?.label === label) return node;
+  return find(node.props?.children, label);
 }
 function status(tree, label) {
   assert.equal(tree.type, "StartupAnimation");
@@ -105,19 +168,85 @@ test("startup has visible status while version and token gates wait, then while 
   assert.equal(h.calls(), 1);
   h.contests.resolve([]);
   await flush();
+  // A valid token asks whose it is before opening anyone's workspace.
+  assert.match(JSON.stringify(h.render()), /Continue as Ada Lovelace\?/);
+  assert.deepEqual(h.routes, []);
+  find(h.render(), "Continue").props.onClick();
   status(h.render(), "Opening your workspace…");
   assert.deepEqual(h.routes, ["/home"]);
+});
+test("not you signs the previous candidate out and keeps their drafts and the device", async () => {
+  const h = harness();
+  h.render();
+  h.mount();
+  h.version.resolve(null);
+  h.contests.resolve([]);
+  await flush();
+  find(h.render(), "Not you? Sign out").props.onClick();
+  assert.equal(h.render().props.children.type, "./WelcomeScreen");
+  assert.deepEqual(h.routes, []);
+  assert.deepEqual(h.cleanup, ["logout", "cache", ["configure_event_stream", null]]);
+  assert.deepEqual(Object.keys(h.store), [
+    "ams_device_id",
+    "ams_theme",
+    "ams_contest_answer_buffer:session-A:p1",
+  ]);
 });
 test("required update takes precedence over token and welcome", async () => {
   const h = harness();
   h.render();
   h.mount();
-  h.version.resolve({ latest: "4.2.0", download_url: "fixture" });
+  h.version.resolve({ minimum: "4.2.0", latest: "4.2.0", download_url: "fixture" });
   await flush();
   assert.equal(h.render().type, "UpdateRequiredDialog");
   assert.equal(h.calls(), 0);
   assert.deepEqual(h.routes, []);
 });
+test("a newer advisory release is a dismissible notice that never blocks", async () => {
+  for (const token of [true, false]) {
+    const h = harness(token);
+    h.render();
+    h.mount();
+    h.version.resolve({ minimum: "4.0.0", latest: "4.2.0", download_url: "fixture" });
+    h.contests.resolve([]);
+    await flush();
+    const tree = h.render();
+    assert.notEqual(tree.type, "UpdateRequiredDialog");
+    assert.equal(h.calls(), token ? 1 : 0);
+    const banner = tree.props.children.props.banner;
+    assert.equal(banner.type, "Banner");
+    assert.equal(banner.props.isDismissable, true);
+    assert.match(banner.props.title, /install after your exam/);
+  }
+});
+test("a slow check says so", () => {
+  const h = harness();
+  h.render();
+  h.mount();
+  h.timers.forEach((fn) => fn());
+  status(h.render(), "Still checking your access. The exam server is slow to answer…");
+});
+for (const [failure, error] of [
+  ["401", new ProctorApiError(401)],
+  ["503", new ProctorApiError(503)],
+  ["timeout", new ProctorApiError(0)],
+]) {
+  test(`a ${failure} from the token check ${failure === "401" ? "signs in again" : "still goes home"}`, async () => {
+    const h = harness();
+    h.render();
+    h.mount();
+    h.version.resolve(null);
+    h.contests.promise.catch(() => {});
+    h.contests.reject(error);
+    await flush();
+    const tree = h.render();
+    if (failure === "401") assert.equal(tree.props.children.type, "./WelcomeScreen");
+    else {
+      find(tree, "Continue").props.onClick();
+      assert.deepEqual(h.routes, ["/home"]);
+    }
+  });
+}
 test("no token reveals welcome only after version gate", async () => {
   const h = harness(false);
   status(h.render(), "Checking your access…");

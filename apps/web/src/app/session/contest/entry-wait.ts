@@ -23,17 +23,20 @@ export const ENTRY_WAIT_PHASES: ReadonlyArray<{ after: number; label: string; de
   {
     after: 6_000,
     label: "Letting you in...",
-    detail: "A few moments more. Everyone is entering at the same time, so this can take longer than usual.",
+    detail:
+      "A few moments more. Everyone is entering at the same time, so this can take longer than usual.",
   },
   {
     after: 18_000,
     label: "Still letting you in...",
-    detail: "You have not lost your place and nothing has gone wrong. Please keep this window open rather than retrying.",
+    detail:
+      "You have not lost your place and nothing has gone wrong. Please keep this window open rather than retrying.",
   },
   {
     after: 35_000,
     label: "Still letting you in...",
-    detail: "This is taking longer than we would like. If it does not open shortly, tell an invigilator -- your place is held.",
+    detail:
+      "This is taking longer than we would like. If it does not open shortly, tell an invigilator -- your place is held.",
   },
 ];
 

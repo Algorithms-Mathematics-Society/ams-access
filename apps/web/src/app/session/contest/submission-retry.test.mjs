@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { attemptLimitError } from "./attempt-limits.ts";
 
 const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const start = client.indexOf("  async function handleSubmitSolution()");
@@ -29,6 +30,7 @@ function fixture(shared = { accepted: new Map(), posts: [], store: new Map(), ne
     submitKeyRef: { current: null },
     acknowledgedSubmitKeysRef: { current: {} },
     toLanguageId: (value) => value,
+    attemptLimitError,
     newIdempotencyKey: () => `key-${++shared.nextKey}`,
     localStorage: {
       getItem: (key) => shared.store.get(key) ?? null,

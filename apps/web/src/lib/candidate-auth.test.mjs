@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { authHeaders, participantToken } from "./candidate-auth.ts";
 import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import { bufferKey, isBufferKey } from "../app/session/contest/answer-buffer.ts";
+import { AUTH_RECHECK_MS, onUnauthorized } from "../app/session/contest/auth-loss.ts";
 import {
   currentToken,
   hasToken,
@@ -91,6 +92,15 @@ test("the token is read from the key the login actually writes", () => {
 test("no Authorization when nobody is signed in", () => {
   const headers = authHeaders();
   assert.equal(Object.prototype.hasOwnProperty.call(headers, "Authorization"), false);
+});
+
+test("every header map names the client version, signed in or not", () => {
+  assert.equal(
+    authHeaders()["X-AMS-Client-Version"],
+    process.env.NEXT_PUBLIC_APP_VERSION ?? "2.0.0"
+  );
+  setToken("versioned");
+  assert.ok(authHeaders()["X-AMS-Client-Version"]);
 });
 
 test("signing out drops the Authorization header", () => {
@@ -791,6 +801,11 @@ test("heartbeat 401 uses the actual release handler before redirect", async () =
     // ask for one immediately. Bound as a plain box: this test is about the
     // 401 path, not about who else can trigger a heartbeat.
     retryBeatRef: { current: () => {} },
+    // A first 401 already seen long ago, so this one confirms the sign-out
+    // (see auth-loss.ts); the provisional first one is covered there.
+    unauthorizedAtRef: { current: 0 },
+    onUnauthorized,
+    AUTH_RECHECK_MS,
   };
   const cleanup = new Function(...Object.keys(bindings), `${js}; return effect();`)(
     ...Object.values(bindings)

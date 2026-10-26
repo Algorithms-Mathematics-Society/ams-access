@@ -102,10 +102,16 @@ export function deriveContestantReadiness({
 
   // ── 3. Derive from policy report when available ────────────────
   if (report) {
-    // Count failures against required checks (any non-pass outcome).
-    const failedRequired = reportRequiredChecks.filter((c) => c.outcome !== "pass").length;
-    // Count advisory warnings from optional checks.
-    const failedOptional = report.optional_checks.filter((c) => c.outcome !== "pass").length;
+    // The native decision is the gate. A required check that warned, or could
+    // not conclude, without blocking is what the report calls
+    // allowed_with_warnings: advisory, not something to fix in Settings.
+    const blocked = report.decision === "blocked";
+    const failedRequired = blocked
+      ? reportRequiredChecks.filter((c) => c.outcome !== "pass").length
+      : 0;
+    const failedOptional = (blocked ? report.optional_checks : report.checks).filter(
+      (c) => c.outcome !== "pass"
+    ).length;
 
     // Honor a hard policy block regardless of the per-check tally (a Blocked
     // decision must never be overridden by a passing check count). When the block

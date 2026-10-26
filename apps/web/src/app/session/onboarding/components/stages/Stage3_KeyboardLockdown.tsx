@@ -51,7 +51,16 @@ function outcomeCopy(kind: KeyboardOutcome["kind"]) {
  * envelope is a presentation safeguard around its 20-second admission guard;
  * timing out here never starts another overlapping probe.
  */
-export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; onWarn(): void }) {
+export function Stage3_KeyboardLockdown({
+  onPass,
+  onWarn,
+  onQuitAndReopen,
+}: {
+  onPass(): void;
+  onWarn(): void;
+  /** macOS applies some grants only to a new process. */
+  onQuitAndReopen?(): void;
+}) {
   const [phase, setPhase] = useState(0);
   const [outcome, setOutcome] = useState<KeyboardOutcome | null>(null);
   const [accessibilityDenied, setAccessibilityDenied] = useState(false);
@@ -189,7 +198,12 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
             select +, choose AMS Access from Applications, and turn it on.
           </Text>
           <Text color="secondary">
-            3. Come back here. The check runs again automatically every few seconds.
+            3. Come back here. The check runs again automatically every few seconds. If it still
+            fails, quit and reopen AMS Access so macOS applies the permission.
+          </Text>
+          <Text color="secondary">
+            If AMS Access is already switched on, select it, click –, add it again with +, then quit
+            and reopen.
           </Text>
         </VStack>
         <HStack gap={3} wrap="wrap">
@@ -198,6 +212,13 @@ export function Stage3_KeyboardLockdown({ onPass, onWarn }: { onPass(): void; on
             label="Open System Settings"
             onClick={() => void invoke("open_privacy_settings", { section: missingPermission })}
           />
+          {onQuitAndReopen && (
+            <Button
+              variant="secondary"
+              label="Quit & reopen AMS Access"
+              onClick={onQuitAndReopen}
+            />
+          )}
           {timedOut && <Button variant="secondary" label="Re-check" onClick={recheck} />}
         </HStack>
         <StatusBadge

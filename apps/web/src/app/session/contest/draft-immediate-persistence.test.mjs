@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { attemptLimitError } from "./attempt-limits.ts";
 
 const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile(
@@ -97,6 +98,7 @@ function fixture() {
       return true;
     },
     toLanguageId: (value) => (value === "Python 3" ? "python3" : "cpp23"),
+    attemptLimitError,
     normalizeLanguageLabel: (value) => value,
     questionFileName: (_question, language) => (language === "Python 3" ? "main.py" : "main.cpp"),
     isPristineStarter: () => false,

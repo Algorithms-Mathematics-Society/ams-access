@@ -14,18 +14,23 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+mod allowlist;
 mod displays;
+pub mod instance;
 mod kiosk_window;
+mod network_path;
 mod power;
 mod remote_access;
 mod system_settings;
 mod watchdog;
 
+pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
 pub use kiosk_window::{
     apply_kiosk, reapply_kiosk_later, restore_kiosk_window, simple_fullscreen_engaged,
     top_safe_inset, wait_native_fullscreen_exit,
 };
+pub use network_path::network_path_warnings;
 pub use power::{install_power_observers, set_power_event_callback};
 pub use system_settings::{restore_status, RestoreStatus, UnrestoredSetting};
 pub use watchdog::helper_mode_from_args;
@@ -1167,12 +1172,18 @@ pub fn retry_restore() -> RestoreStatus {
 /// thread run it inline.
 fn refocus_our_app() {
     let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), || {
-        kiosk_window::guarded(|| unsafe { refocus_on_main() })
+        kiosk_window::guarded(|| unsafe { refocus_on_main(std::process::id()) })
     });
 }
 
-unsafe fn refocus_on_main() {
-    let our_pid = std::process::id() as i32;
+/// Bring another running app forward, best effort. A second launch calls this
+/// on its main thread, before it starts any UI, to show the instance that
+/// already owns the exam.
+pub fn activate_process(pid: u32) {
+    let _ = kiosk_window::guarded(|| unsafe { refocus_on_main(pid) });
+}
+
+unsafe fn refocus_on_main(pid: u32) {
     let cls = objc_getClass(c"NSRunningApplication".as_ptr());
     if cls.is_null() {
         return;
@@ -1185,7 +1196,7 @@ unsafe fn refocus_on_main() {
     // +[NSRunningApplication runningApplicationWithProcessIdentifier:pid]
     type FnForPid = unsafe extern "C" fn(*mut c_void, *const c_void, i32) -> *mut c_void;
     let send_for_pid: FnForPid = std::mem::transmute(objc_msgSend as *const ());
-    let app = send_for_pid(cls, sel_for_pid, our_pid);
+    let app = send_for_pid(cls, sel_for_pid, pid as i32);
     if app.is_null() {
         return;
     }
@@ -1607,6 +1618,18 @@ const HELPER_CLIENT_CONFIG_DEST: &str =
     "/Library/Application Support/AMS Access/network-helper-client.conf";
 const HELPER_CONFIG_DIR: &str = "/Library/Application Support/AMS Access";
 
+/// Whether this copy of the app runs from a path the helper cannot pin. The
+/// helper authorizes its client by executable path, and a copy run from the
+/// mounted disk image or translocated by Gatekeeper (a random path on every
+/// launch) would ask for the admin password again each time, or fail lockdown.
+/// shortcut: any bundle under /Volumes counts, including an install on an
+/// external drive; check that the volume is read-only if labs need that.
+pub fn unstable_bundle_path(exe: &std::path::Path) -> bool {
+    let path = exe.to_string_lossy();
+    path.contains(".app/Contents/MacOS/")
+        && (path.contains("/AppTranslocation/") || path.starts_with("/Volumes/"))
+}
+
 /// Check whether the helper daemon socket is reachable and accepts this app.
 pub fn network_helper_running() -> bool {
     helper_send(r#"{"cmd":"ping"}"#).is_ok()
@@ -1678,6 +1701,21 @@ do shell script "/bin/mkdir -p " & quoted form of configDir & " && (/bin/launchc
     Err("helper installed but socket not ready within 3 s".to_string())
 }
 
+/// A native alert before any window exists, for problems that stop startup.
+/// osascript draws it without the app's run loop, as `install_network_helper`
+/// already relies on, and it gives up after five minutes so a candidate who
+/// walks away does not leave a stuck process behind.
+pub fn show_startup_message(title: &str, message: &str) {
+    let script = format!(
+        r#"display alert "{}" message "{}" as critical buttons {{"OK"}} default button "OK" giving up after 300"#,
+        applescript_string(title),
+        applescript_string(message)
+    );
+    let _ = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .bounded_output_with_timeout(std::time::Duration::from_secs(310));
+}
+
 fn applescript_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -1734,6 +1772,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
 
 /// Lift the network lockdown via the privileged helper.
 pub fn disable_network_lockdown() -> Result<(), String> {
+    allowlist::forget();
     if !network_helper_running() {
         // pf rules outlive the helper, so an unreachable helper only means
         // "nothing to flush" when no lockdown was recorded this boot.
@@ -2278,5 +2317,29 @@ pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
             }
         }
         Err(error) => Err(format!("Could not run networksetup: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_image_and_translocated_copies_are_unstable() {
+        let unstable = |path: &str| unstable_bundle_path(std::path::Path::new(path));
+        assert!(unstable(
+            "/Volumes/AMS Access/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(unstable("/private/var/folders/x/T/AppTranslocation/1A2B/d/AMS Access.app/Contents/MacOS/ams-access"));
+        assert!(!unstable(
+            "/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        assert!(!unstable(
+            "/Users/me/Applications/AMS Access.app/Contents/MacOS/ams-access"
+        ));
+        // A dev build is not a bundle, wherever the checkout lives.
+        assert!(!unstable(
+            "/Volumes/Work/ams-access/target/debug/ams-access"
+        ));
     }
 }

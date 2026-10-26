@@ -22,7 +22,10 @@ test("the explanation changes as the wait grows, and never goes backwards", () =
   assert.equal(new Set(details).size, 4, "each phase should say something new");
   // Monotonic: a candidate watching never sees an earlier message return.
   const thresholds = seen.map((phase) => phase.after);
-  assert.deepEqual(thresholds, [...thresholds].sort((a, b) => a - b));
+  assert.deepEqual(
+    thresholds,
+    [...thresholds].sort((a, b) => a - b)
+  );
 });
 
 test("a long wait still reassures rather than blaming the candidate", () => {
@@ -39,7 +42,15 @@ test("a long wait still reassures rather than blaming the candidate", () => {
 test("no phase invents progress the client cannot know", () => {
   for (const phase of ENTRY_WAIT_PHASES) {
     assert.doesNotMatch(phase.detail, /\d+\s*%/, "no fake percentage");
-    assert.doesNotMatch(phase.detail, /position|queue number|you are #/i, "no invented queue position");
-    assert.doesNotMatch(phase.detail, /\b\d+\s*(seconds|minutes)\s*(left|remaining)/i, "no invented ETA");
+    assert.doesNotMatch(
+      phase.detail,
+      /position|queue number|you are #/i,
+      "no invented queue position"
+    );
+    assert.doesNotMatch(
+      phase.detail,
+      /\b\d+\s*(seconds|minutes)\s*(left|remaining)/i,
+      "no invented ETA"
+    );
   }
 });

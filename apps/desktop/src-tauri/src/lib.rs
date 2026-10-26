@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future as _;
+#[cfg(not(target_os = "macos"))]
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -668,6 +669,27 @@ fn acknowledge_current_event_batch(
     Ok(true)
 }
 
+/// What one upload response means for the batch it carried.
+#[derive(Debug, PartialEq)]
+enum UploadVerdict {
+    Delivered,
+    /// The server will never accept this batch (e.g. 422). Retrying it would
+    /// block every later event, sleep and focus evidence included.
+    Refused(u16),
+    Unauthorized,
+    Retry,
+}
+
+fn upload_verdict(status: u16) -> UploadVerdict {
+    match status {
+        200..=299 => UploadVerdict::Delivered,
+        401 => UploadVerdict::Unauthorized,
+        408 | 429 => UploadVerdict::Retry,
+        400..=499 => UploadVerdict::Refused(status),
+        _ => UploadVerdict::Retry,
+    }
+}
+
 fn spawn_event_sync_task(app: tauri::AppHandle) {
     let store = local_event_store(Some(&app));
     let dir = proctoring_log_dir(Some(&app));
@@ -765,10 +787,10 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                 "{}/participant/sessions/{}/events",
                 config.api_url, config.session_id
             );
-            let delivered = if batch.events.is_empty() {
+            let verdict = if batch.events.is_empty() {
                 // Only preserved quarantine bytes moved the cursor; no server
                 // event is falsely acknowledged and no empty POST is needed.
-                true
+                UploadVerdict::Delivered
             } else {
                 let request = client
                     .post(&url)
@@ -778,34 +800,56 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                     .send();
                 match while_event_lease_active(&config, request).await {
                     None => continue,
-                    Some(Ok(response)) if response.status().is_success() => true,
                     Some(Ok(response)) => {
-                        note_event_error(
-                            "upload event batch",
-                            format!("HTTP {}", response.status().as_u16()),
-                        );
-                        false
+                        let status = response.status().as_u16();
+                        let verdict = upload_verdict(status);
+                        if verdict != UploadVerdict::Delivered {
+                            note_event_error("upload event batch", format!("HTTP {status}"));
+                        }
+                        verdict
                     }
                     Some(Err(error)) => {
                         note_event_error("upload event batch", error.without_url());
-                        false
+                        UploadVerdict::Retry
                     }
                 }
             };
-            if delivered {
-                match tauri::async_runtime::spawn_blocking(move || {
-                    acknowledge_current_event_batch(store, &config, &batch)
-                })
-                .await
-                {
-                    Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
-                    error => {
-                        note_event_error("acknowledge event batch", format!("{error:?}"));
-                        delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+            match verdict {
+                UploadVerdict::Delivered | UploadVerdict::Refused(_) => {
+                    let refused = match verdict {
+                        UploadVerdict::Refused(status) => Some(format!("HTTP {status}")),
+                        _ => None,
+                    };
+                    match tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(reason) = &refused {
+                            store.quarantine_refused(&config.binding, &batch, reason)?;
+                            event_status()
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .quarantine_notices += 1;
+                            note_event_error(
+                                "audit evidence quarantined / refused by server",
+                                reason,
+                            );
+                        }
+                        acknowledge_current_event_batch(store, &config, &batch)
+                    })
+                    .await
+                    {
+                        Ok(Ok(_)) => delay = EVENT_SYNC_INTERVAL_SECS,
+                        error => {
+                            note_event_error("acknowledge event batch", format!("{error:?}"));
+                            delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                        }
                     }
                 }
-            } else {
-                delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS);
+                // Retrying a token the server rejects only spins. Wait until
+                // configure_event_stream arms a new one; it revokes this lease.
+                UploadVerdict::Unauthorized => {
+                    let _ = config.lease.subscribe().wait_for(|revoked| *revoked).await;
+                    delay = EVENT_SYNC_INTERVAL_SECS;
+                }
+                UploadVerdict::Retry => delay = (delay * 2).min(EVENT_SYNC_MAX_BACKOFF_SECS),
             }
         }
     });
@@ -1270,7 +1314,7 @@ fn enrich_report(report: &mut ReadinessReport, device_state: &DeviceState) {
             .map(|_| cache.displays.describe());
         let remote_detail = device_state
             .rdp_server
-            .filter(|found| *found == !cache.remote_tools.is_empty())
+            .filter(|found| *found != cache.remote_tools.is_empty())
             .map(|found| {
                 if found {
                     // Built-in services are not apps to quit; they are switches
@@ -1972,6 +2016,32 @@ fn relaunch_as_admin(app: tauri::AppHandle) -> Result<(), String> {
         let _ = app;
         Err("not_supported_on_this_platform".to_string())
     }
+}
+
+/// Warnings for a system proxy or a full-tunnel VPN, which lockdown would cut
+/// off. Empty when the path is direct, and on other platforms.
+#[tauri::command]
+async fn get_network_path_warnings() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(platform_rs::macos::network_path_warnings)
+        .await
+        .unwrap_or_default();
+    #[cfg(not(target_os = "macos"))]
+    Vec::new()
+}
+
+/// Set on a relaunched process. Tauri starts it just before this one exits,
+/// so on macOS it waits for the instance lock instead of taking the old
+/// process for a second instance and quitting.
+const RELAUNCH_ENV: &str = "AMS_ACCESS_RELAUNCHED";
+
+/// Quit and start AMS Access again, e.g. so a permission macOS grants only to
+/// new processes takes effect. The web side releases lockdown first; the
+/// normal exit path (window teardown, finish_shutdown) still runs.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    std::env::set_var(RELAUNCH_ENV, "1");
+    app.request_restart();
 }
 
 /// Deep-link into the OS privacy settings page for `section`. Windows opens
@@ -2968,7 +3038,22 @@ async fn enable_network_lockdown(
         .await
         .map_err(|error| error.to_string())?
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        // Resolvers are included and the API host is re-resolved while the
+        // lockdown is live; see platform_rs::macos::allowlist.
+        tauri::async_runtime::spawn_blocking(move || {
+            let ips = platform_rs::macos::resolve_allowlist(&allowed_domains);
+            if ips.is_empty() {
+                return Err("Could not resolve any allowed domains to IPs".to_string());
+            }
+            platform_rs::macos::enable_and_follow(&allowed_domains, &ips).map(|_| true)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         // A build that never asked for elevation cannot raise a firewall, so say
         // so instead of resolving every allowlist host and then handing netsh a
@@ -3703,6 +3788,44 @@ pub fn run() {
             return;
         }
     };
+    // On macOS a second launch brings the first forward and exits without
+    // touching its lockdown.
+    #[cfg(target_os = "macos")]
+    let _macos_instance = match platform_rs::macos::instance::acquire(
+        if std::env::var_os(RELAUNCH_ENV).is_some() {
+            Duration::from_secs(10)
+        } else {
+            Duration::ZERO
+        },
+    ) {
+        Ok(owner) => owner,
+        Err(platform_rs::macos::instance::Refused::Running(pid)) => {
+            eprintln!("AMS Access is already running; leaving it in charge");
+            if let Some(pid) = pid {
+                platform_rs::macos::activate_process(pid);
+            }
+            return;
+        }
+        Err(platform_rs::macos::instance::Refused::Failed(error)) => {
+            eprintln!("AMS Access cannot acquire instance ownership: {error}");
+            platform_rs::macos::show_startup_message(
+                "AMS Access could not start",
+                &format!("{error}\n\nIf AMS Access is already open, use that window. Otherwise, check that your Library/Application Support folder is writable."),
+            );
+            return;
+        }
+    };
+    // The network helper pins this executable's path, so a copy on the disk
+    // image or under App Translocation must be moved before setup can work.
+    // Stop before recovery: this copy cannot reach the helper anyway.
+    #[cfg(target_os = "macos")]
+    if std::env::current_exe().is_ok_and(|exe| platform_rs::macos::unstable_bundle_path(&exe)) {
+        platform_rs::macos::show_startup_message(
+            "Move AMS Access to Applications",
+            "AMS Access is running from its disk image or from a temporary copy macOS made, so it cannot set up exam protection.\n\nIn Finder, drag AMS Access into the Applications folder, eject the AMS Access disk image, then open AMS Access from Applications.",
+        );
+        return;
+    }
     // F5: harden the DLL search path before anything else loads a library, so a
     // malicious DLL planted in the launch directory or %CWD% can never be
     // preferred over the system copy (DLL preloading / search-order hijack).
@@ -3876,6 +3999,8 @@ pub fn run() {
             open_accessibility_settings,
             is_process_elevated,
             relaunch_as_admin,
+            relaunch_app,
+            get_network_path_warnings,
             open_privacy_settings,
             check_screen_sharing,
             get_screen_capture_permitted_apps,
@@ -4243,6 +4368,18 @@ mod pinning_tests {
 #[cfg(test)]
 mod event_integration_tests {
     use super::*;
+    #[test]
+    fn upload_refusals_move_on_and_transient_failures_retry() {
+        assert_eq!(upload_verdict(200), UploadVerdict::Delivered);
+        assert_eq!(upload_verdict(202), UploadVerdict::Delivered);
+        assert_eq!(upload_verdict(400), UploadVerdict::Refused(400));
+        assert_eq!(upload_verdict(413), UploadVerdict::Refused(413));
+        assert_eq!(upload_verdict(422), UploadVerdict::Refused(422));
+        assert_eq!(upload_verdict(401), UploadVerdict::Unauthorized);
+        for status in [408, 429, 500, 502, 503] {
+            assert_eq!(upload_verdict(status), UploadVerdict::Retry);
+        }
+    }
     #[test]
     fn chains_are_session_bound_and_resume_without_unbound_gaps() {
         let mut chains = HashMap::new();

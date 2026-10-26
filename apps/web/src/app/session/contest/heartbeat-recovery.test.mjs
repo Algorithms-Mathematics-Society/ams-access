@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss.ts";
 
 const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile(
@@ -41,6 +42,8 @@ function harness(random = 0.5) {
   const referenceRevisionRef = { current: 0 };
   const referenceFetchInFlightRef = { current: false };
   const activeContestIdRef = { current: "contest-A" };
+  const unauthorizedAtRef = { current: null };
+  const clock = { now: Date.now() };
   class ProctorApiError extends Error {
     constructor(status) {
       super(`HTTP ${status}`);
@@ -100,7 +103,10 @@ function harness(random = 0.5) {
       timer.cancelled = true;
     },
     Math: { random: () => random, floor: Math.floor },
-    Date,
+    Date: { now: () => clock.now, parse: Date.parse },
+    unauthorizedAtRef,
+    onUnauthorized,
+    AUTH_RECHECK_MS,
   };
   return {
     requests,
@@ -122,6 +128,18 @@ function harness(random = 0.5) {
     },
     runTimers() {
       for (const timer of timers.splice(0)) if (!timer.cancelled) timer.callback();
+    },
+    // AUTH-1: a 401 is provisional. Let the recheck fire after the pause and
+    // answer it with a second 401, which is what actually signs out.
+    async confirmUnauthorized() {
+      const recheck = timers.find((t) => t.delay === AUTH_RECHECK_MS && !t.cancelled);
+      assert.ok(recheck, "a single 401 must schedule a recheck");
+      assert.deepEqual(redirects, [], "a single 401 must not sign out");
+      clock.now += AUTH_RECHECK_MS;
+      recheck.cancelled = true;
+      recheck.callback();
+      requests.at(-1).reject(new ProctorApiError(401));
+      await flush();
     },
   };
 }
@@ -456,6 +474,7 @@ test("current practice metadata 401 releases, but a stale 401 does not", async (
   current.runTimers();
   current.contestRequests[0].reject(new current.ProctorApiError(401));
   await flush();
+  await current.confirmUnauthorized();
   assert.deepEqual(current.redirects, ["/login"]);
   stopCurrent();
 });
@@ -520,6 +539,7 @@ test("a pending older 401 still releases after a newer transport failure", async
   await flush();
   h.requests[0].reject(new h.ProctorApiError(401));
   await flush();
+  await h.confirmUnauthorized();
   assert.deepEqual(h.redirects, ["/login"]);
   stop();
 });
@@ -531,6 +551,21 @@ test("an older 401 cannot undo a newer accepted heartbeat", async () => {
   h.requests[1].resolve(live());
   await flush();
   h.requests[0].reject(new h.ProctorApiError(401));
+  await flush();
+  assert.deepEqual(h.redirects, []);
+  stop();
+});
+
+test("a single 401 is rechecked, and a success in between keeps the candidate in", async () => {
+  const h = harness();
+  const stop = h.start(true);
+  h.requests[0].reject(new h.ProctorApiError(401));
+  await flush();
+  assert.deepEqual(h.redirects, []);
+  const recheck = h.timers.find((t) => t.delay === AUTH_RECHECK_MS);
+  assert.ok(recheck, "a recheck is scheduled");
+  recheck.callback();
+  h.requests.at(-1).resolve(live());
   await flush();
   assert.deepEqual(h.redirects, []);
   stop();

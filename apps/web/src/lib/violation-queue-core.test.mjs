@@ -5,7 +5,7 @@ import {
   ViolationQueue,
   isPermanentFailure,
   MAX_PENDING,
-  STORAGE_KEY,
+  storageKey,
 } from "./violation-queue-core.ts";
 
 /** A Map-backed store that can be made to fail, like a full quota. */
@@ -32,11 +32,11 @@ class ApiError extends Error {
 
 function setup(send = async () => ({})) {
   const store = new FakeStore();
-  return { store, queue: new ViolationQueue(store, send) };
+  return { store, queue: new ViolationQueue(store, send, "s1") };
 }
 
 function stored(store) {
-  return JSON.parse(store.getItem(STORAGE_KEY) ?? "[]");
+  return JSON.parse(store.getItem(storageKey("s1")) ?? "[]");
 }
 
 // ── durability ────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ test("a successful flush delivers and clears the queue", async () => {
   assert.equal(queue.pendingCount(), 0);
   assert.deepEqual(
     sent.map((e) => e.kind),
-    ["vm_detected", "focus_lost"],
+    ["vm_detected", "focus_lost"]
   );
 });
 
@@ -202,9 +202,26 @@ test("a batch larger than the cap is delivered across several flushes", async ()
   assert.equal(queue.pendingCount(), 0);
 });
 
+test("each session reads and flushes only its own events", async () => {
+  const store = new FakeStore();
+  const sent = [];
+  const practice = new ViolationQueue(store, async (events) => sent.push(...events), "practice");
+  const exam = new ViolationQueue(store, async (events) => sent.push(...events), "exam");
+  practice.enqueue({ kind: "focus_lost" });
+
+  assert.equal(exam.pendingCount(), 0);
+  assert.equal(await exam.flush(), 0);
+  assert.deepEqual(sent, []);
+  assert.equal(practice.pendingCount(), 1);
+});
+
+test("the stored key starts with ams_ so sign-out clears it", () => {
+  assert.ok(storageKey("s1").startsWith("ams_"));
+});
+
 test("corrupt storage does not wedge the queue permanently", () => {
   const { store, queue } = setup();
-  store.map.set(STORAGE_KEY, "{not json");
+  store.map.set(storageKey("s1"), "{not json");
 
   assert.equal(queue.pendingCount(), 0);
   queue.enqueue({ kind: "recovered" });
@@ -213,7 +230,7 @@ test("corrupt storage does not wedge the queue permanently", () => {
 
 test("a non-array in storage is treated as empty rather than trusted", () => {
   const { store, queue } = setup();
-  store.map.set(STORAGE_KEY, '{"kind":"not-an-array"}');
+  store.map.set(storageKey("s1"), '{"kind":"not-an-array"}');
   assert.equal(queue.pendingCount(), 0);
 });
 
@@ -242,6 +259,7 @@ test("only 4xx-except-429 is treated as permanent", () => {
   assert.equal(isPermanentFailure(new ApiError(400)), true);
   assert.equal(isPermanentFailure(new ApiError(422)), true);
   assert.equal(isPermanentFailure(new ApiError(429)), false);
+  assert.equal(isPermanentFailure(new ApiError(401)), false);
   assert.equal(isPermanentFailure(new ApiError(500)), false);
   assert.equal(isPermanentFailure(new ApiError(503)), false);
 });

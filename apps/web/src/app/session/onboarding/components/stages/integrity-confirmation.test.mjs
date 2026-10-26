@@ -77,6 +77,13 @@ test("unblocked review still allows an explicit Continue", () => {
   assert.ok(tree.some((node) => node.type === "Button" && node.props.label === "Continue"));
 });
 
+test("a Mac's review gives the lid and charger advice, unless entry is blocked", () => {
+  const has = (props) => render(props).some((node) => node.type === "PowerAdvice");
+  assert.equal(has({ platform: "macos" }), true);
+  assert.equal(has({ platform: "macos", blocked: true }), false);
+  assert.equal(has({ platform: "windows" }), false);
+});
+
 test("onboarding passes both native-policy and contest-window reasons into the review", () => {
   const ast = ts.createSourceFile(
     "page.tsx",
