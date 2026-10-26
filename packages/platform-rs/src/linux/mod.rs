@@ -2824,6 +2824,7 @@ pub fn wifi_scan() -> crate::WifiScan {
     let (rows, current) = crate::wifi_parse::parse_nmcli(&text);
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        connected: current.is_some(),
         current,
         supported: true,
     }

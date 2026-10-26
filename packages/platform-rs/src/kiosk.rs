@@ -1,5 +1,21 @@
 // ── Fullscreen kiosk: pure decision core (platform-neutral, unit-tested, no Win32) ──
 
+/// Only observed window state counts as success; a queued setter is not an acknowledgement.
+pub fn retry_until_verified(
+    mut engage_and_verify: impl FnMut() -> bool,
+    mut pause: impl FnMut(std::time::Duration),
+) -> bool {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            pause(std::time::Duration::from_millis(100 * attempt));
+        }
+        if engage_and_verify() {
+            return true;
+        }
+    }
+    false
+}
+
 const KIOSK_TICK_MS: u64 = 750;
 const NULL_LOCK_TICKS: u32 = 2;
 const PERSISTENT_REPORT_ATTEMPTS: u32 = 4;
@@ -285,6 +301,36 @@ pub fn on_teardown(state: &mut KioskState, now_ms: u64) -> Vec<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engagement_retries_unverified_state_and_stops_on_confirmation() {
+        let mut observations = [false, false, true].into_iter();
+        let mut delays = Vec::new();
+        assert!(retry_until_verified(
+            || observations.next().expect("no attempt after success"),
+            |delay| delays.push(delay.as_millis()),
+        ));
+        assert_eq!(delays, [100, 200]);
+        assert!(retry_until_verified(
+            || true,
+            |_| panic!("no pause after success")
+        ));
+    }
+
+    #[test]
+    fn engagement_refuses_entry_after_three_unverified_attempts() {
+        let mut calls = 0;
+        let mut delays = Vec::new();
+        assert!(!retry_until_verified(
+            || {
+                calls += 1;
+                false
+            },
+            |delay| delays.push(delay.as_millis()),
+        ));
+        assert_eq!(calls, 3);
+        assert_eq!(delays, [100, 200]);
+    }
 
     fn base() -> TickInput {
         TickInput {

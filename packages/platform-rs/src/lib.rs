@@ -27,7 +27,9 @@ pub struct WifiNetwork {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct WifiScan {
     pub networks: Vec<WifiNetwork>,
-    /// The SSID currently joined, if any.
+    /// Whether Wi-Fi is associated, even when macOS hides its name.
+    pub connected: bool,
+    /// The SSID currently joined, if the OS exposes it.
     pub current: Option<String>,
     /// False when there is no wireless interface, or the OS refused to list.
     /// The UI shows nothing at all rather than an empty list, which would
