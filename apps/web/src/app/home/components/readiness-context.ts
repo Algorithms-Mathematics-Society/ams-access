@@ -109,9 +109,10 @@ export function deriveContestantReadiness({
     const failedRequired = blocked
       ? reportRequiredChecks.filter((c) => c.outcome !== "pass").length
       : 0;
-    const failedOptional = (blocked ? report.optional_checks : report.checks).filter(
+    const optionalIssues = (blocked ? report.optional_checks : report.checks).filter(
       (c) => c.outcome !== "pass"
-    ).length;
+    );
+    const failedOptional = optionalIssues.length;
 
     // Honor a hard policy block regardless of the per-check tally (a Blocked
     // decision must never be overridden by a passing check count). When the block
@@ -131,12 +132,15 @@ export function deriveContestantReadiness({
 
     if (failedOptional > 0) {
       const noun = failedOptional === 1 ? "advisory warning" : "advisory warnings";
-      return make(
-        "advisory_warning",
-        `${failedOptional} ${noun}. Device is eligible to enter.`,
-        0,
-        failedOptional
-      );
+      return {
+        ...make(
+          "advisory_warning",
+          `${failedOptional} ${noun}. Device is eligible to enter.`,
+          0,
+          failedOptional
+        ),
+        advisoryKinds: optionalIssues.map((c) => c.kind),
+      };
     }
 
     // All checks pass — build a "ready" message with the richest available context.

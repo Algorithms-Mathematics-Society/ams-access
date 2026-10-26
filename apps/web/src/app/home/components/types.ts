@@ -162,6 +162,8 @@ export type ContestantReadinessContext = {
   message: string;
   failedRequired: number;
   failedOptional: number;
+  /** Kinds behind an advisory warning, so the panel can name each one. */
+  advisoryKinds?: ReadinessReport["checks"][number]["kind"][];
 };
 
 export type ContestEntryPhase =

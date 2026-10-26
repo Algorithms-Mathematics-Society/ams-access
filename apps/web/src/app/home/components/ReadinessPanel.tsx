@@ -11,6 +11,7 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import type { ReadinessState, ReadinessStatus, ContestantReadinessContext } from "./types";
+import { readinessCheckCopy } from "./utils";
 
 const checks = [
   ["network", "Network connection"],
@@ -42,6 +43,19 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   // entirely, while the log underneath still reported them.
   const advisoryChecks = checks.filter(
     ([key]) => readiness[key] === "warn" || readiness[key] === "unavailable"
+  );
+  // Warnings the summary counts but the six rows above cannot show (displays,
+  // remote access, lockdown...): without these the count named nothing.
+  const listedKinds = [
+    "network",
+    "camera",
+    "microphone",
+    "keyboard_lockdown",
+    "platform",
+    "restricted_apps",
+  ];
+  const otherAdvisory = (context?.advisoryKinds ?? []).filter(
+    (kind) => !listedKinds.includes(kind)
   );
   const pendingChecks = checks.filter(([key]) => readiness[key] === "checking");
   const passedChecks = checks.filter(([key]) => readiness[key] === "ok");
@@ -95,7 +109,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           </VStack>
         )}
 
-        {advisoryChecks.length > 0 && (
+        {(advisoryChecks.length > 0 || otherAdvisory.length > 0) && (
           <VStack as="section" gap={2} aria-label="Advisory checks">
             <HStack gap={2} align="center">
               <StatusDot variant="warning" label="Advisory" />
@@ -109,6 +123,14 @@ export const ReadinessWidget = memo(function ReadinessWidget({
                   status={readiness[key]}
                   theme={theme}
                   onResolve={onResolve ? () => onResolve(key) : undefined}
+                />
+              ))}
+              {otherAdvisory.map((kind) => (
+                <ReadinessItem
+                  key={kind}
+                  label={readinessCheckCopy(kind).label}
+                  status="warn"
+                  theme={theme}
                 />
               ))}
             </List>

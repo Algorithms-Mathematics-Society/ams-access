@@ -43,3 +43,13 @@ test("a blocked report still asks the candidate to act", () => {
 test("a clean report is ready", () => {
   assert.equal(derive("allowed", [check("camera", "pass")]).status, "ready");
 });
+
+test("advisory warnings carry their kinds so Home can name them", () => {
+  const context = derive(
+    "allowed_with_warnings",
+    [check("camera", "pass")],
+    [check("external_display", "warn"), check("remote_server", "unknown")]
+  );
+  assert.equal(context.failedOptional, 2);
+  assert.deepEqual(context.advisoryKinds, ["external_display", "remote_server"]);
+});
