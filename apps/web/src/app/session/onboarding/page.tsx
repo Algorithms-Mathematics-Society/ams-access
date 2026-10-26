@@ -33,8 +33,10 @@ import {
   getSession,
   serverNow,
   startSession,
+  uploadIdentityPhoto,
   type ContestIndex,
 } from "@/lib/proctor-api";
+import { captureFrame } from "@/lib/identity-photo";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
@@ -1121,6 +1123,54 @@ export default function OnboardingPage() {
     [advanceController, stageRun, dryRun]
   );
 
+  const saveResumeReferencePhoto = useCallback(async (video: HTMLVideoElement | null) => {
+    const saved = resumeSetupRef.current;
+    const track = cameraStreamRef.current?.getVideoTracks()[0];
+    if (
+      !saved ||
+      !track ||
+      !track.enabled ||
+      !isTrackDelivering(track) ||
+      !video ||
+      video.readyState < 2 ||
+      video.videoWidth === 0 ||
+      video.videoHeight === 0 ||
+      !canReuseFaceScan(saved, track.getSettings().deviceId ?? "")
+    )
+      return false;
+    const frame = captureFrame(video);
+    if (!frame) return false;
+    const result = await withTimeout(
+      invokeStrict<{ face_verified: boolean }>("save_face_image", {
+        imageData: `data:image/jpeg;base64,${frame}`,
+        index: 0,
+        dryRun: false,
+      }),
+      5000,
+      "Reference photo save timed out"
+    );
+    if (!result?.face_verified) return false;
+    return uploadIdentityPhoto(saved.sessionId, "entry", frame, 0);
+  }, []);
+
+  const retryFullFaceScan = useCallback(() => {
+    resumeSetupRef.current = null;
+    passedFaceRef.current = null;
+    setReusedFaceScan(false);
+    try {
+      localStorage.removeItem(RESUME_SETUP_KEY);
+    } catch {
+      // The in-memory checkpoint is already invalidated for this setup.
+    }
+    setResults((previous) => {
+      const next = { ...previous };
+      delete next[7];
+      delete next[8];
+      return next;
+    });
+    setCurrentStage(7);
+  }, []);
+
   const leaveSetup = useCallback(async (nav: { push: (href: string) => void }) => {
     entryAttemptsRef.current.cancel();
     cameraSession.release();
@@ -1657,12 +1707,17 @@ export default function OnboardingPage() {
                           )}
                           {currentStage === 8 && reusedFaceScan && (
                             <Text color="secondary">
-                              Reusing your recent face scan. Checking your presence again.
+                              Reusing your recent face scan. Checking your presence again and taking
+                              a new reference photo.
                             </Text>
                           )}
                           {currentStage === 8 && (
                             <Stage9_PresenceVerification
                               stream={cameraStream}
+                              onReferencePhoto={
+                                reusedFaceScan ? saveResumeReferencePhoto : undefined
+                              }
+                              onPhotoFailure={retryFullFaceScan}
                               onPass={advancePass}
                               onWarn={advanceWarn}
                             />

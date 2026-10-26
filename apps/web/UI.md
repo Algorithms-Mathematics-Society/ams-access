@@ -330,4 +330,7 @@ external-browser command refuses requests while native exam lockdown is active.
 A native resume of an active session on the same device skips the introduction
 and reuses a passed face scan for at most five minutes when the camera is unchanged.
 Presence, media permissions, displays, applications, network and lockdown are
-checked again. Missing or invalid recovery data runs complete setup.
+checked again. Reusing the scan takes a fresh reference photo during presence
+verification, saves it through the native face-image command and uploads it through
+the existing session identity-photo endpoint. Capture, save or upload failure runs
+the full face scan. Missing or invalid recovery data runs complete setup.

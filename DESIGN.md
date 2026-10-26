@@ -168,4 +168,6 @@ fast, reduced-motion-aware opening transition and no network work on open.
 
 Recent same-device resumes may reuse a passed face scan for five minutes with
 the same camera. Setup says when it reuses the scan and performs a fresh presence
-check; volatile device checks and final entry policy remain authoritative.
+check with a new reference photo saved through the normal native capture and
+identity-photo upload paths. Capture or upload failure runs the full face scan;
+volatile device checks and final entry policy remain authoritative.
