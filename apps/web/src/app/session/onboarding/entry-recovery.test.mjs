@@ -330,3 +330,94 @@ test("session binding failures remain visible instead of navigating in the same 
   assert.match(branch, /setPolicyBlock/);
   assert.doesNotMatch(branch, /router\.(?:push|replace)/);
 });
+
+test("final setup rechecks macOS Location before session creation and returns missing grants to camera setup", async () => {
+  for (const status of ["not_determined", "denied", "restricted", null, "authorized"]) {
+    const stages = [],
+      checks = [];
+    let sessions = 0;
+    const f = fixture({
+      enumerateDevices: async () => [],
+      collectDeviceState: async () => ({ platform: "macos" }),
+      overrides: {
+        platform: "macos",
+        contestId: "contest",
+        preparedSessionIdRef: { current: null },
+        getOrCreateDeviceId: () => "device",
+        invokeStrict: async (command) => {
+          checks.push(command);
+          return status;
+        },
+        setCurrentStage: (stage) => stages.push(stage),
+        startSession: async () => {
+          sessions++;
+          throw new Error("stop after Location gate");
+        },
+      },
+    });
+    await f.finalize();
+    assert.deepEqual(checks, ["wifi_location_status"]);
+    assert.equal(sessions, status === "authorized" ? 1 : 0);
+    if (status !== "authorized") assert.deepEqual(stages, [6]);
+  }
+});
+
+test("final setup never queries Location on Windows or Linux", async () => {
+  for (const platform of ["windows", "windows_msix", "linux"]) {
+    const commands = [];
+    const f = fixture({
+      enumerateDevices: async () => [],
+      collectDeviceState: async () => ({ platform }),
+      overrides: {
+        platform,
+        contestId: "contest",
+        preparedSessionIdRef: { current: null },
+        getOrCreateDeviceId: () => "device",
+        invokeStrict: async (command) => {
+          commands.push(command);
+          throw new Error(command);
+        },
+        startSession: async () => {
+          throw new Error("stop after Location gate");
+        },
+      },
+    });
+    await f.finalize();
+    assert.deepEqual(commands, []);
+  }
+});
+
+test("final setup permits the Location bypass only with both a dev build and relaxed gating", async () => {
+  for (const [env, relaxed, expectedQueries] of [
+    ["production", true, 1],
+    ["development", false, 1],
+    ["development", true, 0],
+  ]) {
+    let queries = 0,
+      sessions = 0;
+    const f = fixture({
+      enumerateDevices: async () => [],
+      collectDeviceState: async () => ({ platform: "macos" }),
+      overrides: {
+        platform: "macos",
+        process: { env: { NODE_ENV: env } },
+        isGatingRelaxed: () => relaxed,
+        warnGatingRelaxed() {},
+        contestId: "contest",
+        preparedSessionIdRef: { current: null },
+        getOrCreateDeviceId: () => "device",
+        invokeStrict: async () => {
+          queries++;
+          return "denied";
+        },
+        startSession: async () => {
+          sessions++;
+          throw new Error("stop after Location gate");
+        },
+      },
+    });
+    await f.finalize();
+    assert.equal(queries, expectedQueries);
+    assert.equal(sessions, expectedQueries === 0 ? 1 : 0);
+  }
+});

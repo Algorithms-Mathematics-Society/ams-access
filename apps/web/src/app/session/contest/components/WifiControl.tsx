@@ -56,9 +56,6 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const [scanError, setScanError] = useState("");
   const [note, setNote] = useState("");
   const [locationStatus, setLocationStatus] = useState<LocationStatus | null>(null);
-  const [locationBusy, setLocationBusy] = useState(false);
-  const locationPending = useRef(false);
-  const rescanRequested = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const scanPending = useRef(false);
   // Which way the menu opens, and how tall it may be.
@@ -102,10 +99,6 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       setScanError("Could not load Wi-Fi networks. Rescan to try again.");
     } finally {
       scanPending.current = false;
-      if (rescanRequested.current) {
-        rescanRequested.current = false;
-        void refresh();
-      }
     }
   }, []);
 
@@ -192,25 +185,6 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       );
     } finally {
       setBusy(false);
-    }
-  };
-
-  const requestLocation = async () => {
-    if (locationPending.current || !window.__TAURI__) return;
-    locationPending.current = true;
-    setLocationBusy(true);
-    setError("");
-    try {
-      setLocationStatus(
-        await window.__TAURI__.core.invoke<LocationStatus>("request_wifi_location")
-      );
-      if (scanPending.current) rescanRequested.current = true;
-      else await refresh();
-    } catch {
-      setError("Could not request Location access. Try again or use System Settings.");
-    } finally {
-      locationPending.current = false;
-      setLocationBusy(false);
     }
   };
 
@@ -337,23 +311,10 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
               again.
             </Text>
           )}
-          {scan.supported && scan.saved_only && locationStatus === "not_determined" && (
-            <VStack gap={2}>
-              <Text type="supporting" color="secondary">
-                Location access lets macOS show nearby Wi-Fi names. It is optional; your location is
-                never recorded or sent.
-              </Text>
-              <Button
-                label="Show networks near you"
-                variant="secondary"
-                isLoading={locationBusy}
-                onClick={() => void requestLocation()}
-              />
-            </VStack>
-          )}
           {scan.supported &&
             scan.saved_only &&
-            (locationStatus === "denied" || locationStatus === "restricted") && (
+            locationStatus !== null &&
+            locationStatus !== "authorized" && (
               <Text type="supporting" color="secondary">
                 To show nearby Wi-Fi names, allow AMS Access in System Settings &gt; Privacy &amp;
                 Security &gt; Location Services, then rescan.

@@ -3,6 +3,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { Selector } from "@astryxdesign/core/Selector";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/app/home/components/ui-primitives";
+import { LocationPermission } from "../LocationPermission";
 import { useTheme } from "@/lib/theme";
 import { Spinner, StageHeader, StatusBadge } from "../ui";
 import { SetupPermissionInfo } from "../SetupPermissionInfo";
@@ -21,19 +22,25 @@ export function Stage7_CameraInit({
   onWarn,
   policy,
   overrideActive,
+  platform,
+  onQuitAndReopen,
 }: {
   onPass(): void;
   onWarn(detail: string): void;
   onCameraReady(stream: MediaStream | null): void;
   policy: SessionPolicy | null;
   overrideActive: boolean;
+  platform: string | null;
+  onQuitAndReopen(): void;
 }) {
   const { theme } = useTheme();
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [error, setError] = useState<string | null>(null);
   const [permissionIssue, setPermissionIssue] = useState(false);
-  const [isWindows, setIsWindows] = useState(false);
-  const [isMac, setIsMac] = useState(false);
+  const isWindows = platform?.toLowerCase().startsWith("windows") ?? false;
+  const isMac = platform?.toLowerCase().startsWith("mac") ?? false;
+  const [locationReady, setLocationReady] = useState(false);
+  const locationPassed = !isMac || locationReady;
   const [retryKey, setRetryKey] = useState(0);
   const [errorCode, setErrorCode] = useState<CameraFailure>("not_ready");
   const [preferredCamera, setPreferredCamera] = useState(
@@ -41,7 +48,6 @@ export function Stage7_CameraInit({
   );
   const [selectionPending, setSelectionPending] = useState(false);
   const { state: cameraDevices, refresh: refreshCameras } = useCameraDevices();
-  const locationRequested = useRef(false);
   const generationRef = useRef(0);
   const completedRef = useRef(false);
   const passTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -52,15 +58,6 @@ export function Stage7_CameraInit({
     passTimerRef.current = null;
   };
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    invoke<{ os: string }>("get_platform")
-      .then((p) => {
-        setIsWindows(p?.os?.toLowerCase().startsWith("windows") ?? false);
-        setIsMac(p?.os?.toLowerCase().startsWith("mac") ?? false);
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,15 +125,13 @@ export function Stage7_CameraInit({
   }, [onCameraReady, refreshCameras, retryKey]);
 
   useEffect(() => {
-    if (!isMac || phase !== "pass" || locationRequested.current) return;
-    locationRequested.current = true;
-    // Optional: permission results never affect camera readiness or contest entry.
-    void invoke("request_wifi_location").catch(() => {});
-  }, [isMac, phase]);
-
-  useEffect(() => {
     cancelPass();
-    if (phase !== "pass" || readinessAction(policy, "camera", "pass").decision !== "pass") return;
+    if (
+      !locationPassed ||
+      phase !== "pass" ||
+      readinessAction(policy, "camera", "pass").decision !== "pass"
+    )
+      return;
     const generation = generationRef.current;
     passTimerRef.current = setTimeout(() => {
       if (generationRef.current !== generation || completedRef.current) return;
@@ -145,7 +140,7 @@ export function Stage7_CameraInit({
       onPass();
     }, 1000);
     return cancelPass;
-  }, [phase, policy, onPass]);
+  }, [phase, policy, onPass, locationPassed]);
 
   const selectCamera = async (deviceId: string) => {
     const generation = ++generationRef.current;
@@ -211,13 +206,7 @@ export function Stage7_CameraInit({
       </VStack>
 
       <SetupPermissionInfo kind="camera" />
-      {isMac && (
-        <Text color="secondary">
-          macOS also asks for optional Location access to show Wi-Fi networks near you, including
-          after a disconnection. Your location is never recorded or sent. Denying this does not
-          block contest entry.
-        </Text>
-      )}
+      {isMac && <LocationPermission onReady={setLocationReady} onQuitAndReopen={onQuitAndReopen} />}
       <Selector
         label="Camera"
         description="Choose the camera to use for setup and during the contest."
@@ -416,8 +405,10 @@ export function Stage7_CameraInit({
               theme={theme}
               variant="secondary"
               size="small"
+              disabled={!locationPassed}
               onClick={() => {
                 if (
+                  !locationPassed ||
                   completedRef.current ||
                   readinessAction(policyRef.current, "camera", "failure").decision !== "warn"
                 )

@@ -1008,6 +1008,9 @@ pub fn open_privacy_pane(section: &str) -> Result<(), String> {
         "screen_recording" => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         }
+        "location" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices"
+        }
         "camera" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
         "microphone" => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"

@@ -1098,7 +1098,7 @@ async fn scan_wifi() -> platform_rs::WifiScan {
     .unwrap_or_default()
 }
 
-/// Location access is optional and is used only to reveal nearby Wi-Fi names.
+/// Location access is used only to reveal nearby Wi-Fi names.
 #[tauri::command]
 fn wifi_location_status() -> &'static str {
     #[cfg(target_os = "macos")]
@@ -2087,7 +2087,7 @@ fn relaunch_app(app: tauri::AppHandle) {
 /// Deep-link into the OS privacy settings page for `section`. Windows opens
 /// the matching ms-settings page ("camera" / "microphone"). macOS opens the
 /// System Settings pane: "accessibility", "input_monitoring",
-/// "screen_recording", "camera", "microphone" or "sharing". Linux is a no-op.
+/// "screen_recording", "camera", "microphone", "location" or "sharing". Linux is a no-op.
 #[tauri::command]
 fn open_privacy_settings(section: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]

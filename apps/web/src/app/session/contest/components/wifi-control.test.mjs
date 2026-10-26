@@ -192,79 +192,17 @@ test("repeated rescans share a pending native scan", async () => {
 const locationButton = (tree) =>
   nodes(tree).find((node) => node.props.label === "Show networks near you");
 
-test("only undetermined Location access on saved-only macOS offers the request", () => {
-  assert.ok(
-    locationButton(harness({ ...base, saved_only: true }, undefined, true, "not_determined")())
-  );
-  for (const status of [null, "authorized", "denied", "restricted"]) {
-    assert.ok(!locationButton(harness({ ...base, saved_only: true }, undefined, true, status)()));
-  }
-  assert.ok(!locationButton(harness(base, undefined, true, "not_determined")()));
-});
-
-test("denied and restricted access point to Location Services without requesting again", () => {
-  for (const status of ["denied", "restricted"]) {
+test("the contest picker gives Settings guidance for every non-authorized macOS status, never a prompt", () => {
+  for (const status of ["not_determined", "denied", "restricted"]) {
     const tree = harness({ ...base, saved_only: true }, undefined, true, status)();
     assert.match(JSON.stringify(tree), /System Settings > Privacy &.*Security > Location Services/);
     assert.ok(!locationButton(tree));
+    assert.doesNotMatch(JSON.stringify(tree), /optional|never recorded or sent/);
   }
-});
-
-test("Location request is single-flight and rescans nearby networks after granting", async () => {
-  const calls = [];
-  let grant;
-  const draw = harness(
-    { ...base, saved_only: true },
-    async (command) => {
-      calls.push(command);
-      if (command === "request_wifi_location")
-        return new Promise((resolve) => {
-          grant = resolve;
-        });
-      if (command === "scan_wifi") return { ...base, networks: [network] };
-    },
-    true,
-    "not_determined"
-  );
-  const button = locationButton(draw());
-  button.props.onClick();
-  button.props.onClick();
-  assert.deepEqual(calls, ["request_wifi_location"]);
-  assert.equal(locationButton(draw()).props.isLoading, true);
-  grant("authorized");
-  await settle();
-  assert.deepEqual(calls, ["request_wifi_location", "scan_wifi"]);
-  assert.match(JSON.stringify(draw()), /Nearby networks/);
-  assert.ok(!locationButton(draw()));
-});
-
-test("denial keeps saved networks usable and request failure allows retry", async () => {
-  for (const fail of [false, true]) {
-    const draw = harness(
-      { ...base, saved_only: true, networks: [network] },
-      async (command) => {
-        if (command === "request_wifi_location") {
-          if (fail) throw new Error("unavailable");
-          return "denied";
-        }
-        if (command === "get_platform") return { os: "macos" };
-        if (command === "wifi_location_status") return "denied";
-        return { ...base, saved_only: true, networks: [network] };
-      },
-      true,
-      "not_determined"
-    );
-    locationButton(draw()).props.onClick();
-    await settle();
-    const tree = draw();
-    assert.ok(row(tree));
-    if (fail) {
-      assert.match(JSON.stringify(tree), /Could not request Location access/);
-      assert.equal(locationButton(tree).props.isLoading, false);
-    } else {
-      assert.ok(!locationButton(tree));
-      assert.match(JSON.stringify(tree), /Location Services/);
-    }
+  for (const status of [null, "authorized"]) {
+    const tree = harness({ ...base, saved_only: true }, undefined, true, status)();
+    assert.ok(!locationButton(tree));
+    assert.doesNotMatch(JSON.stringify(tree), /Location Services/);
   }
 });
 
@@ -282,40 +220,7 @@ test("saved-only refresh queries Location status only on native macOS", async ()
       .props.onClick();
     await settle();
     assert.equal(calls.includes("wifi_location_status"), os === "macos");
-    assert.equal(Boolean(locationButton(draw())), os === "macos");
+    assert.ok(!locationButton(draw()));
+    assert.equal(JSON.stringify(draw()).includes("Location Services"), os === "macos");
   }
-});
-
-test("granting during a pending rescan queues a fresh scan with the new access", async () => {
-  let release;
-  let scans = 0;
-  const draw = harness(
-    { ...base, saved_only: true },
-    async (command) => {
-      if (command === "request_wifi_location" || command === "wifi_location_status")
-        return "authorized";
-      if (command === "get_platform") return { os: "macos" };
-      if (command === "scan_wifi") {
-        scans++;
-        if (scans === 1)
-          return new Promise((resolve) => {
-            release = resolve;
-          });
-        return { ...base, networks: [network] };
-      }
-    },
-    true,
-    "not_determined"
-  );
-  const tree = draw();
-  nodes(tree)
-    .find((node) => node.props["aria-label"] === "Rescan networks")
-    .props.onClick();
-  locationButton(tree).props.onClick();
-  await settle();
-  assert.equal(scans, 1);
-  release({ ...base, saved_only: true });
-  await settle();
-  assert.equal(scans, 2);
-  assert.match(JSON.stringify(draw()), /Nearby networks/);
 });

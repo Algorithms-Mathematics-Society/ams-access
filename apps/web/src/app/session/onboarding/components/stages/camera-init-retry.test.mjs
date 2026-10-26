@@ -105,13 +105,13 @@ test("camera retry replaces a live but muted handle after the user repairs acces
   assert.equal(session.current()?.getVideoTracks()[0], tracks.video[1]);
 });
 
-test("setup requests Location only after macOS camera readiness and never gates entry", async () => {
+test("camera-stage automatic advance waits for Location, while non-macOS is unchanged", () => {
   let effect;
   function find(node) {
     if (
       ts.isCallExpression(node) &&
       node.expression.getText(ast) === "useEffect" &&
-      node.arguments[0]?.getText(ast).includes('invoke("request_wifi_location")')
+      node.arguments[0]?.getText(ast).includes("passTimerRef.current = setTimeout")
     ) {
       effect = node.arguments[0].getText(ast);
     }
@@ -119,31 +119,49 @@ test("setup requests Location only after macOS camera readiness and never gates 
   }
   find(ast);
   assert.ok(effect);
-  assert.match(source.replace(/\s+/g, " "), /Denying this does not block contest entry/);
   const code = ts.transpileModule(`const effect = ${effect};`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  for (const [isMac, phase, alreadyRequested, expected] of [
-    [false, "pass", false, 0],
-    [true, "checking", false, 0],
-    [true, "fail", false, 0],
-    [true, "pass", true, 0],
-    [true, "pass", false, 1],
+  for (const [isMac, locationReady, expected] of [
+    [true, false, 0],
+    [true, true, 1],
+    [false, false, 1],
+    [false, true, 1],
   ]) {
-    const calls = [];
+    let passed = 0;
+    let timer;
     const run = new Function(
-      "isMac",
+      "locationPassed",
+      "cancelPass",
       "phase",
-      "locationRequested",
-      "invoke",
+      "readinessAction",
+      "policy",
+      "generationRef",
+      "passTimerRef",
+      "setTimeout",
+      "completedRef",
+      "policyRef",
+      "onPass",
       `${code}; return effect;`
-    )(isMac, phase, { current: alreadyRequested }, (command) => {
-      calls.push(command);
-      return Promise.reject(new Error("optional permission unavailable"));
-    });
-    assert.equal(run(), undefined, "entry does not await optional access");
-    await new Promise(setImmediate);
-    assert.equal(calls.length, expected);
-    if (expected) assert.equal(calls[0], "request_wifi_location");
+    )(
+      !isMac || locationReady,
+      () => {},
+      "pass",
+      () => ({ decision: "pass" }),
+      {},
+      { current: 1 },
+      { current: null },
+      (callback) => {
+        timer = callback;
+      },
+      { current: false },
+      { current: {} },
+      () => {
+        passed++;
+      }
+    );
+    run();
+    timer?.();
+    assert.equal(passed, expected);
   }
 });
