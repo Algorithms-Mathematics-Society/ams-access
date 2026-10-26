@@ -2485,24 +2485,12 @@ impl lockdown_lifecycle::Operations for DesktopOperations {
                     return Err("The exam window did not leave native full screen".into());
                 }
             }
-            window
-                .set_always_on_top(true)
-                .map_err(|error| error.to_string())?;
-            window
-                .set_simple_fullscreen(true)
-                .map_err(|error| error.to_string())?;
-            // tao declines silently (Tauri drops its bool), so check AppKit
-            // directly and give it one more try before refusing entry.
-            if !platform_rs::macos::simple_fullscreen_engaged(ns_window) {
-                let _ = window.set_simple_fullscreen(false);
-                std::thread::sleep(Duration::from_millis(200));
-                window
-                    .set_simple_fullscreen(true)
-                    .map_err(|error| error.to_string())?;
-                std::thread::sleep(Duration::from_millis(200));
-                if !platform_rs::macos::simple_fullscreen_engaged(ns_window) {
-                    return Err("Full-screen mode could not be engaged".into());
-                }
+            let fullscreen_window = window.clone();
+            if !platform_rs::macos::engage_simple_fullscreen(ns_window, move |fullscreen| {
+                fullscreen_window.set_always_on_top(true).is_ok()
+                    && fullscreen_window.set_simple_fullscreen(fullscreen).is_ok()
+            }) {
+                return Err("Full-screen mode could not be engaged".into());
             }
         }
         self.platform_attempted = true;
