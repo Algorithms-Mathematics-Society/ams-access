@@ -283,7 +283,8 @@ export function toPreflightPolicyItem(check: ReadinessCheck, scope: "required" |
     label: copy.label,
     status: readinessCheckStatus(check),
     successLabel: measured ?? copy.success,
-    failLabel: specific ?? (check.outcome === "warn" ? warningLabel : failCopy),
+    // A bare "Optional warning" left the candidate guessing what was wrong.
+    failLabel: specific ?? (check.outcome === "warn" ? `${warningLabel}: ${failCopy}` : failCopy),
   };
 }
 
