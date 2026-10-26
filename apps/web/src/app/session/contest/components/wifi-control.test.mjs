@@ -296,6 +296,14 @@ test("password reveal and retry form survive an empty refresh and failed join", 
   ui.render();
   const reveal = () => ui.find((node) => node.props?.label === "Show password");
   assert.ok(reveal());
+  assert.ok(reveal().props.icon, "password control must be an icon button");
+  const field = ui.find(
+    (node) =>
+      Array.isArray(node.props?.children) &&
+      node.props.children.some((child) => child?.type === "input") &&
+      node.props.children.some((child) => child?.props?.label === "Show password")
+  );
+  assert.ok(field, "eye control belongs inside the password field");
   reveal().props.onClick();
   ui.render();
   assert.equal(ui.find((node) => node.type === "input").props.type, "text");
@@ -318,6 +326,53 @@ test("password reveal and retry form survive an empty refresh and failed join", 
   ui.find((node) => node.props?.label === "Hide password").props.onClick();
   ui.render();
   assert.equal(ui.find((node) => node.type === "input").props.type, "password");
+  ui.unmount();
+});
+
+test("manual rescan follows a cached read once and exposes native failure", async () => {
+  const cached = deferred();
+  const forced = deferred();
+  const requests = [];
+  const ui = mountPair(base, (command, args) => {
+    assert.equal(command, "scan_wifi");
+    requests.push(args?.refresh ?? false);
+    return args?.refresh ? forced.promise : cached.promise;
+  }).instance();
+  choose(ui);
+  const button = ui.find((node) => node.props?.["aria-label"] === "Rescan networks");
+  button.props.onClick();
+  button.props.onClick();
+  assert.deepEqual(requests, [false]);
+  cached.resolve(base);
+  await tick();
+  assert.deepEqual(requests, [false, true]);
+  ui.render();
+  assert.equal(
+    ui.find((node) => node.props?.["aria-label"] === "Rescan networks").props.disabled,
+    true
+  );
+  forced.reject("Windows Wi-Fi scan timed out. Rescan and try again.");
+  await tick();
+  assert.match(JSON.stringify(ui.render()), /Windows Wi-Fi scan timed out/);
+  assert.equal(
+    ui.find((node) => node.props?.["aria-label"] === "Rescan networks").props.disabled,
+    false
+  );
+  ui.unmount();
+});
+
+test("joining preserves whitespace in the selected network name", async () => {
+  const padded = { ...network, ssid: " Campus " };
+  const scan = { ...base, networks: [padded] };
+  let selected;
+  const ui = mountPair(scan, (command, args) => {
+    if (command === "connect_wifi") selected = args.ssid;
+    return Promise.resolve(command === "scan_wifi" ? scan : true);
+  }).instance();
+  choose(ui);
+  ui.find((node) => node.props?.label === "Join").props.onClick();
+  await tick();
+  assert.equal(selected, " Campus ");
   ui.unmount();
 });
 

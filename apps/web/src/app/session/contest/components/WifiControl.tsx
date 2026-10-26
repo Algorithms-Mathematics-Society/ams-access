@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Lock, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { Eye, EyeOff, Lock, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 
@@ -93,6 +94,8 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
   const scanRef = useRef<Promise<WifiScan | null> | null>(null);
+  const rescanRef = useRef<Promise<WifiScan | null> | null>(null);
+  const [rescanning, setRescanning] = useState(false);
   const refreshTimerRef = useRef<number | null>(null);
   // Which way the menu opens, and how tall it may be.
   //
@@ -105,7 +108,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     maxHeight: 320,
   });
 
-  const refresh = useCallback((): Promise<WifiScan | null> => {
+  const refresh = useCallback((force = false): Promise<WifiScan | null> => {
     if (scanRef.current) return scanRef.current;
     if (!window.__TAURI__) {
       if (mountedRef.current) setScan(UNSUPPORTED_SCAN);
@@ -113,7 +116,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     }
     const statusAtStart = joinStatus;
     const request = window.__TAURI__.core
-      .invoke<WifiScan>("scan_wifi")
+      .invoke<WifiScan>("scan_wifi", { refresh: force })
       .then((next) => {
         if (mountedRef.current) {
           setScan(next ?? UNSUPPORTED_SCAN);
@@ -142,10 +145,14 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
         }
         return next ?? null;
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (mountedRef.current) {
           setScan((previous) => previous ?? UNSUPPORTED_SCAN);
-          setScanError("Could not load Wi-Fi networks. Rescan to try again.");
+          setScanError(
+            typeof error === "string"
+              ? error
+              : "Could not load Wi-Fi networks. Rescan to try again."
+          );
         }
         return null;
       })
@@ -155,6 +162,20 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     scanRef.current = request;
     return request;
   }, []);
+
+  const rescan = useCallback(() => {
+    if (rescanRef.current) return rescanRef.current;
+    setRescanning(true);
+    // A manual request must follow an in-flight cached read, not reuse its stale result.
+    const request = (scanRef.current ?? Promise.resolve(null))
+      .then(() => (mountedRef.current ? refresh(true) : null))
+      .finally(() => {
+        rescanRef.current = null;
+        if (mountedRef.current) setRescanning(false);
+      });
+    rescanRef.current = request;
+    return request;
+  }, [refresh]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -180,10 +201,8 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
   }, [phase, joiningSsid, selected]);
 
   useEffect(() => {
-    // Rescan only while the menu is open or the connection is down. Every
-    // scan spawns a subprocess, and polling one every twenty seconds for a
-    // two-hour paper is several hundred of them per candidate for a list
-    // nobody is looking at.
+    // Read status only while visible or offline. Only manual Rescan requests
+    // a Windows radio scan, which can temporarily increase network latency.
     if (!window.__TAURI__ || (!open && online)) return;
     const id = window.setInterval(() => void refresh(), REFRESH_MS);
     return () => window.clearInterval(id);
@@ -363,8 +382,10 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
             {nativeAvailable && (
               <button
                 type="button"
-                onClick={() => void refresh()}
+                onClick={() => void rescan()}
                 aria-label="Rescan networks"
+                aria-busy={rescanning}
+                disabled={rescanning || busy}
                 style={{
                   background: "transparent",
                   border: "none",
@@ -415,32 +436,49 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
           {passwordNetwork && (
             <VStack gap={2}>
               <Text type="supporting">{passwordNetwork.ssid}</Text>
-              <input
-                type={showPassword ? "text" : "password"}
-                aria-label={`Password for ${passwordNetwork.ssid}`}
-                autoFocus
-                disabled={busy}
-                value={password}
-                placeholder="Network password"
-                onChange={(event) => setPassword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void join(passwordNetwork, password);
-                }}
+              <HStack
+                align="center"
+                gap={1}
                 style={{
                   width: "100%",
-                  padding: "var(--spacing-2)",
                   borderRadius: "var(--radius-control)",
                   border: "var(--border-width) solid var(--color-border)",
                   background: "var(--color-background-page)",
-                  color: "var(--color-text-primary)",
+                  paddingRight: "var(--spacing-1)",
                 }}
-              />
-              <Button
-                label={showPassword ? "Hide password" : "Show password"}
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowPassword((shown) => !shown)}
-              />
+              >
+                <style>{".access-wifi-password::-ms-reveal { display: none; }"}</style>
+                <input
+                  className="access-wifi-password"
+                  type={showPassword ? "text" : "password"}
+                  aria-label={`Password for ${passwordNetwork.ssid}`}
+                  autoFocus
+                  disabled={busy}
+                  value={password}
+                  placeholder="Network password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void join(passwordNetwork, password);
+                  }}
+                  style={{
+                    minWidth: 0,
+                    flex: 1,
+                    padding: "var(--spacing-2)",
+                    borderRadius: "var(--radius-control)",
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                <IconButton
+                  label={showPassword ? "Hide password" : "Show password"}
+                  tooltip={showPassword ? "Hide password" : "Show password"}
+                  icon={showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPassword((shown) => !shown)}
+                />
+              </HStack>
               <HStack gap={2} justify="end">
                 <Button
                   label="Cancel"

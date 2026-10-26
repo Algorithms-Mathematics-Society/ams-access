@@ -1,14 +1,41 @@
 //! One-off WLAN joins. A temporary profile stays in memory; only a verified
 //! join saves an app-named profile, leaving user-created profiles untouched.
 use std::ffi::c_void;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::core::{GUID, PCWSTR};
 use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE};
 use windows::Win32::NetworkManagement::WiFi::*;
 
 static JOIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-struct Client(HANDLE, Option<Box<Completion>>);
+struct Client<T = Completion>(HANDLE, Option<Box<T>>);
+
+impl<T> Client<T> {
+    fn open() -> Result<Self, String> {
+        let mut version = 0;
+        let mut handle = HANDLE::default();
+        check(
+            unsafe { WlanOpenHandle(2, None, &mut version, &mut handle) },
+            "initialization",
+        )?;
+        Ok(Self(handle, None))
+    }
+
+    fn interfaces(&self) -> Result<Vec<WLAN_INTERFACE_INFO>, String> {
+        let mut interfaces = std::ptr::null_mut();
+        let code = unsafe { WlanEnumInterfaces(self.0, None, &mut interfaces) };
+        let _interfaces = Memory(interfaces.cast());
+        check(code, "interface listing")?;
+        if interfaces.is_null() {
+            return Err("No Wi-Fi adapter is available.".into());
+        }
+        let count = unsafe { (*interfaces).dwNumberOfItems as usize }.min(256);
+        Ok(
+            unsafe { std::slice::from_raw_parts((*interfaces).InterfaceInfo.as_ptr(), count) }
+                .to_vec(),
+        )
+    }
+}
 
 struct Completion {
     interface: GUID,
@@ -73,7 +100,7 @@ fn connection_failure(reason: u32) -> String {
     };
     format!("{detail} (Windows reason {reason}.)")
 }
-impl Drop for Client {
+impl<T> Drop for Client<T> {
     fn drop(&mut self) {
         unsafe {
             if self.1.is_some() {
@@ -196,23 +223,178 @@ fn association_state(interfaces: &[WLAN_INTERFACE_INFO]) -> Option<bool> {
     }
 }
 
-pub(super) fn is_connected() -> Option<bool> {
-    let mut version = 0;
-    let mut handle = HANDLE::default();
-    if unsafe { WlanOpenHandle(2, None, &mut version, &mut handle) } != 0 {
+fn visible_network(row: &WLAN_AVAILABLE_NETWORK) -> Option<crate::WifiNetwork> {
+    if row.uNumberOfBssids == 0 && row.dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED == 0 {
         return None;
     }
-    let client = Client(handle, None);
-    let mut interfaces = std::ptr::null_mut();
-    let code = unsafe { WlanEnumInterfaces(client.0, None, &mut interfaces) };
-    let _interfaces = Memory(interfaces.cast());
-    if code != 0 || interfaces.is_null() {
+    let bytes = row
+        .dot11Ssid
+        .ucSSID
+        .get(..row.dot11Ssid.uSSIDLength as usize)?;
+    // A lossy replacement or whitespace trim would join a different SSID.
+    let ssid = std::str::from_utf8(bytes).ok()?.to_owned();
+    if ssid.is_empty() {
         return None;
     }
-    let count = unsafe { (*interfaces).dwNumberOfItems as usize }.min(256);
-    association_state(unsafe {
-        std::slice::from_raw_parts((*interfaces).InterfaceInfo.as_ptr(), count)
+    Some(crate::WifiNetwork {
+        ssid,
+        signal: Some(row.wlanSignalQuality.min(100) as u8),
+        secured: row.bSecurityEnabled.as_bool(),
+        current: row.dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED != 0,
     })
+}
+
+fn scan_result(
+    rows: Vec<crate::WifiNetwork>,
+    interfaces: &[WLAN_INTERFACE_INFO],
+) -> crate::WifiScan {
+    let Some(connected) = association_state(interfaces) else {
+        return crate::WifiScan::default();
+    };
+    let current = rows
+        .iter()
+        .find(|row| row.current)
+        .map(|row| row.ssid.clone());
+    crate::WifiScan {
+        networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        current,
+        connected,
+        supported: true,
+    }
+}
+
+fn read_scan() -> Result<crate::WifiScan, String> {
+    let client: Client = Client::open()?;
+    let interfaces = client.interfaces()?;
+    let mut rows = Vec::new();
+    let mut listed = false;
+    let mut list_error = None;
+    for interface in &interfaces {
+        let mut networks = std::ptr::null_mut();
+        let code = unsafe {
+            WlanGetAvailableNetworkList(client.0, &interface.InterfaceGuid, 0, None, &mut networks)
+        };
+        let _networks = Memory(networks.cast());
+        if code != 0 {
+            list_error.get_or_insert(code);
+            continue;
+        }
+        if networks.is_null() {
+            continue;
+        }
+        listed = true;
+        let count = unsafe { (*networks).dwNumberOfItems as usize }.min(4096);
+        let native = unsafe { std::slice::from_raw_parts((*networks).Network.as_ptr(), count) };
+        rows.extend(native.iter().filter_map(visible_network));
+    }
+    if !listed {
+        return Err(list_error
+            .map(network_list_error)
+            .unwrap_or_else(|| "No Wi-Fi adapter is available.".into()));
+    }
+    Ok(scan_result(rows, &interfaces))
+}
+
+pub(super) fn scan() -> crate::WifiScan {
+    read_scan().unwrap_or_default()
+}
+
+struct ScanCompletion {
+    interfaces: Vec<GUID>,
+    result: std::sync::mpsc::SyncSender<(GUID, bool)>,
+}
+
+unsafe extern "system" fn scan_notification(
+    notification: *mut L2_NOTIFICATION_DATA,
+    context: *mut c_void,
+) {
+    if notification.is_null() || context.is_null() {
+        return;
+    }
+    let notification = unsafe { &*notification };
+    let context = unsafe { &*context.cast::<ScanCompletion>() };
+    if notification.NotificationSource != WLAN_NOTIFICATION_SOURCE_ACM
+        || !context.interfaces.contains(&notification.InterfaceGuid)
+    {
+        return;
+    }
+    let complete = notification.NotificationCode == wlan_notification_acm_scan_complete.0 as u32;
+    if complete || notification.NotificationCode == wlan_notification_acm_scan_fail.0 as u32 {
+        let _ = context
+            .result
+            .try_send((notification.InterfaceGuid, complete));
+    }
+}
+
+fn await_scan(
+    mut pending: Vec<GUID>,
+    mut receive: impl FnMut() -> Option<(GUID, bool)>,
+) -> Result<(), String> {
+    while !pending.is_empty() {
+        let Some((interface, success)) = receive() else {
+            return Err("Wi-Fi rescan did not finish. Wait a moment and rescan again.".into());
+        };
+        if let Some(index) = pending.iter().position(|guid| *guid == interface) {
+            if !success {
+                return Err("Windows could not refresh Wi-Fi networks. Rescan and retry.".into());
+            }
+            pending.swap_remove(index);
+        }
+    }
+    Ok(())
+}
+
+fn scan_targets(interfaces: &[WLAN_INTERFACE_INFO]) -> Vec<GUID> {
+    interfaces
+        .iter()
+        .filter(|interface| interface.isState != wlan_interface_state_not_ready)
+        .map(|interface| interface.InterfaceGuid)
+        .collect()
+}
+
+pub(super) fn rescan() -> Result<crate::WifiScan, String> {
+    let _operation = JOIN
+        .try_lock()
+        .map_err(|_| "A Wi-Fi operation is already in progress. Try again shortly.".to_string())?;
+    let mut client: Client<ScanCompletion> = Client::open()?;
+    let interfaces = client.interfaces()?;
+    let pending = scan_targets(&interfaces);
+    if pending.is_empty() {
+        return Err("No Wi-Fi adapter is available.".into());
+    }
+    let (send, receive) = std::sync::mpsc::sync_channel(pending.len());
+    client.1 = Some(Box::new(ScanCompletion {
+        interfaces: pending.clone(),
+        result: send,
+    }));
+    let context = client.1.as_deref().unwrap();
+    check(
+        unsafe {
+            WlanRegisterNotification(
+                client.0,
+                WLAN_NOTIFICATION_SOURCE_ACM,
+                true,
+                Some(scan_notification),
+                Some((context as *const ScanCompletion).cast()),
+                None,
+                None,
+            )
+        },
+        "rescan notifications",
+    )?;
+    // One four-second deadline across all adapters; background reads never trigger a scan.
+    let deadline = Instant::now() + Duration::from_secs(4);
+    for interface in &pending {
+        check(
+            unsafe { WlanScan(client.0, interface, None, None, None) },
+            "rescan request",
+        )?;
+    }
+    await_scan(pending, || {
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        receive.recv_timeout(remaining).ok()
+    })?;
+    read_scan()
 }
 
 fn ssid_matches(native: &DOT11_SSID, wanted: &[u8]) -> bool {
@@ -281,29 +463,12 @@ pub(super) fn connect(ssid: &str, password: &str) -> Result<(), String> {
     if ssid.is_empty() || ssid.len() > 32 || ssid.chars().any(char::is_control) {
         return Err("Choose a Wi-Fi network with a valid name (1–32 bytes).".into());
     }
-    let mut version = 0;
-    let mut handle = HANDLE::default();
-    check(
-        unsafe { WlanOpenHandle(2, None, &mut version, &mut handle) },
-        "initialization",
-    )?;
-    let mut client = Client(handle, None);
-    let mut interfaces = std::ptr::null_mut();
-    check(
-        unsafe { WlanEnumInterfaces(client.0, None, &mut interfaces) },
-        "interface listing",
-    )?;
-    let _interfaces = Memory(interfaces.cast());
-    if interfaces.is_null() {
-        return Err("No Wi-Fi adapter is available.".into());
-    }
-    let count = unsafe { (*interfaces).dwNumberOfItems as usize }.min(256);
-    let entries =
-        unsafe { std::slice::from_raw_parts((*interfaces).InterfaceInfo.as_ptr(), count) };
+    let mut client: Client = Client::open()?;
+    let entries = client.interfaces()?;
     let mut selected = None;
     let mut found = false;
     let mut list_error = None;
-    for interface in entries {
+    for interface in &entries {
         let mut networks = std::ptr::null_mut();
         let code = unsafe {
             WlanGetAvailableNetworkList(client.0, &interface.InterfaceGuid, 0, None, &mut networks)
@@ -473,19 +638,113 @@ mod tests {
             isState: wlan_interface_state_connected,
             ..Default::default()
         };
-        let scan = super::super::wifi_scan_result(vec![], None, || association_state(&[interface]));
-        assert!(scan.supported && scan.connected);
-        assert!(scan.current.is_none());
+        let scan = scan_result(vec![], &[interface]);
+        assert!(scan.supported && scan.connected && scan.current.is_none());
         interface.isState = wlan_interface_state_disconnected;
-        let scan = super::super::wifi_scan_result(vec![], None, || association_state(&[interface]));
+        let scan = scan_result(vec![], &[interface]);
         assert!(scan.supported && !scan.connected);
-        let scan = super::super::wifi_scan_result(vec![], None, || None);
-        assert!(!scan.supported);
-        assert_eq!(association_state(&[]), None);
-        let scan = super::super::wifi_scan_result(vec![], Some("Guest".into()), || {
-            panic!("SSID already proves association")
-        });
-        assert!(scan.connected && scan.supported);
+        assert!(!scan_result(vec![], &[]).supported);
+    }
+
+    #[test]
+    fn native_scan_preserves_exact_ssid_bytes_through_join_selection() {
+        let mut rows = Vec::new();
+        for name in ["Router", "Router ", " Router", "  "] {
+            let mut native = WLAN_AVAILABLE_NETWORK {
+                uNumberOfBssids: 1,
+                wlanSignalQuality: 70,
+                bSecurityEnabled: true.into(),
+                dwFlags: WLAN_AVAILABLE_NETWORK_CONNECTED,
+                ..Default::default()
+            };
+            native.dot11Ssid.uSSIDLength = name.len() as u32;
+            native.dot11Ssid.ucSSID[..name.len()].copy_from_slice(name.as_bytes());
+            let row = visible_network(&native).unwrap();
+            assert_eq!(row.ssid, name);
+            assert!(ssid_matches(&native.dot11Ssid, row.ssid.as_bytes()));
+            if name != name.trim() {
+                assert!(!ssid_matches(&native.dot11Ssid, name.trim().as_bytes()));
+            }
+            rows.push(row);
+        }
+        let scan = scan_result(
+            rows,
+            &[WLAN_INTERFACE_INFO {
+                isState: wlan_interface_state_connected,
+                ..Default::default()
+            }],
+        );
+        assert_eq!(
+            scan.networks.len(),
+            4,
+            "distinct whitespace is identity, not padding"
+        );
+        assert_eq!(scan.current.as_deref(), Some("Router"));
+    }
+
+    #[test]
+    fn native_scan_omits_unseen_profiles_and_unrepresentable_names() {
+        let mut native = WLAN_AVAILABLE_NETWORK::default();
+        native.dot11Ssid.uSSIDLength = 1;
+        native.dot11Ssid.ucSSID[0] = b'X';
+        assert!(visible_network(&native).is_none());
+        native.uNumberOfBssids = 1;
+        assert!(visible_network(&native).is_some());
+        native.dot11Ssid.ucSSID[0] = 255;
+        assert!(visible_network(&native).is_none());
+        native.dot11Ssid.uSSIDLength = 33;
+        assert!(visible_network(&native).is_none());
+    }
+
+    #[test]
+    fn explicit_rescan_requires_all_adapters_and_reports_failure_or_timeout() {
+        let first = GUID::from_u128(1);
+        let second = GUID::from_u128(2);
+        assert_eq!(
+            scan_targets(&[
+                WLAN_INTERFACE_INFO {
+                    InterfaceGuid: first,
+                    isState: wlan_interface_state_not_ready,
+                    ..Default::default()
+                },
+                WLAN_INTERFACE_INFO {
+                    InterfaceGuid: second,
+                    isState: wlan_interface_state_disconnected,
+                    ..Default::default()
+                },
+            ]),
+            vec![second]
+        );
+        let mut events = [(first, true), (first, true), (second, true)].into_iter();
+        assert!(await_scan(vec![first, second], || events.next()).is_ok());
+        assert!(await_scan(vec![first], || Some((first, false))).is_err());
+        assert!(await_scan(vec![first], || None).is_err());
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        let mut context = ScanCompletion {
+            interfaces: vec![first],
+            result: send,
+        };
+        let mut notification = L2_NOTIFICATION_DATA {
+            NotificationSource: WLAN_NOTIFICATION_SOURCE_ACM,
+            NotificationCode: wlan_notification_acm_scan_complete.0 as u32,
+            InterfaceGuid: second,
+            ..Default::default()
+        };
+        let pointer = (&mut context as *mut ScanCompletion).cast();
+        unsafe {
+            scan_notification(&mut notification, pointer);
+        }
+        assert!(receive.try_recv().is_err());
+        notification.InterfaceGuid = first;
+        unsafe {
+            scan_notification(&mut notification, pointer);
+        }
+        assert_eq!(receive.try_recv().unwrap(), (first, true));
+        notification.NotificationCode = wlan_notification_acm_scan_fail.0 as u32;
+        unsafe {
+            scan_notification(&mut notification, pointer);
+        }
+        assert_eq!(receive.try_recv().unwrap(), (first, false));
     }
 
     #[test]

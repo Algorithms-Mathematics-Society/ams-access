@@ -2352,67 +2352,14 @@ mod firewall_inventory_query_tests {
 
 // ── wireless ────────────────────────────────────────────────────────────────
 //
-// `netsh`, parsed by the shape of its output rather than its labels: it
-// prints in the Windows display language, and a candidate on a Hindi or
-// German install must get the same list as everyone else.
-
-/// The SSID currently joined, if any.
-fn current_ssid() -> Option<String> {
-    let output = hidden_command("netsh")
-        .args(["wlan", "show", "interfaces"])
-        .bounded_output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    // The SSID line and the BSSID line differ only by that prefix, and
-    // "SSID" is one of the few tokens netsh does not translate.
-    text.lines()
-        .filter_map(|line| line.split_once(':'))
-        .find(|(left, _)| {
-            let key = left.trim().to_ascii_lowercase();
-            key == "ssid"
-        })
-        .map(|(_, right)| right.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-/// What wireless networks this machine can see.
+/// Cached wireless visibility and association, preserving native SSID bytes.
 pub fn wifi_scan() -> crate::WifiScan {
-    let Ok(output) = hidden_command("netsh")
-        .args(["wlan", "show", "networks", "mode=bssid"])
-        .bounded_output()
-    else {
-        return crate::WifiScan::default();
-    };
-    if !output.status.success() {
-        return crate::WifiScan::default();
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let rows = crate::wifi_parse::parse_netsh(&text);
-    let current = current_ssid();
-    wifi_scan_result(rows, current, wifi::is_connected)
+    wifi::scan()
 }
 
-fn wifi_scan_result(
-    rows: Vec<crate::WifiNetwork>,
-    current: Option<String>,
-    association: impl FnOnce() -> Option<bool>,
-) -> crate::WifiScan {
-    let connected = if current.is_some() {
-        true
-    } else if let Some(connected) = association() {
-        connected
-    } else {
-        return crate::WifiScan::default();
-    };
-    crate::WifiScan {
-        networks: crate::wifi_parse::tidy(rows, current.as_deref()),
-        connected,
-        current,
-        supported: true,
-    }
+/// Explicit user rescan; background reads do not trigger radio scans.
+pub fn wifi_rescan() -> Result<crate::WifiScan, String> {
+    wifi::rescan()
 }
 
 /// Join a network.

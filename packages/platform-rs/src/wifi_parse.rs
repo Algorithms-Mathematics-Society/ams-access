@@ -13,7 +13,7 @@ use crate::WifiNetwork;
 /// a hall sees the same name five times. A candidate picking a network wants
 /// one row per name.
 pub fn tidy(mut rows: Vec<WifiNetwork>, current: Option<&str>) -> Vec<WifiNetwork> {
-    rows.retain(|n| !n.ssid.trim().is_empty());
+    rows.retain(|n| !n.ssid.is_empty());
     rows.sort_by_key(|n| std::cmp::Reverse(n.signal.unwrap_or(0)));
     let mut seen: Vec<WifiNetwork> = Vec::new();
     for mut row in rows {
@@ -257,10 +257,10 @@ mod tests {
     }
 
     #[test]
-    fn blank_ssids_are_dropped() {
+    fn empty_ssids_are_dropped() {
         let rows = vec![
             WifiNetwork {
-                ssid: "  ".into(),
+                ssid: "".into(),
                 signal: Some(80),
                 secured: true,
                 current: false,

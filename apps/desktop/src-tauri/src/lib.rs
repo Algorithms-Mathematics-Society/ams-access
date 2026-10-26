@@ -1084,18 +1084,21 @@ fn get_battery_status() -> Option<platform_rs::BatteryStatus> {
 /// now the only way back onto a network was leaving the exam, so this brings
 /// the picker inside it.
 ///
-/// Async and off the main thread, because every platform's implementation
-/// spawns a subprocess -- `nmcli`, `netsh`, `networksetup` -- and a scan can
-/// take seconds. A synchronous `#[tauri::command]` runs on the main thread,
-/// which froze the whole exam UI while it ran: the mouse stuck and typing
-/// stalled every time this polled.
+/// Native scans and other platforms' subprocesses can take seconds, so keep
+/// them off the UI thread. Only explicit refresh requests start a Windows radio scan.
 #[tauri::command]
-async fn scan_wifi() -> platform_rs::WifiScan {
-    tauri::async_runtime::spawn_blocking(
-        || platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default()),
-    )
+async fn scan_wifi(refresh: Option<bool>) -> Result<platform_rs::WifiScan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        if refresh.unwrap_or(false) {
+            return platform_rs::windows::wifi_rescan();
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = refresh;
+        Ok(platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default()))
+    })
     .await
-    .unwrap_or_default()
+    .map_err(|error| format!("Wi-Fi scan did not complete: {error}"))?
 }
 
 /// Join a wireless network. `password` is None or empty for an open one.
@@ -1103,10 +1106,9 @@ async fn scan_wifi() -> platform_rs::WifiScan {
 /// may prompt. Off the main thread for the same reason.
 #[tauri::command]
 async fn connect_wifi(ssid: String, password: Option<String>) -> Result<bool, String> {
-    if ssid.trim().is_empty() {
+    if ssid.is_empty() {
         return Err("Choose a network first.".into());
     }
-    let ssid = ssid.trim().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         platform_dispatch!(
             wifi_connect(&ssid, password.as_deref()),
