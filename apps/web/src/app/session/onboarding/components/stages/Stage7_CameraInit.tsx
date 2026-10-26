@@ -425,6 +425,9 @@ export function Stage7_CameraInit({
               generationRef.current += 1;
               completedRef.current = true;
               cancelPass();
+              // A live-but-muted handle is reusable to ensure(), yet cannot deliver frames.
+              // An explicit retry releases it so the next attempt opens the repaired camera.
+              cameraSession.releaseVideo();
               setPhase("checking");
               setError(null);
               setPermissionIssue(false);

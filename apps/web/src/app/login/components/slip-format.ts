@@ -5,8 +5,8 @@
  * transcribing or pasting under time pressure, about to sit an exam, and every
  * way the field can fight them is a support ticket during a live contest.
  *
- * Shaping as they type rather than validating afterwards: a candidate should
- * never be told "incorrect login" for punctuation or capitals.
+ * Accept documented presentation differences without deleting meaningful
+ * characters from an identity. Invalid input stays visible for correction.
  */
 
 /** Optional suffix accepted when a candidate pastes their full login handle. */
@@ -18,22 +18,17 @@ export const HANDLE_SUFFIX = "@access";
  * Lowercase, because handles are stored lowercase — the previous formatter
  * upper-cased for `AMS-7K3M-QR9T`, which for a handle matches nothing at all.
  *
- * Everything from an `@` onward is dropped. A handle never contains one, and
- * the candidate's email shows them `ayush.s-kqmwd@access`, so pasting the whole
- * string is the normal case rather than the exceptional one.
- *
- * Letters, digits, dots, underscores and hyphens survive. Newly allocated
- * handles are letters only, but an existing username is reused as the login id
- * when a credential is issued, and those can carry digits and underscores
- * (`john_doe`, `ayush-shukla-2`). Only what the server can never issue is
- * dropped, so a real login id is never changed into a different one.
+ * Strip only the documented full-handle suffixes. Keep internal whitespace,
+ * punctuation, unknown domains and overlong input visible: deleting them can
+ * turn a typo into another participant's valid identity. The server remains
+ * responsible for rejecting an unrecognised ID.
  */
 export function formatHandle(raw: string): string {
-  const beforeAt = raw.split("@", 1)[0];
-  return beforeAt
+  return raw
+    .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9._-]/g, "")
-    .slice(0, 64);
+    .replace(/@access(?:\.amsaccess\.com)?$/, "")
+    .trim();
 }
 
 /** `XXXX-XXXX-XXXX`. Unchanged: the server still issues this format, and a

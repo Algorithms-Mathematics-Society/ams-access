@@ -56,10 +56,10 @@ export default function TermsPage() {
           body: (
             <P>
               During a session, AMS Access may enable fullscreen or always-on-top behavior, scan
-              running processes, detect virtualization, check the local security environment, test
-              network reachability, request camera and microphone access, log violation events, and
-              apply platform-specific lockdown controls. Some controls vary by operating system and
-              may require elevated privileges or user-granted permissions.
+              running processes, check the local security environment, test network reachability,
+              request camera and microphone access, log violation events, and apply
+              platform-specific lockdown controls. Some controls vary by operating system and may
+              require elevated privileges or user-granted permissions.
             </P>
           ),
         },

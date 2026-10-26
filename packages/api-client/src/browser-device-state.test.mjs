@@ -10,7 +10,6 @@ import { browserDeviceState, hasNativeBridge } from "./index.ts";
 test("every native-only field is null, not a passing value", () => {
   const state = browserDeviceState({ cameraAvailable: true, microphoneAvailable: true });
   assert.equal(state.keyboard, null, "keyboard lockdown must not look engaged");
-  assert.equal(state.virtualization, null, "VM detection must not look clear");
   assert.equal(state.restricted_processes, null, "a process scan must not look clean");
   assert.equal(state.network, null);
   assert.equal(state.network_helper_ready, null, "egress must not look restricted");

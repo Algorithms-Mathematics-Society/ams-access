@@ -2,9 +2,7 @@ pub mod instance;
 mod settings;
 
 use crate::process_runner::{Budget, CommandDeadlineExt};
-use core_rs::exam::{
-    CloseAppsResult, KeyboardInterceptResult, ProcessScanResult, VirtDetectionResult,
-};
+use core_rs::exam::{CloseAppsResult, KeyboardInterceptResult, ProcessScanResult};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 mod kde;
@@ -134,22 +132,6 @@ const ADVISORY: &[&str] = &[
     "whatsapp-for-linux",
 ];
 
-const VM_STRINGS: &[&str] = &[
-    "vmware",
-    "virtualbox",
-    "vbox",
-    "kvm",
-    "qemu",
-    "bochs",
-    "xen",
-    "hyper-v",
-    "hyperv",
-    "parallels",
-    "bhyve",
-    "nutanix",
-    "proxmox",
-];
-
 /// Lowercase basename of a path-like string (after the last '/').
 fn lower_basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_lowercase()
@@ -258,91 +240,6 @@ pub fn scan_processes() -> ProcessScanResult {
         found,
         clean,
         advisory,
-    }
-}
-
-/// systemd-detect-virt prints the detected technology only without --quiet.
-fn systemd_virtualization(success: bool, stdout: &[u8]) -> Option<String> {
-    let name = String::from_utf8_lossy(stdout).trim().to_string();
-    (success && !name.is_empty() && name != "none").then_some(name)
-}
-
-/// Detect virtualisation via DMI and cpuinfo.
-pub fn detect_virtualization() -> VirtDetectionResult {
-    let _budget = Budget::new(std::time::Duration::from_secs(6));
-    let dmi_paths = [
-        "/sys/class/dmi/id/product_name",
-        "/sys/class/dmi/id/sys_vendor",
-        "/sys/class/dmi/id/board_vendor",
-        "/sys/class/dmi/id/bios_vendor",
-        "/sys/class/dmi/id/product_version",
-    ];
-
-    for path in &dmi_paths {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            let lower = content.to_lowercase();
-            for &vm in VM_STRINGS {
-                if lower.contains(vm) {
-                    return VirtDetectionResult {
-                        detected: true,
-                        platform: Some(vm.to_string()),
-                        confidence: "high".to_string(),
-                    };
-                }
-            }
-        }
-    }
-
-    // Check /proc/cpuinfo hypervisor flag
-    if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
-        if cpuinfo.contains("hypervisor") {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some("hypervisor".to_string()),
-                confidence: "medium".to_string(),
-            };
-        }
-        // CPUID hypervisor vendor strings
-        for vm in &["VMwareVMware", "KVMKVMKVM", "XenVMMXenVMM", "Microsoft Hv"] {
-            if cpuinfo.contains(vm) {
-                return VirtDetectionResult {
-                    detected: true,
-                    platform: Some(vm.to_lowercase()),
-                    confidence: "high".to_string(),
-                };
-            }
-        }
-    }
-
-    // Check /proc/1/environ for container indicators
-    if let Ok(environ) = std::fs::read_to_string("/proc/1/environ") {
-        if environ.contains("container=")
-            || environ.contains("DOCKER")
-            || environ.contains("kubernetes")
-        {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some("container".to_string()),
-                confidence: "medium".to_string(),
-            };
-        }
-    }
-
-    // Check systemd-detect-virt
-    if let Ok(output) = std::process::Command::new("systemd-detect-virt").bounded_output() {
-        if let Some(virt) = systemd_virtualization(output.status.success(), &output.stdout) {
-            return VirtDetectionResult {
-                detected: true,
-                platform: Some(virt),
-                confidence: "high".to_string(),
-            };
-        }
-    }
-
-    VirtDetectionResult {
-        detected: false,
-        platform: None,
-        confidence: "high".to_string(),
     }
 }
 
@@ -2621,20 +2518,6 @@ mod tests {
         );
         // Empty → None.
         assert_eq!(match_restricted(&[]), None);
-    }
-}
-
-#[cfg(test)]
-mod required_probe_review_tests {
-    use super::systemd_virtualization;
-
-    #[test]
-    fn systemd_fallback_requires_success_and_detected_technology() {
-        assert_eq!(systemd_virtualization(true, b"kvm\n"), Some("kvm".into()));
-        assert_eq!(systemd_virtualization(false, b"none\n"), None);
-        assert_eq!(systemd_virtualization(true, b"none\n"), None);
-        assert_eq!(systemd_virtualization(true, b""), None);
-        assert_eq!(systemd_virtualization(false, b"permission denied"), None);
     }
 }
 

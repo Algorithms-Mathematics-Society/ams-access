@@ -2,7 +2,7 @@
 
 const KIOSK_TICK_MS: u64 = 750;
 const NULL_LOCK_TICKS: u32 = 2;
-const GIVE_UP_ATTEMPTS: u32 = 4;
+const PERSISTENT_REPORT_ATTEMPTS: u32 = 4;
 /// Re-assert audit events are throttled to at most one per this window, per kind,
 /// so a sustained fullscreen/always-on-top fight cannot flood the proctor log,
 /// while a single drift (e.g. one F11 press) is always reported. The window op
@@ -51,7 +51,7 @@ struct Episode {
     sticky_hwnd: isize,
     attempts: u32,
     next_attempt_ms: u64,
-    gave_up: bool,
+    persistent_reported: bool,
 }
 
 #[derive(Default)]
@@ -89,11 +89,36 @@ pub enum Action {
     },
 }
 
+fn reassert_window_state(state: &mut KioskState, input: &TickInput, actions: &mut Vec<Action>) {
+    if !input.is_fullscreen {
+        actions.push(Action::ReassertFullscreen); // enforcement: every drift tick
+        if reassert_report_due(state.last_fs_reassert_ms, input.now_ms) {
+            state.last_fs_reassert_ms = Some(input.now_ms);
+            actions.push(Action::Report {
+                event: "fullscreen_reasserted",
+                severity: Severity::Info,
+                detail: "exam lost fullscreen — re-asserted".into(),
+            });
+        }
+    }
+    if !input.is_always_on_top {
+        actions.push(Action::ReassertAlwaysOnTop); // enforcement: every drift tick
+        if reassert_report_due(state.last_aot_reassert_ms, input.now_ms) {
+            state.last_aot_reassert_ms = Some(input.now_ms);
+            actions.push(Action::Report {
+                event: "always_on_top_reasserted",
+                severity: Severity::Info,
+                detail: "exam lost always-on-top — re-asserted".into(),
+            });
+        }
+    }
+}
+
 /// Decide what the watchdog must do this tick. Pure: mutates `state`, returns actions.
 pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
     let mut actions = Vec::new();
 
-    // CASE A — exam is foreground: close any episode, drift-check fullscreen/always-on-top.
+    // CASE A — exam is foreground: close any episode and restore window state.
     if input.exam_is_foreground {
         state.null_streak = 0;
         if let Some(ep) = state.episode.take() {
@@ -102,28 +127,7 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
                 duration_ms: input.now_ms.saturating_sub(ep.started_ms),
             });
         }
-        if !input.is_fullscreen {
-            actions.push(Action::ReassertFullscreen); // enforcement: every drift tick
-            if reassert_report_due(state.last_fs_reassert_ms, input.now_ms) {
-                state.last_fs_reassert_ms = Some(input.now_ms);
-                actions.push(Action::Report {
-                    event: "fullscreen_reasserted",
-                    severity: Severity::Info,
-                    detail: "exam lost fullscreen while focused — re-asserted".into(),
-                });
-            }
-        }
-        if !input.is_always_on_top {
-            actions.push(Action::ReassertAlwaysOnTop); // enforcement: every drift tick
-            if reassert_report_due(state.last_aot_reassert_ms, input.now_ms) {
-                state.last_aot_reassert_ms = Some(input.now_ms);
-                actions.push(Action::Report {
-                    event: "always_on_top_reasserted",
-                    severity: Severity::Info,
-                    detail: "exam lost always-on-top while focused — re-asserted".into(),
-                });
-            }
-        }
+        reassert_window_state(state, &input, &mut actions);
         return actions;
     }
 
@@ -143,7 +147,7 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
                     sticky_hwnd: 0,
                     attempts: 0,
                     next_attempt_ms: 0,
-                    gave_up: false,
+                    persistent_reported: false,
                 });
                 actions.push(Action::Report {
                     event: "workstation_locked",
@@ -176,7 +180,7 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
                 sticky_hwnd: 0,
                 attempts: 0,
                 next_attempt_ms: 0,
-                gave_up: false,
+                persistent_reported: false,
             });
             actions.push(Action::Report {
                 event: "system_dialog_foreground",
@@ -199,13 +203,13 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
             ep.sticky_hwnd = fg;
             ep.attempts = 0;
             ep.next_attempt_ms = now;
-            ep.gave_up = false;
+            ep.persistent_reported = false;
         }
         Some(ep) if ep.sticky_hwnd != fg => {
             ep.sticky_hwnd = fg;
             ep.attempts = 0;
             ep.next_attempt_ms = now;
-            ep.gave_up = false;
+            ep.persistent_reported = false;
         }
         Some(_) => {}
     }
@@ -218,7 +222,7 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
             sticky_hwnd: fg,
             attempts: 0,
             next_attempt_ms: now,
-            gave_up: false,
+            persistent_reported: false,
         });
     }
     if need_edge {
@@ -229,13 +233,11 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
         });
     }
     if let Some(ep) = &mut state.episode {
-        if ep.phase == LossCause::ForeignApp && !ep.gave_up && now >= ep.next_attempt_ms {
-            if ep.attempts < GIVE_UP_ATTEMPTS {
+        if ep.phase == LossCause::ForeignApp && now >= ep.next_attempt_ms {
+            if ep.attempts < PERSISTENT_REPORT_ATTEMPTS {
                 ep.attempts += 1;
-                ep.next_attempt_ms = now.saturating_add(backoff_ms(ep.attempts));
-                actions.push(Action::NudgeForeground);
-            } else {
-                ep.gave_up = true;
+            } else if !ep.persistent_reported {
+                ep.persistent_reported = true;
                 actions.push(Action::Report {
                     event: "focus_loss_persistent",
                     severity: Severity::High,
@@ -246,8 +248,13 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
                     ),
                 });
             }
+            ep.next_attempt_ms = now.saturating_add(backoff_ms(ep.attempts));
+            actions.push(Action::NudgeForeground);
         }
     }
+    // Window-state drift must not wait for foreground recovery. A virtual
+    // desktop move can leave another ordinary app focused for several ticks.
+    reassert_window_state(state, &input, &mut actions);
     actions
 }
 
@@ -256,7 +263,7 @@ pub fn decide(state: &mut KioskState, input: TickInput) -> Vec<Action> {
 /// is tearing down). Guarantees no dangling open episode (spec §4.1).
 pub fn on_teardown(state: &mut KioskState, now_ms: u64) -> Vec<Action> {
     if let Some(ep) = state.episode.take() {
-        let severity = if ep.ever_locked || ep.gave_up {
+        let severity = if ep.ever_locked || ep.persistent_reported {
             Severity::High
         } else {
             Severity::Medium
@@ -367,6 +374,59 @@ mod tests {
     }
 
     #[test]
+    fn foreign_window_does_not_delay_fullscreen_recovery() {
+        let mut s = KioskState::default();
+        let a = decide(
+            &mut s,
+            TickInput {
+                is_fullscreen: false,
+                is_always_on_top: false,
+                ..foreign(0, 111, "chrome.exe")
+            },
+        );
+        assert!(a.contains(&Action::ReassertFullscreen));
+        assert!(a.contains(&Action::ReassertAlwaysOnTop));
+        assert!(has(&a, "focus_loss"));
+        assert_eq!(nudges(&a), 1);
+
+        let b = decide(
+            &mut s,
+            TickInput {
+                is_fullscreen: false,
+                is_always_on_top: false,
+                ..foreign(750, 111, "chrome.exe")
+            },
+        );
+        assert!(b.contains(&Action::ReassertFullscreen));
+        assert!(b.contains(&Action::ReassertAlwaysOnTop));
+        assert!(!has(&b, "fullscreen_reasserted"));
+        assert!(!has(&b, "always_on_top_reasserted"));
+        assert_eq!(nudges(&b), 1); // foreground backoff is unchanged
+    }
+
+    #[test]
+    fn secure_or_null_foreground_never_reasserts_window_state() {
+        let mut s = KioskState::default();
+        for input in [
+            TickInput {
+                is_fullscreen: false,
+                is_always_on_top: false,
+                ..null_fg(0)
+            },
+            TickInput {
+                is_fullscreen: false,
+                is_always_on_top: false,
+                ..secure(750, 999, "consent.exe")
+            },
+        ] {
+            let actions = decide(&mut s, input);
+            assert!(!actions.contains(&Action::ReassertFullscreen));
+            assert!(!actions.contains(&Action::ReassertAlwaysOnTop));
+            assert_eq!(nudges(&actions), 0);
+        }
+    }
+
+    #[test]
     fn nudges_are_multi_second_spaced_not_a_tight_loop() {
         let mut s = KioskState::default();
         assert_eq!(nudges(&decide(&mut s, foreign(0, 111, "x.exe"))), 1); // #1 @ t0
@@ -380,16 +440,19 @@ mod tests {
     }
 
     #[test]
-    fn gives_up_after_four_nudges_then_persistent() {
+    fn persistent_focus_loss_reports_once_and_keeps_capped_retries() {
         let mut s = KioskState::default();
         for t in [0u64, 750, 2250, 5250] {
             assert_eq!(nudges(&decide(&mut s, foreign(t, 111, "x.exe"))), 1);
         }
         assert_eq!(nudges(&decide(&mut s, foreign(11249, 111, "x.exe"))), 0); // final 6s gap
         let a = decide(&mut s, foreign(11250, 111, "x.exe"));
-        assert_eq!(nudges(&a), 0);
+        assert_eq!(nudges(&a), 1);
         assert!(has(&a, "focus_loss_persistent"));
-        assert_eq!(nudges(&decide(&mut s, foreign(20000, 111, "x.exe"))), 0); // stays given-up
+        let b = decide(&mut s, foreign(17250, 111, "x.exe"));
+        assert_eq!(nudges(&b), 1);
+        assert!(!has(&b, "focus_loss_persistent"));
+        assert_eq!(nudges(&decide(&mut s, foreign(20000, 111, "x.exe"))), 0);
     }
 
     #[test]

@@ -175,6 +175,9 @@ export default function HomePage() {
   const resumeInFlightRef = useRef(false);
   const resumeConsumeInFlightRef = useRef(false);
   const resumePollInFlightRef = useRef(false);
+  const resumeRequestInFlightRef = useRef(false);
+  // Invalidate responses that started before sign-out or this Home visit ended.
+  const recoveryEpochRef = useRef(0);
   const scanGenerationRef = useRef(0);
   const [readiness, setReadiness] = useState<ReadinessState>({
     camera: "checking",
@@ -183,7 +186,6 @@ export default function HomePage() {
     networkLockdown: "checking",
     keyboard: "checking",
     restrictedApps: "checking",
-    vm: "checking",
     platform: "checking",
   });
   const [readinessReport, setReadinessReport] = useState<
@@ -255,7 +257,6 @@ export default function HomePage() {
           platform: telemetry.platform ?? null,
           env: telemetry.env ?? null,
           processes: telemetry.processes ?? null,
-          virt: telemetry.virt ?? null,
           network: telemetry.network ?? null,
           // Carried separately from `error`: the scan as a whole succeeded,
           // and these name the individual probes that did not.
@@ -294,7 +295,6 @@ export default function HomePage() {
           platform: r.platform === "checking" ? (supported ? "ok" : "fail") : r.platform,
           keyboard: r.keyboard === "checking" ? (supported ? "ok" : "fail") : r.keyboard,
           restrictedApps: snapshot.processes?.clean ? "ok" : flagged(r.restrictedApps),
-          vm: snapshot.virt && !snapshot.virt.detected ? "ok" : flagged(r.vm),
           network: snapshot.network ? (snapshot.network.reachable ? "ok" : "warn") : "unavailable",
         }));
         appendSecurityEvent(
@@ -409,7 +409,6 @@ export default function HomePage() {
         networkLockdown: "checking",
         keyboard: "checking",
         restrictedApps: "checking",
-        vm: "checking",
         platform: "checking",
       });
       appendSecurityEvent("READINESS: Local integrity scan started");
@@ -512,7 +511,6 @@ export default function HomePage() {
         networkLockdown: "unavailable",
         keyboard: native,
         restrictedApps: native,
-        vm: native,
         platform: native,
       });
       appendSecurityEvent("READINESS: Local integrity scan failed", "error");
@@ -539,14 +537,28 @@ export default function HomePage() {
     setResumeStatus(reason);
   }
 
+  function recoveryCurrent(sessionId: string, epoch: number) {
+    if (epoch !== recoveryEpochRef.current) return false;
+    try {
+      return (
+        (JSON.parse(localStorage.getItem(ACTIVE_SESSION_KEY) ?? "null") as ActiveSession | null)
+          ?.id === sessionId
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function consumeApprovedResume(session: ActiveSession) {
     if (!session.id || !session.contest_id || resumeConsumeInFlightRef.current) return;
+    const epoch = recoveryEpochRef.current;
     resumeConsumeInFlightRef.current = true;
     setResumeBusy(true);
     try {
       // 409 here means the grant was spent, rejected or has lapsed — the
       // server decides, and it is the only thing that can.
       await consumeResume(session.id);
+      if (!recoveryCurrent(session.id, epoch)) return;
       const nextSession = mergeResumeRequestIntoSession(session, { status: "CONSUMED" });
       localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
       setActiveSession(nextSession);
@@ -558,9 +570,10 @@ export default function HomePage() {
       // IN_PROGRESS session, so this does not create a duplicate session.
       router.push(`/session/onboarding?contestId=${encodeURIComponent(session.contest_id)}`);
     } catch {
-      setResumeStatus("Could not consume organizer approval. Try again.");
+      if (recoveryCurrent(session.id, epoch))
+        setResumeStatus("Could not consume organizer approval. Try again.");
     } finally {
-      setResumeBusy(false);
+      if (recoveryCurrent(session.id, epoch)) setResumeBusy(false);
       resumeConsumeInFlightRef.current = false;
     }
   }
@@ -568,8 +581,7 @@ export default function HomePage() {
   /**
    * Poll the resume request.
    *
-   * `consume` is false for the background poller and true only when the
-   * candidate pressed Resume. An approved grant used to be consumed the
+   * Only the explicit Resume action consumes approval. An approved grant used to be consumed the
    * moment the poller noticed it, which routed straight back into
    * onboarding: leaving a contest put you on /home, the poller saw
    * APPROVED, and pushed you into entry again. There was no way out of
@@ -578,15 +590,15 @@ export default function HomePage() {
    *
    * Approval now means re-entry is *available*, not that it happens.
    */
-  async function refreshResumeRequest(
-    session: ActiveSession,
-    isCancelled = () => false,
-    consume = false
-  ) {
+  async function refreshResumeRequest(session: ActiveSession, isCancelled = () => false) {
     if (!session.id || resumePollInFlightRef.current || resumeConsumeInFlightRef.current) return;
+    const epoch = recoveryEpochRef.current;
     resumePollInFlightRef.current = true;
     const isStale = () =>
       isCancelled() ||
+      !recoveryCurrent(session.id, epoch) ||
+      resumeInFlightRef.current ||
+      resumeConsumeInFlightRef.current ||
       activeSessionRef.current?.id !== session.id ||
       activeSessionRef.current?.resume_request_id !== session.resume_request_id ||
       activeSessionRef.current?.resume_request_status !== session.resume_request_status;
@@ -617,12 +629,8 @@ export default function HomePage() {
         setResumeStatus("Resume request expired. Submit it again to rejoin.");
         setResumeBusy(false);
       } else if (requestStatus === "APPROVED") {
-        if (consume) {
-          await consumeApprovedResume(nextSession);
-        } else {
-          setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
-          setResumeBusy(false);
-        }
+        setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
+        setResumeBusy(false);
       }
     } catch {
       if (!isStale()) setResumeStatus("Waiting for organizer approval.");
@@ -634,7 +642,9 @@ export default function HomePage() {
   refreshResumeRequestRef.current = refreshResumeRequest;
 
   async function submitResumeRequest(session: ActiveSession) {
-    if (!session.id) return;
+    if (!session.id || resumeRequestInFlightRef.current) return;
+    resumeRequestInFlightRef.current = true;
+    const epoch = recoveryEpochRef.current;
     setResumeBusy(true);
     setResumeStatus("Requesting organizer approval...");
     appendSecurityEvent("SESSION: Resume approval requested");
@@ -643,6 +653,7 @@ export default function HomePage() {
         deviceFingerprint: getOrCreateDeviceId(),
         reason: "The app was closed or crashed and is rejoining.",
       });
+      if (!recoveryCurrent(session.id, epoch)) return;
       const request = {
         id: created.uid,
         status: created.status,
@@ -654,8 +665,12 @@ export default function HomePage() {
       setActiveSession(nextSession);
       setResumeStatus("Resume requested. Waiting for organizer approval.");
     } catch {
-      setResumeStatus("Could not request organizer approval.");
-      setResumeBusy(false);
+      if (recoveryCurrent(session.id, epoch)) {
+        setResumeStatus("Could not request organizer approval.");
+        setResumeBusy(false);
+      }
+    } finally {
+      resumeRequestInFlightRef.current = false;
     }
   }
 
@@ -664,6 +679,8 @@ export default function HomePage() {
       clearStoredActiveSession("No active session found on this device.");
       return null;
     }
+    const epoch = recoveryEpochRef.current;
+    const isStale = () => !recoveryCurrent(session.id, epoch);
 
     if (mode === "resume") setResumeBusy(true);
     setResumeVerification("checking");
@@ -679,6 +696,7 @@ export default function HomePage() {
       try {
         live = await getSession(session.id);
       } catch (error) {
+        if (isStale()) return null;
         // Only an authoritative not-found response invalidates recovery. A
         // timeout, outage or expired sign-in says nothing about this session.
         if (error instanceof ProctorApiError && error.status === 404) {
@@ -688,6 +706,7 @@ export default function HomePage() {
         }
         throw error;
       }
+      if (isStale()) return null;
 
       const data: Partial<ActiveSession> & {
         contest_id?: string;
@@ -739,6 +758,7 @@ export default function HomePage() {
       // Check the authoritative session first: an unavailable approval
       // endpoint must not keep a completed or mismatched session recoverable.
       const pending = await latestResumeRequest(session.id);
+      if (isStale()) return null;
       data.resume_request_status = pending?.status;
       data.resume_request = pending
         ? {
@@ -779,6 +799,7 @@ export default function HomePage() {
       appendSecurityEvent("SESSION: Active session verified for contest " + contestId);
       return withResume;
     } catch (error) {
+      if (isStale()) return null;
       // Retain both the saved record and its approval state until the server
       // confirms them. Retry is explicit, so an outage cannot cause a loop.
       setResumeVerification("retryable");
@@ -793,7 +814,7 @@ export default function HomePage() {
       );
       return null;
     } finally {
-      if (mode === "resume") setResumeBusy(false);
+      if (mode === "resume" && epoch === recoveryEpochRef.current) setResumeBusy(false);
     }
   }
 
@@ -835,6 +856,7 @@ export default function HomePage() {
     }
 
     return () => {
+      recoveryEpochRef.current += 1;
       scanGenerationRef.current += 1;
     };
   }, []);
@@ -874,11 +896,12 @@ export default function HomePage() {
       const verifiedSession = await validateStoredActiveSession(activeSession, "resume");
       if (!verifiedSession?.contest_id) return;
       const requestStatus = String(verifiedSession.resume_request_status ?? "").toUpperCase();
-      if (requestStatus === "PENDING" || requestStatus === "APPROVED") {
-        // Pressed by the candidate, so an approved grant is acted on here.
-        await refreshResumeRequest(verifiedSession, () => false, true);
+      if (requestStatus === "APPROVED") {
+        // Validation already fetched the approval; a background poll must not drop this click.
+        await consumeApprovedResume(verifiedSession);
         return;
       }
+      if (requestStatus === "PENDING") return;
       setPreflightContestId(verifiedSession.contest_id);
       setPreflightSessionType("resume");
     } finally {
@@ -905,6 +928,7 @@ export default function HomePage() {
   async function signOut() {
     setConfirmDiscardOpen(false);
     setSigningOut(true);
+    recoveryEpochRef.current += 1;
     // Storage is not the session: `router.push` keeps module state, so the
     // in-memory token and cached responses must be dropped explicitly, and
     // before touching storage, which can throw.

@@ -35,6 +35,7 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
 sha2 = "0.10"
 hex = "0.4"
+brotli = "8.0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

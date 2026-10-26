@@ -29,14 +29,22 @@ Do this once, on your own machine, and ideally more than a day ahead.
 
 ### 1. Download the installer
 
-From the release page, take **one** of:
+Use the release version approved by the organizer for your contest, from the
+[official releases](https://github.com/Algorithms-Mathematics-Society/ams-access/releases).
+Do not install an untested newer release during a live contest. In the filenames
+below, replace `<version>` with that approved version. Take **one** installer:
 
-| File                             | When                               |
-| -------------------------------- | ---------------------------------- |
-| `AMS.Access_2.0.0_x64-setup.exe` | Normal choice                      |
-| `AMS.Access_2.0.0_x64_en-US.msi` | Deploying by Group Policy / Intune |
+| File                                 | When                               |
+| ------------------------------------ | ---------------------------------- |
+| `AMS.Access_<version>_x64-setup.exe` | Normal choice                      |
+| `AMS.Access_<version>_x64_en-US.msi` | Deploying by Group Policy / Intune |
 
 Also download `SHA256SUMS-x86_64-pc-windows-msvc.txt`.
+
+If campus Wi-Fi cannot complete the download, try the same official asset over a
+mobile hotspot or obtain an organizer-provided copy of that exact approved
+artifact. Verify the same published checksum before installing either copy.
+Record the file size, download time, network and any failures for both routes.
 
 ### 2. Verify the checksum — do not skip this
 
@@ -44,7 +52,7 @@ Put the sums file in the same folder as the installer, open PowerShell there,
 and run:
 
 ```powershell
-Get-FileHash .\AMS.Access_2.0.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash '.\AMS.Access_<version>_x64-setup.exe' -Algorithm SHA256
 ```
 
 Compare the hash against the line for your file in
@@ -75,11 +83,22 @@ Confirm it launches and reaches the sign-in screen before you touch the
 contest-hall machines. This is also when you find out whether your antivirus
 quarantines it, which is much better to discover now.
 
+Open **Settings** and check the installed **Version** against the approved
+release. The version on a download page is not proof of the installed version.
+For upgrades, first preserve a backup of the disposable test profile and its
+local drafts, then upgrade from the last distributed version. Launch from each
+existing shortcut and verify the version and retained state. Test uninstall and
+reinstall separately in a disposable profile; do not use a candidate's only copy
+of pending work for this test. Record installer logs and any stale shortcuts or
+helper installations before approving the release.
+
 ### 4. If you manage the hall's machines, pre-install
 
 Every step below that a candidate does not have to do on the morning is a
 step that cannot go wrong at 9am. The `.msi` can be deployed by Group Policy
-or Intune and installs without any of the prompts described here.
+or Intune under the administrator's deployment policy. An interactive per-machine
+installation may require administrator approval; do not promise a prompt-free
+candidate installation.
 
 ---
 
@@ -151,11 +170,11 @@ installs with no warning, no administrator prompt, and no clicking through
 anything. If it is listed for your contest, prefer it — this page is for
 people installing the direct download.
 
-|                                 | Direct download      | Microsoft Store |
-| ------------------------------- | -------------------- | --------------- |
-| SmartScreen warning             | yes, once at install | none            |
-| Administrator prompt            | none                 | none            |
-| Lockdown, camera, capture guard | yes                  | yes             |
-| Windows registry policy changes | yes                  | no              |
-| Automatic process termination   | no                   | no              |
-| Network firewall                | no (off by default)  | no              |
+|                                 | Direct download                                 | Microsoft Store |
+| ------------------------------- | ----------------------------------------------- | --------------- |
+| SmartScreen warning             | yes, once at install                            | none            |
+| Administrator prompt            | installer may ask; ordinary app launch does not | none            |
+| Lockdown, camera, capture guard | yes                                             | yes             |
+| Windows registry policy changes | yes                                             | no              |
+| Automatic process termination   | no                                              | no              |
+| Network firewall                | no (off by default)                             | no              |

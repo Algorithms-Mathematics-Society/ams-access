@@ -6,7 +6,8 @@ import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { BackToHomeButton } from "@/components/BackToHomeButton";
-export function BootScreen({ label }: { label: string }) {
+export { ENTRY_WAIT_PHASES, entryWaitPhase } from "../entry-wait";
+export function BootScreen({ label, detail }: { label: string; detail?: string }) {
   return (
     <AppShell height="fill" style={{ height: "100dvh" }}>
       <VStack
@@ -14,14 +15,28 @@ export function BootScreen({ label }: { label: string }) {
         justify="center"
         gap={4}
         role="status"
+        aria-live="polite"
         style={{ minHeight: "100%", padding: "var(--spacing-6)" }}
       >
         <Spinner />
         <Text color="secondary">{label}</Text>
+        {/* Second line, not a replacement: the heading stays still while the
+            explanation underneath changes, so a candidate reading mid-wait
+            is not told a different thing every few seconds. */}
+        {detail ? (
+          <Text
+            type="supporting"
+            color="secondary"
+            style={{ textAlign: "center", maxWidth: "34rem" }}
+          >
+            {detail}
+          </Text>
+        ) : null}
       </VStack>
     </AppShell>
   );
 }
+
 export interface ContestLoadErrorScreenProps {
   loadError: string;
   router: ReturnType<typeof useRouter>;

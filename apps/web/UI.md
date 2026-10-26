@@ -224,6 +224,13 @@ Restore success requires a successful status query confirming no pending restora
 
 ## Frontend feedback and request ownership
 
+Login and organizer-approval creation synchronously own their pending request,
+including multiple submit events before React rerenders. Failed attempts release
+ownership for explicit retry; successful login keeps ownership through navigation.
+Approval ownership is released on completion, including responses invalidated by
+sign-out. Existing server-directed login cooldown and recovery identity checks
+remain authoritative. These guards add no background work or automatic retries.
+
 Startup keeps a visible status after the intro while version and sign-in checks
 finish. Empty credentials are checked before requesting sign-in, and the login ID
 field accepts short IDs or full handles. Optional display metadata storage failures
@@ -243,7 +250,10 @@ updates preserve selection. The horizontal header logo is 180px wide with
 existing page gutters and built-in artwork clear space preserved.
 
 Sign-in labels match the credential slip: Login ID and Password. Short IDs and full
-`@access` handles retain the existing normalization. The password starts masked,
+`@access` and `@access.amsaccess.com` handles accept case changes and surrounding
+whitespace. Internal whitespace, punctuation, unknown domains and overlong IDs
+are preserved for server rejection rather than silently selecting another identity.
+The password starts masked,
 with a Show/Hide control and a persistent format hint linked to the input.
 
 ## Contest reference sheet
@@ -289,3 +299,30 @@ transient verification failures and offers Retry verification.
 The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
 so network names and password controls stay inside the dialog at narrow sizes.
 The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
+Wi-Fi names and the connected network come only from the native OS integration.
+Browser builds show guidance to use system Wi-Fi settings, without sample networks,
+password prompts, simulated joins or background scan polling. Native scan failures
+show a retry message rather than a fallback network list.
+
+Device setup lets AppShell own page scrolling to avoid nested viewport-height
+scroll regions. The MediaPipe loader routes its exact CPU delegate startup
+notice to console.info; all other stderr remains error output.
+
+The offline C++ reference is prepared by the web dev and build hooks. First setup
+downloads the pinned cppreference archive, verifies its checksum, and packs it into
+`public/cppref/`; later builds reuse a validated bundle. For setup without network
+access, set `CPPREFERENCE_ARCHIVE` to the pinned archive or `CPPREFERENCE_SOURCE`
+to its extracted directory containing `reference/`. Run
+`node scripts/setup-cppreference.mjs --check` from `apps/web` to check the bundle.
+Installed apps read the embedded index and bounded Brotli blocks through native
+`read_cppref_asset` IPC; development servers use the existing Brotli response headers.
+Missing bundles fail preparation rather than producing a broken installer. Reference
+load errors offer Retry, and rejected index/block loads remain retryable.
+Reference HTML is sanitized before rendering: scripts, forms, frames, inline styles,
+event handlers and external image sources are removed. Article anchors carry only
+controlled navigation metadata, so clicks, keyboard activation and middle-clicks
+cannot open external URLs. Only bundled article paths and image assets are allowed.
+Build preparation strips external CSS/SVG resource references and omits upstream
+JavaScript; bundle checks reject unsafe copied assets. Native top-level navigation
+is restricted to the app origin (or the configured development origin), and the
+external-browser command refuses requests while native exam lockdown is active.

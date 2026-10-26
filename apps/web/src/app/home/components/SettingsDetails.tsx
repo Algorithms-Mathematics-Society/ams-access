@@ -444,7 +444,6 @@ export function SettingsSecurity({
     platform: platformInfo,
     env: securityEnv,
     processes: processScan,
-    virt: virtScan,
     network: networkCheck,
     isLoading: securityBusy,
   } = telemetry;
@@ -527,18 +526,6 @@ export function SettingsSecurity({
               </MetadataListItem>
             </MetadataList>
             <List hasDividers density="spacious" aria-label="Security environment results">
-              <SecurityInfoRow
-                label="Virtualization check"
-                value={
-                  virtScan
-                    ? virtScan.detected
-                      ? `${virtScan.platform ?? "virtualized"} detected (${virtScan.confidence})`
-                      : "Bare-metal signals clear"
-                    : unavailable
-                }
-                secure={virtScan ? !virtScan.detected : null}
-                loading={securityBusy}
-              />
               <SecurityInfoRow
                 label={isWindows ? "Debugger/injection profile" : "Startup injection check"}
                 value={
