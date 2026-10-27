@@ -391,3 +391,18 @@ remain unverified; client unit tests cannot establish server authorization.
 
 Scale: retain the MAC-13 single-flight/backoff policy; qualify the combined
 organizer and candidate workload at 3,000 participants before release.
+
+## MAC-17 / #212: server clock after Mac sleep
+
+A native wake event now requests an immediate heartbeat through the existing
+single-flight path. This refreshes the server clock without trusting the Mac's
+wall clock or waiting for the regular heartbeat interval. Late wake callbacks
+after cleanup are ignored. Existing clock/window/extension handling is retained.
+
+- [ ] With wrong Mac time/timezone, compare entry boundaries and timer to server.
+- [ ] Sleep across a start or end boundary; wake online and verify current phase.
+- [ ] Wake offline, reconnect, and verify server time/Finish state converge.
+- [ ] Postpone or extend a synthetic contest; verify only its timer changes.
+
+Scale: one wake-triggered heartbeat, using the existing in-flight guard; no new
+polling interval. A whole-hall reconnect still requires staging capacity evidence.

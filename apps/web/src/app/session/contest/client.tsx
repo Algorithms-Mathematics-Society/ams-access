@@ -3046,7 +3046,10 @@ export default function ContestPageClient() {
     const unlisten = listen<{ kind: string; detail: string; payload?: { slept_secs?: number } }>(
       "lockdown-event",
       (event) => {
-        if (event?.kind !== "system_woke") return;
+        if (cancelled || event?.kind !== "system_woke") return;
+        // performance.now() can pause during Mac sleep. Refresh the server
+        // anchor immediately through the existing single-flight heartbeat.
+        retryBeatRef.current?.();
         const sleptSecs = event.payload?.slept_secs ?? 0;
         const body = {
           category: "system_sleep",
