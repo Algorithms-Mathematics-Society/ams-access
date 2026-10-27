@@ -1084,34 +1084,38 @@ fn get_battery_status() -> Option<platform_rs::BatteryStatus> {
 /// now the only way back onto a network was leaving the exam, so this brings
 /// the picker inside it.
 ///
-/// Async and off the main thread, because every platform's implementation
-/// spawns a subprocess -- `nmcli`, `netsh`, `networksetup` -- and a scan can
-/// take seconds. A synchronous `#[tauri::command]` runs on the main thread,
-/// which froze the whole exam UI while it ran: the mouse stuck and typing
-/// stalled every time this polled.
+/// Native scans and other platforms' subprocesses can take seconds, so keep
+/// them off the UI thread. Only explicit refresh requests start a Windows radio scan.
 #[tauri::command]
-async fn scan_wifi() -> platform_rs::WifiScan {
-    tauri::async_runtime::spawn_blocking(
-        || platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default()),
-    )
+async fn scan_wifi(refresh: Option<bool>) -> Result<platform_rs::WifiScan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        if refresh.unwrap_or(false) {
+            return platform_rs::windows::wifi_rescan();
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = refresh;
+        Ok(platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default()))
+    })
     .await
-    .unwrap_or_default()
+    .map_err(|error| format!("Wi-Fi scan did not complete: {error}"))?
 }
 
 /// Join a wireless network. `password` is None or empty for an open one.
 /// Joining takes longer than scanning: the OS associates, gets a lease and
 /// may prompt. Off the main thread for the same reason.
 #[tauri::command]
-async fn connect_wifi(ssid: String, password: Option<String>) -> Result<(), String> {
-    if ssid.trim().is_empty() {
+async fn connect_wifi(ssid: String, password: Option<String>) -> Result<bool, String> {
+    if ssid.is_empty() {
         return Err("Choose a network first.".into());
     }
-    let ssid = ssid.trim().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         platform_dispatch!(
             wifi_connect(&ssid, password.as_deref()),
             else Err("Changing network is not supported on this system.".to_string())
-        )
+        )?;
+        // Windows waits for association; other platforms may only accept the request.
+        Ok(cfg!(target_os = "windows"))
     })
     .await
     .unwrap_or_else(|error| Err(format!("Network change did not complete: {error}")))
@@ -2150,7 +2154,11 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
             } else {
                 Ok(())
             };
-            lockdown_lifecycle::combine_cleanup(desktop, network)?;
+            let wifi = platform_rs::windows::cleanup_wifi_profiles(false);
+            lockdown_lifecycle::combine_cleanup(
+                lockdown_lifecycle::combine_cleanup(desktop, network),
+                wifi,
+            )?;
         }
         #[cfg(target_os = "linux")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
@@ -3182,18 +3190,25 @@ async fn disable_network_lockdown() -> Result<bool, String> {
         .await
         .map_err(|error| error.to_string())?
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
-        // Nothing was ever applied, so there is nothing to tear down — and calling
-        // netsh here would fail noisily on the exit path of every ordinary exam.
-        #[cfg(target_os = "windows")]
-        if !WANTS_FIREWALL {
-            return Ok(false);
-        }
-
-        #[cfg(target_os = "windows")]
-        return windows_firewall::disable().await;
-        #[cfg(not(target_os = "windows"))]
+        let network = if WANTS_FIREWALL {
+            windows_firewall::disable().await
+        } else {
+            Ok(false)
+        };
+        let wifi = tauri::async_runtime::spawn_blocking(|| {
+            platform_rs::windows::cleanup_wifi_profiles(false)
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+        let disabled = network.as_ref().copied().unwrap_or(false);
+        lockdown_lifecycle::combine_cleanup(network.map(|_| ()), wifi)?;
+        Ok(disabled)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
         platform_dispatch!(
             disable_network_lockdown(),
             else Err("Network lockdown not supported on this platform".to_string())
@@ -3693,6 +3708,10 @@ fn finish_shutdown() {
         let _ = LINUX_NETWORK.close(platform_rs::linux::disable_network_lockdown);
         #[cfg(target_os = "windows")]
         let _ = platform_rs::windows::close_network_lockdown_on_exit();
+        #[cfg(target_os = "windows")]
+        if let Err(error) = platform_rs::windows::cleanup_wifi_profiles(true) {
+            eprintln!("Could not remove AMS Access Wi-Fi profiles at exit: {error}");
+        }
         #[cfg(target_os = "macos")]
         let _ = platform_dispatch!(disable_network_lockdown(), else Ok(()));
     });
