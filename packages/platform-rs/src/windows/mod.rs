@@ -2357,6 +2357,11 @@ pub fn wifi_scan() -> crate::WifiScan {
     wifi::scan()
 }
 
+/// Remove only verified app-created Wi-Fi profiles, waiting for any active join.
+pub fn cleanup_wifi_profiles(shutdown: bool) -> Result<(), String> {
+    wifi::cleanup(shutdown)
+}
+
 /// Explicit user rescan; background reads do not trigger radio scans.
 pub fn wifi_rescan() -> Result<crate::WifiScan, String> {
     wifi::rescan()

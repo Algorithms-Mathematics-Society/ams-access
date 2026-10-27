@@ -2154,7 +2154,11 @@ async fn retry_lockdown_restore(app: tauri::AppHandle) -> Result<LockdownRestore
             } else {
                 Ok(())
             };
-            lockdown_lifecycle::combine_cleanup(desktop, network)?;
+            let wifi = platform_rs::windows::cleanup_wifi_profiles(false);
+            lockdown_lifecycle::combine_cleanup(
+                lockdown_lifecycle::combine_cleanup(desktop, network),
+                wifi,
+            )?;
         }
         #[cfg(target_os = "linux")]
         if !LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
@@ -3186,18 +3190,25 @@ async fn disable_network_lockdown() -> Result<bool, String> {
         .await
         .map_err(|error| error.to_string())?
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
-        // Nothing was ever applied, so there is nothing to tear down — and calling
-        // netsh here would fail noisily on the exit path of every ordinary exam.
-        #[cfg(target_os = "windows")]
-        if !WANTS_FIREWALL {
-            return Ok(false);
-        }
-
-        #[cfg(target_os = "windows")]
-        return windows_firewall::disable().await;
-        #[cfg(not(target_os = "windows"))]
+        let network = if WANTS_FIREWALL {
+            windows_firewall::disable().await
+        } else {
+            Ok(false)
+        };
+        let wifi = tauri::async_runtime::spawn_blocking(|| {
+            platform_rs::windows::cleanup_wifi_profiles(false)
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+        let disabled = network.as_ref().copied().unwrap_or(false);
+        lockdown_lifecycle::combine_cleanup(network.map(|_| ()), wifi)?;
+        Ok(disabled)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
         platform_dispatch!(
             disable_network_lockdown(),
             else Err("Network lockdown not supported on this platform".to_string())
@@ -3697,6 +3708,10 @@ fn finish_shutdown() {
         let _ = LINUX_NETWORK.close(platform_rs::linux::disable_network_lockdown);
         #[cfg(target_os = "windows")]
         let _ = platform_rs::windows::close_network_lockdown_on_exit();
+        #[cfg(target_os = "windows")]
+        if let Err(error) = platform_rs::windows::cleanup_wifi_profiles(true) {
+            eprintln!("Could not remove AMS Access Wi-Fi profiles at exit: {error}");
+        }
         #[cfg(target_os = "macos")]
         let _ = platform_dispatch!(disable_network_lockdown(), else Ok(()));
     });

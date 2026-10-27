@@ -8,6 +8,11 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::NetworkManagement::WiFi::*;
 
+#[path = "wifi_profiles.rs"]
+mod profiles;
+
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 static JOIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 // Windows rejects AUTO unless the client explicitly sets the connection mode.
 const SAVE_PROFILE_FLAGS: u32 = WLAN_PROFILE_USER
@@ -420,6 +425,7 @@ pub(super) fn rescan() -> Result<crate::WifiScan, String> {
     let _operation = JOIN
         .try_lock()
         .map_err(|_| "A Wi-Fi operation is already in progress. Try again shortly.".to_string())?;
+    admit_operation(&SHUTTING_DOWN)?;
     let mut client: Client<ScanCompletion> = Client::open()?;
     let interfaces = client.interfaces()?;
     let pending = scan_targets(&interfaces);
@@ -520,10 +526,36 @@ fn check(code: u32, action: &str) -> Result<(), String> {
     }
 }
 
+fn admit_operation(closing: &std::sync::atomic::AtomicBool) -> Result<(), String> {
+    if closing.load(std::sync::atomic::Ordering::Acquire) {
+        Err("Wi-Fi operations are unavailable while the application exits.".into())
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn cleanup(shutdown: bool) -> Result<(), String> {
+    if shutdown {
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::Release);
+    }
+    let _operation = JOIN
+        .lock()
+        .map_err(|_| "The Wi-Fi operation lock could not be acquired.".to_string())?;
+    let client: Client = Client::open()?;
+    let mut first_error = None;
+    for interface in client.interfaces()? {
+        if let Err(error) = profiles::cleanup(client.0, &interface.InterfaceGuid) {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
 pub(super) fn connect(ssid: &str, password: &str) -> Result<(), String> {
     let _join = JOIN
         .try_lock()
         .map_err(|_| "A Wi-Fi connection is already in progress. Try again shortly.".to_string())?;
+    admit_operation(&SHUTTING_DOWN)?;
     if ssid.is_empty() || ssid.len() > 32 || ssid.chars().any(char::is_control) {
         return Err("Choose a Wi-Fi network with a valid name (1–32 bytes).".into());
     }
@@ -645,28 +677,9 @@ pub(super) fn connect(ssid: &str, password: &str) -> Result<(), String> {
             )
         },
         || {
-            // Only a verified join becomes an auto-reconnect profile.
-            let saved_name: Vec<u16> = format!("AMS Access Wi-Fi {}", ssid_hex(ssid))
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-            let code = unsafe {
-                WlanSaveTemporaryProfile(
-                    client.0,
-                    &interface,
-                    PCWSTR(saved_name.as_ptr()),
-                    PCWSTR::null(),
-                    SAVE_PROFILE_FLAGS,
-                    true,
-                    None,
-                )
-            };
-            if code != 0 {
-                return Err(format!(
-                    "Joined {ssid}, but Windows could not save it for reconnection (code {code})."
-                ));
-            }
-            Ok(())
+            profiles::save(client.0, &interface, ssid).map_err(|error| {
+                format!("Joined {ssid}, but Windows could not save it for reconnection. {error}")
+            })
         },
     )
 }
@@ -674,6 +687,31 @@ pub(super) fn connect(ssid: &str, password: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_closes_admission_before_waiting_for_active_join() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+        };
+        let gate = Arc::new(Mutex::new(()));
+        let closing = Arc::new(AtomicBool::new(false));
+        let active_join = gate.lock().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker_gate = gate.clone();
+        let worker_closing = closing.clone();
+        let worker = std::thread::spawn(move || {
+            worker_closing.store(true, Ordering::Release);
+            send.send(()).unwrap();
+            let _cleanup = worker_gate.lock().unwrap();
+            assert!(admit_operation(&worker_closing).is_err());
+        });
+        receive.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(admit_operation(&closing).is_err());
+        drop(active_join);
+        worker.join().unwrap();
+        assert!(admit_operation(&AtomicBool::new(false)).is_ok());
+    }
 
     #[test]
     fn save_flags_pass_windows_auto_mode_validation() {
