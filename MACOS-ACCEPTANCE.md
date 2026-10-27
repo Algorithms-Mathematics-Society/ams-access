@@ -406,3 +406,27 @@ after cleanup are ignored. Existing clock/window/extension handling is retained.
 
 Scale: one wake-triggered heartbeat, using the existing in-flight guard; no new
 polling interval. A whole-hall reconnect still requires staging capacity evidence.
+
+## MAC-18 / #213: draft backup continuity
+
+Fixed overlapping background saves: a slow request now holds one shared flight
+across interval ticks and effect replacement. Cancelled responses cannot update
+revision/cache state or disable a later effect. Local immediate draft writes are
+unchanged. Tests execute the actual backup effect with deferred success/failure.
+
+API companion commit `9e3b78c` on `fix/macos-draft-cors` adds PUT to the existing
+CORS policy. Real middleware preflight tests pass for Mac, Windows and hosted-dev
+origins, while an untrusted origin remains rejected. This needs API review, CI
+and deployment; a client build alone cannot fix a rejected preflight.
+
+- [ ] Edit different problems/languages; navigate away and back, compare exact text.
+- [ ] With slow networking, verify one backup at a time in the network inspector.
+- [ ] Verify OPTIONS then PUT succeeds on the deployed API from the packaged Mac.
+- [ ] Disconnect, type, force-quit, restart and obtain re-entry approval; verify
+      last confirmed local text. Test server restoration separately on synthetic data.
+- [ ] Sleep/wake and repeat with CPU/memory pressure; keystrokes remain intact.
+
+Scale: unchanged 45-second backup cadence, changed buffers only, serialized
+problems and no overlapping batch. At 3,000 continuously editing clients one
+changed problem per tick is about 67 PUTs/sec, plus preflights where uncached;
+multiple changed problems increase that bound. Staging capacity is not measured.

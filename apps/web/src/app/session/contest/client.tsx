@@ -532,6 +532,7 @@ export default function ContestPageClient() {
   // whether backing up has been given up for this session.
   const serverDraftRef = useRef<Record<string, string>>({});
   const draftBackupOffRef = useRef(false);
+  const draftBackupFlightRef = useRef(false);
   const submitInFlightRef = useRef(false);
   // Retain an unacknowledged request only for retries of its exact payload.
   const submitKeyRef = useRef<{
@@ -2908,32 +2909,39 @@ export default function ContestPageClient() {
     if (!sessionId || questions.length === 0) return;
     let cancelled = false;
     const backup = async () => {
-      for (const question of questions) {
-        if (cancelled || draftBackupOffRef.current) return;
-        const next = draftBackup(
-          readAnswerBuffer(localStorage, sessionId, question.id),
-          serverDraftRef.current[question.id]
-        );
-        if (!next) continue;
-        try {
-          const saved = await saveDraft(sessionId, question.id, {
-            source: next.source,
-            language: next.language,
-            clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
-          });
-          // The server answers with what it holds, which is another device's
-          // copy when ours was stale; the next tick then supersedes it.
-          draftRevisionsRef.current[question.id] = Math.max(
-            draftRevisionsRef.current[question.id] ?? 0,
-            saved.client_revision
+      if (cancelled || draftBackupFlightRef.current) return;
+      draftBackupFlightRef.current = true;
+      try {
+        for (const question of questions) {
+          if (cancelled || draftBackupOffRef.current) return;
+          const next = draftBackup(
+            readAnswerBuffer(localStorage, sessionId, question.id),
+            serverDraftRef.current[question.id]
           );
-          serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
-        } catch (caught) {
-          if (caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
-            draftBackupOffRef.current = true;
+          if (!next) continue;
+          try {
+            const saved = await saveDraft(sessionId, question.id, {
+              source: next.source,
+              language: next.language,
+              clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
+            });
+            if (cancelled) return;
+            // The server answers with what it holds, which is another device's
+            // copy when ours was stale; the next tick then supersedes it.
+            draftRevisionsRef.current[question.id] = Math.max(
+              draftRevisionsRef.current[question.id] ?? 0,
+              saved.client_revision
+            );
+            serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
+          } catch (caught) {
+            if (!cancelled && caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
+              draftBackupOffRef.current = true;
+            }
+            return;
           }
-          return;
         }
+      } finally {
+        draftBackupFlightRef.current = false;
       }
     };
     const id = setInterval(() => void backup(), DRAFT_BACKUP_MS);
