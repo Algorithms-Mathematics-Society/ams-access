@@ -2261,7 +2261,7 @@ async fn measure_clock_skew(api_url: &str) -> Option<i64> {
     Some(server_ms - local_ms)
 }
 
-/// Current OS identifier.
+/// Ask for optional Mac audio access off the main thread.
 #[tauri::command]
 async fn request_macos_microphone_permission() -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -2298,6 +2298,7 @@ fn quit_macos_when_idle(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Current OS identifier.
 #[tauri::command]
 fn get_platform() -> serde_json::Value {
     serde_json::json!({
