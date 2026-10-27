@@ -458,3 +458,24 @@ missing/null output from older engines stays absent instead of becoming an empty
 string. The existing worker suite exposed this regression; all 25 translation
 checks pass after the fix, including explicit-empty/new-engine cases. No judge
 rollout or live end-to-end output check was performed. No new polling or judge jobs.
+
+## MAC-20 / #215: submission and Finish acceptance
+
+Retained the current implementation: submission uses an in-flight guard and
+persisted payload-scoped retry identity. Finish refuses while the submission
+request is outstanding, but does not wait for judging after acceptance. Finish
+and device-draft acknowledgements are separate; retries are bounded and an
+unconfirmed Finish retains recovery rather than claiming success. Existing
+submission-retry, submission-refresh and contest-confidence tests cover these
+contracts. No new submission or auto-submit behavior was introduced.
+
+- [ ] Double-click Submit on a synthetic solution; compare one server receipt.
+- [ ] Lose its acknowledgement, retry unchanged text; retain the same submission.
+- [ ] Change the source and submit again; confirm a distinct attempt.
+- [ ] Click Finish with a pending Submit; it waits for acceptance, not judge completion.
+- [ ] Drop the Finish reply and reconnect; confirm server state and truthful receipt.
+- [ ] Cross the exact deadline offline and online; retain the local draft without
+      inventing an accepted submission, and verify the organizer's final state.
+
+Scale: no extra requests. Existing bounded retries need combined staging testing
+with judge backlog, rather than treating client mocks as proof of 3,000-seat capacity.
