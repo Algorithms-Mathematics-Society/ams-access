@@ -182,3 +182,8 @@ history. Keep pending retries tied to their original identifiers. Support must
 yield to mandatory overlays without changing exam state. The organization portal
 owns the separate staff inbox. Device incident reporting with diagnostics remains
 a separate contest action.
+Recent same-device resumes may reuse a passed face scan for five minutes with
+the same camera. Setup says when it reuses the scan and performs a fresh presence
+check with a new reference photo saved through the normal native capture and
+identity-photo upload paths. Capture or upload failure runs the full face scan;
+volatile device checks and final entry policy remain authoritative.

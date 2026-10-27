@@ -35,10 +35,14 @@ export function Stage9_PresenceVerification({
   stream,
   onPass,
   onWarn,
+  onReferencePhoto,
+  onPhotoFailure,
 }: {
   stream: MediaStream | null;
   onPass(): void;
   onWarn(): void;
+  onReferencePhoto?: (video: HTMLVideoElement | null) => Promise<boolean>;
+  onPhotoFailure?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -55,13 +59,24 @@ export function Stage9_PresenceVerification({
     let cancelled = false;
     let detector: PresenceDetector | null = null;
     let advanceTimer: ReturnType<typeof setTimeout> | null = null;
-    // The advance callbacks are read through a ref-free closure captured once;
-    // `settle` is called exactly once and the effect is keyed on `stream`
-    // alone, so a re-render cannot double-advance the stage.
+    // Each effect visit settles once; cleanup discards late photo results.
     let settled = false;
-    const settle = (result: PresenceVerdict) => {
+    const settle = async (result: PresenceVerdict) => {
       if (cancelled || settled) return;
       settled = true;
+      if (onReferencePhoto) {
+        let saved = false;
+        try {
+          saved = isPresencePass(result) && (await onReferencePhoto(videoRef.current));
+        } catch {
+          // Any capture or upload failure must run the full face scan.
+        }
+        if (cancelled) return;
+        if (!saved) {
+          onPhotoFailure?.();
+          return;
+        }
+      }
       setVerdict(result);
       advanceTimer = setTimeout(() => {
         if (!cancelled) (isPresencePass(result) ? onPass : onWarn)();
@@ -71,7 +86,7 @@ export function Stage9_PresenceVerification({
     async function run() {
       // No camera at all is a measurement we could not take, not an absence.
       if (!stream) {
-        settle("unknown");
+        await settle("unknown");
         return;
       }
 
@@ -79,7 +94,7 @@ export function Stage9_PresenceVerification({
         detector = await loadPresenceDetector();
       } catch {
         // Model or backend unavailable. Say so rather than inventing a pass.
-        settle("unknown");
+        await settle("unknown");
         return;
       }
       if (cancelled) {
@@ -101,7 +116,7 @@ export function Stage9_PresenceVerification({
           } catch (error) {
             if (error instanceof CameraTimeoutError) {
               // Do not overlap a second inference with an uncancellable one.
-              settle("unknown");
+              await settle("unknown");
               return;
             }
             sample = null;
@@ -114,7 +129,12 @@ export function Stage9_PresenceVerification({
         }
       }
 
-      settle(decidePresence(samples));
+      // A majority presence verdict alone could photograph an empty final frame.
+      await settle(
+        onReferencePhoto && samples[samples.length - 1]?.status !== "presence_ok"
+          ? "unknown"
+          : decidePresence(samples)
+      );
     }
 
     void run().finally(() => {
@@ -125,7 +145,7 @@ export function Stage9_PresenceVerification({
       cancelled = true;
       if (advanceTimer) clearTimeout(advanceTimer);
     };
-  }, [stream, onPass, onWarn]);
+  }, [stream, onPass, onWarn, onReferencePhoto, onPhotoFailure]);
 
   const settled = verdict !== null;
   const passing = settled && isPresencePass(verdict);

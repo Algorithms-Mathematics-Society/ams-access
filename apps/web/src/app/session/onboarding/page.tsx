@@ -28,7 +28,15 @@ import {
 } from "@ams/api-client";
 import { SessionBindingError } from "@/lib/api-client";
 import { participantToken } from "@/lib/candidate-auth";
-import { getContest, serverNow, startSession, type ContestIndex } from "@/lib/proctor-api";
+import {
+  getContest,
+  getSession,
+  serverNow,
+  startSession,
+  uploadIdentityPhoto,
+  type ContestIndex,
+} from "@/lib/proctor-api";
+import { captureFrame } from "@/lib/identity-photo";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
@@ -55,6 +63,12 @@ import {
   entryMediaFacts,
   refreshEntryValue,
 } from "./entry-attempt";
+import {
+  RESUME_SETUP_KEY,
+  readResumeSetup,
+  canReuseFaceScan,
+  type ResumeSetup,
+} from "./resume-setup";
 import { createStageAdvanceController } from "./components/stage-advance";
 import {
   buildFaceReviewEvent,
@@ -200,6 +214,42 @@ export default function OnboardingPage() {
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const preparedSessionIdRef = useRef<string | null>(null);
+  const resumeSetupRef = useRef<ResumeSetup | null>(null);
+  const passedFaceRef = useRef<{ cameraId: string; passedAt: number } | null>(null);
+  const [reusedFaceScan, setReusedFaceScan] = useState(false);
+
+  useEffect(() => {
+    if (dryRun || !contestId || !hasNativeBridge()) return;
+    let cancelled = false;
+    try {
+      const active = JSON.parse(localStorage.getItem("ams_active_session") ?? "null");
+      if (!active?.id || active.contest_id !== contestId) return;
+      const saved = readResumeSetup(localStorage.getItem(RESUME_SETUP_KEY), {
+        sessionId: active.id,
+        contestId,
+        deviceId: getOrCreateDeviceId(),
+      });
+      if (!saved) return;
+      void getSession(saved.sessionId)
+        .then((session) => {
+          if (
+            cancelled ||
+            session.uid !== saved.sessionId ||
+            session.contest_uid !== contestId ||
+            !["active", "pending"].includes(session.status.toLowerCase())
+          )
+            return;
+          resumeSetupRef.current = saved;
+          setCurrentStage((stage) => (stage === 0 ? 1 : stage));
+        })
+        .catch(() => {});
+    } catch {
+      // Missing or unreadable recovery data falls back to complete setup.
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [contestId, dryRun]);
   const [isTestAccount, setIsTestAccount] = useState(false);
   // Authoritative device platform ("windows" | "macos" | "linux"), resolved
   // once via the Tauri `get_platform` command. Drives the Windows-only entry
@@ -911,6 +961,21 @@ export default function OnboardingPage() {
         }
       }
 
+      if (passedFaceRef.current && preparedSessionIdRef.current) {
+        try {
+          localStorage.setItem(
+            RESUME_SETUP_KEY,
+            JSON.stringify({
+              ...passedFaceRef.current,
+              sessionId: preparedSessionIdRef.current,
+              contestId,
+              deviceId: getOrCreateDeviceId(),
+            } satisfies ResumeSetup)
+          );
+        } catch {
+          // Recovery is optional; storage failure must not prevent entry.
+        }
+      }
       attempts.commit(attempt);
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
@@ -992,6 +1057,11 @@ export default function OnboardingPage() {
       onBegin: (stage, status) => {
         setTransitioning(true);
         setResults((r) => ({ ...r, [stage]: status }));
+        if (stage === 7) {
+          const cameraId = cameraStreamRef.current?.getVideoTracks()[0]?.getSettings().deviceId;
+          passedFaceRef.current =
+            status === "pass" && cameraId ? { cameraId, passedAt: Date.now() } : null;
+        }
         if (status !== "warn")
           setWarningDetails((previous) => {
             const next = { ...previous };
@@ -1000,6 +1070,19 @@ export default function OnboardingPage() {
           });
       },
       onAdvance: (nextStage) => {
+        const saved = resumeSetupRef.current;
+        const cameraId = cameraStreamRef.current?.getVideoTracks()[0]?.getSettings().deviceId ?? "";
+        if (
+          nextStage === 7 &&
+          saved &&
+          canReuseFaceScan(saved, cameraId) &&
+          cameraStreamRef.current?.getVideoTracks().some(isTrackDelivering)
+        ) {
+          passedFaceRef.current = { cameraId, passedAt: saved.passedAt };
+          setResults((r) => ({ ...r, 7: "pass" }));
+          setReusedFaceScan(true);
+          nextStage = 8;
+        }
         setCurrentStage(nextStage);
         setTransitioning(false);
       },
@@ -1053,6 +1136,54 @@ export default function OnboardingPage() {
     },
     [advanceController, stageRun, dryRun]
   );
+
+  const saveResumeReferencePhoto = useCallback(async (video: HTMLVideoElement | null) => {
+    const saved = resumeSetupRef.current;
+    const track = cameraStreamRef.current?.getVideoTracks()[0];
+    if (
+      !saved ||
+      !track ||
+      !track.enabled ||
+      !isTrackDelivering(track) ||
+      !video ||
+      video.readyState < 2 ||
+      video.videoWidth === 0 ||
+      video.videoHeight === 0 ||
+      !canReuseFaceScan(saved, track.getSettings().deviceId ?? "")
+    )
+      return false;
+    const frame = captureFrame(video);
+    if (!frame) return false;
+    const result = await withTimeout(
+      invokeStrict<{ face_verified: boolean }>("save_face_image", {
+        imageData: `data:image/jpeg;base64,${frame}`,
+        index: 0,
+        dryRun: false,
+      }),
+      5000,
+      "Reference photo save timed out"
+    );
+    if (!result?.face_verified) return false;
+    return uploadIdentityPhoto(saved.sessionId, "entry", frame, 0);
+  }, []);
+
+  const retryFullFaceScan = useCallback(() => {
+    resumeSetupRef.current = null;
+    passedFaceRef.current = null;
+    setReusedFaceScan(false);
+    try {
+      localStorage.removeItem(RESUME_SETUP_KEY);
+    } catch {
+      // The in-memory checkpoint is already invalidated for this setup.
+    }
+    setResults((previous) => {
+      const next = { ...previous };
+      delete next[7];
+      delete next[8];
+      return next;
+    });
+    setCurrentStage(7);
+  }, []);
 
   const leaveSetup = useCallback(async (nav: { push: (href: string) => void }) => {
     entryAttemptsRef.current.cancel();
@@ -1590,9 +1721,19 @@ export default function OnboardingPage() {
                               onFaceFallback={handleFaceFallback}
                             />
                           )}
+                          {currentStage === 8 && reusedFaceScan && (
+                            <Text color="secondary">
+                              Reusing your recent face scan. Checking your presence again and taking
+                              a new reference photo.
+                            </Text>
+                          )}
                           {currentStage === 8 && (
                             <Stage9_PresenceVerification
                               stream={cameraStream}
+                              onReferencePhoto={
+                                reusedFaceScan ? saveResumeReferencePhoto : undefined
+                              }
+                              onPhotoFailure={retryFullFaceScan}
                               onPass={advancePass}
                               onWarn={advanceWarn}
                             />

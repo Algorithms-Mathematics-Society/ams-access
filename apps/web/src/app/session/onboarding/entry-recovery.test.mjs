@@ -95,6 +95,7 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
     hasNativeBridge: () => true,
     cameraStreamRef: { current: null },
     cameraAttemptedRef: { current: true },
+    passedFaceRef: { current: null },
     entryMediaFacts,
     refreshEntryValue,
     browserDeviceState() {
