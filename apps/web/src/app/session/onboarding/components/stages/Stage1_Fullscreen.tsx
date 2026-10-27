@@ -4,6 +4,9 @@ import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList"
 import { useEffect, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, tauriWindow } from "../../support";
+import { createFullscreenLifecycle } from "./fullscreen-lifecycle";
+
+const startFullscreen = createFullscreenLifecycle();
 
 /**
  * Full-screen lockdown.
@@ -40,48 +43,44 @@ export function Stage1_Fullscreen({ onPass, onWarn }: { onPass(): void; onWarn()
   useEffect(() => {
     let cancelled = false;
 
-    async function go() {
-      const win = await tauriWindow();
-      const macos = await isMacos();
-      if (win) {
-        if (macos) {
-          await win.setSimpleFullscreen(true).catch(() => {});
-        } else {
-          await win.setFullscreen(true).catch(() => {});
+    let callbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const lifecycle = startFullscreen({
+      getWindow: tauriWindow,
+      isMacos,
+      ready: async (win, macos) => {
+        if (cancelled) return;
+
+        // Give the compositor a moment to actually apply it before asking.
+        await new Promise((r) => setTimeout(r, 800));
+        if (cancelled) return;
+
+        // Ask the window first; fall back to comparing the viewport against the
+        // screen, which is what Setup Verification uses. The tolerance is for
+        // the few pixels some window managers keep for themselves.
+        // `isFullscreen()` reports native full-screen only, so it is always
+        // false in simple full-screen; macOS goes straight to the viewport.
+        let ok = false;
+        if (win && !macos) {
+          ok = await win.isFullscreen().catch(() => false);
         }
-        await win.setAlwaysOnTop(true).catch(() => {});
-        await win.setDecorations(false).catch(() => {});
-      }
+        if (!ok) {
+          ok =
+            Boolean(document.fullscreenElement) ||
+            window.innerHeight >= window.screen.height * 0.94;
+        }
 
-      // Give the compositor a moment to actually apply it before asking.
-      await new Promise((r) => setTimeout(r, 800));
-      if (cancelled) return;
-
-      // Ask the window first; fall back to comparing the viewport against the
-      // screen, which is what Setup Verification uses. The tolerance is for
-      // the few pixels some window managers keep for themselves.
-      // `isFullscreen()` reports native full-screen only, so it is always
-      // false in simple full-screen; macOS goes straight to the viewport.
-      let ok = false;
-      if (win && !macos) {
-        ok = await win.isFullscreen().catch(() => false);
-      }
-      if (!ok) {
-        ok =
-          Boolean(document.fullscreenElement) || window.innerHeight >= window.screen.height * 0.94;
-      }
-
-      if (cancelled) return;
-      setEngaged(ok);
-      setDone(true);
-      setTimeout(() => {
-        if (!cancelled) (ok ? onPass : onWarn)();
-      }, 600);
-    }
-
-    void go();
+        if (cancelled) return;
+        setEngaged(ok);
+        setDone(true);
+        callbackTimer = setTimeout(() => {
+          if (!cancelled) (ok ? onPass : onWarn)();
+        }, 600);
+      },
+    });
     return () => {
       cancelled = true;
+      clearTimeout(callbackTimer);
+      lifecycle.cancel();
     };
   }, [onPass, onWarn]);
 

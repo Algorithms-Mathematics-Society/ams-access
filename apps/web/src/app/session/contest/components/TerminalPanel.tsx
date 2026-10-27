@@ -418,6 +418,14 @@ export function TerminalPanel({
           // The custom pane is always about its run. The official pane shows
           // the submission once one supersedes the run.
           const showRun = custom ? true : viewingRun;
+          // Diagnostics must belong to the displayed attempt, not the last
+          // run in another tab or a run superseded by a submission.
+          const compilerText = showRun
+            ? view.result?.compile_output
+            : latestAttempt?.compile_output;
+          const compilerIsError = showRun
+            ? view.result?.status === "CE"
+            : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE";
           const status = view.status;
           const paneLive = activeTab === runMode && isRunning;
 

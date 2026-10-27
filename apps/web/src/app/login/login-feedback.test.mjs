@@ -51,6 +51,9 @@ function harness({
     performance: { now: () => 0 },
     cooldownUntil: { current: 0 },
     ProctorApiError,
+    setServiceFailure: (value) => {
+      state.serviceFailure = value;
+    },
     setError: (value) => {
       state.error = value;
     },
@@ -272,7 +275,10 @@ test("password format and errors are described; only missing field is invalid", 
       input = nodes.find((n) => n.props?.id === "login-id"),
       field = nodes.find((n) => n.props?.inputID === "login-id");
     assert.equal(field.props.label, "Login ID");
-    assert.equal(input.props["aria-describedby"], error ? "login-error" : undefined);
+    assert.equal(
+      input.props["aria-describedby"],
+      error ? "login-id-help login-error" : "login-id-help"
+    );
     const passwordInput = nodes.find((n) => n.props?.id === "login-password");
     const passwordField = nodes.find((n) => n.props?.inputID === "login-password");
     assert.equal(passwordField.props.descriptionID, "login-password-help");
@@ -322,3 +328,19 @@ test("sign-in button shows and honors the server cooldown", () => {
   assert.equal(button.props.label, "Try again in 5s");
   assert.equal(button.props.isDisabled, true);
 });
+for (const status of [0, 429, 503, 401, 403]) {
+  test(`service context classifies HTTP ${status} without changing authoritative error`, async () => {
+    const h = harness({ failure: new ProctorApiError("Server response", status) });
+    await h.submit();
+    assert.equal(h.state.serviceFailure, status === 0 || status === 429 || status >= 500);
+    assert.equal(
+      h.state.error,
+      status === 0
+        ? "Connection failed"
+        : status === 429
+          ? "Server response Wait before trying again; repeated attempts may be limited."
+          : "Server response"
+    );
+    assert.deepEqual(h.routes, []);
+  });
+}

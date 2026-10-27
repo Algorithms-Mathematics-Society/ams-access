@@ -1,7 +1,20 @@
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { exitToHome } from "./exit-to-home.ts";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import { releaseDeviceControls, createDeviceRelease } from "./release-device-controls.ts";
+
+const source = readFileSync(new URL("./exit-to-home.ts", import.meta.url), "utf8");
+const compiled = ts.transpileModule(source, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
+const exports = {};
+new Function("require", "exports", compiled)((name) => {
+  assert.equal(name, "./release-device-controls");
+  return { releaseDeviceControls };
+}, exports);
+const { exitToHome } = exports;
 
 const releases = [
   "setFullscreen",
@@ -13,7 +26,7 @@ const releases = [
   "disable_network_lockdown",
 ];
 
-async function fixture({ fail, status = { pending: false } } = {}) {
+async function fixture({ fail, status = { pending: false, items: [] } } = {}) {
   const calls = [];
   const windowMethods = Object.fromEntries(
     releases.slice(0, 4).map((name) => [
@@ -36,6 +49,7 @@ async function fixture({ fail, status = { pending: false } } = {}) {
         async invoke(name) {
           calls.push(name);
           if (fail === name) throw Error("native failed");
+          if (name === "get_platform") return { os: "macos" };
           if (name === "get_lockdown_restore_status") return status;
         },
       },
@@ -55,13 +69,13 @@ test("browser exit retains the requested destination", async () => {
 
 test("confirmed desktop release retains the requested destination", async () => {
   const { calls, destinations } = await fixture();
-  assert.deepEqual(calls, [...releases, "get_lockdown_restore_status"]);
+  assert.deepEqual(calls, ["get_platform", ...releases, "get_lockdown_restore_status"]);
   assert.deepEqual(destinations, ["/login"]);
 });
 
 test("simple-fullscreen release failure opens recovery", async () => {
   const { calls, destinations } = await fixture({ fail: "setSimpleFullscreen" });
-  assert.deepEqual(calls, [...releases, "get_lockdown_restore_status"]);
+  assert.deepEqual(calls, ["get_platform", ...releases, "get_lockdown_restore_status"]);
   assert.deepEqual(destinations, ["/home?restore=pending"]);
 });
 
@@ -149,7 +163,8 @@ test("completed and rejected restoration steps leave no deadline timers behind",
   t.mock.method(globalThis, "clearTimeout", id => pending.delete(id));
   for (const fail of [undefined, "setSimpleFullscreen", "disable_network_lockdown"]) {
     await fixture({fail});
+    await createDeviceRelease(() => globalThis.window.__TAURI__)();
     assert.equal(pending.size, 0);
   }
-  assert.equal(next, 24, "each of the eight restoration steps was deadline protected");
+  assert.equal(next, 27, "each of the nine restoration steps was deadline protected");
 });

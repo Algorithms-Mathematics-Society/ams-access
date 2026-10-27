@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { entryProgressLabel } from "./entry-progress.ts";
 
 import {
   EntryCancelledError,
@@ -79,14 +80,17 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
   const time = fakeClock();
   const attempts = createEntryAttemptController(time.clock);
   attempts.activate();
-  const state = { blocks: [], retries: [], navigation: [], sessions: 0 };
+  const state = { blocks: [], retries: [], navigation: [], sessions: 0, progress: [] };
   const context = {
     entryAttemptsRef: { current: attempts },
+    setupLeavingRef: { current: false },
     contestWindow: null,
     setPolicyBlock: (value) => state.blocks.push(value),
     setFaceReviewSaveFailed() {},
     setEntryRetryAvailable: (value) => state.retries.push(value),
     setTransitioning() {},
+    setEntryProgress: (value) => state.progress.push(value),
+    entryProgressLabel,
     dryRun: false,
     evaluateEntryGateFromServer: async () => ({ ok: true, index: null }),
     isTestAccount: false,
@@ -103,6 +107,7 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
     },
     platform: "linux",
     collectDeviceState,
+    invokeStrict: async () => {},
     isGatingRelaxed: () => false,
     getNetworkProbeHost: () => "probe.invalid",
     API_URL: "https://api.invalid",
@@ -357,7 +362,7 @@ test("final setup rechecks macOS Location before session creation and returns mi
       },
     });
     await f.finalize();
-    assert.deepEqual(checks, ["wifi_location_status"]);
+    assert.deepEqual(checks.filter((command) => command !== "disable_keyboard_intercept"), ["wifi_location_status"]);
     assert.equal(sessions, status === "authorized" ? 1 : 0);
     if (status !== "authorized") assert.deepEqual(stages, [6]);
   }
@@ -384,7 +389,7 @@ test("final setup never queries Location on Windows or Linux", async () => {
       },
     });
     await f.finalize();
-    assert.deepEqual(commands, []);
+    assert.deepEqual(commands.filter((command) => command !== "disable_keyboard_intercept"), []);
   }
 });
 
@@ -407,7 +412,8 @@ test("final setup permits the Location bypass only with both a dev build and rel
         contestId: "contest",
         preparedSessionIdRef: { current: null },
         getOrCreateDeviceId: () => "device",
-        invokeStrict: async () => {
+        invokeStrict: async (command) => {
+          if (command === "disable_keyboard_intercept") return;
           queries++;
           return "denied";
         },
@@ -421,4 +427,14 @@ test("final setup permits the Location bypass only with both a dev build and rel
     assert.equal(queries, expectedQueries);
     assert.equal(sessions, expectedQueries === 0 ? 1 : 0);
   }
+});
+test("leaving setup prevents final entry from starting again", async () => {
+  const f = fixture({
+    enumerateDevices: async () => [],
+    collectDeviceState: async () => ({}),
+    overrides: { setupLeavingRef: { current: true } },
+  });
+  await f.finalize();
+  assert.equal(f.state.sessions, 0);
+  assert.deepEqual(f.state.navigation, []);
 });

@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+import { CloseAppButton } from "@/components/CloseAppButton";
+
 /**
  * "This AMS Access is too old for the exam server."
  *
@@ -35,8 +38,12 @@ export function UpdateRequiredDialog({
   downloadUrl: string;
   onInstall: (url: string) => void;
 }) {
+  const [opened, setOpened] = useState(false);
   return (
-    <div
+    <VStack
+      align="center"
+      justify="center"
+      gap={0}
       role="dialog"
       aria-modal="true"
       aria-labelledby="update-required-title"
@@ -44,14 +51,20 @@ export function UpdateRequiredDialog({
         position: "fixed",
         inset: 0,
         zIndex: 1000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
         padding: "var(--spacing-5)",
         background: "color-mix(in srgb, var(--color-background-body) 88%, transparent)",
       }}
     >
-      <Card padding={5} style={{ maxWidth: "28rem", width: "100%" }}>
+      <Card
+        padding={5}
+        style={{
+          maxWidth: "28rem",
+          width: "100%",
+          maxHeight: "100%",
+          minHeight: 0,
+          overflowY: "auto",
+        }}
+      >
         <VStack gap={4}>
           <Heading level={2} id="update-required-title">
             Update AMS Access
@@ -60,14 +73,34 @@ export function UpdateRequiredDialog({
           <Text type="supporting" color="secondary">
             {currentVersion} &rarr; {latestVersion}
           </Text>
+          <Text type="supporting" color="secondary">
+            Installed: {currentVersion} · Available: {latestVersion}
+          </Text>
+          <Text type="supporting">
+            Opening the page does not install the update. Use the official download page, not an
+            installer shared in a group chat.
+          </Text>
+          <Text type="code" style={{ overflowWrap: "anywhere", userSelect: "text" }}>
+            {downloadUrl}
+          </Text>
+          {opened && (
+            <Text role="status">
+              If the page did not open, copy the address into your browser. No download or
+              installation has been confirmed by this app.
+            </Text>
+          )}
+          <CloseAppButton />
           <Button
-            label="Install"
+            label="Open official download"
             variant="primary"
-            onClick={() => onInstall(downloadUrl)}
+            onClick={() => {
+              setOpened(true);
+              onInstall(downloadUrl);
+            }}
             style={{ alignSelf: "flex-start" }}
           />
         </VStack>
       </Card>
-    </div>
+    </VStack>
   );
 }

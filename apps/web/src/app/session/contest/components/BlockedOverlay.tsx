@@ -78,13 +78,13 @@ export function BlockedAppsOverlay({
        * power-off. */}
       <Button
         variant="secondary"
-        label="Exit contest"
+        label="Leave contest"
         onClick={onExit}
         style={{ alignSelf: "flex-start" }}
       />
       <Text type="supporting" color="secondary">
-        Exiting ends your sitting and releases this computer. Close the application above instead if
-        you can.
+        Leaving releases device controls without confirming a finish. The timer continues; returning
+        depends on the contest’s entry rules.
       </Text>
     </ContestOverlay>
   );

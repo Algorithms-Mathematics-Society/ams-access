@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { contestTimestamp } from "./contest-information.ts";
 import { readReferenceSheet } from "./reference-sheet.ts";
 
 const sheet = {
@@ -135,6 +136,7 @@ function harness({ supportsInert = true } = {}) {
       },
     },
     require(name) {
+      if (name === "../contest-information") return { contestTimestamp };
       if (name === "react")
         return {
           memo: (fn) => fn,

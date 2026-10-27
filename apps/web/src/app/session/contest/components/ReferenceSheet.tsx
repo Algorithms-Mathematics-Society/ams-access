@@ -5,6 +5,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { ContestOverlay } from "./ContestOverlay";
 import { CountdownBadge } from "./CountdownBadge";
+import { contestTimestamp } from "../contest-information";
 import type { ReferenceSheet } from "../reference-sheet";
 import type { ClockSnapshot } from "../session-clock";
 
@@ -175,7 +176,7 @@ export const ReferenceSheetButton = memo(function ReferenceSheetButton({
           </VStack>
           <HStack gap={3} justify="between" align="center" wrap="wrap">
             <Text type="supporting" color="secondary">
-              Published version {sheet.revision}
+              Published version {sheet.revision} · {contestTimestamp(sheet.published_at)}
             </Text>
             <CountdownBadge clock={clock} />
           </HStack>

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import * as summary from "../result-summary.ts";
 import * as output from "../execution-output.ts";
 import * as language from "../rule-language.ts";
 import { GATE_KIND } from "../family-summary.ts";
@@ -13,6 +14,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: {
 const jsx = (type, props) => typeof type === "function" ? type(props) : props?.children;
 const context = { exports: {}, require(name) {
   if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+  if (name === "../result-summary") return summary;
   if (name === "../execution-output") return output;
   if (name === "../rule-language") return language;
   if (name === "../family-summary") return { GATE_KIND };

@@ -45,7 +45,13 @@ export function SlipForm({
   return (
     <form onSubmit={onSubmit} data-login-form noValidate>
       <VStack gap={5}>
-        <Field label="Login ID" inputID="login-id" width="100%">
+        <Field
+          label="Login ID"
+          inputID="login-id"
+          width="100%"
+          description="Use the ID from your contest slip. Pasting the full ID ending in @access keeps the part before @access."
+          descriptionID="login-id-help"
+        >
           <HStack
             className={styles.fieldControl}
             align="center"
@@ -68,7 +74,7 @@ export function SlipForm({
               // Leave room for a full handle and keep overlong IDs invalid
               // instead of truncating them into a valid 64-character ID.
               maxLength={256}
-              aria-describedby={errorDescription}
+              aria-describedby={["login-id-help", errorDescription].filter(Boolean).join(" ")}
               aria-invalid={invalidField === "handle" || undefined}
               autoFocus
               required

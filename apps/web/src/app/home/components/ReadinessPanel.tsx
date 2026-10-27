@@ -40,9 +40,8 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   // Advisory: real results that do not stop the candidate entering. Without a
   // bucket of their own these matched nothing and disappeared from the panel
   // entirely, while the log underneath still reported them.
-  const advisoryChecks = checks.filter(
-    ([key]) => readiness[key] === "warn" || readiness[key] === "unavailable"
-  );
+  const advisoryChecks = checks.filter(([key]) => readiness[key] === "warn");
+  const unavailableChecks = checks.filter(([key]) => readiness[key] === "unavailable");
   const pendingChecks = checks.filter(([key]) => readiness[key] === "checking");
   const passedChecks = checks.filter(([key]) => readiness[key] === "ok");
   const policyNeedsReview =
@@ -56,7 +55,9 @@ export const ReadinessWidget = memo(function ReadinessWidget({
         ? "Checking your setup"
         : policyNeedsReview
           ? "Review your setup"
-          : "Checks complete";
+          : unavailableChecks.length > 0
+            ? "Some checks are not verified"
+            : "Checks complete";
 
   return (
     <Card
@@ -99,10 +100,29 @@ export const ReadinessWidget = memo(function ReadinessWidget({
           <VStack as="section" gap={2} aria-label="Advisory checks">
             <HStack gap={2} align="center">
               <StatusDot variant="warning" label="Advisory" />
-              <Text type="supporting">Worth knowing — these do not stop you entering</Text>
+              <Text type="supporting">Warnings to review — contest policy determines entry</Text>
             </HStack>
             <List density="compact" aria-label="Advisory checks">
               {advisoryChecks.map(([key, label]) => (
+                <ReadinessItem
+                  key={key}
+                  label={label}
+                  status={readiness[key]}
+                  theme={theme}
+                  onResolve={onResolve ? () => onResolve(key) : undefined}
+                />
+              ))}
+            </List>
+          </VStack>
+        )}
+
+        {unavailableChecks.length > 0 && (
+          <VStack as="section" gap={2} aria-label="Unverified checks">
+            <Text type="supporting">
+              Not verified — review the contest’s required checks before entry
+            </Text>
+            <List density="compact" aria-label="Unverified checks">
+              {unavailableChecks.map(([key, label]) => (
                 <ReadinessItem
                   key={key}
                   label={label}
@@ -187,11 +207,12 @@ export const ReadinessItem = memo(function ReadinessItem({
       : status === "fail"
         ? "Needs action"
         : status === "warn"
-          ? "Not available — you can still enter"
+          ? "Warning — review contest requirements"
           : status === "unavailable"
-            ? "Unavailable on this device"
+            ? "Not verified on this device"
             : "Checking...";
-  const canResolve = (status === "fail" || status === "warn") && !!onResolve;
+  const canResolve =
+    (status === "fail" || status === "warn" || status === "unavailable") && !!onResolve;
   return (
     <ListItem
       style={{ paddingInline: 0, minHeight: canResolve ? "var(--spacing-10)" : undefined }}
@@ -201,7 +222,10 @@ export const ReadinessItem = memo(function ReadinessItem({
           <Text>{label}</Text>
         </>
       }
-      aria-label={canResolve ? `Resolve ${label.toLowerCase()}` : `${label}: ${statusLabel}`}
+      description={<Text type="supporting">{statusLabel}</Text>}
+      aria-label={
+        canResolve ? `Resolve ${label.toLowerCase()}: ${statusLabel}` : `${label}: ${statusLabel}`
+      }
       onClick={canResolve ? onResolve : undefined}
       endContent={canResolve ? <Icon icon="chevronRight" size="sm" /> : undefined}
     />

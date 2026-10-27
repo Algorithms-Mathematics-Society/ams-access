@@ -187,3 +187,7 @@ the same camera. Setup says when it reuses the scan and performs a fresh presenc
 check with a new reference photo saved through the normal native capture and
 identity-photo upload paths. Capture or upload failure runs the full face scan;
 volatile device checks and final entry policy remain authoritative.
+Signed-out sign-in help uses the shared dialog with local guidance and a public
+browser contact handoff. Keep the URL/address selectable, diagnostics explicitly
+reviewable, and copy/open feedback distinct from message delivery. It must remain
+usable without participant authentication or network-dependent initialization.
