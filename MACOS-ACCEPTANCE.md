@@ -52,3 +52,23 @@ GUI checklist:
       after an offline/failed cleanup. Capture any restore guidance.
 
 Scale: one cached platform lookup and one local IPC per click; no backend traffic.
+
+## MAC-03 / #198: fullscreen and focus recovery
+
+Timed-out AppKit dispatch now cancels work that has not begun. Previously a
+queued operation could run after its caller timed out and started recovery.
+Already-running native calls cannot be interrupted; a timeout still means
+unverified, never successful. Three portable tests cover cancellation, single
+execution and start/cancel races. Actual window transitions need a Mac.
+
+GUI checklist:
+- [ ] Enter from a normal window and a macOS fullscreen Space; verify one visible,
+      usable contest window, with editor and dialogs above the correct surface.
+- [ ] Trigger failed setup/entry, then Back to contests; Dock, menu bar, switching,
+      window movement and fullscreen controls work again.
+- [ ] Repeat rapid entry/cancel/exit three times; no late refocus or return to kiosk.
+- [ ] Request a missing permission; its prompt or recovery guidance stays reachable.
+- [ ] Connect an unsupported extra display; read the guidance, correct it, retry,
+      and exit without a stranded black/off-screen window.
+
+Scale: local atomic state per dispatched job; no backend requests or new polling.

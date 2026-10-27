@@ -73,3 +73,8 @@ mod windows_hook_lifecycle_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 #[path = "windows/keyboard_policy.rs"]
 mod windows_keyboard_policy_tests;
+
+// Mac AppKit dispatch cancellation is pure and can be exercised on every host.
+#[cfg(all(test, not(target_os = "macos")))]
+#[path = "macos/deferred_job.rs"]
+mod macos_deferred_job_tests;

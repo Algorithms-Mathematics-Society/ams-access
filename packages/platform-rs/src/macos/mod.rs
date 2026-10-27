@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod allowlist;
+mod deferred_job;
 mod displays;
 pub mod instance;
 mod kiosk_window;

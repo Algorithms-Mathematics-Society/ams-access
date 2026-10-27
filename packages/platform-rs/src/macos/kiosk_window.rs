@@ -16,7 +16,7 @@ use objc2::runtime::{AnyObject, Bool};
 use objc2::{class, msg_send, MainThreadMarker};
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{mpsc, Mutex, MutexGuard, PoisonError};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 // NSApplicationPresentationOptions
@@ -127,7 +127,8 @@ extern "C" fn run_job(context: *mut c_void) {
 ///
 /// Asynchronous dispatch plus a bounded wait, never `dispatch_sync`: the main
 /// thread may itself be waiting on the caller during shutdown. On timeout the
-/// job may still run later; callers treat `None` as "not done".
+/// queued job is cancelled before it can start. An already-running AppKit call
+/// cannot be interrupted; callers still treat `None` as "not verified".
 pub(super) fn on_main<R: Send + 'static>(
     timeout: Duration,
     f: impl FnOnce() -> R + Send + 'static,
@@ -136,14 +137,22 @@ pub(super) fn on_main<R: Send + 'static>(
         return catch_unwind(AssertUnwindSafe(f)).ok();
     }
     let (sender, receiver) = mpsc::sync_channel(1);
+    let pending = Arc::new(super::deferred_job::DeferredJob::default());
+    let queued = Arc::clone(&pending);
     let job: Job = Box::new(move || {
-        let _ = sender.send(f());
+        if queued.start() {
+            let _ = sender.send(f());
+        }
     });
     let context = Box::into_raw(Box::new(job)) as *mut c_void;
     // SAFETY: the main queue lives for the whole process; `run_job` takes
     // ownership of `context` exactly once.
     unsafe { dispatch_async_f(std::ptr::addr_of!(_dispatch_main_q), context, run_job) };
-    receiver.recv_timeout(timeout).ok()
+    let result = receiver.recv_timeout(timeout).ok();
+    if result.is_none() {
+        pending.cancel();
+    }
+    result
 }
 
 /// Run an AppKit call behind a panic guard and an Objective-C exception
