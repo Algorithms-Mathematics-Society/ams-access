@@ -31,3 +31,24 @@ release. It only inspects the bundle; it does not alter security settings.
 Apple's verification guidance: https://developer.apple.com/library/archive/technotes/tn2206/
 
 Scale: build-time validation adds no candidate requests or runtime polling.
+
+## MAC-02 / #197: signed-out exit
+
+Welcome and Login now show a Mac-only Quit button. It calls local native shutdown,
+which retains the existing restoration path; no login or API request is needed.
+Concurrent clicks are coalesced. Native refuses the idle action during an active
+exam or an in-progress lifecycle transition. Windows/Linux/browser controls are
+unchanged. Component regressions cover platform gating, duplicate clicks and
+readable refusal. Native Cmd+Q/menu/window-close acceptance remains required.
+
+GUI checklist:
+- [ ] On Welcome and Login, turn connectivity off and click Quit; the app exits,
+      Dock/menu bar/input work, and reopening is usable without signing in.
+- [ ] Repeat with Cmd+Q, application-menu Quit and the window close control.
+- [ ] From Home, setup failure, approval wait, active contest, reconnect and Finish,
+      exercise each existing exit control; the correct confirmation is retained.
+- [ ] Close a Reference/help modal and then exit; repeat three enter/exit cycles.
+- [ ] Verify no duplicate finish submission, stranded fullscreen or required login
+      after an offline/failed cleanup. Capture any restore guidance.
+
+Scale: one cached platform lookup and one local IPC per click; no backend traffic.

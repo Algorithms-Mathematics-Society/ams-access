@@ -2258,6 +2258,30 @@ async fn measure_clock_skew(api_url: &str) -> Option<i64> {
 }
 
 /// Current OS identifier.
+/// Signed-out Mac screens need a local exit even when the API is unreachable.
+/// Active exams retain their existing confirmed exit flow.
+#[tauri::command]
+fn quit_macos_when_idle(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut lifecycle = lockdown_lifecycle()
+            .try_lock()
+            .map_err(|_| "Device setup is changing. Try Quit again in a moment.".to_string())?;
+        if lifecycle.active || LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+            return Err("Use the contest's exit control before quitting AMS Access.".into());
+        }
+        // Invalidate any entry already queued behind this idle exit.
+        lifecycle.generation = lifecycle.generation.wrapping_add(1);
+        app.exit(0); // RunEvent::Exit still runs finish_shutdown and native restoration.
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("This quit control is only available on macOS.".into())
+    }
+}
+
 #[tauri::command]
 fn get_platform() -> serde_json::Value {
     serde_json::json!({
@@ -3997,6 +4021,7 @@ pub fn run() {
             check_network_stability,
             get_full_telemetry,
             get_platform,
+            quit_macos_when_idle,
             get_security_environment,
             save_face_image,
             verify_face_model_assets,

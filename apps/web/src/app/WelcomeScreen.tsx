@@ -5,6 +5,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
+import { MacQuitButton } from "@/components/MacQuitButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessLogo } from "@/components/AccessLogo";
 
@@ -38,7 +39,10 @@ export default function WelcomeScreen({ onEnter, banner }: WelcomeScreenProps) {
       >
         <HStack as="header" gap={4} justify="between" align="center">
           <AccessLogo />
-          <ThemeToggle />
+          <HStack gap={2} align="center">
+            <MacQuitButton />
+            <ThemeToggle />
+          </HStack>
         </HStack>
 
         <VStack

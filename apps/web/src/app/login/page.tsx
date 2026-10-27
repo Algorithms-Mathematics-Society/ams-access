@@ -20,6 +20,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { useRouter } from "next/navigation";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { MacQuitButton } from "@/components/MacQuitButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessLogo } from "@/components/AccessLogo";
 import { invoke } from "@ams/api-client";
@@ -197,7 +198,10 @@ export default function LoginPage() {
       >
         <HStack as="header" gap={4} justify="between" align="center">
           <AccessLogo />
-          <ThemeToggle />
+          <HStack gap={2} align="center">
+            <MacQuitButton />
+            <ThemeToggle />
+          </HStack>
         </HStack>
 
         <HStack
