@@ -168,6 +168,12 @@ pub fn macos_scan_rows(
     saved: Vec<WifiNetwork>,
     current: Option<&str>,
 ) -> (Vec<WifiNetwork>, bool) {
+    // CoreWLAN can return unnamed/redacted rows without a usable network.
+    // Filter them here, without trimming valid SSIDs or changing Windows parsing.
+    let nearby = nearby
+        .into_iter()
+        .filter(|row| !row.ssid.trim().is_empty() && row.ssid != "<redacted>")
+        .collect();
     let mut rows = tidy(nearby, current);
     let saved_only = rows.is_empty();
     if saved_only {
