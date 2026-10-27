@@ -72,3 +72,24 @@ GUI checklist:
       and exit without a stranded black/off-screen window.
 
 Scale: local atomic state per dispatched job; no backend requests or new polling.
+
+## MAC-04 / #199: retired network-lockdown check and legacy cleanup
+
+This issue was already closed for feature removal. It is not reopened here.
+The fetched main still contains the old enforcement path; full removal is separate
+work and must not be claimed shipped from this branch. This change only makes Mac
+helper uninstall clear its existing scoped rules before stopping/deleting the
+service. Failed cleanup retains the helper for recovery and reports the error.
+It does not disable PF globally, flush other anchors or reintroduce enforcement.
+
+GUI checklist (use a disposable Mac profile/device for legacy-helper cases):
+- [ ] Upgrade from a build with the helper installed. Restore settings, uninstall
+      the helper, then verify ordinary internet access and a clean app restart.
+- [ ] Cancel the administrator prompt; the app stays usable and reports failure.
+- [ ] With a recorded lockdown but unavailable helper, uninstall must fail visibly,
+      not claim successful restoration. Restore the helper before retrying.
+- [ ] On the eventual removal build, setup must not block on Network Lockdown or
+      ask to install a network helper. Verify other firewall rules remain intact.
+
+Validation: inspected the helper disable/marker lifecycle and native Rust formatting.
+Native administrator/PF behavior requires Mac acceptance. No new polling or API load.

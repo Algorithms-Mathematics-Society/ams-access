@@ -1726,6 +1726,10 @@ fn applescript_string(value: &str) -> String {
 ///
 /// Requires admin privileges (osascript elevation).
 pub fn uninstall_network_helper() -> Result<(), String> {
+    // The helper owns the scoped PF anchor. Clear it while the service still
+    // exists; deleting the daemon first can strand rules across app restarts.
+    // If recorded rules cannot be cleared, retain the helper for recovery.
+    disable_network_lockdown()?;
     let script = format!(
         r#"do shell script "
             /bin/launchctl bootout system '{HELPER_PLIST_DEST}' 2>/dev/null || true &&
