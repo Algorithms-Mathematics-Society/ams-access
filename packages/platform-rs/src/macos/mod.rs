@@ -1089,8 +1089,14 @@ pub fn retry_restore() -> RestoreStatus {
 /// main thread, behind an exception guard. Observers already on the main
 /// thread run it inline.
 fn refocus_our_app() {
-    let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), || {
-        kiosk_window::guarded(|| unsafe { refocus_on_main(std::process::id()) })
+    refocus_for_generation(desktop_generation());
+}
+
+fn refocus_for_generation(generation: u64) {
+    let _ = kiosk_window::on_main(std::time::Duration::from_millis(500), move || {
+        if owns_desktop(generation) {
+            kiosk_window::guarded(|| unsafe { refocus_on_main(std::process::id()) });
+        }
     });
 }
 
@@ -1240,16 +1246,17 @@ fn remove_space_observer() {
 /// misses (e.g. a space switch that never activates another app). 2 s interval
 /// — the event-driven observer handles the fast path.
 fn spawn_space_watchdog() {
+    let generation = desktop_generation();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
-        if !lockdown_active() {
+        if !owns_desktop(generation) {
             break;
         }
         if lockdown_config().disable_siri {
             quit_siri();
         }
-        // Dispatches to the main thread behind an exception guard.
-        refocus_our_app();
+        // Re-check ownership when the main queue actually executes this work.
+        refocus_for_generation(generation);
     });
 }
 

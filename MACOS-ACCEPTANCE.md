@@ -186,3 +186,28 @@ Validation: native source review plus existing Wi-Fi UI and parsing regressions.
 CoreWLAN/Location/association require Mac CI and hardware. OS scan duration is not
 cancellable; the gate prevents accumulating scans. No backend traffic is added.
 Apple API: https://developer.apple.com/documentation/corewlan/cwinterface/scanfornetworks(withname:)
+
+## MAC-09 / #204: bounded session watchdog lifetime
+
+The Mac fallback focus watchdog now belongs to one desktop generation. Previously
+rapid exit/re-entry inside its two-second sleep could keep old pollers alive,
+adding process scans and main-thread dispatches each cycle. Stale generations
+now stop at the next tick; queued refocus also checks ownership when executed.
+The existing event-driven observers and two-second fallback frequency remain.
+No server requests, higher polling rate or global animation changes are added.
+
+GUI/performance checklist:
+- [ ] Compare the previous release and this build on the same Mac, power mode,
+      contest and data; record build/OS/architecture and Activity Monitor values.
+- [ ] Repeat entry/exit ten times, including quick cycles; idle CPU/thread count
+      should settle rather than gain another permanent watchdog each time.
+- [ ] Run a 30-minute synthetic contest with typing, scrolling, modals and question
+      changes. Record memory/CPU at start, 10, 20 and 30 minutes and after exit.
+- [ ] Include a long statement, large draft, Reference content and reconnect;
+      record stalls with their trigger and duration, not just “feels smoother”.
+- [ ] Repeat with Reduce Motion enabled; ensure focus, buttons and readable
+      loading/error states remain usable. No perpetual activity after exit.
+
+Validation: lifecycle review and portable regression suite. No native performance
+measurements or 3,000-participant production load qualification are claimed here.
+This change reduces per-device stale work and adds no backend load.
