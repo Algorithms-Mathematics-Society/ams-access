@@ -139,7 +139,14 @@ test("Windows restore failure stays visible and retry uses the journal", async (
     /let network = if windows_firewall::recovery_needed\(WANTS_FIREWALL\)/
   );
   assert.match(windowsRetry, /windows_firewall::disable_blocking\(\)\.map\(\|_\| \(\)\)/);
-  assert.match(windowsRetry, /lockdown_lifecycle::combine_cleanup\(desktop, network\)\?;/);
+  assert.match(
+    windowsRetry,
+    /let wifi = platform_rs::windows::cleanup_wifi_profiles\(false\);/
+  );
+  assert.match(
+    windowsRetry,
+    /lockdown_lifecycle::combine_cleanup\(\s*lockdown_lifecycle::combine_cleanup\(desktop, network\),\s*wifi,?\s*\)\?;/
+  );
   assert.match(
     desktop,
     /cfg\(target_os = "windows"\)\]\s*let protected = \{\s*let status = platform_rs::windows::lock_desktop_with_status\(\)\?/
