@@ -1,4 +1,4 @@
-# MAC-01–MAC-10 acceptance handoff
+# MAC-01–MAC-15 acceptance handoff
 
 Owner for native verification: @Rasesh2005. These issues stay open until the
 required GUI evidence is recorded. Linux unit tests and browser fixtures do not
@@ -345,3 +345,32 @@ branch still has legacy enforcement; don't claim its removal is shipped.
 
 Scale: removes retained local timers; no added requests, radio scans or retries.
 Native networking/window verification remains required, so no closure yet.
+
+## MAC-15 / #210: Home recovery must stop after navigation
+
+The merged work already prevents duplicate entry attempts, fast-paths active
+resume, excludes terminal stored sessions and preserves server refusal reasons.
+Rashesh has native evidence for early-entry recovery, active resume and terminated
+session messaging. Those paths remain intact.
+
+A remaining transition race was Home's desktop recovery interval: clearing the
+interval did not invalidate its pending native query. A late answer could release
+desktop/simple fullscreen after navigation to setup or the workspace. Home now
+invalidates both the query continuation and delayed platform lookup on unmount;
+late callbacks cannot navigate to recovery either. It still releases leftovers
+while mounted and preserves a Mac user's native green-button fullscreen.
+Tests execute the actual effect for both late-response races and normal recovery.
+
+- [ ] Complete setup and rapidly repeat Enter: one session and workspace.
+- [ ] Navigate Home → setup while a native query is delayed; it must not exit
+      fullscreen or unlock the new session when the old query returns.
+- [ ] Resume active/pending sessions; preserve the existing approval rules and
+      exact destination. Terminated/completed sessions must not become Resume loops.
+- [ ] Fail final readiness, retry, then restart once during setup and once after
+      entry; successful checks/session/draft state follow the documented recovery route.
+- [ ] Return to Home with genuine leftover lockdown; mounted recovery still works
+      and incomplete restoration remains visible.
+
+Scale: no additional polling or backend requests; the existing five-second local
+check stays single-flight and its late work is invalidated. Keep the audit open
+for repeated-entry/restart native acceptance, rather than closing on unit tests.

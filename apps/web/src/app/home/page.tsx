@@ -137,28 +137,32 @@ export default function HomePage() {
   useEffect(() => {
     if (!hasNativeBridge()) return;
     let inFlight = false;
+    let cancelled = false;
     const macos = invoke<{ os?: string }>("get_platform")
       .then((platform) => platform?.os === "macos")
       .catch(() => false);
     const check = () => {
-      if (inFlight) return;
+      if (cancelled || inFlight) return;
       inFlight = true;
       invoke<boolean>("is_lockdown_engaged")
         .then(async (engaged) => {
+          if (cancelled) return;
           if (engaged) {
             await exitToHome({
               push: (href) => {
-                if (href.includes("restore=pending")) setActiveNav("settings");
+                if (!cancelled && href.includes("restore=pending")) setActiveNav("settings");
               },
             });
             return;
           }
           // Home is never kiosk full screen. On macOS that is simple full screen
           // only; native full screen there is the candidate's own green button.
+          const isMac = await macos;
+          if (cancelled) return;
           const win = window.__TAURI__?.window.getCurrentWindow();
           await Promise.all([
             win?.setSimpleFullscreen(false),
-            (await macos) ? undefined : win?.setFullscreen(false),
+            isMac ? undefined : win?.setFullscreen(false),
           ]);
         })
         .catch(() => {})
@@ -168,7 +172,10 @@ export default function HomePage() {
     };
     check();
     const id = setInterval(check, 5_000);
-    return () => clearInterval(id);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
   const [signingOut, setSigningOut] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
