@@ -430,3 +430,28 @@ Scale: unchanged 45-second backup cadence, changed buffers only, serialized
 problems and no overlapping batch. At 3,000 continuously editing clients one
 changed problem per tick is about 67 PUTs/sec, plus preflights where uncached;
 multiple changed problems increase that bound. Staging capacity is not measured.
+
+## MAC-19 / #214: run output and judging diagnostics
+
+Confirmed the existing engine fix: cxxprobe commit `155339b` serializes ordinary
+case stdout/stderr, including empty output, and is included in released v1.0.0
+(`d69bfa6`). The release has a Linux binary and checksum asset. Worker main
+`cf3ba88` pins that version; its earlier `df4ae20` forwards manual-case output.
+These are source/release facts, not proof that running judges were refreshed.
+
+The client already has a separate behavior diagnostic view. Updated obsolete
+copy claiming ordinary test output is never returned. Added real-renderer
+regressions distinguishing returned text, empty output, omitted output, hidden
+cases and failed behavior diagnostics/stderr. Existing stale-attempt selection
+and request/idempotency tests remain in place.
+
+- [ ] Verify the active judge binary version and checksum, not just the bootstrap pin.
+- [ ] Run known AC, WA, CE, RE and TLE fixtures; check verdict, diagnostics and output.
+- [ ] Run empty-output and multiline custom-input fixtures; empty is not missing.
+- [ ] Select a failed behavior check; its diagnostic stays visible and readable.
+- [ ] Switch attempts while a result is delayed; it must not replace the new selection.
+- [ ] Simulate queue/service failure; show explicit failure, never fabricated output.
+
+Release asset SHA-256: `22dd9cc810e454e74e64f0d24949260785eb91c5a6c287cd27af5a9beb54a9b0`.
+API filtering must still keep hidden submission tests private. No judge rollout
+or live end-to-end output check was performed. No new polling or judge jobs.

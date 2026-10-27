@@ -591,9 +591,9 @@ function CaseDetail({
   // revealed: the candidate is reading these two values a few inches up.
   const input = row.input ?? example?.input ?? null;
   const expected = row.expected ?? example?.output ?? null;
-  // What the program actually printed. Present for a case the candidate
-  // supplied; withheld on the problem's own tests, because a hidden test
-  // whose output came back would be an answer key.
+  // Public sample and custom-run output supplied by the API. Missing output
+  // from an older worker is distinct from an explicitly empty program output.
+  // The API owns which test results may be exposed to this candidate.
   const got = row.stdout_text ?? row.output ?? row.actual ?? null;
   const hidden = input == null && expected == null && got == null;
 
@@ -620,16 +620,9 @@ function CaseDetail({
                 Your output
               </Text>
               <Text type="supporting" color="secondary">
-                Not returned for the problem&apos;s own tests. Run this case as your own to see what
-                your code prints.
+                Output was not included in this result. You can retry this input as your own case.
               </Text>
-              {/* The instruction used to end at "put this input under
-                  Testcase and run it", which is three manual steps — copy
-                  the input, switch tab, paste, run — at the moment a
-                  candidate is already stuck. The sample's input and expected
-                  output are both on screen, so handing them to the custom
-                  path reveals nothing and returns stdout, which the
-                  problem's own tests structurally cannot. */}
+              {/* Offer a retry for public input when an older worker omitted output. */}
               {onRunAsCustom && input != null ? (
                 <Button
                   variant="secondary"
