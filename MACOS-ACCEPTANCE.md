@@ -256,3 +256,41 @@ permission matrix. Keep this audit open for the remaining native acceptance.
 - [ ] Deny optional microphone: warning remains advisory; final policy stays authoritative.
 - [ ] Cancel/restart setup: no duplicate prompts or stale failures after repair.
 - [ ] Record warning, blocked, repaired and ready screenshots with build and architecture.
+
+## MAC-12 / #207: reconcile existing load evidence before more changes
+
+The issue's original hash-only benchmark is no longer the whole local record.
+`/home/ayush/work/ams/loadtest/data/entry-runs.csv` includes a later 1,000-client
+Enter Contest run (4 workers, 20+40 pool): 1,000 admitted, zero shed 503s,
+entry p95 11,850 ms and health p95 299 ms. `enter-contest-storm.js` performs
+session creation, contest index and first statement once per participant, using
+pre-issued tokens. This is stronger evidence than nonexistent-ID login traffic,
+but does not measure a real Mac's login/setup flow or reconcile unique DB sessions.
+
+The separate `contest1300-summary.json` records 11,700 iterations, 5,247 accepted
+submissions, 6,449 accepted runs, zero submit 5xx/network failures and an API-answer
+rate of 1. Its script uses pre-provisioned seats and concentrates on one problem.
+Do not silently equate those counts with entry success. The aggregate duration
+minimum is negative (-1552.44049 ms); timing provenance needs review before
+reusing its percentiles as release evidence.
+
+Artifact hashes at review time (no credentials or seat/token files copied):
+- `data/entry-runs.csv`: `2e64c1b17c2c2dac1f6f0158dcbee3d06cae410d991ffc595916827b2b348ecf`
+- `enter-contest-storm.js`: `6fbad436df861f10c8e200c18fe6c4ec8e83943b719df470af6f0e45b7ccfe49`
+- `contest1300.js`: `b4c33edf8feea0c4fef3427df800ff3ac26e933a63905a9d47d103bed833dfca`
+- `contest1300-summary.json`: `df578ae34bb40493184d59fdd943dafcb1aa8cc8a73409f9cfd00caca3dd11ca`
+
+Keep MAC-12 open: partial server qualification exists, not complete native/load
+acceptance. No duplicate production load test or server tuning change was made.
+For the remaining rehearsal, agree explicit latency/error limits first and use
+staging or separately approved production fixtures. Start with a small calibration,
+then the required 3,000 synthetic candidates plus organizer reads, heartbeats and
+representative judging. Record attempted entry IDs, unique sessions, first-problem
+successes and retry duplicates, along with p50/p95/p99, queue depth and request rate.
+Reconcile all attempts, including failures, against server records before cleanup.
+
+- [ ] Record one Mac login → setup → entry → first-problem baseline per supported architecture.
+- [ ] Correlate those clients with the calibrated load run and deployed API/client hashes.
+- [ ] Inject a bounded service outage, restore, and verify identity/draft/timer continuity.
+- [ ] Reconcile attempted entries and unique server sessions; investigate every mismatch.
+- [ ] Attach metrics, thresholds, fixture cleanup and independent reviewer sign-off.
