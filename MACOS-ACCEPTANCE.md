@@ -237,3 +237,22 @@ GUI checklist:
 Validation: normalization, login identity/feedback and support regressions in the
 web suite. Native paste/caret and real delivery/revocation remain manual acceptance.
 No additional authentication requests, retry loops or backend costs are introduced.
+
+## MAC-11 / #206: preflight warning consistency
+
+Reviewed against the merged #172 work and MAC-05's contextual microphone prompt.
+The final review already uses the native policy decision, preserves the blocking
+reason, calls warnings advisory and rechecks entry before opening the workspace.
+Added a regression that executes the Mac review: warning text stays exact,
+Continue does not promise guaranteed entry, and a repaired pass removes stale
+warning text. No additional runtime behavior or requests are introduced.
+
+Rashesh's existing native evidence covers proxy warning/Continue and truthful
+Home preflight wording on one Apple Silicon machine. It does not cover the full
+permission matrix. Keep this audit open for the remaining native acceptance.
+
+- [ ] Deny/revoke camera and Accessibility, repair via Settings and retry without reinstall.
+- [ ] Check a busy/disconnected camera: blocked reason and preview agree.
+- [ ] Deny optional microphone: warning remains advisory; final policy stays authoritative.
+- [ ] Cancel/restart setup: no duplicate prompts or stale failures after repair.
+- [ ] Record warning, blocked, repaired and ready screenshots with build and architecture.
