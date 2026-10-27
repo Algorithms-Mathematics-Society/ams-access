@@ -376,6 +376,56 @@ test("joining preserves whitespace in the selected network name", async () => {
   ui.unmount();
 });
 
+test("a stale network name cannot confirm a disconnected join", async () => {
+  const stale = { ...base, current: "Campus", connected: false };
+  const app = mountPair(stale, (command) =>
+    Promise.resolve(command === "scan_wifi" ? stale : false)
+  );
+  const ui = app.instance();
+  assert.match(JSON.stringify(ui.tree), /Not connected to Wi-Fi/);
+  choose(ui);
+  ui.find((node) => node.props?.label === "Join").props.onClick();
+  await tick();
+  for (const callback of app.timers.values()) callback();
+  await tick();
+  assert.doesNotMatch(JSON.stringify(ui.render()), /Connected to Campus/);
+  ui.unmount();
+});
+
+test("opening the picker refreshes connection status without waiting for the poll", async () => {
+  let current = { ...base, current: "Campus", connected: true };
+  const ui = mountPair(current, () => Promise.resolve(current)).instance();
+  await tick();
+  current = base;
+  ui.find((node) => node.props?.["aria-expanded"] !== undefined).props.onClick();
+  ui.render();
+  await tick();
+  assert.match(JSON.stringify(ui.render()), /Not connected to Wi-Fi/);
+  ui.unmount();
+});
+
+test("a profile-save failure schedules connection status reconciliation", async () => {
+  let scans = 0;
+  const associated = { ...base, current: "Campus", connected: true };
+  const app = mountPair(base, (command) => {
+    if (command === "scan_wifi") return Promise.resolve(++scans === 1 ? base : associated);
+    return Promise.reject("Joined Wi-Fi, but the reconnect profile could not be saved.");
+  });
+  const ui = app.instance();
+  choose(ui);
+  await tick();
+  const before = app.timers.size;
+  ui.find((node) => node.props?.label === "Join").props.onClick();
+  await tick();
+  assert.equal(app.timers.size, before + 1);
+  [...app.timers.values()].at(-1)();
+  await tick();
+  const view = JSON.stringify(ui.render());
+  assert.match(view, /Network: Campus/);
+  assert.match(view, /reconnect profile could not be saved/);
+  ui.unmount();
+});
+
 test("verified native success clears password even when scans cannot expose the SSID", async () => {
   let hidden = { ...base, current: null, connected: true };
   const app = mountPair(base, (command) =>

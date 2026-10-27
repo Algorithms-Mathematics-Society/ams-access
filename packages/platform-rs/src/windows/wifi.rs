@@ -3,10 +3,16 @@
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 use windows::core::{GUID, PCWSTR};
-use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE};
+use windows::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_INVALID_DATA, ERROR_INVALID_STATE, HANDLE,
+};
 use windows::Win32::NetworkManagement::WiFi::*;
 
 static JOIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// Windows rejects AUTO unless the client explicitly sets the connection mode.
+const SAVE_PROFILE_FLAGS: u32 = WLAN_PROFILE_USER
+    | WLAN_PROFILE_CONNECTION_MODE_SET_BY_CLIENT
+    | WLAN_PROFILE_CONNECTION_MODE_AUTO;
 
 struct Client<T = Completion>(HANDLE, Option<Box<T>>);
 
@@ -224,7 +230,7 @@ fn association_state(interfaces: &[WLAN_INTERFACE_INFO]) -> Option<bool> {
 }
 
 fn visible_network(row: &WLAN_AVAILABLE_NETWORK) -> Option<crate::WifiNetwork> {
-    if row.uNumberOfBssids == 0 && row.dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED == 0 {
+    if row.uNumberOfBssids == 0 {
         return None;
     }
     let bytes = row
@@ -240,21 +246,19 @@ fn visible_network(row: &WLAN_AVAILABLE_NETWORK) -> Option<crate::WifiNetwork> {
         ssid,
         signal: Some(row.wlanSignalQuality.min(100) as u8),
         secured: row.bSecurityEnabled.as_bool(),
-        current: row.dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED != 0,
+        current: false,
     })
 }
 
 fn scan_result(
     rows: Vec<crate::WifiNetwork>,
     interfaces: &[WLAN_INTERFACE_INFO],
+    current: Option<String>,
 ) -> crate::WifiScan {
     let Some(connected) = association_state(interfaces) else {
         return crate::WifiScan::default();
     };
-    let current = rows
-        .iter()
-        .find(|row| row.current)
-        .map(|row| row.ssid.clone());
+    let current = current.filter(|_| connected);
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
         current,
@@ -263,13 +267,73 @@ fn scan_result(
     }
 }
 
+fn current_connection(client: HANDLE, interface: &GUID) -> Result<WLAN_CONNECTION_ATTRIBUTES, u32> {
+    let mut size = 0;
+    let mut data = std::ptr::null_mut();
+    let code = unsafe {
+        WlanQueryInterface(
+            client,
+            interface,
+            wlan_intf_opcode_current_connection,
+            None,
+            &mut size,
+            &mut data,
+            None,
+        )
+    };
+    let _data = Memory(data);
+    if code != 0 {
+        return Err(code);
+    }
+    if data.is_null() || (size as usize) < std::mem::size_of::<WLAN_CONNECTION_ATTRIBUTES>() {
+        return Err(ERROR_INVALID_DATA.0);
+    }
+    Ok(unsafe { *data.cast::<WLAN_CONNECTION_ATTRIBUTES>() })
+}
+
+fn connection_name(attrs: &WLAN_CONNECTION_ATTRIBUTES) -> Option<String> {
+    if attrs.isState != wlan_interface_state_connected {
+        return None;
+    }
+    let ssid = &attrs.wlanAssociationAttributes.dot11Ssid;
+    let bytes = ssid.ucSSID.get(..ssid.uSSIDLength as usize)?;
+    let name = std::str::from_utf8(bytes).ok()?;
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+fn refresh_connection(
+    interface: &mut WLAN_INTERFACE_INFO,
+    result: Result<WLAN_CONNECTION_ATTRIBUTES, u32>,
+) -> Option<String> {
+    match result {
+        Ok(attrs) => {
+            interface.isState = attrs.isState;
+            connection_name(&attrs)
+        }
+        Err(code) => {
+            if code == ERROR_INVALID_STATE.0 {
+                interface.isState = wlan_interface_state_disconnected;
+            }
+            None
+        }
+    }
+}
+
 fn read_scan() -> Result<crate::WifiScan, String> {
     let client: Client = Client::open()?;
-    let interfaces = client.interfaces()?;
+    let mut interfaces = client.interfaces()?;
+    let mut current = None;
     let mut rows = Vec::new();
     let mut listed = false;
     let mut list_error = None;
-    for interface in &interfaces {
+    for interface in &mut interfaces {
+        if interface.isState == wlan_interface_state_connected {
+            let result = current_connection(client.0, &interface.InterfaceGuid);
+            let name = refresh_connection(interface, result);
+            if current.is_none() {
+                current = name;
+            }
+        }
         let mut networks = std::ptr::null_mut();
         let code = unsafe {
             WlanGetAvailableNetworkList(client.0, &interface.InterfaceGuid, 0, None, &mut networks)
@@ -292,7 +356,7 @@ fn read_scan() -> Result<crate::WifiScan, String> {
             .map(network_list_error)
             .unwrap_or_else(|| "No Wi-Fi adapter is available.".into()));
     }
-    Ok(scan_result(rows, &interfaces))
+    Ok(scan_result(rows, &interfaces, current))
 }
 
 pub(super) fn scan() -> crate::WifiScan {
@@ -570,29 +634,8 @@ pub(super) fn connect(ssid: &str, password: &str) -> Result<(), String> {
             wait_for_connection(
                 || receive.recv_timeout(Duration::from_secs(30)).ok(),
                 || {
-                    let mut size = 0;
-                    let mut data = std::ptr::null_mut();
-                    let code = unsafe {
-                        WlanQueryInterface(
-                            client.0,
-                            &interface,
-                            wlan_intf_opcode_current_connection,
-                            None,
-                            &mut size,
-                            &mut data,
-                            None,
-                        )
-                    };
-                    let _data = Memory(data);
-                    code == 0
-                        && !data.is_null()
-                        && size as usize >= std::mem::size_of::<WLAN_CONNECTION_ATTRIBUTES>()
-                        && confirmed(
-                            unsafe { &*data.cast::<WLAN_CONNECTION_ATTRIBUTES>() },
-                            ssid.as_bytes(),
-                            &name,
-                            kind,
-                        )
+                    current_connection(client.0, &interface)
+                        .is_ok_and(|attrs| confirmed(&attrs, ssid.as_bytes(), &name, kind))
                 },
                 || {
                     completion
@@ -613,14 +656,14 @@ pub(super) fn connect(ssid: &str, password: &str) -> Result<(), String> {
                     &interface,
                     PCWSTR(saved_name.as_ptr()),
                     PCWSTR::null(),
-                    WLAN_PROFILE_USER | WLAN_PROFILE_CONNECTION_MODE_AUTO,
+                    SAVE_PROFILE_FLAGS,
                     true,
                     None,
                 )
             };
             if code != 0 {
                 return Err(format!(
-                    "Connected to {ssid}, but Windows could not save it for reconnection (code {code})."
+                    "Joined {ssid}, but Windows could not save it for reconnection (code {code})."
                 ));
             }
             Ok(())
@@ -633,17 +676,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn save_flags_pass_windows_auto_mode_validation() {
+        // Installed wlanapi.dll rejects mode bits 0x20000 (AUTO without SET_BY_CLIENT).
+        let rejected = |flags: u32| flags & !0x30002 != 0 || flags & 0x30000 == 0x20000;
+        assert!(rejected(
+            WLAN_PROFILE_USER | WLAN_PROFILE_CONNECTION_MODE_AUTO
+        ));
+        assert!(!rejected(SAVE_PROFILE_FLAGS));
+        assert_ne!(SAVE_PROFILE_FLAGS & WLAN_PROFILE_USER, 0);
+    }
+
+    #[test]
+    fn current_connection_replaces_cached_hotspot_and_clears_on_disconnect() {
+        let mut hotspot = WLAN_AVAILABLE_NETWORK {
+            uNumberOfBssids: 1,
+            dwFlags: WLAN_AVAILABLE_NETWORK_CONNECTED,
+            ..Default::default()
+        };
+        hotspot.dot11Ssid.uSSIDLength = 7;
+        hotspot.dot11Ssid.ucSSID[..7].copy_from_slice(b"Hotspot");
+        let row = visible_network(&hotspot).unwrap();
+        assert!(
+            !row.current,
+            "cached connection flags are not association evidence"
+        );
+        let mut interface = WLAN_INTERFACE_INFO {
+            isState: wlan_interface_state_connected,
+            ..Default::default()
+        };
+        let mut attrs = WLAN_CONNECTION_ATTRIBUTES {
+            isState: wlan_interface_state_connected,
+            ..Default::default()
+        };
+        attrs.wlanAssociationAttributes.dot11Ssid.uSSIDLength = 7;
+        attrs.wlanAssociationAttributes.dot11Ssid.ucSSID[..7].copy_from_slice(b"Router ");
+        let current = refresh_connection(&mut interface, Ok(attrs));
+        let scan = scan_result(vec![row.clone()], &[interface], current);
+        assert_eq!(scan.current.as_deref(), Some("Router "));
+        assert!(!scan.networks[0].current);
+        attrs.isState = wlan_interface_state_disconnected;
+        let current = refresh_connection(&mut interface, Ok(attrs));
+        let scan = scan_result(vec![row.clone()], &[interface], current);
+        assert!(!scan.connected && scan.current.is_none() && !scan.networks[0].current);
+        interface.isState = wlan_interface_state_connected;
+        let current = refresh_connection(&mut interface, Err(ERROR_INVALID_STATE.0));
+        let scan = scan_result(vec![row.clone()], &[interface], current);
+        assert!(!scan.connected && scan.current.is_none());
+        interface.isState = wlan_interface_state_connected;
+        let current = refresh_connection(&mut interface, Err(ERROR_ACCESS_DENIED.0));
+        let scan = scan_result(vec![row], &[interface], current);
+        assert!(scan.connected && scan.current.is_none() && !scan.networks[0].current);
+    }
+
+    #[test]
     fn hidden_ssid_uses_interface_association_and_unknown_is_not_disconnected() {
         let mut interface = WLAN_INTERFACE_INFO {
             isState: wlan_interface_state_connected,
             ..Default::default()
         };
-        let scan = scan_result(vec![], &[interface]);
+        let scan = scan_result(vec![], &[interface], None);
         assert!(scan.supported && scan.connected && scan.current.is_none());
         interface.isState = wlan_interface_state_disconnected;
-        let scan = scan_result(vec![], &[interface]);
+        let scan = scan_result(vec![], &[interface], None);
         assert!(scan.supported && !scan.connected);
-        assert!(!scan_result(vec![], &[]).supported);
+        assert!(!scan_result(vec![], &[], None).supported);
     }
 
     #[test]
@@ -673,6 +769,7 @@ mod tests {
                 isState: wlan_interface_state_connected,
                 ..Default::default()
             }],
+            Some("Router".into()),
         );
         assert_eq!(
             scan.networks.len(),

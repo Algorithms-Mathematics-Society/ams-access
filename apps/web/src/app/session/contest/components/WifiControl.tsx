@@ -123,6 +123,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
           setScanError("");
           if (
             joinStatus === statusAtStart &&
+            next?.connected &&
             next?.current === joinStatus.network?.ssid &&
             joinStatus.phase === "joining" &&
             !joinStatus.busy
@@ -204,6 +205,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     // Read status only while visible or offline. Only manual Rescan requests
     // a Windows radio scan, which can temporarily increase network latency.
     if (!window.__TAURI__ || (!open && online)) return;
+    void refresh();
     const id = window.setInterval(() => void refresh(), REFRESH_MS);
     return () => window.clearInterval(id);
   }, [open, online, refresh]);
@@ -268,14 +270,6 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
         note: confirmed === true ? `Connected to ${network.ssid}.` : `Joining ${network.ssid}…`,
         network,
       });
-      // Other platforms may accept a join before association finishes.
-      if (mountedRef.current) {
-        if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = window.setTimeout(() => {
-          refreshTimerRef.current = null;
-          void refresh();
-        }, 2500);
-      }
     } catch (caught) {
       setJoinStatus({
         phase: "error",
@@ -291,6 +285,14 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
       });
     } finally {
       if (joinStatus.busy) setJoinStatus({ ...joinStatus, busy: false });
+      // Even a save-profile failure can follow a successful association.
+      if (mountedRef.current) {
+        if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = window.setTimeout(() => {
+          refreshTimerRef.current = null;
+          void refresh();
+        }, 2500);
+      }
     }
   };
 
@@ -299,7 +301,7 @@ export function WifiControl({ online, inline = false }: { online: boolean; inlin
     (inline && phase !== "connected" && joiningNetwork?.secured ? joiningNetwork : null);
   const Icon = online ? Wifi : WifiOff;
   const label = scan.supported
-    ? scan.current
+    ? scan.connected && scan.current
       ? `Network: ${scan.current}`
       : scan.connected
         ? "Connected to Wi-Fi (name unavailable)"
