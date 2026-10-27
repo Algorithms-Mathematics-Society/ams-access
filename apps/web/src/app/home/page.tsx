@@ -657,8 +657,10 @@ export default function HomePage() {
         setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
         setResumeBusy(false);
       }
-    } catch {
-      if (!isStale()) setResumeStatus("Waiting for organizer approval.");
+    } catch (error) {
+      if (!isStale()) setResumeStatus("Could not check organizer approval. Retrying shortly.");
+      // Preserve Retry-After for the poller instead of retrying every three seconds.
+      throw error;
     } finally {
       resumePollInFlightRef.current = false;
     }

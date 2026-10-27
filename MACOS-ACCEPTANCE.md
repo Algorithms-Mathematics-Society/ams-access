@@ -294,3 +294,29 @@ Reconcile all attempts, including failures, against server records before cleanu
 - [ ] Inject a bounded service outage, restore, and verify identity/draft/timer continuity.
 - [ ] Reconcile attempted entries and unique server sessions; investigate every mismatch.
 - [ ] Attach metrics, thresholds, fixture cleanup and independent reviewer sign-off.
+
+## MAC-13 / #208: approval polling obeys overload guidance
+
+Existing login handling already enforces Retry-After and prevents duplicate
+submits before rerender. Existing Mac evidence covers delayed-start polling,
+confirmed 401 handling and Run 429 countdown; those mechanisms are preserved.
+A remaining gap was approval polling: Home swallowed its error and always retried
+on a three-second interval. The poller now receives the error, honors Retry-After,
+backs off failures (6/12/24/30 seconds plus up to three seconds of jitter), and
+schedules only after settlement. Long server waits are chunked to avoid JS timer
+overflow. Success restores the existing three-second cadence; disposal invalidates
+late responses and stops scheduling. The same shared Home code serves Mac and
+other platforms; regression tests protect their normal cadence and single-flight behavior.
+
+- [ ] Rapid mouse/keyboard Retry produces one pending request/mutation.
+- [ ] Login 503 with Retry-After: 5 retains identity and shows the existing cooldown.
+- [ ] Approval polling 429/503 with Retry-After: 20 sends no poll before 20 seconds;
+      repeated outages back off, then recovery updates the decision without a burst.
+- [ ] Navigate away while a poll is pending; no stale decision or new timer appears.
+- [ ] Measure request rate/CPU/memory on native Mac through an idle wait and recovery.
+
+Scale: at 3,000 pending clients, the unchanged healthy cadence has a theoretical
+1,000 polls/second ceiling before response latency. Sustained failure backs off to
+roughly 91–100 polls/second, with jitter. These are client bounds, not proof of
+server capacity. Native resource measurements and the combined staging load gate
+remain open; no production traffic was generated.
