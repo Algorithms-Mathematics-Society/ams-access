@@ -506,3 +506,24 @@ API versions must also be checked, not inferred from merged branches.
 
 Scale: existing revision-triggered single-flight fetching and support backoff are
 retained. Test simultaneous delivery plus organizer actions at 3,000 seats.
+
+## MAC-22 / #217: problem, reference and practice consistency
+
+Preserved existing published-reference snapshots, contest-scoped modal state,
+focus/background isolation and embedded offline C++ reference loader. Current
+reference-sheet, reference-content, cppref and practice-entry tests cover those
+client contracts. Source tests cannot verify a setter's actual published paper,
+compiler flags or the live practice judge fleet. No content or policy was guessed.
+
+- [ ] Compare each statement, sample, scoring rule and language with the published
+      organizer version and actual worker compiler configuration.
+- [ ] Open Reference, scroll/search, close and reopen; editor text, cursor and timer
+      remain intact, and keyboard focus returns to the workspace.
+- [ ] Open a different contest/account; no prior reference or modal state leaks.
+- [ ] Disconnect after loading; bundled C++ reference remains usable with bounded
+      fetches/cache, while missing assets produce an actionable error.
+- [ ] Verify practice entry and a real judged sample. Practice does not schedule
+      fleet warming; arrange an explicit approved warm window for rehearsal.
+
+Scale: retain existing cache/bounded refresh behavior. Published-only authorization
+needs API integration evidence; no production paper or fleet was changed.
