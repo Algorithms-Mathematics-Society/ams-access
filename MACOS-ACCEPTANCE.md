@@ -116,3 +116,23 @@ GUI checklist:
       links and optional-mic behavior. Do not reset TCC to manufacture success.
 
 Scale: one local bounded native request per microphone-check attempt, no API traffic.
+
+## MAC-06 / #201: input regression coverage
+
+The existing Mac shortcut table is now exercised directly by portable tests,
+without changing its decisions. Coverage protects typing, undo/redo, selection,
+word navigation, editor Escape and the contest clipboard policy, while preserving
+blocked system shortcuts. This is regression coverage, not evidence that native
+trackpad/IME/modal behavior has passed. No new runtime polling or requests.
+
+GUI checklist:
+- [ ] Type, select, undo/redo, indent and navigate code with the built-in keyboard
+      and an external one; verify the caret stays visible during scrolling.
+- [ ] Test permitted copy/paste and denied external paste separately. No draft
+      disappears when switching questions or returning from a modal.
+- [ ] Use autocomplete/search Escape, then help/Reference/finish modal controls;
+      keyboard focus returns to the expected control/editor. Record modal Escape
+      behavior explicitly, including whether native restrictions intercept it.
+- [ ] Scroll statement/editor/results with the trackpad, select text, and test
+      an IME/input source required by participants on actual hardware.
+- [ ] After exit, system shortcuts and normal trackpad gestures are restored.

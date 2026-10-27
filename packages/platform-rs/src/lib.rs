@@ -78,3 +78,8 @@ mod windows_keyboard_policy_tests;
 #[cfg(all(test, not(target_os = "macos")))]
 #[path = "macos/deferred_job.rs"]
 mod macos_deferred_job_tests;
+
+#[cfg(all(test, not(target_os = "macos")))]
+#[path = "macos/keyboard_policy.rs"]
+#[allow(dead_code)]
+mod macos_keyboard_policy_tests;
