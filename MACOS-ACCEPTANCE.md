@@ -453,5 +453,8 @@ and request/idempotency tests remain in place.
 - [ ] Simulate queue/service failure; show explicit failure, never fabricated output.
 
 Release asset SHA-256: `22dd9cc810e454e74e64f0d24949260785eb91c5a6c287cd27af5a9beb54a9b0`.
-API filtering must still keep hidden submission tests private. No judge rollout
-or live end-to-end output check was performed. No new polling or judge jobs.
+API filtering must still keep hidden submission tests private. Worker companion `5d57560` on `fix/macos-output-contract` fixes one further gap:
+missing/null output from older engines stays absent instead of becoming an empty
+string. The existing worker suite exposed this regression; all 25 translation
+checks pass after the fix, including explicit-empty/new-engine cases. No judge
+rollout or live end-to-end output check was performed. No new polling or judge jobs.
