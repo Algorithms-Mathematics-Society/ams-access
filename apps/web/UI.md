@@ -330,7 +330,24 @@ The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
 Wi-Fi names and the connected network come only from the native OS integration.
 Browser builds show guidance to use system Wi-Fi settings, without sample networks,
 password prompts, simulated joins or background scan polling. Native scan failures
-show a retry message rather than a fallback network list.
+show a retry message rather than invented networks. On macOS, CoreWLAN scans nearby
+networks with a saved-only fallback that warns profiles may be out of range.
+Stage 7 requires Location access on macOS only, alongside camera setup. The
+candidate selects **Allow Location access**; status is checked every second for up
+to 60 seconds after the request and whenever the window regains focus. Denied or
+restricted access blocks setup with System Settings guidance and a **Quit & reopen
+AMS Access** action that first releases setup controls. If no prompt appears, the
+Allow button remains available with manual Location Services guidance. Only
+`isGatingRelaxed()` in a development build may bypass it, with a visible “skipped in
+dev build” note. Production builds still require access even if that flag is set.
+The setup flow rechecks before creating a session and returns missing grants to
+Stage 7. This is a macOS-only setup gate, not a new shared readiness CheckKind;
+Windows/Linux UI and the policy fixture remain unchanged. The contest Wi-Fi picker
+only points to Location Services in System Settings when access is unavailable,
+since a system prompt cannot appear above the kiosk. No location updates are
+started, and location coordinates are never recorded or sent. If a child scan
+still cannot see names after authorization, a single in-app worker retries within
+the scan deadline.
 
 Device setup lets AppShell own page scrolling to avoid nested viewport-height
 scroll regions. The MediaPipe loader routes its exact CPU delegate startup

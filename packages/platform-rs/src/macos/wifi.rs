@@ -6,6 +6,48 @@ use objc2::{class, msg_send};
 #[link(name = "CoreWLAN", kind = "framework")]
 extern "C" {}
 
+#[link(name = "CoreLocation", kind = "framework")]
+extern "C" {}
+
+thread_local! {
+    static LOCATION_MANAGER: std::cell::RefCell<Option<Retained<AnyObject>>> = const { std::cell::RefCell::new(None) };
+}
+
+fn authorization_status(status: i32) -> &'static str {
+    match status {
+        0 => "not_determined",
+        1 => "restricted",
+        3 | 4 => "authorized", // Always / WhenInUse
+        _ => "denied",
+    }
+}
+
+pub fn location_status() -> &'static str {
+    // SAFETY: CLLocationManager's class authorizationStatus returns CLAuthorizationStatus (int).
+    unsafe { authorization_status(msg_send![class!(CLLocationManager), authorizationStatus]) }
+}
+
+/// Must run on the app main thread; never requests location updates.
+pub fn request_location() {
+    assert!(objc2::MainThreadMarker::new().is_some());
+    if location_status() != "not_determined" {
+        return;
+    }
+    LOCATION_MANAGER.with(|slot| {
+        // SAFETY: the manager is created, retained and released on the main run loop.
+        unsafe {
+            let manager: Retained<AnyObject> = msg_send![class!(CLLocationManager), new];
+            let _: () = msg_send![&*manager, requestWhenInUseAuthorization];
+            *slot.borrow_mut() = Some(manager);
+        }
+    });
+}
+
+pub fn finish_location_request() {
+    assert!(objc2::MainThreadMarker::new().is_some());
+    LOCATION_MANAGER.with(|slot| slot.borrow_mut().take());
+}
+
 // CoreWLAN scans block until the OS answers. Never queue multiple radio scans
 // behind a slow/permission-stalled operation; cached status reads remain cheap.
 static RADIO_OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -72,6 +114,7 @@ pub(super) fn scan(interface: &str, refresh: bool) -> Result<Vec<crate::WifiNetw
                     ssid: ssid.into(),
                     signal: None,
                     secured: !open.as_bool(),
+                    saved: false,
                     current: false,
                 });
             }

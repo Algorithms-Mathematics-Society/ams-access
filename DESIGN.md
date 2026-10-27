@@ -158,6 +158,12 @@ Camera settings retain observed device-list states independently of permission/c
 
 Linux keyboard setup checks are temporary native probes with restoration before completion. Show aggregate capability separately from individual shortcut enforcement: individual rows remain “Not individually verified.” Keep one pending probe, discard late results after navigation, and provide warning/continuation according to contest policy after the presentation deadline. A successful settings check must not imply gesture prevention, complete shortcut coverage, or Cinnamon support.
 
+macOS requires Location access during camera setup so the candidate can reconnect
+using nearby Wi-Fi networks. Keep the permission row, System Settings and safe
+relaunch actions outside the contest kiosk; the contest picker gives Settings
+guidance without requesting permission. Only relaxed development builds may skip
+this setup gate, with a visible note. Windows and Linux have no Location step.
+
 Network-helper warnings use explicit retry or policy-aware warning continuation. Recovery feedback reports verified state: fulfilled commands without a successful pending-state query are insufficient to declare everything restored. Keep desktop and network recovery claims separate when their outcomes differ.
 
 Published contest references use an ordinary in-app overlay, below mandatory

@@ -1105,6 +1105,46 @@ async fn scan_wifi(refresh: Option<bool>) -> Result<platform_rs::WifiScan, Strin
     .map_err(|error| format!("Wi-Fi scan did not complete: {error}"))?
 }
 
+/// Location access is used only to reveal nearby Wi-Fi names.
+#[tauri::command]
+fn wifi_location_status() -> &'static str {
+    #[cfg(target_os = "macos")]
+    return platform_rs::macos::wifi_location_status();
+    #[cfg(not(target_os = "macos"))]
+    "authorized"
+}
+
+#[tauri::command]
+async fn request_wifi_location(app: tauri::AppHandle) -> Result<&'static str, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Serialize callers so one timeout cannot release another request's manager.
+        static REQUEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _request = REQUEST.lock().await;
+        let (send, receive) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            platform_rs::macos::request_location();
+            let _ = send.send(());
+        })
+        .map_err(|error| error.to_string())?;
+        receive.await.map_err(|error| error.to_string())?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while wifi_location_status() == "not_determined" && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let (send, receive) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            platform_rs::macos::finish_location_request();
+            let _ = send.send(());
+        })
+        .map_err(|error| error.to_string())?;
+        receive.await.map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(wifi_location_status())
+}
+
 /// Join a wireless network. `password` is None or empty for an open one.
 /// Joining takes longer than scanning: the OS associates, gets a lease and
 /// may prompt. Off the main thread for the same reason.
@@ -2055,7 +2095,7 @@ fn relaunch_app(app: tauri::AppHandle) {
 /// Deep-link into the OS privacy settings page for `section`. Windows opens
 /// the matching ms-settings page ("camera" / "microphone"). macOS opens the
 /// System Settings pane: "accessibility", "input_monitoring",
-/// "screen_recording", "camera", "microphone" or "sharing". Linux is a no-op.
+/// "screen_recording", "camera", "microphone", "location" or "sharing". Linux is a no-op.
 #[tauri::command]
 fn open_privacy_settings(section: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -3789,7 +3829,7 @@ fn macos_webview_configuration(
 }
 
 /// The helper processes that share this binary: the macOS lockdown watchdog
-/// (restores the desktop if the app dies) and the login-time restore agent.
+/// (restores the desktop if the app dies) and login-time restore.
 /// Returns the exit code when this process is one of them; `None` means start
 /// the app normally.
 pub fn run_helper_mode() -> Option<i32> {
@@ -4034,6 +4074,8 @@ pub fn run() {
             log_proctoring_event,
             count_monitors,
             scan_wifi,
+            wifi_location_status,
+            request_wifi_location,
             connect_wifi,
             check_network_stability,
             get_full_telemetry,

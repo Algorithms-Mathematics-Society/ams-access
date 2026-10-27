@@ -26,6 +26,9 @@ mod remote_access;
 mod system_settings;
 mod watchdog;
 mod wifi;
+pub use wifi::{
+    finish_location_request, location_status as wifi_location_status, request_location,
+};
 
 pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
@@ -920,6 +923,9 @@ pub fn open_privacy_pane(section: &str) -> Result<(), String> {
         }
         "screen_recording" => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        "location" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices"
         }
         "camera" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
         "microphone" => {
@@ -2219,27 +2225,15 @@ pub fn wifi_scan() -> crate::WifiScan {
         return crate::WifiScan::default();
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    let mut rows = crate::wifi_parse::parse_networksetup_list(&text);
-    // Cached CoreWLAN results include nearby networks that were never saved.
-    // Put these first so real security flags win over the saved-list fallback.
-    if let Ok(mut nearby) = wifi::scan(&interface, false) {
-        rows.retain(|saved| !nearby.iter().any(|row| row.ssid == saved.ssid));
-        nearby.extend(rows);
-        rows = nearby;
-    }
-    // The joined network is not always in the preferred list.
-    if let Some(name) = current.as_deref() {
-        if !rows.iter().any(|r| r.ssid == name) {
-            rows.push(crate::WifiNetwork {
-                ssid: name.to_string(),
-                signal: None,
-                secured: true,
-                current: true,
-            });
-        }
-    }
+    let saved = crate::wifi_parse::parse_networksetup_list(&text);
+    let (rows, saved_only) = crate::wifi_parse::macos_scan_rows(
+        wifi::scan(&interface, false).unwrap_or_default(),
+        saved,
+        current.as_deref(),
+    );
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        saved_only,
         current,
         connected,
         supported: true,
@@ -2251,6 +2245,7 @@ pub fn wifi_rescan() -> Result<crate::WifiScan, String> {
     let interface = wifi_interface().ok_or("No wireless interface on this Mac.")?;
     let nearby = wifi::scan(&interface, true)?;
     let mut scan = wifi_scan();
+    scan.saved_only = nearby.is_empty();
     let mut rows = nearby;
     scan.networks
         .retain(|saved| !rows.iter().any(|row| row.ssid == saved.ssid));

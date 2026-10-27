@@ -251,6 +251,7 @@ fn visible_network(row: &WLAN_AVAILABLE_NETWORK) -> Option<crate::WifiNetwork> {
         ssid,
         signal: Some(row.wlanSignalQuality.min(100) as u8),
         secured: row.bSecurityEnabled.as_bool(),
+        saved: false,
         current: false,
     })
 }
@@ -266,6 +267,7 @@ fn scan_result(
     let current = current.filter(|_| connected);
     crate::WifiScan {
         networks: crate::wifi_parse::tidy(rows, current.as_deref()),
+        saved_only: false,
         current,
         connected,
         supported: true,
