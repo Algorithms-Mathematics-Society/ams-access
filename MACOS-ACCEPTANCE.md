@@ -479,3 +479,30 @@ contracts. No new submission or auto-submit behavior was introduced.
 
 Scale: no extra requests. Existing bounded retries need combined staging testing
 with judge backlog, rather than treating client mocks as proof of 3,000-seat capacity.
+
+## MAC-21 / #216: support and outage communication
+
+Support integration is present: signed-out users send a one-way guest issue with
+contact details; authenticated chat uses identity-scoped capabilities. Existing
+help-request-modal and support-auth/poll tests cover that distinction and retries.
+The contest workspace fetches announcement revisions through heartbeat, staggers
+fetches, shows a mandatory modal and records acknowledgement. Its existing tests
+cover acknowledgement and malformed/missing storage behavior.
+
+Remaining scope gap: no announcement delivery was found on Home or onboarding,
+and the workspace suppresses its announcement overlay once the finish receipt
+owns the screen. The broad "all online candidates" requirement is therefore not
+proven satisfied. Claude owns announcement implementation per the user's request;
+this audit does not overwrite it or close this issue. Packaged client and deployed
+API versions must also be checked, not inferred from merged branches.
+
+- [ ] On Login, report inability to sign in without first signing in; verify receipt
+      in the organizer inbox and contact details, with no unusable guest chat.
+- [ ] In an authenticated session, send/retry a message, receive a reply and sign out.
+- [ ] Publish a synthetic postponement while candidates are in Home, setup, contest
+      and finish screens; record delivery failures for the announcement owner.
+- [ ] Reconnect an offline candidate; verify the current notice and acknowledgement.
+- [ ] Notice must explicitly say stop/continue, contact route and next update time.
+
+Scale: existing revision-triggered single-flight fetching and support backoff are
+retained. Test simultaneous delivery plus organizer actions at 3,000 seats.
