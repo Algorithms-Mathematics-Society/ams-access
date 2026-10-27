@@ -1,4 +1,4 @@
-# MAC-01–MAC-15 acceptance handoff
+# MAC-01–MAC-23 acceptance handoff
 
 Owner for native verification: @Rasesh2005. These issues stay open until the
 required GUI evidence is recorded. Linux unit tests and browser fixtures do not
@@ -527,3 +527,42 @@ compiler flags or the live practice judge fleet. No content or policy was guesse
 
 Scale: retain existing cache/bounded refresh behavior. Published-only authorization
 needs API integration evidence; no production paper or fleet was changed.
+
+## MAC-23 / #218: final rehearsal and fairness decision
+
+Implementation audit is complete through MAC-23; macOS release acceptance is
+not complete. Keep this issue open until the packaged build, backend deployment,
+judge version, announcement coverage and a timed rehearsal have evidence. No
+production load was generated and no fairness decision was made on behalf of
+the organizers. Reusing exposed 24 October questions requires an explicit
+organizer decision communicated to candidates.
+
+- [ ] Record signed/notarized artifact URL, version, SHA-256, Mac model/OS/arch,
+      API revision and active judge binary digest. Test the distributed artifact.
+- [ ] @Rasesh2005: timed install → login → setup → entry → edit/run → disconnect
+      → restart/approval → submit → Finish → exit; attach timestamps/receipts.
+- [ ] Verify desktop/network restoration and repeat the flow with another identity.
+- [ ] Run approved staging qualification at 3,000 candidates with organizer
+      approvals, backup traffic, judge backlog and announcement fan-out together;
+      record request rates, p95/p99, error/duplicate counts and database saturation.
+- [ ] Rehearse an incident decision and notice with online/offline candidates;
+      resolve MAC-21's Home/setup/finish coverage before claiming universal delivery.
+- [ ] Organizer records fresh-paper/exposed-question decision, official credentials,
+      download channel, contact route and next-update policy.
+- [ ] Review every P0 audit with native evidence; tester closes only accepted issues.
+
+Evidence record to fill in (currently NOT RUN):
+
+| Gate | Evidence required | Current status |
+| --- | --- | --- |
+| Mac artifact | Signing/notarization + installed GUI recording | Awaiting native acceptance |
+| Draft backup | Deployed CORS PUT + restart/restore | Companion API commit prepared |
+| Judge output | Active binary digest + AC/WA/CE/RE/TLE receipts | Source/release verified only |
+| Broadcast | Home/setup/contest/finish + offline delivery | Coverage gap, announcement owner |
+| Scale | Combined 3,000-seat load report | Not run |
+| Fairness | Organizer's explicit paper/communication decision | Not supplied |
+
+Portable test results belong in the PR and issue comments; they do not turn any
+of these NOT RUN checks into a pass. Windows/Linux behavior must retain CI
+coverage because the draft/output fixes touch shared code, though this audit
+and the requested native acceptance focus on macOS.
