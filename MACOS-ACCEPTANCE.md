@@ -320,3 +320,28 @@ Scale: at 3,000 pending clients, the unchanged healthy cadence has a theoretical
 roughly 91–100 polls/second, with jitter. These are client bounds, not proof of
 server capacity. Native resource measurements and the combined staging load gate
 remain open; no production traffic was generated.
+
+## MAC-14 / #209: reconnect and restoration consistency
+
+MAC-08 already adds nearby Mac Wi-Fi discovery and retains the latest reconnect
+feedback. Existing heartbeat/submission logic distinguishes local drafts from
+server receipts; this audit does not replace it. Found and fixed a cleanup leak:
+exitToHome left eight ten-second deadline timers alive even when restoration
+finished immediately. Deadlines now clear on settlement, preserving step order,
+timeout behavior and restore-pending guidance. The shared helper's existing
+failure/hung-native regressions plus the new timer accounting test cover this.
+
+Keep this broader audit open. Retiring Network Lockdown does not retire reconnect,
+small-window usability, draft continuity or server-outage acceptance. The current
+branch still has legacy enforcement; don't claim its removal is shipped.
+
+- [ ] With a synthetic contest, test Wi-Fi loss separately from an API-only outage.
+- [ ] Reconnect on the same network and a new approved hotspot, including wrong
+      password/failed scan; Retry, Join and Exit stay reachable at high scaling.
+- [ ] Verify selected problem, exact draft, session identity and authoritative timer.
+- [ ] Confirm an accepted receipt with the server; reconnect alone is not submission success.
+- [ ] Exit offline and repeat entry/exit: networking restores or pending recovery
+      is shown, and settled steps leave no lingering deadline timers.
+
+Scale: removes retained local timers; no added requests, radio scans or retries.
+Native networking/window verification remains required, so no closure yet.

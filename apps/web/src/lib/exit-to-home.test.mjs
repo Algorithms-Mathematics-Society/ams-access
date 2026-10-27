@@ -140,3 +140,16 @@ test("a hung native call times out instead of trapping the candidate", async () 
     mock.timers.reset();
   }
 });
+
+
+test("completed and rejected restoration steps leave no deadline timers behind", async (t) => {
+  const pending = new Set();
+  let next = 0;
+  t.mock.method(globalThis, "setTimeout", () => { const id = ++next; pending.add(id); return id; });
+  t.mock.method(globalThis, "clearTimeout", id => pending.delete(id));
+  for (const fail of [undefined, "setSimpleFullscreen", "disable_network_lockdown"]) {
+    await fixture({fail});
+    assert.equal(pending.size, 0);
+  }
+  assert.equal(next, 24, "each of the eight restoration steps was deadline protected");
+});

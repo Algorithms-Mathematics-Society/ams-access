@@ -15,10 +15,13 @@ const STEP_TIMEOUT_MS = 10_000;
 function within<T>(promise: Promise<T>, fallback: T): Promise<T> {
   // A native call stuck behind the lockdown mutex must not trap the candidate
   // on the very button meant to get them out.
-  return Promise.race([
-    promise.catch(() => fallback),
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), STEP_TIMEOUT_MS)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), STEP_TIMEOUT_MS);
+  });
+  return Promise.race([promise.catch(() => fallback), deadline]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 const ok = (promise: Promise<unknown>) =>
