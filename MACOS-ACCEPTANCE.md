@@ -374,3 +374,20 @@ Tests execute the actual effect for both late-response races and normal recovery
 Scale: no additional polling or backend requests; the existing five-second local
 check stays single-flight and its late work is invalidated. Keep the audit open
 for repeated-entry/restart native acceptance, rather than closing on unit tests.
+
+## MAC-16 / #211: organizer approval and identity isolation
+
+Existing recovery epochs reject late approval responses after sign-out, session
+replacement and approval consumption. The Home storage regressions exercise these
+races; MAC-13's bounded polling remains unchanged. No second approval mechanism
+was introduced. Organizer bulk operations and cross-account native acceptance
+remain unverified; client unit tests cannot establish server authorization.
+
+- [ ] Open three synthetic candidates and approve only A; B and C stay pending.
+- [ ] Deny B, bulk-approve the intended remaining candidates, and verify the queue.
+- [ ] Delay an approval response, sign out A and sign in B; no A redirect or draft.
+- [ ] Repeat Resume after an interrupted response; one approval is consumed once.
+- [ ] Compare each candidate's draft and submission receipts with the organizer.
+
+Scale: retain the MAC-13 single-flight/backoff policy; qualify the combined
+organizer and candidate workload at 3,000 participants before release.
