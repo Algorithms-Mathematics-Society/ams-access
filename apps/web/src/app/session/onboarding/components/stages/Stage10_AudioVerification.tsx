@@ -42,6 +42,14 @@ export function Stage10_AudioVerification({
     async function init() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("unavailable");
+        // WKWebView needs a native TCC request. Wait for the user's decision;
+        // requesting audio immediately can fail while the system prompt is open.
+        const platform = await invoke<{ os: string }>("get_platform").catch(() => null);
+        if (cancelled) return;
+        if (platform?.os === "macos") {
+          await invoke("request_macos_microphone_permission");
+          if (cancelled) return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         if (cancelled) {
           stopMediaStream(stream);

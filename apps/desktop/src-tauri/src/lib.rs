@@ -2258,6 +2258,18 @@ async fn measure_clock_skew(api_url: &str) -> Option<i64> {
 }
 
 /// Current OS identifier.
+#[tauri::command]
+async fn request_macos_microphone_permission() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(platform_rs::macos::request_microphone_permission)
+            .await
+            .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
 /// Signed-out Mac screens need a local exit even when the API is unreachable.
 /// Active exams retain their existing confirmed exit flow.
 #[tauri::command]
@@ -4022,6 +4034,7 @@ pub fn run() {
             get_full_telemetry,
             get_platform,
             quit_macos_when_idle,
+            request_macos_microphone_permission,
             get_security_environment,
             save_face_image,
             verify_face_model_assets,
@@ -4146,7 +4159,8 @@ pub fn run() {
             // On macOS, WKWebView's getUserMedia() does NOT trigger the macOS TCC
             // permission dialog on its own — only a native AVCaptureDevice.requestAccess
             // call does. Fire it here so the system dialog appears on first launch
-            // and the app is registered in System Settings → Privacy → Camera/Microphone.
+            // and the app is registered in System Settings → Privacy → Camera.
+            // Optional microphone permission is requested at its onboarding stage.
             #[cfg(target_os = "macos")]
             {
                 platform_rs::macos::request_av_permissions();

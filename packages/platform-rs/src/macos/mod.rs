@@ -2179,31 +2179,36 @@ fn process_alive_by_name(name: &str) -> bool {
         .unwrap_or(true)
 }
 
-/// Request macOS TCC (Privacy) permission for camera and microphone.
-///
-/// WKWebView's `getUserMedia()` auto-grants at the WebKit level but does NOT
-/// trigger the macOS system permission dialog — that only happens when the
-/// native app itself calls `+[AVCaptureDevice requestAccessForMediaType:completionHandler:]`.
-/// This function fires those requests so macOS shows the "AMS Access wants to
-/// use the camera/microphone" system dialog and registers the app in
-/// System Settings → Privacy & Security → Camera / Microphone.
-///
-/// Safe to call multiple times — a no-op if permission is already granted.
+/// Register camera permission before WKWebView first requests video.
+/// Microphone is optional and requested only when the candidate reaches its check.
 pub fn request_av_permissions() {
+    request_media_permission(false, |_| {});
+}
+
+/// Called on a blocking worker, never AppKit's main thread. A late response after
+/// timeout is harmless: it does not acquire a stream or advance onboarding.
+pub fn request_microphone_permission() -> Result<(), String> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    request_media_permission(true, move |granted| {
+        let _ = sender.try_send(granted);
+    });
+    match receiver.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("Microphone access was not granted. You may continue without it.".into()),
+        Err(_) => Err("Microphone permission is still unanswered. Check the system prompt or continue without it.".into()),
+    }
+}
+
+fn request_media_permission(audio: bool, completion: impl Fn(bool) + Send + 'static) {
     unsafe {
         let cls = objc_getClass(c"AVCaptureDevice".as_ptr());
         if cls.is_null() {
+            completion(false);
             return;
         }
-
         let sel = sel_registerName(c"requestAccessForMediaType:completionHandler:".as_ptr());
-
-        // Fire-and-forget completion handler — we only care that the dialog appears.
-        // The argument must be objc2's Bool (ObjC BOOL ABI), not Rust bool —
-        // Rust bool does not implement Encode, so RcBlock::new rejects it.
-        let video_block = RcBlock::new(|_granted: objc2::runtime::Bool| {});
-        let audio_block = RcBlock::new(|_granted: objc2::runtime::Bool| {});
-
+        let block =
+            RcBlock::new(move |granted: objc2::runtime::Bool| completion(granted.as_bool()));
         type FnReqAccess = unsafe extern "C" fn(
             *mut c_void,
             *const c_void,
@@ -2211,11 +2216,16 @@ pub fn request_av_permissions() {
             &block2::Block<dyn Fn(objc2::runtime::Bool)>,
         );
         let req: FnReqAccess = std::mem::transmute(objc_msgSend as *const ());
-
-        // Request video (camera).
-        req(cls, sel, AVMediaTypeVideo, &video_block);
-        // Request audio (microphone).
-        req(cls, sel, AVMediaTypeAudio, &audio_block);
+        req(
+            cls,
+            sel,
+            if audio {
+                AVMediaTypeAudio
+            } else {
+                AVMediaTypeVideo
+            },
+            &block,
+        );
     }
 }
 

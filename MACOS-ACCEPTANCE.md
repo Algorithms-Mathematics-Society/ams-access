@@ -93,3 +93,26 @@ GUI checklist (use a disposable Mac profile/device for legacy-helper cases):
 
 Validation: inspected the helper disable/marker lifecycle and native Rust formatting.
 Native administrator/PF behavior requires Mac acceptance. No new polling or API load.
+
+## MAC-05 / #200: contextual optional microphone permission
+
+Mac startup now requests camera only. The optional microphone check asks native
+TCC for audio permission when reached, waits for its result before opening audio,
+and retains the existing continue-with-warning path on denial/timeout. Leaving
+the stage before the response prevents late stream acquisition. Native waiting
+runs off the main thread with a 60-second bound. Other OS permission paths retain
+their existing behavior. Native TCC requires Mac CI and device verification.
+
+GUI checklist:
+- [ ] In a clean standard-user profile, launch: no unsolicited microphone prompt
+      on Welcome/Login; camera permission remains available.
+- [ ] Reach Microphone check, allow the prompt, and see audio activity. Deny in a
+      separate clean profile: Continue without microphone remains available.
+- [ ] Leave the stage while its prompt is open; answering later must not reopen
+      audio, advance another page or leave a recording indicator on.
+- [ ] Revoke camera/Accessibility permissions in System Settings, retry, then
+      grant and reopen when prompted; recovery must be actionable, not a loop.
+- [ ] Upgrade the official app in place and verify granted permissions, Settings
+      links and optional-mic behavior. Do not reset TCC to manufacture success.
+
+Scale: one local bounded native request per microphone-check attempt, no API traffic.
