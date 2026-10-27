@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "ams-access"
-version = "4.7.0"
+version = "4.8.0"
 dependencies = [
  "base64 0.22.1",
  "brotli",
@@ -466,7 +466,7 @@ dependencies = [
 
 [[package]]
 name = "core-rs"
-version = "4.7.0"
+version = "4.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "network-helper"
-version = "4.7.0"
+version = "4.8.0"
 dependencies = [
  "libc",
  "serde",
@@ -2436,7 +2436,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-rs"
-version = "4.7.0"
+version = "4.8.0"
 dependencies = [
  "block2",
  "cfg-if",
