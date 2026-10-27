@@ -211,3 +211,29 @@ GUI/performance checklist:
 Validation: lifecycle review and portable regression suite. No native performance
 measurements or 3,000-participant production load qualification are claimed here.
 This change reduces per-device stale work and adds no backend load.
+
+## MAC-10 / #205: issued credentials and Mac paste verification
+
+The current full-handle normalization and shared-device identity fixes are already
+present. No authentication/backend behavior is changed here. A regression adds
+Mail/Pages-style surrounding Unicode whitespace and full-length suffixed IDs,
+while ensuring invisible interior characters and lookalike punctuation are not
+silently converted into someone else's identity. Delivery/reissue/revocation
+must be checked with organizer-owned synthetic accounts, not real credentials.
+
+GUI checklist:
+- [ ] Paste a full issued ID from Mail, including its suffix and surrounding
+      spaces; verify the complete ID survives and signs into the intended account.
+- [ ] Type the ID manually, edit in the middle, select/replace and paste; verify
+      cursor behavior and that overlong/malformed IDs are not truncated into another ID.
+- [ ] Use a synthetic issued slip, reissue its password, then verify the old one
+      fails and the new one works. Check received email content with the organizer.
+- [ ] Sign out on a shared Mac, sign in as a second synthetic candidate and verify
+      identity, contests and support history belong to that candidate only.
+- [ ] Simulate API unavailability, expired credentials and a revoked account;
+      errors are distinct/actionable, retries do not duplicate requests, and login
+      help remains usable without first signing in.
+
+Validation: normalization, login identity/feedback and support regressions in the
+web suite. Native paste/caret and real delivery/revocation remain manual acceptance.
+No additional authentication requests, retry loops or backend costs are introduced.

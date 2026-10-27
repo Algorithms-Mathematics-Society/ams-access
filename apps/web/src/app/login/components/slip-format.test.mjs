@@ -93,3 +93,13 @@ test("overtyping past the password length is ignored rather than accepted", () =
   // will reject with a message that says nothing about which one was extra.
   assert.equal(formatPassword("ABCDEFGHJKMNPQRS"), "ABCD-EFGH-JKMN");
 });
+
+test("Mail/Pages paste keeps the whole issued ID and rejects lookalike identity changes", () => {
+  const longId = "candidate." + "a".repeat(54);
+  assert.equal(formatHandle(`\u00a0${longId}@ACCESS.AMSACCESS.COM\u202f\n`), longId);
+  // Invisible interior characters and typographic punctuation must remain
+  // visible/invalid to the server, never silently map to a different person.
+  for (const pasted of ["student\u200b.name", "student\u2013name", "student\u00a0name"]) {
+    assert.equal(formatHandle(pasted), pasted);
+  }
+});
