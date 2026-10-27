@@ -1093,7 +1093,11 @@ async fn scan_wifi(refresh: Option<bool>) -> Result<platform_rs::WifiScan, Strin
         if refresh.unwrap_or(false) {
             return platform_rs::windows::wifi_rescan();
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
+        if refresh.unwrap_or(false) {
+            return platform_rs::macos::wifi_rescan();
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let _ = refresh;
         Ok(platform_dispatch!(wifi_scan(), else platform_rs::WifiScan::default()))
     })

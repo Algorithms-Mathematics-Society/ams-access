@@ -160,3 +160,29 @@ GUI checklist:
 
 Validation: source-level lifecycle review and Rust formatting. AppKit/sleep/crash
 acceptance still requires native CI and hardware; no claim of blackout reproduction.
+
+## MAC-08 / #203: nearby Wi-Fi discovery
+
+Mac Wi-Fi previously listed saved networks only and ignored explicit Rescan.
+It now reads CoreWLAN's nearby cache for status and performs a broadcast scan
+only on Rescan, merging nearby and saved networks. Missing/redacted names produce
+actionable guidance on an explicit scan. Names keep their whitespace. At most
+256 scanned entries are read and native radio scans/password joins are serialized
+with a non-blocking gate. Windows' recent association/retry UI is preserved.
+
+GUI checklist:
+- [ ] Disconnect in a synthetic contest; open Wi-Fi and Rescan. A nearby hotspot
+      never saved on this Mac should appear, with its real security state.
+- [ ] Enter a wrong password, then the right one; feedback remains visible and
+      only verified status says Connected. Confirm API reconnect separately.
+- [ ] Test long/Unicode/space-containing SSIDs and a saved network; no truncation
+      or trimmed name is sent to the OS, and passwords do not appear in logs.
+- [ ] Deny Location access or turn Wi-Fi off; read recovery guidance and retry.
+      The app must remain exitable without claiming submissions were delivered.
+- [ ] Repeated Rescan clicks and opening both offline/toolbar controls must not
+      create simultaneous radio scans. Verify drafts and server receipt after recovery.
+
+Validation: native source review plus existing Wi-Fi UI and parsing regressions.
+CoreWLAN/Location/association require Mac CI and hardware. OS scan duration is not
+cancellable; the gate prevents accumulating scans. No backend traffic is added.
+Apple API: https://developer.apple.com/documentation/corewlan/cwinterface/scanfornetworks(withname:)

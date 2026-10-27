@@ -2213,6 +2213,13 @@ pub fn wifi_scan() -> crate::WifiScan {
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut rows = crate::wifi_parse::parse_networksetup_list(&text);
+    // Cached CoreWLAN results include nearby networks that were never saved.
+    // Put these first so real security flags win over the saved-list fallback.
+    if let Ok(mut nearby) = wifi::scan(&interface, false) {
+        rows.retain(|saved| !nearby.iter().any(|row| row.ssid == saved.ssid));
+        nearby.extend(rows);
+        rows = nearby;
+    }
     // The joined network is not always in the preferred list.
     if let Some(name) = current.as_deref() {
         if !rows.iter().any(|r| r.ssid == name) {
@@ -2230,6 +2237,20 @@ pub fn wifi_scan() -> crate::WifiScan {
         connected,
         supported: true,
     }
+}
+
+/// Only the user's Rescan action performs an active radio scan.
+pub fn wifi_rescan() -> Result<crate::WifiScan, String> {
+    let interface = wifi_interface().ok_or("No wireless interface on this Mac.")?;
+    let nearby = wifi::scan(&interface, true)?;
+    let mut scan = wifi_scan();
+    let mut rows = nearby;
+    scan.networks
+        .retain(|saved| !rows.iter().any(|row| row.ssid == saved.ssid));
+    rows.extend(scan.networks);
+    scan.networks = crate::wifi_parse::tidy(rows, scan.current.as_deref());
+    scan.supported = true;
+    Ok(scan)
 }
 
 /// Join a network. A saved one needs no password.
