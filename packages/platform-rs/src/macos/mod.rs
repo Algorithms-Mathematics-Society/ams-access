@@ -178,6 +178,16 @@ static ESCAPE_BLOCKED: AtomicBool = AtomicBool::new(true);
 // the readiness probe arms the tap without a lockdown, and a lockdown without
 // Accessibility still owns the observers, the display monitor and the prefs.
 static LOCKDOWN_ACTIVE: AtomicBool = AtomicBool::new(false);
+// Invalidate deferred work even when exit and re-entry happen between two ticks.
+static DESKTOP_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn desktop_generation() -> u64 {
+    DESKTOP_GENERATION.load(Ordering::SeqCst)
+}
+
+fn owns_desktop(generation: u64) -> bool {
+    desktop_generation() == generation && lockdown_active()
+}
 // Per-contest key policy, read by the tap callback without locking.
 static CLIPBOARD_BLOCKED: AtomicBool = AtomicBool::new(false);
 static FUNCTION_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
@@ -1278,6 +1288,7 @@ fn quit_siri() {
 /// else depends on it, so the rest engages even when it is refused and the
 /// return value reports only the tap (the policy decides whether that blocks).
 pub fn lock_desktop() -> bool {
+    DESKTOP_GENERATION.fetch_add(1, Ordering::SeqCst);
     let config = lockdown_config();
     CLIPBOARD_BLOCKED.store(!config.allow_clipboard, Ordering::SeqCst);
     FUNCTION_KEYS_BLOCKED.store(config.block_function_keys, Ordering::SeqCst);
@@ -1343,6 +1354,7 @@ pub fn lock_desktop() -> bool {
 /// Safe to call when nothing is locked: restore only acts on a snapshot on
 /// disk, so an idle Restore action never writes guessed defaults.
 pub fn unlock_desktop() {
+    DESKTOP_GENERATION.fetch_add(1, Ordering::SeqCst);
     LOCKDOWN_ACTIVE.store(false, Ordering::SeqCst);
     disable_keyboard_intercept();
     remove_space_observer();

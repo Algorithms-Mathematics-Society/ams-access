@@ -346,13 +346,15 @@ pub fn reapply_kiosk_later(ns_window: usize) {
     if ns_window == 0 {
         return;
     }
+    let generation = super::desktop_generation();
     let _ = std::thread::Builder::new()
         .name("ams-kiosk-reapply".into())
         .spawn(move || {
             std::thread::sleep(Duration::from_millis(1500));
             let _ = on_main(Duration::from_secs(3), move || {
                 let window_saved = matches!(*lock(&WINDOW), Some((w, _, _)) if w == ns_window);
-                if super::lockdown_active() && lock(&PRESENTATION).is_some() && window_saved {
+                if super::owns_desktop(generation) && lock(&PRESENTATION).is_some() && window_saved
+                {
                     let _ = apply_on_main(ns_window);
                 }
             });

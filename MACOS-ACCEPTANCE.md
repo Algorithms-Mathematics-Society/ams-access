@@ -136,3 +136,27 @@ GUI checklist:
 - [ ] Scroll statement/editor/results with the trackpad, select text, and test
       an IME/input source required by participants on actual hardware.
 - [ ] After exit, system shortcuts and normal trackpad gestures are restored.
+
+## MAC-07 / #202: delayed work cannot own the next session
+
+Mac desktop entry and exit now advance a generation. The delayed kiosk reapply
+belongs to the generation that scheduled it, so exit/re-entry on the same window
+cannot make old work valid again. This addresses a concrete lifecycle race; the
+reported blackout's cause is still unconfirmed. Existing recovery journals and
+single-instance ownership remain intact. No backend changes or additional timers.
+
+GUI checklist:
+- [ ] Enter, exit immediately, and re-enter repeatedly; no delayed focus jump,
+      off-screen window or fullscreen change belongs to the previous session.
+- [ ] Sleep/wake during a synthetic contest: the window is usable, server time
+      remains authoritative, drafts survive and reconnect does not duplicate work.
+- [ ] After ordinary exit, sleep/wake again; AMS must not seize desktop focus.
+- [ ] On a disposable test device, terminate the process during a synthetic
+      contest, relaunch and inspect restoration. Record exact reproduction steps,
+      native logs and the screen state for any blackout; do not call it resolved
+      merely because reopening works.
+- [ ] Launch a second installed copy during the first session; it must not alter
+      the first session's controls or restoration ownership.
+
+Validation: source-level lifecycle review and Rust formatting. AppKit/sleep/crash
+acceptance still requires native CI and hardware; no claim of blackout reproduction.
