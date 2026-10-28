@@ -5,6 +5,7 @@ import json
 import plistlib
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -49,9 +50,36 @@ def check(app, version, arch, team, run=subprocess.run):
             'native_launch_and_upgrade': 'requires manual GUI verification'}
 
 
+def check_dmg(dmg, version, arch, team, run=subprocess.run):
+    """Inspect the shipped payload, not Tauri's deleted intermediate app."""
+    with tempfile.TemporaryDirectory(prefix='ams-dmg-verify-') as directory:
+        mount = Path(directory) / 'volume'
+        mount.mkdir()
+        mounted = False
+        try:
+            result = run(['/usr/bin/hdiutil', 'attach', '-readonly', '-nobrowse',
+                          '-mountpoint', str(mount), str(dmg)],
+                         capture_output=True, text=True, timeout=120, check=False)
+            if result.returncode:
+                raise ValueError(f'DMG mount failed: {result.stderr.strip()}')
+            mounted = True
+            apps = list(mount.glob('*.app'))
+            if len(apps) != 1 or apps[0].is_symlink() or not apps[0].is_dir():
+                raise ValueError('Expected exactly one real app bundle inside the DMG')
+            return check(apps[0], version, arch, team, run)
+        finally:
+            if mounted:
+                result = run(['/usr/bin/hdiutil', 'detach', str(mount)],
+                             capture_output=True, text=True, timeout=60, check=False)
+                if result.returncode:
+                    raise ValueError(f'DMG detach failed: {result.stderr.strip()}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--app', required=True, type=Path)
+    artifact = parser.add_mutually_exclusive_group(required=True)
+    artifact.add_argument('--app', type=Path)
+    artifact.add_argument('--dmg', type=Path)
     parser.add_argument('--version', required=True)
     parser.add_argument('--arch', required=True, choices=['arm64', 'x86_64'])
     parser.add_argument('--team', required=True)
@@ -61,7 +89,10 @@ def main():
     if not args.team.strip():
         parser.exit(2, 'Expected Apple signing team is required.\n')
     try:
-        result = check(args.app.resolve(), args.version, args.arch, args.team)
+        if args.dmg:
+            result = check_dmg(args.dmg.resolve(), args.version, args.arch, args.team)
+        else:
+            result = check(args.app.resolve(), args.version, args.arch, args.team)
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         parser.exit(1, f'Mac release verification failed: {error}\n')
     print(json.dumps(result, indent=2))
