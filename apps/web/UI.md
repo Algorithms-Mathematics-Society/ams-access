@@ -414,6 +414,8 @@ remain release acceptance checks.
 
 Readiness distinguishes unavailable checks from advisory warnings. Setup progress counts required checks rather than estimating a percentage. Approval requests remain single-flight and accepted even if local persistence fails; unavailable status retains explicitly last-known context and help stays reachable. Existing polling and entry policy remain unchanged.
 
-Contest info opens the schedule and rules from a circled information icon in the toolbar, without polling. Reference search keeps arrow-selected results visible without stationary hover overriding selection; opening a result focuses the scrollable article. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
+Contest info opens the schedule and rules from an icon-only circled information button with an accessible label and tooltip, without polling. Reference search keeps arrow-selected results visible without stationary hover overriding selection; opening a result focuses the scrollable article. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
 
 Support previews and submits the same allowlisted automatic context. User-entered contact and message remain explicit fields, with credential-sharing guidance. Update screens describe an official-download handoff without claiming installation success. Native behavior and candidate comprehension remain acceptance checks.
+
+The Login ID field shows a fixed, selectable @access suffix beside the editable handle. Full-ID paste keeps the existing normalization; typed spaces are blocked without intercepting paste or silently deleting internal characters from pasted IDs.

@@ -13,6 +13,8 @@ test("active controls keep Finish, Help, reference and safe recovery with Contes
   assert.match(top, /<ContestInformation/);
   const info = read("./components/ContestInformation.tsx");
   assert.match(info, /label="Contest info"/);
+  assert.match(info, /<IconButton/);
+  assert.match(info, /tooltip="Contest info"/);
   assert.ok(info.includes('icon={<Info size={16} aria-hidden="true" />}'));
   const client = read("./client.tsx");
   assert.match(client, /label="Exit Contest"[^<]*onClick=\{requestLeave\}/);

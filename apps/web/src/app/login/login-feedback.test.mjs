@@ -277,8 +277,11 @@ test("password format and errors are described; only missing field is invalid", 
     assert.equal(field.props.label, "Login ID");
     assert.equal(
       input.props["aria-describedby"],
-      error ? "login-id-help login-error" : "login-id-help"
+      error ? "login-id-suffix login-error" : "login-id-suffix"
     );
+    assert.equal(field.props.description, undefined);
+    const suffix = nodes.find((n) => n.props?.id === "login-id-suffix");
+    assert.equal(suffix.props.children, "@access");
     const passwordInput = nodes.find((n) => n.props?.id === "login-password");
     const passwordField = nodes.find((n) => n.props?.inputID === "login-password");
     assert.equal(passwordField.props.descriptionID, "login-password-help");
@@ -327,6 +330,22 @@ test("sign-in button shows and honors the server cooldown", () => {
   const button = nodes.find((node) => node.props?.type === "submit");
   assert.equal(button.props.label, "Try again in 5s");
   assert.equal(button.props.isDisabled, true);
+});
+
+test("typed spaces are blocked without intercepting paste or navigation shortcuts", () => {
+  const input = all(formHarness()()).find((n) => n.props?.id === "login-id");
+  let prevented = 0;
+  const press = (key, modifiers = {}) => input.props.onKeyDown({
+    key, ...modifiers, preventDefault() { prevented++; },
+  });
+  press(" ");
+  assert.equal(prevented, 1);
+  press("v", { ctrlKey: true });
+  press("v", { metaKey: true });
+  press("Tab");
+  press("ArrowLeft");
+  press(" ", { ctrlKey: true });
+  assert.equal(prevented, 1);
 });
 for (const status of [0, 429, 503, 401, 403]) {
   test(`HTTP ${status} keeps authoritative error without a service-status surface`, async () => {

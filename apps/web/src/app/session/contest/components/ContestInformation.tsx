@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Info } from "lucide-react";
-import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@ams/shared-ui";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { AccessDialog } from "@/components/AccessDialog";
@@ -38,8 +38,9 @@ export const ContestInformation = memo(function ContestInformation({
   }, [open, suspended]);
   return (
     <>
-      <Button
+      <IconButton
         label="Contest info"
+        tooltip="Contest info"
         icon={<Info size={16} aria-hidden="true" />}
         variant="ghost"
         isDisabled={suspended}
