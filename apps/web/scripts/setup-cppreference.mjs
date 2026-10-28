@@ -3,6 +3,8 @@
 import { createHash } from "crypto";
 import {
   existsSync,
+  openSync,
+  closeSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -302,11 +304,25 @@ export function pack(source, output) {
   };
 }
 
-function safeArchiveListing(archive) {
-  const listing = spawnSync("tar", ["-tf", archive], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+// GNU tar interprets D:\... in -f as a remote host. Feed the pinned xz
+// archive through an inherited file descriptor instead, on every platform.
+// Explicit -J also works when tar cannot infer compression from stdin.
+export function runArchiveTar(archive, mode, cwd) {
+  const fd = openSync(archive, "r");
+  try {
+    return spawnSync("tar", [`-${mode}Jf`, "-"], {
+      cwd,
+      stdio: [fd, "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function safeArchiveListing(archive) {
+  const listing = runArchiveTar(archive, "t");
   if (listing.status !== 0)
     throw new Error(`cannot inspect archive: ${listing.stderr || listing.error || "tar failed"}`);
   const entries = listing.stdout.split(/\r?\n/).filter(Boolean);
@@ -321,10 +337,7 @@ function safeArchiveListing(archive) {
       throw new Error(`unsafe archive path: ${entry}`);
   }
   // Links can redirect later extraction entries outside the staging directory.
-  const verbose = spawnSync("tar", ["-tvf", archive], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const verbose = runArchiveTar(archive, "tv");
   if (verbose.status !== 0)
     throw new Error(`cannot validate archive entries: ${verbose.stderr || "tar failed"}`);
   for (const line of verbose.stdout.split(/\r?\n/))
@@ -476,10 +489,7 @@ function extractArchive(archive) {
   const extracted = join(cache, "source");
   rmSync(extracted, { recursive: true, force: true });
   mkdirSync(extracted, { recursive: true });
-  const result = spawnSync("tar", ["-xf", archive, "-C", extracted], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  const result = runArchiveTar(archive, "x", extracted);
   if (result.status !== 0)
     throw new Error(
       `cppreference archive extraction failed: ${result.stderr || result.error || "tar failed"}`

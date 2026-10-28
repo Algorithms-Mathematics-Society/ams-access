@@ -27,6 +27,25 @@ jobs:
         with:
           ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
 
+      # Build application source from the immutable tag, with explicitly scoped
+      # build/verification fixes from the reviewed workflow revision.
+      - name: Checkout release repair tooling
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: |
+            scripts
+            apps/web/scripts
+
+      - name: Apply cppreference build repair for tagged rebuild
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          cp .release-tooling/apps/web/scripts/setup-cppreference.mjs apps/web/scripts/setup-cppreference.mjs
+          cp .release-tooling/apps/web/scripts/setup-cppreference.test.mjs apps/web/scripts/setup-cppreference.test.mjs
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
@@ -93,6 +112,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      # Build application source from the immutable tag, with explicitly scoped
+      # build/verification fixes from the reviewed workflow revision.
+      - name: Checkout release repair tooling
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: |
+            scripts
+            apps/web/scripts
+
+      - name: Apply cppreference build repair for tagged rebuild
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          cp .release-tooling/apps/web/scripts/setup-cppreference.mjs apps/web/scripts/setup-cppreference.mjs
+          cp .release-tooling/apps/web/scripts/setup-cppreference.test.mjs apps/web/scripts/setup-cppreference.test.mjs
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -338,16 +376,6 @@ jobs:
             target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           if-no-files-found: warn
           retention-days: 3
-
-      # A manual repair builds application code from the unchanged release tag,
-      # while using the corrected verifier from this workflow's revision.
-      - name: Checkout release verification tooling
-        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          path: .release-tooling
-          sparse-checkout: scripts
 
       - name: Verify macOS release identity, architecture and Gatekeeper
         if: runner.os == 'macOS'
