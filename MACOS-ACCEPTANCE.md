@@ -1,3 +1,7 @@
+> Current 4.8.0 release follow-up: Wi-Fi controls/Location setup and public
+> service-status UI are removed. Earlier Wi-Fi scenarios below are historical;
+> use `docs/release-4.8-followups.md` for the current replacement checks.
+
 # MAC-01–MAC-23 acceptance handoff
 
 Owner for native verification: @Rasesh2005. These issues stay open until the
@@ -15,6 +19,7 @@ publication. The four portable regression cases exercise rejection paths; actual
 Apple signing/assessment still requires the macOS release runner.
 
 GUI checklist:
+
 - [ ] Download the intended release normally, keep Gatekeeper/quarantine intact,
       install into Applications and launch as a standard user.
 - [ ] Repeat clean installation and upgrade on every advertised architecture.
@@ -42,6 +47,7 @@ unchanged. Component regressions cover platform gating, duplicate clicks and
 readable refusal. Native Cmd+Q/menu/window-close acceptance remains required.
 
 GUI checklist:
+
 - [ ] On Welcome and Login, turn connectivity off and click Quit; the app exits,
       Dock/menu bar/input work, and reopening is usable without signing in.
 - [ ] Repeat with Cmd+Q, application-menu Quit and the window close control.
@@ -62,6 +68,7 @@ unverified, never successful. Three portable tests cover cancellation, single
 execution and start/cancel races. Actual window transitions need a Mac.
 
 GUI checklist:
+
 - [ ] Enter from a normal window and a macOS fullscreen Space; verify one visible,
       usable contest window, with editor and dialogs above the correct surface.
 - [ ] Trigger failed setup/entry, then Back to contests; Dock, menu bar, switching,
@@ -83,6 +90,7 @@ service. Failed cleanup retains the helper for recovery and reports the error.
 It does not disable PF globally, flush other anchors or reintroduce enforcement.
 
 GUI checklist (use a disposable Mac profile/device for legacy-helper cases):
+
 - [ ] Upgrade from a build with the helper installed. Restore settings, uninstall
       the helper, then verify ordinary internet access and a clean app restart.
 - [ ] Cancel the administrator prompt; the app stays usable and reports failure.
@@ -104,6 +112,7 @@ runs off the main thread with a 60-second bound. Other OS permission paths retai
 their existing behavior. Native TCC requires Mac CI and device verification.
 
 GUI checklist:
+
 - [ ] In a clean standard-user profile, launch: no unsolicited microphone prompt
       on Welcome/Login; camera permission remains available.
 - [ ] Reach Microphone check, allow the prompt, and see audio activity. Deny in a
@@ -126,6 +135,7 @@ blocked system shortcuts. This is regression coverage, not evidence that native
 trackpad/IME/modal behavior has passed. No new runtime polling or requests.
 
 GUI checklist:
+
 - [ ] Type, select, undo/redo, indent and navigate code with the built-in keyboard
       and an external one; verify the caret stays visible during scrolling.
 - [ ] Test permitted copy/paste and denied external paste separately. No draft
@@ -146,6 +156,7 @@ reported blackout's cause is still unconfirmed. Existing recovery journals and
 single-instance ownership remain intact. No backend changes or additional timers.
 
 GUI checklist:
+
 - [ ] Enter, exit immediately, and re-enter repeatedly; no delayed focus jump,
       off-screen window or fullscreen change belongs to the previous session.
 - [ ] Sleep/wake during a synthetic contest: the window is usable, server time
@@ -171,6 +182,7 @@ actionable guidance on an explicit scan. Names keep their whitespace. At most
 with a non-blocking gate. Windows' recent association/retry UI is preserved.
 
 GUI checklist:
+
 - [ ] Disconnect in a synthetic contest; open Wi-Fi and Rescan. A nearby hotspot
       never saved on this Mac should appear, with its real security state.
 - [ ] Enter a wrong password, then the right one; feedback remains visible and
@@ -197,6 +209,7 @@ The existing event-driven observers and two-second fallback frequency remain.
 No server requests, higher polling rate or global animation changes are added.
 
 GUI/performance checklist:
+
 - [ ] Compare the previous release and this build on the same Mac, power mode,
       contest and data; record build/OS/architecture and Activity Monitor values.
 - [ ] Repeat entry/exit ten times, including quick cycles; idle CPU/thread count
@@ -222,6 +235,7 @@ silently converted into someone else's identity. Delivery/reissue/revocation
 must be checked with organizer-owned synthetic accounts, not real credentials.
 
 GUI checklist:
+
 - [ ] Paste a full issued ID from Mail, including its suffix and surrounding
       spaces; verify the complete ID survives and signs into the intended account.
 - [ ] Type the ID manually, edit in the middle, select/replace and paste; verify
@@ -275,6 +289,7 @@ minimum is negative (-1552.44049 ms); timing provenance needs review before
 reusing its percentiles as release evidence.
 
 Artifact hashes at review time (no credentials or seat/token files copied):
+
 - `data/entry-runs.csv`: `2e64c1b17c2c2dac1f6f0158dcbee3d06cae410d991ffc595916827b2b348ecf`
 - `enter-contest-storm.js`: `6fbad436df861f10c8e200c18fe6c4ec8e83943b719df470af6f0e45b7ccfe49`
 - `contest1300.js`: `b4c33edf8feea0c4fef3427df800ff3ac26e933a63905a9d47d103bed833dfca`
@@ -553,14 +568,14 @@ organizer decision communicated to candidates.
 
 Evidence record to fill in (currently NOT RUN):
 
-| Gate | Evidence required | Current status |
-| --- | --- | --- |
-| Mac artifact | Signing/notarization + installed GUI recording | Awaiting native acceptance |
-| Draft backup | Deployed CORS PUT + restart/restore | Companion API commit prepared |
-| Judge output | Active binary digest + AC/WA/CE/RE/TLE receipts | Source/release verified only |
-| Broadcast | Home/setup/contest/finish + offline delivery | Coverage gap, announcement owner |
-| Scale | Combined 3,000-seat load report | Not run |
-| Fairness | Organizer's explicit paper/communication decision | Not supplied |
+| Gate         | Evidence required                                 | Current status                   |
+| ------------ | ------------------------------------------------- | -------------------------------- |
+| Mac artifact | Signing/notarization + installed GUI recording    | Awaiting native acceptance       |
+| Draft backup | Deployed CORS PUT + restart/restore               | Companion API commit prepared    |
+| Judge output | Active binary digest + AC/WA/CE/RE/TLE receipts   | Source/release verified only     |
+| Broadcast    | Home/setup/contest/finish + offline delivery      | Coverage gap, announcement owner |
+| Scale        | Combined 3,000-seat load report                   | Not run                          |
+| Fairness     | Organizer's explicit paper/communication decision | Not supplied                     |
 
 Portable test results belong in the PR and issue comments; they do not turn any
 of these NOT RUN checks into a pass. Windows/Linux behavior must retain CI

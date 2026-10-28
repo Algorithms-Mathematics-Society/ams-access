@@ -34,26 +34,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
-/// Pinned TLS trust anchors (PEM) for every Rust-side HTTPS call to the backend.
-/// These are the Let's Encrypt roots — ISRG Root X1 and X2 — that the API
-/// origin's certificate chains to. Pinning to them (built-in OS roots OFF)
-/// defeats a locally-installed MITM root (mitmproxy/Burp/corporate TLS
-/// inspection) while surviving routine leaf rotation, since the roots outlive
-/// every leaf by a decade.
-///
-/// This replaced the Google Trust Services set that was pinned when the
-/// backend ran on Cloud Run. That backend is gone; keeping its roots would
-/// have rejected every call to the current API — a pin against a CA you no
-/// longer use is not security, it is an outage.
-///
-/// Because pinning bypasses the OS trust store, `api.amsaccess.com` must
-/// resolve straight to the origin (Cloudflare DNS-only). Putting the orange
-/// cloud in front would present Cloudflare's edge certificate, which does not
-/// chain to ISRG, and every request from this app would fail.
-///
-/// Blank this string to disable pinning in an emergency (kill-switch).
-const PINNED_ROOTS_PEM: &str = include_str!("../assets/tls/isrg-roots.pem");
-
 const MAX_FACE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FACE_IMAGE_PIXELS: u64 = 2_000_000;
 const EXPECTED_BLAZEFACE_ASSETS: &[(&str, &str, u64)] = &[
@@ -431,67 +411,11 @@ fn remember_after_persist<T: Serialize>(
     persisted.map(|_| ())
 }
 
-// ── F4: pinned HTTP client ─────────────────────────────────────────────────────
-//
-// Single construction point for every outbound HTTPS client so the backend TLS
-// trust anchors are enforced uniformly. Returns a `reqwest::ClientBuilder` —
-// callers add their own timeout and `.build()`, preserving the per-site timeouts
-// that already existed.
-//
-// MECHANISM: trust-anchor pinning. We parse the embedded Let's Encrypt roots
-// (`PINNED_ROOTS_PEM`) and hand them to reqwest's `tls_certs_only`, which
-// trusts ONLY those roots — the OS/built-in root store is turned OFF. Because
-// the API origin's Let's Encrypt leaf chains to these long-lived ISRG roots,
-// the backend continues to validate, but a locally-installed MITM root
-// (mitmproxy/Burp/corporate TLS inspection) — which chains to the user's own
-// root, not ISRG — is rejected. Pinning the long-lived roots (not the leaf)
-// means routine 90-day renewal does not break us.
-//
-// KILL-SWITCH: if `PINNED_ROOTS_PEM` is blanked, we log a one-time warning and
-// fall back to an un-pinned, system-root client. This is intentional and is the
-// only path to an un-pinned client; when roots ARE configured we never silently
-// fall back (that would be a security downgrade) — a parse failure of the
-// embedded, build-time-constant bundle is an impossible-without-a-corrupted-build
-// state, so we `.expect` and fail fast.
-//
-// SCOPE: This pins ONLY the Rust-side reqwest calls — the event-stream upload,
-// the readiness-report delivery, and the clock-skew probe — all of which are
-// best-effort / non-fatal telemetry or probe traffic. The exam SUBMISSION
-// traffic does NOT pass through here: it is issued by the embedded webview
-// (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux) via JS `fetch`,
-// which uses the OS trust store and is therefore NOT pinned by this function.
-// Truly pinning the submission path would require routing submissions through a
-// Rust `#[tauri::command]` that uses this pinned client — an architectural
-// follow-up gated on the production submission API. Tracked as F4-followup.
-fn pinned_http_client_builder() -> reqwest::ClientBuilder {
-    use std::sync::Once;
-
-    if PINNED_ROOTS_PEM.trim().is_empty() {
-        static WARN_ONCE: Once = Once::new();
-        WARN_ONCE.call_once(|| {
-            eprintln!(
-                "WARNING: TLS certificate pinning is DISABLED (PINNED_ROOTS_PEM is empty; \
-                 kill-switch engaged); using system roots only — see remediation F4."
-            );
-        });
-        return reqwest::Client::builder();
-    }
-
-    // The embedded bundle is build-time-constant data already verified to parse
-    // and validate by the orchestrator; a failure here means a corrupted build,
-    // so fail fast rather than silently downgrade to an un-pinned client.
-    let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
-        .expect("embedded ISRG roots PEM must parse");
-    // Guard the fail-closed footgun: a non-blank bundle that parses to ZERO certs
-    // (e.g. comments/whitespace only) would yield an empty root store that rejects
-    // EVERY connection. That can only happen if the asset is gutted, so treat it
-    // as a build error and fail fast rather than ship a client that can't talk to
-    // the backend at all. (Real asset = 2 ISRG roots, so this never fires.)
-    assert!(
-        !certs.is_empty(),
-        "PINNED_ROOTS_PEM is non-empty but contained no certificates — corrupted isrg-roots.pem"
-    );
-    reqwest::Client::builder().tls_certs_only(certs)
+// Native uploads and probes use the platform verifier, just like the webview.
+// reqwest 0.13 with rustls uses rustls-platform-verifier by default. Keep
+// certificate and hostname validation enabled; no retry with weakened TLS.
+fn platform_http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
 }
 
 fn record_violation(app: Option<&tauri::AppHandle>, kind: &str, detail: &str) {
@@ -710,7 +634,7 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
         );
     }
     tauri::async_runtime::spawn(async move {
-        let client = match pinned_http_client_builder()
+        let client = match platform_http_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
         {
@@ -1430,7 +1354,7 @@ async fn deliver_readiness_report(
         .filter_map(|check| serde_json::to_value(&check.kind).ok())
         .collect();
 
-    let delivered = match pinned_http_client_builder()
+    let delivered = match platform_http_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
     {
@@ -2185,7 +2109,7 @@ async fn measure_clock_skew(api_url: &str) -> Option<i64> {
         .ok()?;
     let client = CLIENT
         .get_or_init(|| {
-            pinned_http_client_builder()
+            platform_http_client_builder()
                 .timeout(Duration::from_secs(3))
                 .build()
                 .ok()
@@ -4241,114 +4165,6 @@ pub fn run() {
                 finish_shutdown();
             }
         });
-}
-
-#[cfg(test)]
-mod pinning_tests {
-    use super::PINNED_ROOTS_PEM;
-
-    /// SHA-256 fingerprints of ISRG Root X1 and X2 — the roots Let's Encrypt
-    /// chains to, and the only ones this app trusts.
-    ///
-    /// Fingerprints rather than a substring search. An earlier version of
-    /// this test looked for "ISRG Root X1" in the file text, which only
-    /// worked while the bundle carried a comment header naming it; once the
-    /// header was stripped the assertion tested nothing but the comment.
-    /// A certificate's identity is its bytes, so that is what is checked.
-    const ISRG_ROOT_X1_SHA256: &str =
-        "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6";
-    const ISRG_ROOT_X2_SHA256: &str =
-        "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470";
-
-    fn der_certificates() -> Vec<Vec<u8>> {
-        use base64::Engine as _;
-
-        let mut out = Vec::new();
-        let mut current: Option<String> = None;
-        for line in PINNED_ROOTS_PEM.lines() {
-            let line = line.trim();
-            if line == "-----BEGIN CERTIFICATE-----" {
-                current = Some(String::new());
-            } else if line == "-----END CERTIFICATE-----" {
-                if let Some(body) = current.take() {
-                    let der = base64::engine::general_purpose::STANDARD
-                        .decode(body)
-                        .expect("embedded certificate must be valid base64");
-                    out.push(der);
-                }
-            } else if let Some(buf) = current.as_mut() {
-                buf.push_str(line);
-            }
-        }
-        out
-    }
-
-    fn fingerprint(der: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(der);
-        hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    }
-
-    /// A corrupted or emptied bundle silently disables pinning via the
-    /// kill-switch, which is exactly the failure nobody notices until an exam
-    /// is being intercepted. Catch it at build time instead.
-    #[test]
-    fn pinned_bundle_contains_both_isrg_roots() {
-        let prints: Vec<String> = der_certificates().iter().map(|d| fingerprint(d)).collect();
-
-        assert_eq!(
-            prints.len(),
-            2,
-            "expected ISRG Root X1 and X2; a shrunken bundle means some \
-             Let's Encrypt chains would be rejected mid-contest"
-        );
-        assert!(
-            prints.iter().any(|p| p == ISRG_ROOT_X1_SHA256),
-            "ISRG Root X1 is missing from the pinned bundle"
-        );
-        assert!(
-            prints.iter().any(|p| p == ISRG_ROOT_X2_SHA256),
-            "ISRG Root X2 is missing from the pinned bundle"
-        );
-    }
-
-    /// The Cloud Run backend is gone. Pinning its CA would reject every call
-    /// to the current API — an outage dressed as a security control.
-    #[test]
-    fn pinned_bundle_holds_nothing_but_those_two_roots() {
-        for der in der_certificates() {
-            let print = fingerprint(&der);
-            assert!(
-                print == ISRG_ROOT_X1_SHA256 || print == ISRG_ROOT_X2_SHA256,
-                "unexpected certificate pinned: {print}"
-            );
-        }
-    }
-
-    /// The kill-switch is deliberate, but it must require blanking the file —
-    /// never fire because of a stray edit that leaves whitespace behind.
-    #[test]
-    fn pinning_is_enabled_in_this_build() {
-        assert!(
-            !PINNED_ROOTS_PEM.trim().is_empty(),
-            "pinning is disabled; this must never ship"
-        );
-    }
-
-    /// The bundle must be something reqwest can actually load; a file that
-    /// parses here but not there would pass CI and fail on a candidate's
-    /// machine.
-    #[test]
-    fn reqwest_accepts_the_bundle() {
-        let certs = reqwest::Certificate::from_pem_bundle(PINNED_ROOTS_PEM.as_bytes())
-            .expect("embedded roots must parse");
-        assert_eq!(certs.len(), 2);
-    }
 }
 
 #[cfg(test)]

@@ -128,36 +128,15 @@ test("malformed JSON clears deadline and preserves parse failure", async () => {
   assert.equal(h.timers.size, 0);
 });
 
-test("session-binding body stays bounded and preserves the binding error without retries", async () => {
-  let finish;
+test("403 rejects immediately without parsing a body or retrying", async () => {
   const h = harness(() => ({
     ok: false,
     status: 403,
-    json: () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
+    json() {
+      throw new Error("must not read");
+    },
   }));
-  const pending = h.fetchJson("/bound", {}, { retries: 2 });
-  const failed = assert.rejects(
-    pending,
-    (error) => error instanceof h.SessionBindingError && error.code === "SESSION_DEVICE_MISMATCH"
-  );
-  await flush();
-  assert.equal(h.timers.size, 1);
-  finish({ code: "SESSION_DEVICE_MISMATCH", error: "Wrong device" });
-  await failed;
-  assert.equal(h.requests.length, 1);
-  assert.equal(h.timers.size, 0);
-});
-
-test("stalled 403 body aborts and retains existing generic HTTP failure handling", async () => {
-  const h = harness((signal) => stalledBody(signal, 403));
-  const pending = h.fetchJson("/bound", {}, { retries: 2 });
-  const failed = assert.rejects(pending, /HTTP 403/);
-  await flush();
-  h.expire();
-  await failed;
+  await assert.rejects(h.fetchJson("/forbidden", {}, { retries: 2 }), /HTTP 403/);
   assert.equal(h.requests.length, 1);
   assert.equal(h.timers.size, 0);
 });

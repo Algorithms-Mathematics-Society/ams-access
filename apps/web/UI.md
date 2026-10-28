@@ -385,19 +385,16 @@ help state. Authenticated `HelpRequestModal` and its receipts are unchanged.
 Production inbox receipt/staff coverage and packaged browser handoff on Windows,
 macOS and Linux require separate acceptance; browser tests do not establish them.
 
-## Public service status
+## Contest controls and connectivity
 
-Candidate screens share one credential-free `/client/status` reader. A compact,
-fixed-height advisory row opens manually requested details; sign-in help and the
-reconnect/load-error views render details inline. Published incident context never
-changes authentication, setup policy, timers, drafts, submission or exit decisions.
-Status details close when a higher-priority contest overlay appears, without
-restoring focus behind that overlay. Current authority requires validated bounded
-JSON, a nondecreasing revision, trusted response time and unexpired publication.
-Failed refreshes retain explicitly last-known context. A missing deployment is
-not reported as healthy or as a confirmed outage. Polling is single-flight,
-jittered, paused offline/hidden, timeout/body bounded and backed off on failures.
-Native network access and operator publication remain deployment acceptance gates.
+The active toolbar offers Help and Finish contest, but no Leave contest or Contest
+info action. Recovery dialogs retain their safe exits, including Check Again and
+Exit Contest after detected disconnection. Exit does not mean Finish.
+
+Public service-status banners/dialogs and their `/client/status` polling are removed.
+Local connectivity, request errors, bounded retries, support and contest announcements
+remain independent. Home lists every non-passing advisory from its policy report by
+name and detail, including displays, remote access and clock checks.
 
 ## Local exit and restoration
 
@@ -417,6 +414,6 @@ remain release acceptance checks.
 
 Readiness distinguishes unavailable checks from advisory warnings. Setup progress counts required checks rather than estimating a percentage. Approval requests remain single-flight and accepted even if local persistence fails; unavailable status retains explicitly last-known context and help stays reachable. Existing polling and entry policy remain unchanged.
 
-Contest information is an on-demand dialog with explicit UTC schedule, action meanings and reference availability; it adds no polling. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
+Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
 
 Support previews and submits the same allowlisted automatic context. User-entered contact and message remain explicit fields, with credential-sharing guidance. Update screens describe an official-download handoff without claiming installation success. Native behavior and candidate comprehension remain acceptance checks.

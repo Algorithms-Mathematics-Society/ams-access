@@ -310,3 +310,15 @@ test("macOS helper uninstall keeps the recovery helper until firewall cleanup su
   assert.match(uninstall, /disable_network_lockdown\(\)\?;/);
   assert.ok(uninstall.indexOf("disable_network_lockdown()?;") < uninstall.indexOf("let script"));
 });
+
+// The platform trust policy must never become an accept-invalid fallback.
+test("native HTTPS shares platform trust and preserves certificate and hostname verification", async () => {
+  const source = await read("apps/desktop/src-tauri/src/lib.rs");
+  assert.doesNotMatch(source, /tls_certs_only|danger_accept_invalid|PINNED_ROOTS_PEM/);
+  assert.match(
+    source,
+    /fn platform_http_client_builder\(\) -> reqwest::ClientBuilder \{\s*reqwest::Client::builder\(\)\s*\}/
+  );
+  assert.equal((source.match(/reqwest::Client::builder\(\)/g) ?? []).length, 1);
+  assert.equal((source.match(/platform_http_client_builder\(\)/g) ?? []).length, 4);
+});

@@ -10,7 +10,6 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
 import { ReferenceSheetButton } from "./ReferenceSheet";
-import { ContestInformation } from "./ContestInformation";
 import { BatteryStatus } from "./BatteryStatus";
 
 export interface FinishQuestionReview {
@@ -22,7 +21,6 @@ export interface FinishQuestionReview {
 }
 
 export interface TopBarProps {
-  onLeave?: () => void;
   contest: ContestMeta | null;
   clock: ClockSnapshot;
   handleContestExpiry: () => void | Promise<void>;
@@ -42,13 +40,11 @@ export interface TopBarProps {
   onReviewQuestion: (index: number) => void;
   markedQuestionIds: string[];
   workspaceControls?: ReactNode;
-  /** Drives the wifi glyph. The picker itself works either way, which is the
-   *  point: it is needed most when this is false. */
+  /** Connectivity state used by the Finish review. */
   online?: boolean;
 }
 
 export function TopBar({
-  onLeave,
   contest,
   clock,
   handleContestExpiry,
@@ -189,10 +185,7 @@ export function TopBar({
         style={{ flex: 1, minWidth: 0 }}
       >
         <ThemeToggle />
-        <ContestInformation
-          contest={contest}
-          suspended={finishReviewSuspended || submitConfirm || timeUpState !== "idle"}
-        />
+
         {workspaceControls}
         {contest?.reference_sheet && (
           <ReferenceSheetButton
@@ -209,7 +202,6 @@ export function TopBar({
           icon={<Headset size={16} />}
           onClick={() => setShowSupportModal(true)}
         />
-        <Button label="Leave contest" variant="ghost" onClick={onLeave} />
         <Button
           ref={triggerRef}
           label="Finish contest"
@@ -332,7 +324,7 @@ export function TopBar({
             {submissionPending && (
               <Text role="status" color="secondary">
                 Waiting for your solution submission before finishing the attempt. You can still go
-                back and choose Leave contest.
+                back and contact your invigilator.
               </Text>
             )}
             {submitError && (

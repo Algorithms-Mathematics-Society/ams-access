@@ -3,12 +3,22 @@
 ## macOS readiness and recovery
 
 - Improve keyboard, fullscreen, permission and desktop-restoration lifecycle handling, including stale callback cancellation and an idle Quit action.
-- Discover nearby Wi-Fi networks on explicit rescan; add Location permission setup while preserving bounded radio operations and Windows reconnect feedback.
+- Remove in-app Wi-Fi scanning/joining and the Location permission step. After 12 seconds of detected disconnection, offer Check Again or Exit Contest so candidates can reconnect through their operating system.
+- Request microphone access only at the microphone step or an explicit Settings test, never from the Home setup scan.
+- Block external editor pastes, including short pre-copied text, while preserving internal copy/cut and sample copies.
+- Keep firewall cleanup before legacy helper removal; retain the helper if cleanup fails.
 - Resume recent same-device setup while still capturing a fresh reference photo.
 - Refresh server time after waking from sleep and improve approval polling/backoff.
 - Validate signed release artifacts, architecture and Gatekeeper acceptance in macOS release CI.
 
 ## Contest reliability and feedback
+
+- Prepare sessions and readiness reports while candidates wait for the start, avoiding repeated entry writes at T=0 without adding an admission delay.
+- Name each Home policy warning with its detail, including displays, remote access and clock checks.
+- Simplify active controls: keep Help and Finish; remove the active Leave action, Contest info dialog and public service-status UI/polling. Recovery exits and contest announcements remain available.
+- Use platform TLS trust for native uploads/probes, with certificate and hostname verification enabled, so valid CA changes work consistently with the webview.
+- Remove unsupported device-mismatch/idle-timeout client branches; retain existing server-authoritative session and resume errors.
+- Preserve Retry-After guidance, stagger approval polling and coalesce repeated pending Check Again requests.
 
 - Preserve per-problem drafts, serialize background backups and ignore late responses after navigation.
 - Retain submission retry identity, authoritative deadlines and explicit Finish recovery.
@@ -20,8 +30,7 @@
 ## Deployment and validation notes
 
 - API draft saves require the CORS PUT fix from ams-api #32. Output compatibility requires cxxprobe-worker #1 and judges running cxxprobe 1.0.0. A desktop update does not deploy those services.
-- Advisory service status requires the companion public-service-status API; unavailable status is not treated as evidence of a healthy service.
-- The integrated source passed 134 web test files and TypeScript locally. Cross-platform package/build checks and artifact checks run in CI.
+- The integrated source passed 135 web test files and TypeScript locally. Cross-platform package/build checks and artifact checks run in CI.
 - Native Mac acceptance remains tracked in MACOS-ACCEPTANCE.md. Home/setup/finish announcement coverage, a combined 3,000-participant rehearsal and organizer fairness decisions are not claimed completed by this release.
 - Network Lockdown removal remains separate uncommitted work and is not included in this release branch.
 

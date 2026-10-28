@@ -2,8 +2,6 @@
 
 import { registerAllowedClipboard, resetAllowedClipboard } from "./clipboard-provenance";
 
-import { ServiceStatus } from "@/components/ServiceStatus";
-
 import { formatSource } from "./format-code";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
@@ -44,12 +42,7 @@ import {
 import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import {
-  clearQueryCache,
-  fetchJson,
-  postJsonKeepalive,
-  SessionBindingError,
-} from "@/lib/api-client";
+import { clearQueryCache, fetchJson, postJsonKeepalive } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { INTERVAL_MS, captureFrame, jitterOffset } from "@/lib/identity-photo";
@@ -179,7 +172,6 @@ import {
   type Draft,
   run as runAgainstSamples,
   serverNow,
-  startSession,
   newIdempotencyKey,
   submit as submitSolution,
   uploadIdentityPhoto,
@@ -1423,7 +1415,7 @@ export default function ContestPageClient() {
     (async () => {
       // `getSession` validates ownership server-side — someone else's session
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
-      let live = await getSession(stored.id);
+      const live = await getSession(stored.id);
       if (disposed || leavingWorkspaceRef.current) return;
       unauthorizedAtRef.current = null;
       livePhase = live.phase;
@@ -1434,17 +1426,18 @@ export default function ContestPageClient() {
         return;
       }
 
+      // The API's get-session path activates pending sessions using its own
+      // clock and current roster. Never recreate/reopen at the bell: doing so
+      // would put every pre-created session back into the same POST burst.
+      if (live.status === "pending") {
+        failRetryable(
+          "Waiting for the server to open your session. This page will retry automatically."
+        );
+        return;
+      }
+
       const { index, questions } = await loadContestPaper(contestId);
       if (disposed || leavingWorkspaceRef.current) return;
-      if (live.status === "pending" && index.phase === "running") {
-        // Created during verification and never activated: heartbeat does not
-        // promote it, and run/submit refuse a pending session. Re-open it —
-        // the same idempotent POST onboarding uses, with the server's own
-        // eligibility checks — now that the server says the clock started.
-        live = await startSession({ contestUid: contestId });
-        if (disposed || leavingWorkspaceRef.current) return;
-        if (live.status === "pending") throw new Error("Session is not active yet.");
-      }
       // Held for the cleanup below. Blob URLs are document references the
       // browser keeps alive until revoked explicitly, not garbage-collected
       // values.
@@ -1555,10 +1548,6 @@ export default function ContestPageClient() {
         setLoadRetryable(true);
         setLoading(false);
         retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), AUTH_RECHECK_MS);
-        return;
-      }
-      if (error instanceof SessionBindingError) {
-        void redirectAfterRelease("/home");
         return;
       }
       if (error instanceof ProctorApiError && error.status === 404) {
@@ -4489,22 +4478,7 @@ export default function ContestPageClient() {
         style={{ height: "100%", minHeight: 0, overflow: "hidden", paddingTop: topSafeInset }}
       >
         <KioskBanner />
-        <ServiceStatus
-          components={["judging", "submissions", "support"]}
-          localFailure={networkDisconnected}
-          suspended={
-            leaveConfirm ||
-            criticalOverlayActive ||
-            networkOverlayActive ||
-            submitConfirm ||
-            showSupportModal ||
-            showMediaToggleWarning ||
-            timeUpState !== "idle" ||
-            bellRung ||
-            Boolean(sessionEnded) ||
-            referenceOpen
-          }
-        />
+
         {lockGraceActive && lockGraceCountdown > 0 && (
           <LockGraceToast lockGraceCountdown={lockGraceCountdown} />
         )}
@@ -4516,7 +4490,6 @@ export default function ContestPageClient() {
           />
         )}
         <TopBar
-          onLeave={requestLeave}
           online={!networkDisconnected}
           markedQuestionIds={markedQuestionIds}
           workspaceControls={
@@ -4834,7 +4807,7 @@ export default function ContestPageClient() {
           <Heading level={2} id="network-disconnection-title">
             Reconnecting to the exam server
           </Heading>
-          <ServiceStatus components={["judging", "submissions", "support"]} localFailure expanded />
+
           <Text id="network-disconnection-assurance" role="status">
             {connectionDraftAssurance(unsavedOnDevice.length === 0)}
           </Text>

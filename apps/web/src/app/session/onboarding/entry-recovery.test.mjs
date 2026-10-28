@@ -84,7 +84,9 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
   const context = {
     entryAttemptsRef: { current: attempts },
     setupLeavingRef: { current: false },
+    preparedEntryRef: { current: null },
     contestWindow: null,
+    contestId: "contest",
     setPolicyBlock: (value) => state.blocks.push(value),
     setFaceReviewSaveFailed() {},
     setEntryRetryAvailable: (value) => state.retries.push(value),
@@ -132,7 +134,7 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
   const finalize = new Function(...Object.keys(context), `return ${callbackCode}`)(
     ...Object.values(context)
   );
-  return { finalize, time, state, attempts };
+  return { finalize, time, state, attempts, context };
 }
 
 test("real final entry handles a pending media enumeration deadline without creating a session", async () => {
@@ -184,7 +186,7 @@ test("real final entry prevents overlapping native scans and allows a fresh scan
   assert.deepEqual(f.state.navigation, []);
 });
 
-function desktopFixture({ start, verify, cleanup } = {}) {
+function desktopFixture({ start, verify, cleanup, overrides: extra = {} } = {}) {
   const desktop = { active: false, scans: 0, starts: 0, unlocks: 0 };
   const invoke = async (name) => {
     if (name === "is_lockdown_engaged") return verify ? verify() : desktop.active;
@@ -226,6 +228,7 @@ function desktopFixture({ start, verify, cleanup } = {}) {
         if (start) await start();
         desktop.active = true;
       },
+      ...extra,
     },
   });
   return { ...f, desktop };
@@ -328,13 +331,12 @@ test("real final entry awaits recorder binding before network lockdown can emit 
   assert.ok(lockdown > recorder, "network lockdown must start after the bounded recorder binding");
 });
 
-test("session binding failures remain visible instead of navigating in the same catch", () => {
-  const start = callbackCode.indexOf("error instanceof SessionBindingError");
-  const end = callbackCode.indexOf("const rawMsg", start);
-  assert.ok(start >= 0 && end > start);
-  const branch = callbackCode.slice(start, end);
-  assert.match(branch, /setPolicyBlock/);
-  assert.doesNotMatch(branch, /router\.(?:push|replace)/);
+test("entry retains normal recovery without unsupported device or idle lockouts", () => {
+  assert.doesNotMatch(
+    callbackCode,
+    /SessionBindingError|SESSION_DEVICE_MISMATCH|SESSION_IDLE_TIMEOUT/
+  );
+  assert.match(callbackCode, /readinessErrorText\(error\)/);
 });
 
 test("macOS entry no longer queries Location or blocks an otherwise ready candidate", async () => {
@@ -443,4 +445,161 @@ test("leaving setup prevents final entry from starting again", async () => {
   await f.finalize();
   assert.equal(f.state.sessions, 0);
   assert.deepEqual(f.state.navigation, []);
+});
+
+test("prepare session and readiness before T=0, then enter once without repeating API/native work", async () => {
+  let now = 1000,
+    sessions = 0,
+    eligibility = 0;
+  const f = desktopFixture({
+    overrides: {
+      contestWindow: {
+        startAt: new Date(10000).toISOString(),
+        endAt: new Date(20000).toISOString(),
+      },
+      preparedSessionIdRef: { current: null },
+      FINAL_STAGE: 13,
+      serverNow: () => now,
+      localStorage: { setItem() {} },
+      startSession: async () => {
+        sessions++;
+        return { uid: "session" };
+      },
+      evaluateEntryGateFromServer: async () => {
+        eligibility++;
+        return { ok: true, index: null };
+      },
+    },
+  });
+  await f.finalize();
+  assert.equal(sessions, 1);
+  assert.equal(f.desktop.starts, 1, "readiness delivery/secure start happens before waiting");
+  assert.equal(f.desktop.active, true, JSON.stringify(f.state.blocks));
+  assert.deepEqual(f.state.navigation, []);
+  now = 9999;
+  await f.finalize();
+  assert.deepEqual(f.state.navigation, []);
+  now = 10000;
+  await Promise.all([f.finalize(), f.finalize()]);
+  assert.deepEqual(f.state.navigation, ["/session/contest?contestId=contest"]);
+  assert.equal(sessions, 1);
+  assert.equal(eligibility, 1);
+  assert.equal(f.desktop.starts, 1);
+  assert.equal(f.desktop.scans, 1);
+});
+
+test("3000 prepared candidates create no new sessions or readiness writes at the bell", async () => {
+  let calls = 0;
+  const clients = Array.from({ length: 3000 }, () =>
+    fixture({
+      enumerateDevices: async () => {
+        calls++;
+        return [];
+      },
+      collectDeviceState: async () => {
+        calls++;
+        return {};
+      },
+      overrides: {
+        contestId: "contest",
+        preparedEntryRef: { current: { contestId: "contest", entered: false } },
+        contestWindow: {
+          startAt: new Date(10000).toISOString(),
+          endAt: new Date(20000).toISOString(),
+        },
+        serverNow: () => 10000,
+        evaluateEntryGateFromServer: async () => {
+          calls++;
+          return { ok: true };
+        },
+        startSession: async () => {
+          calls++;
+          return { uid: "session" };
+        },
+      },
+    })
+  );
+  await Promise.all(clients.map((f) => f.finalize()));
+  assert.equal(calls, 0);
+  assert.equal(clients.filter((f) => f.state.navigation.length === 1).length, 3000);
+});
+
+test("cancelled setup cannot enter a prepared workspace and an ended contest cannot open", async () => {
+  const f = fixture({
+    enumerateDevices: async () => [],
+    collectDeviceState: async () => ({}),
+    overrides: {
+      contestId: "contest",
+      preparedEntryRef: { current: { contestId: "contest", entered: false } },
+      contestWindow: { startAt: new Date(1000).toISOString(), endAt: new Date(2000).toISOString() },
+      serverNow: () => 3000,
+    },
+  });
+  await f.finalize();
+  assert.deepEqual(f.state.navigation, []);
+  assert.match(f.state.blocks.at(-1), /ended/);
+  f.context.setupLeavingRef.current = true;
+  await f.finalize();
+  assert.deepEqual(f.state.navigation, []);
+});
+
+test("unmount releases prepared waiting controls but transfers controls to an entered room", async () => {
+  let effect;
+  function find(node) {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("entryAttemptsRef.current.activate()")
+    )
+      effect = node.arguments[0];
+    ts.forEachChild(node, find);
+  }
+  find(ast);
+  const code = ts
+    .transpileModule(`(${effect.getText(ast)})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    })
+    .outputText.trim()
+    .replace(/;$/, "");
+  for (const entered of [false, true]) {
+    const calls = [];
+    const setup = new Function(
+      "entryAttemptsRef",
+      "preparedEntryRef",
+      "cameraSession",
+      "releaseDeviceControls",
+      `return ${code}`
+    )(
+      {
+        current: {
+          activate() {},
+          cancel() {
+            calls.push("cancel");
+          },
+        },
+      },
+      { current: { contestId: "contest", entered } },
+      {
+        release() {
+          calls.push("camera");
+        },
+      },
+      async () => {
+        calls.push("release");
+      }
+    );
+    setup()();
+    await flush();
+    assert.deepEqual(calls, entered ? ["cancel"] : ["cancel", "camera", "release"]);
+  }
+});
+
+test("the room relies on server activation and never recreates a prepared session at T=0", () => {
+  const room = readFileSync(new URL("../contest/client.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(room, /startSession/);
+  const read = room.indexOf("const live = await getSession(stored.id)");
+  const pending = room.indexOf('if (live.status === "pending")', read);
+  const paper = room.indexOf("await loadContestPaper(contestId)", read);
+  assert.ok(read > 0 && pending > read && paper > pending);
+  assert.match(room.slice(pending, paper), /failRetryable/);
 });

@@ -329,10 +329,10 @@ test("sign-in button shows and honors the server cooldown", () => {
   assert.equal(button.props.isDisabled, true);
 });
 for (const status of [0, 429, 503, 401, 403]) {
-  test(`service context classifies HTTP ${status} without changing authoritative error`, async () => {
+  test(`HTTP ${status} keeps authoritative error without a service-status surface`, async () => {
     const h = harness({ failure: new ProctorApiError("Server response", status) });
     await h.submit();
-    assert.equal(h.state.serviceFailure, status === 0 || status === 429 || status >= 500);
+    assert.equal(h.state.serviceFailure, undefined);
     assert.equal(
       h.state.error,
       status === 0

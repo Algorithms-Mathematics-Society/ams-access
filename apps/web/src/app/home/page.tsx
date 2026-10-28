@@ -2,8 +2,6 @@
 
 import { CloseAppButton } from "@/components/CloseAppButton";
 
-import { ServiceStatus } from "@/components/ServiceStatus";
-
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
@@ -1149,14 +1147,11 @@ export default function HomePage() {
           </HStack>
         }
       >
-        <ServiceStatus
-          components={["contest_entry", "support"]}
-          localFailure={Boolean(invitedContestsQuery.error)}
-        />
         {activeNav === "overview" && (
           <DashboardColumns
             readiness={
               <ReadinessWidget
+                report={readinessReport}
                 readiness={readiness}
                 onSettingsRedirect={() => setActiveNav("settings")}
                 theme={theme}

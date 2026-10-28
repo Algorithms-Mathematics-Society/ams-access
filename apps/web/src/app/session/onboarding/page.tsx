@@ -2,7 +2,6 @@
 
 import { entryProgressLabel } from "./entry-progress";
 import { CloseAppButton } from "@/components/CloseAppButton";
-import { ServiceStatus } from "@/components/ServiceStatus";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BatteryStatus } from "../contest/components/BatteryStatus";
@@ -30,7 +29,6 @@ import {
   strictContestPolicy,
   type OrganizerOverride,
 } from "@ams/api-client";
-import { SessionBindingError } from "@/lib/api-client";
 import { participantToken } from "@/lib/candidate-auth";
 import {
   getContest,
@@ -199,7 +197,19 @@ export default function OnboardingPage() {
   const [setupLeaving, setSetupLeaving] = useState(false);
   useEffect(() => {
     entryAttemptsRef.current.activate();
-    return () => entryAttemptsRef.current.cancel();
+    return () => {
+      entryAttemptsRef.current.cancel();
+      // A prepared session owns native controls while waiting, but has not
+      // handed them to the room. Unexpected navigation must release them too.
+      if (preparedEntryRef.current && !preparedEntryRef.current.entered) {
+        preparedEntryRef.current = null;
+        try {
+          cameraSession.release();
+        } finally {
+          void releaseDeviceControls().catch(() => {});
+        }
+      }
+    };
   }, []);
   const warningRecordsRef = useRef(
     new Map<number, { detail: string; record: ReturnType<typeof createFaceReviewRequest> }>()
@@ -222,6 +232,7 @@ export default function OnboardingPage() {
   );
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
+  const preparedEntryRef = useRef<{ contestId: string; entered: boolean } | null>(null);
   const preparedSessionIdRef = useRef<string | null>(null);
   const resumeSetupRef = useRef<ResumeSetup | null>(null);
   const passedFaceRef = useRef<{ cameraId: string; passedAt: number } | null>(null);
@@ -489,6 +500,24 @@ export default function OnboardingPage() {
 
   const finalizeSecureStart = useCallback(async () => {
     if (setupLeavingRef.current) return;
+    // Session creation, readiness delivery and native protection setup already
+    // completed while waiting. T=0 does not repeat those writes or scans.
+    const prepared = preparedEntryRef.current;
+    if (prepared?.contestId === contestId) {
+      if (prepared.entered) return;
+      if (contestWindow && !isTestAccount) {
+        if (new Date(contestWindow.startAt).getTime() > serverNow()) return;
+        if (contestWindow.endAt && new Date(contestWindow.endAt).getTime() <= serverNow()) {
+          setPolicyBlock("This contest has ended.");
+          setReadyForStart(false);
+          return;
+        }
+      }
+      prepared.entered = true;
+      setReadyForStart(false);
+      router.push(`/session/contest?contestId=${contestId}`);
+      return;
+    }
     const attempts = entryAttemptsRef.current;
     const attempt = attempts.begin();
     if (attempt === null) return;
@@ -577,16 +606,6 @@ export default function OnboardingPage() {
         return;
       }
 
-      if (windowMeta && !isTestAccount) {
-        const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
-        if (remaining > 0) {
-          setCurrentStage(FINAL_STAGE);
-          setTransitioning(false);
-          setReadyForStart(true);
-          setPolicyBlock(null);
-          return;
-        }
-      }
       // A timed-out start may still acquire native controls. Its rollback must
       // settle before another setup probe or entry can share the desktop.
       await attempts.recoverResource(attempt, "secure session start");
@@ -925,17 +944,6 @@ export default function OnboardingPage() {
           }
         );
 
-      if (windowMeta && !isTestAccount) {
-        const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
-        if (remaining > 0) {
-          setCurrentStage(FINAL_STAGE);
-          setTransitioning(false);
-          setReadyForStart(true);
-          setPolicyBlock(null);
-          return;
-        }
-      }
-
       // This is the complete native lifecycle marker. start_secure_session
       // already applies advisory/override keyboard policy; false here means
       // the lifecycle itself did not engage, not an unsupported keyboard probe.
@@ -991,29 +999,24 @@ export default function OnboardingPage() {
           // Recovery is optional; storage failure must not prevent entry.
         }
       }
-      setEntryProgress("Opening the contest workspace");
+      // Keep ownership while waiting; Exit setup performs normal restoration.
+      // The room still reads the authenticated server window before exposing
+      // questions, so a postponement/revocation cannot expose an early paper.
+      preparedEntryRef.current = { contestId, entered: false };
       attempts.commit(attempt);
+      if (windowMeta && !isTestAccount && new Date(windowMeta.startAt).getTime() > serverNow()) {
+        setCurrentStage(FINAL_STAGE);
+        setReadyForStart(true);
+        setPolicyBlock(null);
+        return;
+      }
+      preparedEntryRef.current.entered = true;
+      setEntryProgress("Opening the contest workspace");
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
       if (error instanceof EntryCancelledError || !attempts.current(attempt)) return;
       setEntryRetryAvailable(true);
-      // SESSION_DEVICE_MISMATCH / SESSION_IDLE_TIMEOUT: the backend rejected this
-      // device binding.  Route the candidate to /home so they can use the existing
-      // resume-request flow (submitResumeRequest) to rejoin from their device.
-      if (error instanceof SessionBindingError) {
-        setEntryRetryAvailable(false);
-        setTransitioning(false);
-        setReadyForStart(false);
-        setPolicyBlock(
-          error.code === "SESSION_DEVICE_MISMATCH"
-            ? "This session was started on a different device. Return to the home screen to request re-entry from your organizer."
-            : "Your session timed out due to inactivity. Return to the home screen to request re-entry."
-        );
-        // Keep the failure visible. The persistent Exit setup action above
-        // returns to Home, where the organizer-approved resume flow lives.
-        return;
-      }
       const rawMsg = readinessErrorText(error);
       if (windowMeta && !isTestAccount) {
         const remaining = new Date(windowMeta.startAt).getTime() - serverNow();
@@ -1350,7 +1353,6 @@ export default function OnboardingPage() {
           color: "var(--color-text-primary)",
         }}
       >
-        <ServiceStatus components={["contest_entry"]} localFailure={Boolean(contextError)} />
         <HStack as="header" justify="between" align="center" gap={4} wrap="wrap">
           <HStack gap={3} align="center">
             <AccessLogo />
