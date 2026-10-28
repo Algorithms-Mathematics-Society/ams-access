@@ -28,7 +28,7 @@ def bundle_identity(app, expected_version):
 def check(app, version, arch, team, run=subprocess.run):
     executable, info = bundle_identity(app, version)
     commands = [
-        ['/usr/bin/lipo', '-verify_arch', arch, str(executable)],
+        ['/usr/bin/lipo', str(executable), '-verify_arch', arch],
         ['/usr/bin/codesign', '--verify', '--deep', '--strict', '--verbose=2', str(app)],
         ['/usr/bin/codesign', '--display', '--verbose=4', str(app)],
         ['/usr/sbin/spctl', '--assess', '--type', 'execute', '--verbose=4', str(app)],
