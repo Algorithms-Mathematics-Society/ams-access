@@ -10,6 +10,9 @@ import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
+import type { ReadinessReport } from "@ams/api-client";
+import { readinessCheckCopy } from "./utils";
+import { advisoryReportChecks } from "./readiness-advisories";
 import type { ReadinessState, ReadinessStatus, ContestantReadinessContext } from "./types";
 
 const checks = [
@@ -23,6 +26,7 @@ const checks = [
 
 export const ReadinessWidget = memo(function ReadinessWidget({
   readiness,
+  report,
   onSettingsRedirect,
   theme,
   onResolve,
@@ -30,6 +34,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   onPracticeRun,
 }: {
   readiness: ReadinessState;
+  report?: ReadinessReport | null;
   onSettingsRedirect: () => void;
   theme: "dark" | "light";
   onResolve?: (key: string) => void;
@@ -40,7 +45,8 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   // Advisory: real results that do not stop the candidate entering. Without a
   // bucket of their own these matched nothing and disappeared from the panel
   // entirely, while the log underneath still reported them.
-  const advisoryChecks = checks.filter(([key]) => readiness[key] === "warn");
+  const advisoryChecks = report ? [] : checks.filter(([key]) => readiness[key] === "warn");
+  const reportedAdvisories = advisoryReportChecks(report);
   const unavailableChecks = checks.filter(([key]) => readiness[key] === "unavailable");
   const pendingChecks = checks.filter(([key]) => readiness[key] === "checking");
   const passedChecks = checks.filter(([key]) => readiness[key] === "ok");
@@ -90,6 +96,26 @@ export const ReadinessWidget = memo(function ReadinessWidget({
                   status={readiness[key]}
                   theme={theme}
                   onResolve={onResolve ? () => onResolve(key) : undefined}
+                />
+              ))}
+            </List>
+          </VStack>
+        )}
+
+        {reportedAdvisories.length > 0 && (
+          <VStack as="section" gap={2} aria-label="Policy warnings">
+            <Text type="supporting">Warnings to review</Text>
+            <List density="compact" aria-label="Policy warnings">
+              {reportedAdvisories.map((check) => (
+                <ListItem
+                  key={check.kind}
+                  label={readinessCheckCopy(check.kind).label}
+                  description={
+                    check.detail ||
+                    (check.outcome === "unknown"
+                      ? "Not verified on this device"
+                      : readinessCheckCopy(check.kind).fail)
+                  }
                 />
               ))}
             </List>

@@ -324,30 +324,15 @@ Accepted submission receipts remain visible while history refresh recovers.
 Reset code asks for confirmation, restores the current language's starter, and
 saves through the existing draft path without changing other questions or attempts.
 
-The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
-so network names and password controls stay inside the dialog at narrow sizes.
-The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
-Wi-Fi names and the connected network come only from the native OS integration.
-Browser builds show guidance to use system Wi-Fi settings, without sample networks,
-password prompts, simulated joins or background scan polling. Native scan failures
-show a retry message rather than invented networks. On macOS, CoreWLAN scans nearby
-networks with a saved-only fallback that warns profiles may be out of range.
-Stage 7 requires Location access on macOS only, alongside camera setup. The
-candidate selects **Allow Location access**; status is checked every second for up
-to 60 seconds after the request and whenever the window regains focus. Denied or
-restricted access blocks setup with System Settings guidance and a **Quit & reopen
-AMS Access** action that first releases setup controls. If no prompt appears, the
-Allow button remains available with manual Location Services guidance. Only
-`isGatingRelaxed()` in a development build may bypass it, with a visible “skipped in
-dev build” note. Production builds still require access even if that flag is set.
-The setup flow rechecks before creating a session and returns missing grants to
-Stage 7. This is a macOS-only setup gate, not a new shared readiness CheckKind;
-Windows/Linux UI and the policy fixture remain unchanged. The contest Wi-Fi picker
-only points to Location Services in System Settings when access is unavailable,
-since a system prompt cannot appear above the kiosk. No location updates are
-started, and location coordinates are never recorded or sent. If a child scan
-still cannot see names after authorization, a single in-app worker retries within
-the scan deadline.
+The app does not scan, join or manage Wi-Fi networks and does not ask for Location
+permission. After 12 seconds of a continuous observed connection failure, the
+recovery dialog offers **Check Again** and **Exit Contest**. Check Again rechecks
+the session; Exit Contest uses the existing draft-save confirmation and local
+restoration path. Candidates reconnect through OS settings and resume under the
+contest's current entry rules. Exiting does not Finish or submit the attempt.
+A browser offline event starts the 12-second grace immediately; a server-only
+failure starts it when the existing heartbeat reports failure. No extra polling
+is added, so the grace is not a promise of detecting every server outage in 12 seconds.
 
 Device setup lets AppShell own page scrolling to avoid nested viewport-height
 scroll regions. The MediaPipe loader routes its exact CPU delegate startup
@@ -363,8 +348,6 @@ Installed apps read the embedded index and bounded Brotli blocks through native
 `read_cppref_asset` IPC; development servers use the existing Brotli response headers.
 Missing bundles fail preparation rather than producing a broken installer. Reference
 load errors offer Retry, and rejected index/block loads remain retryable.
-Reference search keeps the keyboard-selected result visible; stationary pointer hover does not override arrow navigation. Opening a result or returning to a previous page focuses the scrollable article so keyboard scrolling stays in the reference.
-
 Reference HTML is sanitized before rendering: scripts, forms, frames, inline styles,
 event handlers and external image sources are removed. Article anchors carry only
 controlled navigation metadata, so clicks, keyboard activation and middle-clicks
@@ -381,6 +364,7 @@ checked again. Reusing the scan takes a fresh reference photo during presence
 verification, saves it through the native face-image command and uploads it through
 the existing session identity-photo endpoint. Capture, save or upload failure runs
 the full face scan. Missing or invalid recovery data runs complete setup.
+
 ## Public sign-in help
 
 Login opens `LoginHelpDialog` without reading participant authentication or sending
@@ -401,10 +385,20 @@ help state. Authenticated `HelpRequestModal` and its receipts are unchanged.
 Production inbox receipt/staff coverage and packaged browser handoff on Windows,
 macOS and Linux require separate acceptance; browser tests do not establish them.
 
+## Contest controls and connectivity
+
+The active toolbar offers Help and Finish contest, but no Leave contest or Contest
+info action. Recovery dialogs retain their safe exits, including Check Again and
+Exit Contest after detected disconnection. Exit does not mean Finish.
+
+Public service-status banners/dialogs and their `/client/status` polling are removed.
+Local connectivity, request errors, bounded retries, support and contest announcements
+remain independent. Home lists every non-passing advisory from its policy report by
+name and detail, including displays, remote access and clock checks.
+
 ## Local exit and restoration
 
-The contest toolbar uses Finish contest as its only exit action. Recovery exits in
-blocked, disconnected and finishing states restore local controls without requesting attempt completion.
+Leave contest restores local controls without requesting attempt completion.
 Finish remains a separate server acknowledgement. Both routes preserve truthful
 draft/recovery outcomes; network requests and evidence upload never gate local
 recovery. Login/home/update screens offer normal Close app, with pending restoration
@@ -420,6 +414,6 @@ remain release acceptance checks.
 
 Readiness distinguishes unavailable checks from advisory warnings. Setup progress counts required checks rather than estimating a percentage. Approval requests remain single-flight and accepted even if local persistence fails; unavailable status retains explicitly last-known context and help stays reachable. Existing polling and entry policy remain unchanged.
 
-The contest header keeps Contest info with a circled information icon, Workspace, Help, Finish contest and any published Reference sheet. Contest info opens the schedule, action meanings and rules without polling. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
+Contest info opens the schedule and rules from a circled information icon in the toolbar, without polling. Reference search keeps arrow-selected results visible without stationary hover overriding selection; opening a result focuses the scrollable article. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
 
 Support previews and submits the same allowlisted automatic context. User-entered contact and message remain explicit fields, with credential-sharing guidance. Update screens describe an official-download handoff without claiming installation success. Native behavior and candidate comprehension remain acceptance checks.

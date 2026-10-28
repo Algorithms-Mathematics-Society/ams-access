@@ -72,6 +72,7 @@ export default function LoginPage() {
     event.preventDefault();
     if (loading || loginInFlightRef.current || performance.now() < cooldownUntil.current) return;
     setError(null);
+
     setDiagnostic(null);
     setInvalidField(null);
     const missingField = !loginId.trim() ? "handle" : !password ? "password" : null;
@@ -173,9 +174,13 @@ export default function LoginPage() {
         return;
       }
       if (caught.status === 429) {
-        const seconds = Number.isFinite(caught.retryAfterSeconds) && caught.retryAfterSeconds > 0
-          ? Math.ceil(caught.retryAfterSeconds) : 0;
-        setError(`${caught.message} ${seconds > 0 ? `The server asks you to wait ${seconds} seconds before trying again.` : "Wait before trying again; repeated attempts may be limited."}`);
+        const seconds =
+          Number.isFinite(caught.retryAfterSeconds) && caught.retryAfterSeconds > 0
+            ? Math.ceil(caught.retryAfterSeconds)
+            : 0;
+        setError(
+          `${caught.message} ${seconds > 0 ? `The server asks you to wait ${seconds} seconds before trying again.` : "Wait before trying again; repeated attempts may be limited."}`
+        );
         return;
       }
       // The server's own wording. It already distinguishes "incorrect",
@@ -262,6 +267,7 @@ export default function LoginPage() {
                 This exam is proctored. After signing in, you’ll set up your camera and check your
                 device before entering a contest.
               </Text>
+
               <Divider />
               <VStack gap={3} align="start">
                 {/* Credentials can be reissued by an invigilator, not recovered here. */}

@@ -34,12 +34,15 @@ test("unchanged approval response preserves session identity; decision and note 
   );
 });
 
-test("polls immediately then every three seconds, with no requests between ticks", async (t) => {
+test("polls immediately then at the three-second floor with zero jitter", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let calls = 0;
-  const stop = startResumePolling(async () => {
-    calls++;
-  });
+  const stop = startResumePolling(
+    async () => {
+      calls++;
+    },
+    () => 0
+  );
   await settle();
   assert.equal(calls, 1);
   t.mock.timers.tick(2999);
@@ -145,4 +148,37 @@ test("long Retry-After cannot overflow the timer into immediate requests", async
   await settle();
   assert.equal(calls, 1);
   stop();
+});
+
+test("3000 healthy approval waiters spread follow-up reads without adding requests", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const counts = Array(3000).fill(0);
+  const stops = counts.map((_, i) =>
+    startResumePolling(
+      async () => {
+        counts[i]++;
+      },
+      () => i / 3000
+    )
+  );
+  await settle();
+  assert(counts.every((n) => n === 1));
+  t.mock.timers.tick(2999);
+  await settle();
+  assert(counts.every((n) => n === 1));
+  t.mock.timers.tick(501);
+  await settle();
+  const refreshed = counts.filter((n) => n === 2).length;
+  assert(refreshed >= 1500 && refreshed < 1510);
+  assert(counts.every((n) => n <= 2));
+  t.mock.timers.tick(500);
+  await settle();
+  assert(counts.every((n) => n === 2));
+  stops.forEach((stop) => stop());
+  t.mock.timers.tick(60_000);
+  await settle();
+  assert(
+    counts.every((n) => n === 2),
+    "unmount stops every waiter without catch-up requests"
+  );
 });

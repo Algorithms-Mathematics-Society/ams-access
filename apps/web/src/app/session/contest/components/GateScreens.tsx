@@ -7,7 +7,15 @@ import { Banner } from "@astryxdesign/core/Banner";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { BackToHomeButton } from "@/components/BackToHomeButton";
 export { ENTRY_WAIT_PHASES, entryWaitPhase } from "../entry-wait";
-export function BootScreen({ label, detail, onExit }: { label: string; detail?: string; onExit?: () => void }) {
+export function BootScreen({
+  label,
+  detail,
+  onExit,
+}: {
+  label: string;
+  detail?: string;
+  onExit?: () => void;
+}) {
   return (
     <AppShell height="fill" style={{ height: "100dvh" }}>
       <VStack
@@ -61,6 +69,7 @@ export function ContestLoadErrorScreen({
         <VStack gap={5} style={{ width: "100%", maxWidth: "calc(var(--spacing-10) * 14)" }}>
           <Heading level={1}>Unable to open your contest</Heading>
           <Banner status="error" title="Contest load error" description={loadError} />
+
           {onRetry && <Button label="Retry" variant="primary" onClick={onRetry} />}
           {/* Always offered, even when cleanup failed: the release is local
               and works with the backend down, so a stuck candidate can leave. */}

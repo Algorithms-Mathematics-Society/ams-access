@@ -1,5 +1,7 @@
 "use client";
 
+import { registerAllowedClipboard, resetAllowedClipboard } from "./clipboard-provenance";
+
 import { formatSource } from "./format-code";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
@@ -40,12 +42,7 @@ import {
 import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import {
-  clearQueryCache,
-  fetchJson,
-  postJsonKeepalive,
-  SessionBindingError,
-} from "@/lib/api-client";
+import { clearQueryCache, fetchJson, postJsonKeepalive } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { INTERVAL_MS, captureFrame, jitterOffset } from "@/lib/identity-photo";
@@ -63,7 +60,6 @@ import {
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import {
   CONTEST_EDITOR_THEMES,
-  registerAllowedClipboard,
   resolveLanguageBundle,
   type ContestEditorThemeId,
 } from "./editor-pane";
@@ -104,7 +100,7 @@ import { FooterTrustStrip } from "./components/FooterTrustStrip";
 import { footerCameraStatus } from "./camera-status";
 import { nextPresenceEvidenceDelay, presenceUnavailableEvent } from "./presence-evidence";
 import { TopBar } from "./components/TopBar";
-import { WifiControl } from "./components/WifiControl";
+import { startDisconnectGrace } from "./disconnect-grace";
 import { QuestionRail } from "./components/QuestionRail";
 import { ReferencePanel } from "./components/ReferencePanel";
 import { ProblemPane } from "./components/ProblemPane";
@@ -176,7 +172,6 @@ import {
   type Draft,
   run as runAgainstSamples,
   serverNow,
-  startSession,
   newIdempotencyKey,
   submit as submitSolution,
   uploadIdentityPhoto,
@@ -656,8 +651,12 @@ export default function ContestPageClient() {
   // CodeMirror, the window focus listener -- report against this rather than
   // having a session id threaded down to them.
   useEffect(() => {
+    resetAllowedClipboard();
     setViolationSession(sessionId);
-    return () => setViolationSession(null);
+    return () => {
+      resetAllowedClipboard();
+      setViolationSession(null);
+    };
   }, [sessionId]);
   // Advice to the candidate about how they are sitting, never sent anywhere.
   const [framingHint, setFramingHint] = useState<Framing>("ok");
@@ -1416,7 +1415,7 @@ export default function ContestPageClient() {
     (async () => {
       // `getSession` validates ownership server-side — someone else's session
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
-      let live = await getSession(stored.id);
+      const live = await getSession(stored.id);
       if (disposed || leavingWorkspaceRef.current) return;
       unauthorizedAtRef.current = null;
       livePhase = live.phase;
@@ -1427,17 +1426,18 @@ export default function ContestPageClient() {
         return;
       }
 
+      // The API's get-session path activates pending sessions using its own
+      // clock and current roster. Never recreate/reopen at the bell: doing so
+      // would put every pre-created session back into the same POST burst.
+      if (live.status === "pending") {
+        failRetryable(
+          "Waiting for the server to open your session. This page will retry automatically."
+        );
+        return;
+      }
+
       const { index, questions } = await loadContestPaper(contestId);
       if (disposed || leavingWorkspaceRef.current) return;
-      if (live.status === "pending" && index.phase === "running") {
-        // Created during verification and never activated: heartbeat does not
-        // promote it, and run/submit refuse a pending session. Re-open it —
-        // the same idempotent POST onboarding uses, with the server's own
-        // eligibility checks — now that the server says the clock started.
-        live = await startSession({ contestUid: contestId });
-        if (disposed || leavingWorkspaceRef.current) return;
-        if (live.status === "pending") throw new Error("Session is not active yet.");
-      }
       // Held for the cleanup below. Blob URLs are document references the
       // browser keeps alive until revoked explicitly, not garbage-collected
       // values.
@@ -1548,10 +1548,6 @@ export default function ContestPageClient() {
         setLoadRetryable(true);
         setLoading(false);
         retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), AUTH_RECHECK_MS);
-        return;
-      }
-      if (error instanceof SessionBindingError) {
-        void redirectAfterRelease("/home");
         return;
       }
       if (error instanceof ProctorApiError && error.status === 404) {
@@ -2873,7 +2869,17 @@ export default function ContestPageClient() {
     };
 
     // `beat` is defined above; expose it now that it exists.
-    const retry = () => void beat();
+    let manualRetry: Promise<void> | null = null;
+    const retry = () => {
+      if (cancelled || authExpired || manualRetry) return;
+      // Repeated clicks/online events share this attempt. The periodic heartbeat
+      // and auth recheck retain their independent recovery/ordering guarantees.
+      const pending = beat();
+      manualRetry = pending;
+      void pending.finally(() => {
+        if (manualRetry === pending) manualRetry = null;
+      });
+    };
     retryBeatRef.current = retry;
     // A browser "offline" hint suppresses only the immediate request. The
     // minute poll still checks for recovery if an online event never arrives.
@@ -2923,7 +2929,11 @@ export default function ContestPageClient() {
             );
             serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
           } catch (caught) {
-            if (!cancelled && caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
+            if (
+              !cancelled &&
+              caught instanceof ProctorApiError &&
+              stopsDraftBackup(caught.status)
+            ) {
               draftBackupOffRef.current = true;
             }
             return;
@@ -3922,6 +3932,12 @@ export default function ContestPageClient() {
   // a session an invigilator ended, a submission already made -- and not
   // because a heartbeat was slow.
   const networkDisconnected = connectionLevel(heartbeatState) === "offline" || !browserOnline;
+  const connectionInterrupted = !browserOnline || heartbeatState.consecutiveFailures > 0;
+  const [disconnectGraceExpired, setDisconnectGraceExpired] = useState(false);
+  useEffect(
+    () => startDisconnectGrace(connectionInterrupted, setDisconnectGraceExpired),
+    [connectionInterrupted]
+  );
   const editorLocked = bellRung || Boolean(sessionEnded) || timeUpState !== "idle";
 
   const judgingUnavailableReason = sessionEnded
@@ -4332,7 +4348,8 @@ export default function ContestPageClient() {
   const announcementActive = pendingAnnouncement !== null;
   const criticalOverlayActive = (lockGraceActive && lockGraceCountdown === 0) || announcementActive;
   const networkOverlayActive =
-    networkDisconnected &&
+    connectionInterrupted &&
+    disconnectGraceExpired &&
     !criticalOverlayActive &&
     !bellRung &&
     !sessionEnded &&
@@ -4365,7 +4382,9 @@ export default function ContestPageClient() {
       timeUpState === "idle",
     closeSupport
   );
-  const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle" && !leaveConfirm);
+  const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(
+    timeUpState !== "idle" && !leaveConfirm
+  );
   // No dismissal callback: Escape must not close an announcement. The only
   // way out is the acknowledgement, which is the record staff rely on.
   const announcementDialogRef = useFocusTrap<HTMLDivElement>(
@@ -4416,7 +4435,13 @@ export default function ContestPageClient() {
 
   if (loading) {
     const phase = entryWaitPhase(bootWaitedMs);
-    return <BootScreen label={phase.label} detail={phase.detail} onExit={() => void redirectAfterRelease("/home")} />;
+    return (
+      <BootScreen
+        label={phase.label}
+        detail={phase.detail}
+        onExit={() => void redirectAfterRelease("/home")}
+      />
+    );
   }
 
   if (loadError) {
@@ -4453,6 +4478,7 @@ export default function ContestPageClient() {
         style={{ height: "100%", minHeight: 0, overflow: "hidden", paddingTop: topSafeInset }}
       >
         <KioskBanner />
+
         {lockGraceActive && lockGraceCountdown > 0 && (
           <LockGraceToast lockGraceCountdown={lockGraceCountdown} />
         )}
@@ -4781,6 +4807,7 @@ export default function ContestPageClient() {
           <Heading level={2} id="network-disconnection-title">
             Reconnecting to the exam server
           </Heading>
+
           <Text id="network-disconnection-assurance" role="status">
             {connectionDraftAssurance(unsavedOnDevice.length === 0)}
           </Text>
@@ -4791,24 +4818,18 @@ export default function ContestPageClient() {
           <Text color="secondary">
             The contest timer continues to run while disconnected or away.
           </Text>
-          {/* The picker, here as well as in the top bar.
-              This dialog is a native modal, so everything behind it is in the
-              inert top layer and the top bar cannot be clicked through it. It
-              is also the one moment a candidate actually needs to change
-              network, and on macOS the system wifi menu is unreachable: the
-              kiosk hides the menu bar and the window cannot be moved. So the
-              control comes to where the problem is stated. */}
-          <WifiControl online={false} inline />
-          <HStack gap={3} justify="end">
-            <Button label="Retry now" variant="secondary" onClick={() => retryBeatRef.current()} />
+          <Text color="secondary">
+            Exit Contest to connect using your computer’s network settings, then reopen AMS Access
+            and resume. Returning depends on the contest’s current entry rules.
+          </Text>
+          <HStack gap={3} justify="end" wrap="wrap">
+            <Button
+              label="Check Again"
+              variant="secondary"
+              onClick={() => retryBeatRef.current()}
+            />
+            <Button label="Exit Contest" variant="secondary" onClick={requestLeave} />
           </HStack>
-          <VStack gap={2}>
-            <Text color="secondary">
-              You can leave to change network. Leaving does not finish your attempt; returning
-              depends on the contest’s current entry rules.
-            </Text>
-            <Button label="Leave to change network" variant="secondary" onClick={requestLeave} />
-          </VStack>
         </VStack>
       </Dialog>
 
@@ -5155,6 +5176,7 @@ export default function ContestPageClient() {
               </HStack>
             </>
           )}
+          <Button label="Leave contest" variant="ghost" onClick={requestLeave} />
           {sentReports.some((report) => report.sessionId === sessionId) && (
             <VStack
               as="section"

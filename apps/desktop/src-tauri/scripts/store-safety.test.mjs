@@ -139,14 +139,8 @@ test("Windows restore failure stays visible and retry uses the journal", async (
     /let network = if windows_firewall::recovery_needed\(WANTS_FIREWALL\)/
   );
   assert.match(windowsRetry, /windows_firewall::disable_blocking\(\)\.map\(\|_\| \(\)\)/);
-  assert.match(
-    windowsRetry,
-    /let wifi = platform_rs::windows::cleanup_wifi_profiles\(false\);/
-  );
-  assert.match(
-    windowsRetry,
-    /lockdown_lifecycle::combine_cleanup\(\s*lockdown_lifecycle::combine_cleanup\(desktop, network\),\s*wifi,?\s*\)\?;/
-  );
+  assert.match(windowsRetry, /combine_cleanup\(desktop, network\)/);
+  assert.match(windowsRetry, /lockdown_lifecycle::combine_cleanup\(desktop, network\)\?;/);
   assert.match(
     desktop,
     /cfg\(target_os = "windows"\)\]\s*let protected = \{\s*let status = platform_rs::windows::lock_desktop_with_status\(\)\?/
@@ -307,4 +301,24 @@ test("CI installs, launches, and certification-checks the MSIX", async () => {
   assert.match(ci, /Add-AppxPackage/);
   assert.match(ci, /Start-Process "shell:AppsFolder/);
   assert.match(ci, /appcert test -appxpackagepath/);
+});
+
+// MAC-04: failure must return before the helper removal script can run.
+test("macOS helper uninstall keeps the recovery helper until firewall cleanup succeeds", async () => {
+  const source = await read("packages/platform-rs/src/macos/mod.rs");
+  const uninstall = source.slice(source.indexOf("pub fn uninstall_network_helper()"));
+  assert.match(uninstall, /disable_network_lockdown\(\)\?;/);
+  assert.ok(uninstall.indexOf("disable_network_lockdown()?;") < uninstall.indexOf("let script"));
+});
+
+// The platform trust policy must never become an accept-invalid fallback.
+test("native HTTPS shares platform trust and preserves certificate and hostname verification", async () => {
+  const source = await read("apps/desktop/src-tauri/src/lib.rs");
+  assert.doesNotMatch(source, /tls_certs_only|danger_accept_invalid|PINNED_ROOTS_PEM/);
+  assert.match(
+    source,
+    /fn platform_http_client_builder\(\) -> reqwest::ClientBuilder \{\s*reqwest::Client::builder\(\)\s*\}/
+  );
+  assert.equal((source.match(/reqwest::Client::builder\(\)/g) ?? []).length, 1);
+  assert.equal((source.match(/platform_http_client_builder\(\)/g) ?? []).length, 4);
 });

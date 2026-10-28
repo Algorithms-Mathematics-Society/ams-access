@@ -12,7 +12,6 @@ import { type ContestMeta } from "./questions";
 import { ReferenceSheetButton } from "./ReferenceSheet";
 import { ContestInformation } from "./ContestInformation";
 import { BatteryStatus } from "./BatteryStatus";
-import { WifiControl } from "./WifiControl";
 
 export interface FinishQuestionReview {
   id: string;
@@ -42,8 +41,7 @@ export interface TopBarProps {
   onReviewQuestion: (index: number) => void;
   markedQuestionIds: string[];
   workspaceControls?: ReactNode;
-  /** Drives the wifi glyph. The picker itself works either way, which is the
-   *  point: it is needed most when this is false. */
+  /** Connectivity state used by the Finish review. */
   online?: boolean;
 }
 
@@ -179,7 +177,6 @@ export function TopBar({
         </Text>
       </HStack>
       <CountdownBadge clock={clock} onExpiry={handleContestExpiry} />
-      <WifiControl online={online} />
       <BatteryStatus />
       <HStack
         gap={2}
@@ -193,6 +190,7 @@ export function TopBar({
           contest={contest}
           suspended={finishReviewSuspended || submitConfirm || timeUpState !== "idle"}
         />
+
         {workspaceControls}
         {contest?.reference_sheet && (
           <ReferenceSheetButton
@@ -331,7 +329,7 @@ export function TopBar({
             {submissionPending && (
               <Text role="status" color="secondary">
                 Waiting for your solution submission before finishing the attempt. You can still go
-                back to the contest.
+                back and contact your invigilator.
               </Text>
             )}
             {submitError && (

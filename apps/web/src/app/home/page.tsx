@@ -456,7 +456,11 @@ export default function HomePage() {
       "HARDWARE: Media availability camera=" +
         (media.cameraAvailable ? "available" : "missing") +
         ", microphone=" +
-        (media.microphoneAvailable ? "available" : "missing")
+        (media.microphoneAvailable === null
+          ? "not checked"
+          : media.microphoneAvailable
+            ? "available"
+            : "missing")
     );
 
     try {
@@ -539,7 +543,12 @@ export default function HomePage() {
       const native = nativeCheckFallback(hasNativeBridge());
       setReadiness({
         camera: media.cameraAvailable ? "ok" : "fail",
-        mic: media.microphoneAvailable ? "ok" : "fail",
+        mic:
+          media.microphoneAvailable === null
+            ? "unavailable"
+            : media.microphoneAvailable
+              ? "ok"
+              : "fail",
         // The scan threw, so nothing was measured. "ok" was a guess that
         // happened to be green; `unavailable` says we do not know, which is
         // the only true thing available here.
@@ -687,7 +696,10 @@ export default function HomePage() {
         setResumeBusy(false);
       }
     } catch (error) {
-      if (!isStale()) { setApprovalUnavailable(true); setResumeStatus("Could not check organizer approval. Retrying shortly."); }
+      if (!isStale()) {
+        setApprovalUnavailable(true);
+        setResumeStatus("Could not check organizer approval. Retrying shortly.");
+      }
       // Preserve Retry-After for the poller instead of retrying every three seconds.
       throw error;
     } finally {
@@ -1139,6 +1151,7 @@ export default function HomePage() {
           <DashboardColumns
             readiness={
               <ReadinessWidget
+                report={readinessReport}
                 readiness={readiness}
                 onSettingsRedirect={() => setActiveNav("settings")}
                 theme={theme}

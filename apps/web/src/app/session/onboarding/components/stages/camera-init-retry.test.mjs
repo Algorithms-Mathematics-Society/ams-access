@@ -105,7 +105,7 @@ test("camera retry replaces a live but muted handle after the user repairs acces
   assert.equal(session.current()?.getVideoTracks()[0], tracks.video[1]);
 });
 
-test("camera-stage automatic advance waits for Location, while non-macOS is unchanged", () => {
+test("camera-stage automatic advance needs camera readiness, not Location access", () => {
   let effect;
   function find(node) {
     if (
@@ -123,7 +123,7 @@ test("camera-stage automatic advance waits for Location, while non-macOS is unch
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
   for (const [isMac, locationReady, expected] of [
-    [true, false, 0],
+    [true, false, 1],
     [true, true, 1],
     [false, false, 1],
     [false, true, 1],
@@ -131,7 +131,6 @@ test("camera-stage automatic advance waits for Location, while non-macOS is unch
     let passed = 0;
     let timer;
     const run = new Function(
-      "locationPassed",
       "cancelPass",
       "phase",
       "readinessAction",
@@ -144,7 +143,6 @@ test("camera-stage automatic advance waits for Location, while non-macOS is unch
       "onPass",
       `${code}; return effect;`
     )(
-      !isMac || locationReady,
       () => {},
       "pass",
       () => ({ decision: "pass" }),

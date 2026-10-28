@@ -74,13 +74,14 @@ export function createMediaRequestOwner() {
   };
 }
 
-type MediaAvailability = { cameraAvailable: boolean; microphoneAvailable: boolean };
+type MediaAvailability = { cameraAvailable: boolean; microphoneAvailable: boolean | null };
 let availabilityInFlight: Promise<MediaAvailability> | null = null;
 
 /** Share overlapping baseline/preflight probes; never cache a finished hardware check. */
 export function getBrowserMediaAvailability(): Promise<MediaAvailability> {
   if (availabilityInFlight) return availabilityInFlight;
-  // getUserMedia triggers OS permission prompts, unlike enumerateDevices. Allow
+  // Only camera is checked here. Microphone permission belongs to its explicit
+  // onboarding step (or the user-initiated Settings test). Allow
   // 30s for the candidate to answer. Release each successful stream immediately.
   const probe = async (constraints: MediaStreamConstraints) => {
     try {
@@ -91,8 +92,8 @@ export function getBrowserMediaAvailability(): Promise<MediaAvailability> {
       return false;
     }
   };
-  availabilityInFlight = Promise.all([probe({ video: true }), probe({ audio: true })])
-    .then(([cameraAvailable, microphoneAvailable]) => ({ cameraAvailable, microphoneAvailable }))
+  availabilityInFlight = probe({ video: true })
+    .then((cameraAvailable) => ({ cameraAvailable, microphoneAvailable: null }))
     .finally(() => {
       availabilityInFlight = null;
     });

@@ -518,13 +518,13 @@ test("manual Retry accepts an authoritative heartbeat while navigator stays offl
   assert.equal(h.requests.length, 2, "unmounted Retry must not send another heartbeat");
 });
 
-test("an older manual Retry cannot overwrite newer authoritative session state", async () => {
+test("an older manual Retry cannot overwrite newer periodic authoritative session state", async () => {
   const h = harness();
   const stop = h.start(true);
   h.requests[0].resolve(live());
   await flush();
   h.retryBeatRef.current();
-  h.retryBeatRef.current();
+  h.intervals[0].callback();
   assert.equal(h.requests.length, 3);
   h.requests[2].resolve(live());
   await flush();
@@ -585,4 +585,23 @@ test("a single 401 is rechecked, and a success in between keeps the candidate in
   await flush();
   assert.deepEqual(h.redirects, []);
   stop();
+});
+
+test("3000 repeated manual retries share one pending heartbeat and do not replay after exit", async () => {
+  const h = harness();
+  const stop = h.start(false);
+  for (let i = 0; i < 3000; i++) h.retryBeatRef.current();
+  assert.equal(h.requests.length, 1);
+  h.requests[0].reject(new Error("offline"));
+  await flush();
+  h.retryBeatRef.current();
+  assert.equal(h.requests.length, 2, "an explicit retry is available after failure");
+  const oldRetry = h.retryBeatRef.current;
+  stop();
+  h.requests[1].resolve(live());
+  await flush();
+  oldRetry();
+  h.retryBeatRef.current();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.state.browserOnline, false, "late response must not update a closed room");
 });

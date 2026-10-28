@@ -52,13 +52,16 @@ test("stalled response body times out and the next resume polling tick can retry
         }),
     };
   });
-  const stop = startResumePolling(async () => {
-    try {
-      decisions.push(await latestResumeRequest("session"));
-    } catch (error) {
-      errors.push(error);
-    }
-  });
+  const stop = startResumePolling(
+    async () => {
+      try {
+        decisions.push(await latestResumeRequest("session"));
+      } catch (error) {
+        errors.push(error);
+      }
+    },
+    () => 0
+  );
   await settle();
   assert.equal(calls, 1);
   for (let i = 0; i < 7; i++) {
