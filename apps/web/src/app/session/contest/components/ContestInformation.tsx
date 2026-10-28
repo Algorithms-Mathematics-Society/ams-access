@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Info } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
@@ -39,6 +40,7 @@ export const ContestInformation = memo(function ContestInformation({
     <>
       <Button
         label="Contest info"
+        icon={<Info size={16} aria-hidden="true" />}
         variant="ghost"
         isDisabled={suspended}
         onClick={() => {
@@ -77,8 +79,8 @@ export const ContestInformation = memo(function ContestInformation({
               acceptance and then its verdict. Saving a draft on this device is not a submission.
             </Text>
             <Text>
-              Finish ends the attempt after the server confirms it. Leave restores device controls
-              without confirming a finish. Returning depends on the contest’s current entry rules.
+              Finish ends the attempt after the server confirms it. Recovery exits restore device
+              controls without confirming a finish. Returning depends on the contest’s current entry rules.
             </Text>
             <Heading level={3}>Rules and reference</Heading>
             <Text>

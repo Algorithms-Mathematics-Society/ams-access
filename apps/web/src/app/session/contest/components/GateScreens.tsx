@@ -1,4 +1,3 @@
-import { ServiceStatus } from "@/components/ServiceStatus";
 import { type useRouter } from "next/navigation";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { VStack } from "@astryxdesign/core/Stack";
@@ -62,7 +61,6 @@ export function ContestLoadErrorScreen({
         <VStack gap={5} style={{ width: "100%", maxWidth: "calc(var(--spacing-10) * 14)" }}>
           <Heading level={1}>Unable to open your contest</Heading>
           <Banner status="error" title="Contest load error" description={loadError} />
-          <ServiceStatus components={["contest_entry"]} localFailure={Boolean(onRetry)} expanded />
           {onRetry && <Button label="Retry" variant="primary" onClick={onRetry} />}
           {/* Always offered, even when cleanup failed: the release is local
               and works with the backend down, so a stuck candidate can leave. */}

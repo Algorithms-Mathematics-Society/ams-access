@@ -1,7 +1,5 @@
 "use client";
 
-import { ServiceStatus } from "@/components/ServiceStatus";
-
 /**
  * Sign-in, by handle.
  *
@@ -42,7 +40,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
-  const [serviceFailure, setServiceFailure] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<"handle" | "password" | null>(null);
   // `host · CODE` for a status-0. Shown small and quiet under the error: the
@@ -75,7 +72,6 @@ export default function LoginPage() {
     event.preventDefault();
     if (loading || loginInFlightRef.current || performance.now() < cooldownUntil.current) return;
     setError(null);
-    setServiceFailure(false);
     setDiagnostic(null);
     setInvalidField(null);
     const missingField = !loginId.trim() ? "handle" : !password ? "password" : null;
@@ -136,7 +132,6 @@ export default function LoginPage() {
         return;
       }
 
-      setServiceFailure(caught.status === 0 || caught.status === 429 || caught.status >= 500);
       if (caught.needsUpgrade) {
         // The one error where telling them exactly what to do is the whole
         // point: a version mismatch is unfixable from inside the app, so give
@@ -267,7 +262,6 @@ export default function LoginPage() {
                 This exam is proctored. After signing in, you’ll set up your camera and check your
                 device before entering a contest.
               </Text>
-              <ServiceStatus components={["sign_in", "support"]} localFailure={serviceFailure} />
               <Divider />
               <VStack gap={3} align="start">
                 {/* Credentials can be reissued by an invigilator, not recovered here. */}

@@ -1,7 +1,5 @@
 "use client";
 
-import { ServiceStatus } from "@/components/ServiceStatus";
-
 import { formatSource } from "./format-code";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
@@ -4455,22 +4453,6 @@ export default function ContestPageClient() {
         style={{ height: "100%", minHeight: 0, overflow: "hidden", paddingTop: topSafeInset }}
       >
         <KioskBanner />
-        <ServiceStatus
-          components={["judging", "submissions", "support"]}
-          localFailure={networkDisconnected}
-          suspended={
-            leaveConfirm ||
-            criticalOverlayActive ||
-            networkOverlayActive ||
-            submitConfirm ||
-            showSupportModal ||
-            showMediaToggleWarning ||
-            timeUpState !== "idle" ||
-            bellRung ||
-            Boolean(sessionEnded) ||
-            referenceOpen
-          }
-        />
         {lockGraceActive && lockGraceCountdown > 0 && (
           <LockGraceToast lockGraceCountdown={lockGraceCountdown} />
         )}
@@ -4482,7 +4464,6 @@ export default function ContestPageClient() {
           />
         )}
         <TopBar
-          onLeave={requestLeave}
           online={!networkDisconnected}
           markedQuestionIds={markedQuestionIds}
           workspaceControls={
@@ -4800,7 +4781,6 @@ export default function ContestPageClient() {
           <Heading level={2} id="network-disconnection-title">
             Reconnecting to the exam server
           </Heading>
-          <ServiceStatus components={["judging", "submissions", "support"]} localFailure expanded />
           <Text id="network-disconnection-assurance" role="status">
             {connectionDraftAssurance(unsavedOnDevice.length === 0)}
           </Text>
@@ -5175,7 +5155,6 @@ export default function ContestPageClient() {
               </HStack>
             </>
           )}
-          <Button label="Leave contest" variant="ghost" onClick={requestLeave} />
           {sentReports.some((report) => report.sessionId === sessionId) && (
             <VStack
               as="section"

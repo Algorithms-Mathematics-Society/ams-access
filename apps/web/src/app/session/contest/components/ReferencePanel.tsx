@@ -151,6 +151,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   const hostRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const selectedHitRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [path, setPath] = useState(HOME_PAGE);
@@ -172,9 +173,11 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     setQuery("");
     setHits([]);
     setCursor(0);
+    scrollRef.current?.focus({ preventScroll: true });
   }, []);
 
   const back = useCallback(() => {
+    scrollRef.current?.focus({ preventScroll: true });
     setHistory((past) => {
       if (past.length === 0) return past;
       setPath(past[past.length - 1]);
@@ -293,6 +296,10 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   }, [query]);
 
   const crumb = useMemo(() => labelOf(path), [path]);
+
+  useEffect(() => {
+    selectedHitRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [cursor, hits]);
 
   /** Results are driven from the search box, so a candidate never has to move
    *  to the mouse mid-exam: arrows move, Enter opens, Escape backs out. */
@@ -469,10 +476,12 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           {hits.map((hit, at) => (
             <button
               key={hit.path}
+              ref={at === cursor ? selectedHitRef : undefined}
               type="button"
               role="option"
               aria-selected={at === cursor}
-              onMouseEnter={() => setCursor(at)}
+              // Scrolling beneath a stationary pointer must not replace keyboard selection.
+              onMouseMove={() => setCursor(at)}
               onClick={() => go(hit.path)}
               style={{
                 display: "flex",
@@ -499,7 +508,15 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         </VStack>
       ) : null}
 
-      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 12px" }}>
+      <VStack
+        ref={scrollRef}
+        role="region"
+        aria-label="C++ reference article"
+        tabIndex={0}
+        gap={0}
+        paddingInline={3}
+        style={{ flex: 1, minHeight: 0, overflow: "auto", overscrollBehavior: "contain" }}
+      >
         {status.kind === "error" ? (
           <VStack gap={4} style={{ padding: "var(--spacing-6)" }}>
             <Text size="sm" style={{ fontWeight: 600 }}>
@@ -515,7 +532,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           </VStack>
         ) : null}
         <div ref={hostRef} />
-      </div>
+      </VStack>
     </VStack>
   );
 });

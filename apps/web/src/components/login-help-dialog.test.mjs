@@ -57,7 +57,6 @@ function harness() {
             }
           },
         };
-      if (name.endsWith("/ServiceStatus")) return { ServiceStatus: "ServiceStatus" };
       if (name.endsWith("/login-help")) return help;
       if (name.endsWith("/use-app-version"))
         return {

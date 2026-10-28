@@ -23,7 +23,6 @@ export interface FinishQuestionReview {
 }
 
 export interface TopBarProps {
-  onLeave?: () => void;
   contest: ContestMeta | null;
   clock: ClockSnapshot;
   handleContestExpiry: () => void | Promise<void>;
@@ -49,7 +48,6 @@ export interface TopBarProps {
 }
 
 export function TopBar({
-  onLeave,
   contest,
   clock,
   handleContestExpiry,
@@ -211,7 +209,6 @@ export function TopBar({
           icon={<Headset size={16} />}
           onClick={() => setShowSupportModal(true)}
         />
-        <Button label="Leave contest" variant="ghost" onClick={onLeave} />
         <Button
           ref={triggerRef}
           label="Finish contest"
@@ -334,7 +331,7 @@ export function TopBar({
             {submissionPending && (
               <Text role="status" color="secondary">
                 Waiting for your solution submission before finishing the attempt. You can still go
-                back and choose Leave contest.
+                back to the contest.
               </Text>
             )}
             {submitError && (

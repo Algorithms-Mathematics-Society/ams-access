@@ -2,7 +2,6 @@
 
 import { entryProgressLabel } from "./entry-progress";
 import { CloseAppButton } from "@/components/CloseAppButton";
-import { ServiceStatus } from "@/components/ServiceStatus";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BatteryStatus } from "../contest/components/BatteryStatus";
@@ -1364,7 +1363,6 @@ export default function OnboardingPage() {
           color: "var(--color-text-primary)",
         }}
       >
-        <ServiceStatus components={["contest_entry"]} localFailure={Boolean(contextError)} />
         <HStack as="header" justify="between" align="center" gap={4} wrap="wrap">
           <HStack gap={3} align="center">
             <AccessLogo />

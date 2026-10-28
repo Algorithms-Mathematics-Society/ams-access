@@ -363,6 +363,8 @@ Installed apps read the embedded index and bounded Brotli blocks through native
 `read_cppref_asset` IPC; development servers use the existing Brotli response headers.
 Missing bundles fail preparation rather than producing a broken installer. Reference
 load errors offer Retry, and rejected index/block loads remain retryable.
+Reference search keeps the keyboard-selected result visible; stationary pointer hover does not override arrow navigation. Opening a result or returning to a previous page focuses the scrollable article so keyboard scrolling stays in the reference.
+
 Reference HTML is sanitized before rendering: scripts, forms, frames, inline styles,
 event handlers and external image sources are removed. Article anchors carry only
 controlled navigation metadata, so clicks, keyboard activation and middle-clicks
@@ -399,23 +401,10 @@ help state. Authenticated `HelpRequestModal` and its receipts are unchanged.
 Production inbox receipt/staff coverage and packaged browser handoff on Windows,
 macOS and Linux require separate acceptance; browser tests do not establish them.
 
-## Public service status
-
-Candidate screens share one credential-free `/client/status` reader. A compact,
-fixed-height advisory row opens manually requested details; sign-in help and the
-reconnect/load-error views render details inline. Published incident context never
-changes authentication, setup policy, timers, drafts, submission or exit decisions.
-Status details close when a higher-priority contest overlay appears, without
-restoring focus behind that overlay. Current authority requires validated bounded
-JSON, a nondecreasing revision, trusted response time and unexpired publication.
-Failed refreshes retain explicitly last-known context. A missing deployment is
-not reported as healthy or as a confirmed outage. Polling is single-flight,
-jittered, paused offline/hidden, timeout/body bounded and backed off on failures.
-Native network access and operator publication remain deployment acceptance gates.
-
 ## Local exit and restoration
 
-Leave contest restores local controls without requesting attempt completion.
+The contest toolbar uses Finish contest as its only exit action. Recovery exits in
+blocked, disconnected and finishing states restore local controls without requesting attempt completion.
 Finish remains a separate server acknowledgement. Both routes preserve truthful
 draft/recovery outcomes; network requests and evidence upload never gate local
 recovery. Login/home/update screens offer normal Close app, with pending restoration
@@ -431,6 +420,6 @@ remain release acceptance checks.
 
 Readiness distinguishes unavailable checks from advisory warnings. Setup progress counts required checks rather than estimating a percentage. Approval requests remain single-flight and accepted even if local persistence fails; unavailable status retains explicitly last-known context and help stays reachable. Existing polling and entry policy remain unchanged.
 
-Contest information is an on-demand dialog with explicit UTC schedule, action meanings and reference availability; it adds no polling. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
+The contest header keeps Contest info with a circled information icon, Workspace, Help, Finish contest and any published Reference sheet. Contest info opens the schedule, action meanings and rules without polling. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
 
 Support previews and submits the same allowlisted automatic context. User-entered contact and message remain explicit fields, with credential-sharing guidance. Update screens describe an official-download handoff without claiming installation success. Native behavior and candidate comprehension remain acceptance checks.

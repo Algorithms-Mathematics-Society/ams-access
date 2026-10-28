@@ -1,7 +1,5 @@
 "use client";
 
-import { ServiceStatus } from "@/components/ServiceStatus";
-
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -175,7 +173,6 @@ function LoginHelpContent({ onClose, hasError, diagnostic }: Props) {
           <Button label="Back to sign in" onClick={onClose} />
         </HStack>
       </VStack>
-      <ServiceStatus components={["sign_in", "support"]} localFailure={hasError} expanded />
     </AccessDialog>
   );
 }
