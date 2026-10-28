@@ -10,6 +10,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
 import { ReferenceSheetButton } from "./ReferenceSheet";
+import { ContestInformation } from "./ContestInformation";
 import { BatteryStatus } from "./BatteryStatus";
 
 export interface FinishQuestionReview {
@@ -185,6 +186,10 @@ export function TopBar({
         style={{ flex: 1, minWidth: 0 }}
       >
         <ThemeToggle />
+        <ContestInformation
+          contest={contest}
+          suspended={finishReviewSuspended || submitConfirm || timeUpState !== "idle"}
+        />
 
         {workspaceControls}
         {contest?.reference_sheet && (

@@ -34,7 +34,7 @@ test("session exit and stale copies cannot authorize another contest's paste", (
   assert.equal(isAllowedClipboard("inside"), false);
 });
 test("editor paste handler prevents insertion and shows notice for short external text", () => {
-  const source = readFileSync(new URL("./editor-pane.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./editor-pane.tsx", import.meta.url), "utf8").replaceAll("\r\n", "\n");
   const body = source.slice(
     source.indexOf("        const text = event.clipboardData"),
     source.indexOf("      },\n    }),", source.indexOf("        const text = event.clipboardData"))

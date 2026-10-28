@@ -10,7 +10,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 
-import { formatHandle, formatPassword } from "./slip-format";
+import { formatHandle, formatPassword, HANDLE_SUFFIX } from "./slip-format";
 import styles from "../login.module.css";
 
 export function SlipForm({
@@ -49,8 +49,6 @@ export function SlipForm({
           label="Login ID"
           inputID="login-id"
           width="100%"
-          description="Use the ID from your contest slip. Pasting the full ID ending in @access keeps the part before @access."
-          descriptionID="login-id-help"
         >
           <HStack
             className={styles.fieldControl}
@@ -64,6 +62,11 @@ export function SlipForm({
               className={styles.fieldInput}
               value={loginId}
               onChange={(event) => setLoginId(formatHandle(event.target.value))}
+              onKeyDown={(event) => {
+                if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey) {
+                  event.preventDefault();
+                }
+              }}
               placeholder="e.g. test-student"
               autoComplete="username"
               // Preserve lowercase handles on mobile keyboards.
@@ -74,11 +77,26 @@ export function SlipForm({
               // Leave room for a full handle and keep overlong IDs invalid
               // instead of truncating them into a valid 64-character ID.
               maxLength={256}
-              aria-describedby={["login-id-help", errorDescription].filter(Boolean).join(" ")}
+              aria-describedby={["login-id-suffix", errorDescription].filter(Boolean).join(" ")}
               aria-invalid={invalidField === "handle" || undefined}
               autoFocus
               required
             />
+            <Text
+              id="login-id-suffix"
+              color="secondary"
+              style={{
+                flexShrink: 0,
+                alignSelf: "stretch",
+                display: "flex",
+                alignItems: "center",
+                paddingInline: "var(--spacing-3)",
+                borderLeft: "var(--border-width) solid var(--color-border)",
+                userSelect: "text",
+              }}
+            >
+              {HANDLE_SUFFIX}
+            </Text>
           </HStack>
         </Field>
 
