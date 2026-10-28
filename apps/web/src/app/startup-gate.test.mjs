@@ -213,6 +213,10 @@ test("a newer advisory release is a dismissible notice that never blocks", async
     const tree = h.render();
     assert.notEqual(tree.type, "UpdateRequiredDialog");
     assert.equal(h.calls(), token ? 1 : 0);
+    if (!token) {
+      assert.deepEqual(h.routes, ["/login"]);
+      continue;
+    }
     const banner = tree.props.children.props.banner;
     assert.equal(banner.type, "Banner");
     assert.equal(banner.props.isDismissable, true);
@@ -247,12 +251,12 @@ for (const [failure, error] of [
     }
   });
 }
-test("no token reveals welcome only after version gate", async () => {
+test("no token routes to login only after version gate", async () => {
   const h = harness(false);
   status(h.render(), "Checking your access…");
   h.mount();
   h.version.resolve(null);
   await flush();
-  assert.equal(h.render().props.children.type, "./WelcomeScreen");
+  assert.deepEqual(h.routes, ["/login"]);
   assert.equal(h.calls(), 0);
 });

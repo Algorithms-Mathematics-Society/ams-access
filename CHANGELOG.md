@@ -1,4 +1,11 @@
-# AMS Access 4.8.0
+# AMS Access 5.0.0
+
+## Fresh sign-in and contest navigation
+
+- Upgrading to 5.0.0 requires a fresh login. Tokens saved by older versions are not reused. Your login ID and password do not change.
+- After signing in to 5.0.0, normal saved-session and restart recovery continue. Unsent drafts, device identity and preferences are preserved.
+- Include Shubh’s merged login-ID field improvements, contest-information button, and keyboard scrolling/focus fixes for the C++ reference.
+- Fresh unauthenticated launches open the login screen after the mandatory version check.
 
 ## macOS readiness and recovery
 
@@ -15,7 +22,7 @@
 
 - Prepare sessions and readiness reports while candidates wait for the start, avoiding repeated entry writes at T=0 without adding an admission delay.
 - Name each Home policy warning with its detail, including displays, remote access and clock checks.
-- Simplify active controls: keep Help and Finish; remove the active Leave action, Contest info dialog and public service-status UI/polling. Recovery exits and contest announcements remain available.
+- Simplify active controls: keep Help and Finish; remove the active Leave action and public service-status UI/polling. Contest info remains available through an accessible information button. Recovery exits and contest announcements remain available.
 - Use platform TLS trust for native uploads/probes, with certificate and hostname verification enabled, so valid CA changes work consistently with the webview.
 - Remove unsupported device-mismatch/idle-timeout client branches; retain existing server-authoritative session and resume errors.
 - Preserve Retry-After guidance, stagger approval polling and coalesce repeated pending Check Again requests.

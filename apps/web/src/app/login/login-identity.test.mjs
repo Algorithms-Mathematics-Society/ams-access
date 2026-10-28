@@ -21,8 +21,8 @@ const compile = (source) =>
   }).outputText;
 const loginCode = compile(loginSource.slice(loginStart, loginEnd));
 const homeCode = compile(homeSource.slice(homeStart, homeEnd));
-const TOKEN = "ams_participant_token",
-  EXPIRY = "ams_participant_token_expires_at";
+const TOKEN = "ams_participant_token_v5",
+  EXPIRY = "ams_participant_token_expires_at_v5";
 let moduleId = 0;
 
 async function setup(t, { expiry = Date.now() + 3600000, failedKey = "all" } = {}) {

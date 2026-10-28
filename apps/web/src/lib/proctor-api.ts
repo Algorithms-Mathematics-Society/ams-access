@@ -149,8 +149,9 @@ export function clockSkewMs(): number {
 // in-memory-only token turned every restart into a re-login *and* an
 // invigilator-approved resume, when the session itself was still perfectly
 // valid.
-const TOKEN_KEY = "ams_participant_token";
-const TOKEN_EXPIRY_KEY = "ams_participant_token_expires_at";
+// v5 never restores pre-v5 bearer tokens. Later v5 restarts keep normal resume.
+const TOKEN_KEY = "ams_participant_token_v5";
+const TOKEN_EXPIRY_KEY = "ams_participant_token_expires_at_v5";
 
 let token: string | null = null;
 let signedOut = false;
@@ -218,6 +219,10 @@ export function setToken(value: string | null, expiresInSeconds?: number): void 
       return;
     }
     store.setItem(TOKEN_KEY, value);
+    // Older installations used these names; never leave a usable old session behind.
+    for (const key of ["ams_participant_token", "ams_participant_token_expires_at", "ams_candidate_token"]) {
+      try { store.removeItem(key); } catch { /* This build cannot restore these keys. */ }
+    }
     if (expiresInSeconds) {
       store.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + expiresInSeconds * 1000));
     }
@@ -236,7 +241,20 @@ export function restoreToken(): boolean {
   if (!store) return false;
   try {
     const saved = store.getItem(TOKEN_KEY);
-    if (!saved) return false;
+    if (!saved) {
+      // Clear identity/session metadata, not draft buffers or device preferences.
+      // Failed removals cannot restore an old token: v5 never reads its key.
+      for (const key of [
+        "ams_participant_token", "ams_participant_token_expires_at", "ams_candidate_token",
+        STORAGE_KEYS.ACTIVE_SESSION, STORAGE_KEYS.LAST_SESSION,
+        STORAGE_KEYS.ACTIVE_CONTEST, STORAGE_KEYS.ACTIVE_CONTEST_TITLE,
+        STORAGE_KEYS.DISPLAY_NAME, STORAGE_KEYS.UNLOCKED_CONTESTS,
+      ]) {
+        try { store.removeItem(key); } catch { /* Best-effort legacy cleanup. */ }
+      }
+      clearSignedInSupportReceipt();
+      return false;
+    }
 
     // The stored expiry was computed from the device clock. On a hard reload
     // there is no server clock yet, so let the server accept or reject it.

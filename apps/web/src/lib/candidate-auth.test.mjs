@@ -30,8 +30,8 @@ import {
   uploadIdentityPhoto,
 } from "./proctor-api.ts";
 
-const TOKEN_KEY = "ams_participant_token";
-const EXPIRY_KEY = "ams_participant_token_expires_at";
+const TOKEN_KEY = "ams_participant_token_v5";
+const EXPIRY_KEY = "ams_participant_token_expires_at_v5";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
@@ -895,4 +895,44 @@ test("failed release while finish is pending remains retryable without restartin
     attemptsBefore + 1
   );
   assert.equal(fixture.context.exitInFlightRef.current, true);
+});
+
+
+test("v5 rejects pre-upgrade tokens, preserves drafts and does not contact the API", () => {
+  localStorage.setItem("ams_participant_token", "pre-v5-secret");
+  localStorage.setItem("ams_candidate_token", "older-secret");
+  localStorage.setItem("ams_display_name", "previous candidate");
+  localStorage.setItem("ams_active_session", "previous session");
+  localStorage.setItem("ams_contest_answer_buffer:session:p1", "unsent work");
+  localStorage.setItem("ams_device_id", "same-device");
+  assert.equal(participantToken(), null);
+  assert.equal(authHeaders().Authorization, undefined);
+  assert.equal(localStorage.getItem("ams_participant_token"), null);
+  assert.equal(localStorage.getItem("ams_display_name"), null);
+  assert.equal(localStorage.getItem("ams_active_session"), null);
+  assert.equal(localStorage.getItem("ams_contest_answer_buffer:session:p1"), "unsent work");
+  assert.equal(localStorage.getItem("ams_device_id"), "same-device");
+});
+
+test("v5 ignores legacy credentials even when storage refuses their removal", () => {
+  localStorage.setItem("ams_participant_token", "stuck-old-token");
+  localStorage.removeItem = () => { throw new Error("blocked"); };
+  assert.equal(participantToken(), null);
+  setToken("fresh-v5-login");
+  assert.equal(participantToken(), "fresh-v5-login");
+});
+
+test("3,000 upgrade checks never send cached authorization or automatically log in", () => {
+  const previousFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = () => { requests++; throw new Error("upgrade must stay local"); };
+  try {
+    for (let i = 0; i < 3000; i++) {
+      localStorage.setItem("ams_participant_token", `old-${i}`);
+      assert.equal(participantToken(), null);
+    }
+    assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });

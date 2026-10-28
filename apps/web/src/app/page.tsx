@@ -149,7 +149,7 @@ export default function RootPage() {
         return;
       }
 
-      setGate("welcome");
+      router.replace("/login");
     })();
 
     return () => {
