@@ -202,6 +202,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify release gate against native Apple lipo
+        if: runner.os == 'macOS'
+        run: python3 scripts/verify-macos-release.test.py
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
