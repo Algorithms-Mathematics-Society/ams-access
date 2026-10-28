@@ -15,7 +15,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
+import { openSync, closeSync, linkSync } from "node:fs";
 import {
+  runArchiveTar,
+  safeArchiveListing,
   checkBundle,
   download,
   findReferenceDir,
@@ -358,6 +362,64 @@ test("rejects a bundle with a different release or malformed file mapping", () =
     manifest.release = "v20250209";
     writeFileSync(join(root, "manifest.json"), JSON.stringify(manifest));
     assert.match(checkBundle(root).reason, /invalid file entry/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function archiveFixture(withLink = false) {
+  const root = mkdtempSync(join(tmpdir(), "cppref tar spaces-"));
+  const source = join(root, "source"),
+    output = join(root, "output");
+  mkdirSync(source);
+  mkdirSync(output);
+  writeFileSync(join(source, "page.html"), "offline reference");
+  if (withLink) linkSync(join(source, "page.html"), join(source, "linked.html"));
+  // On Windows tmpdir already supplies a drive prefix. On Unix deliberately
+  // include a colon, reproducing GNU tar's remote-host parsing without Windows.
+  const archive = join(
+    root,
+    process.platform === "win32" ? "book spaces.tar.xz" : "D: book spaces.tar.xz"
+  );
+  const fd = openSync(archive, "w");
+  try {
+    const result = spawnSync(
+      "tar",
+      ["-cJf", "-", "page.html", ...(withLink ? ["linked.html"] : [])],
+      {
+        cwd: source,
+        stdio: ["ignore", fd, "pipe"],
+        encoding: "utf8",
+      }
+    );
+    assert.equal(result.status, 0, String(result.error || result.stderr));
+  } finally {
+    closeSync(fd);
+  }
+  return { root, archive, output };
+}
+
+test("real xz archive with drive/colon and spaces lists, validates and extracts locally", () => {
+  const { root, archive, output } = archiveFixture();
+  try {
+    const listed = runArchiveTar(archive, "t");
+    assert.equal(listed.status, 0, String(listed.error || listed.stderr));
+    assert.match(listed.stdout, /page.html/);
+    safeArchiveListing(archive);
+    const extracted = runArchiveTar(archive, "x", output);
+    assert.equal(extracted.status, 0, String(extracted.error || extracted.stderr));
+    assert.equal(readFileSync(join(output, "page.html"), "utf8"), "offline reference");
+    // Windows also catches leaked archive descriptors when removing the file.
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stdin archive validation still refuses hard links before extraction", () => {
+  const { root, archive, output } = archiveFixture(true);
+  try {
+    assert.throws(() => safeArchiveListing(archive), /contains links/);
+    assert.equal(existsSync(join(output, "page.html")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

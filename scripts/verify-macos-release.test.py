@@ -1,6 +1,9 @@
 """Exercise release rejection paths without a Mac or weakening host security."""
 import importlib.util
 import plistlib
+import platform
+import subprocess
+import sys
 import shutil
 import tempfile
 import unittest
@@ -40,6 +43,32 @@ class ArtifactGate(unittest.TestCase):
         self.save()
         with self.assertRaisesRegex(ValueError, 'identifier'):
             verify.check(self.app, '4.7.0', 'arm64', 'EXPECTED', self.native)
+
+    def test_lipo_input_precedes_variadic_architecture_arguments(self):
+        for arch in ('arm64', 'x86_64'):
+            calls = []
+            def native(command, **kwargs):
+                calls.append(command)
+                return self.native(command, **kwargs)
+            verify.check(self.app, '4.7.0', arch, 'EXPECTED', native)
+            self.assertEqual(calls[0], ['/usr/bin/lipo',
+                str(self.app / 'Contents/MacOS/access'), '-verify_arch', arch])
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'requires actual Apple lipo')
+    def test_real_lipo_accepts_the_generated_command_with_a_spaced_bundle_path(self):
+        executable = self.app / 'Contents/MacOS/access'
+        subprocess.run(['/usr/bin/clang', '-x', 'c', '-', '-o', str(executable)],
+                       input='int main(void) { return 0; }', text=True, check=True,
+                       capture_output=True)
+        def native(command, **kwargs):
+            if command[0] == '/usr/bin/lipo':
+                return subprocess.run(command, **kwargs)
+            return self.native(command, **kwargs)
+        arch = platform.machine()
+        verify.check(self.app, '4.7.0', arch, 'EXPECTED', native)
+        wrong = 'x86_64' if arch == 'arm64' else 'arm64'
+        with self.assertRaisesRegex(ValueError, 'lipo'):
+            verify.check(self.app, '4.7.0', wrong, 'EXPECTED', native)
 
     def test_every_native_failure_stops_release(self):
         for tool, flag in [('lipo','-verify_arch'), ('codesign','--verify'), ('codesign','--display'), ('spctl','--assess')]:
