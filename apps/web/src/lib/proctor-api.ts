@@ -91,7 +91,7 @@ export class ProctorApiError extends Error {
   /** Seconds to wait before retrying, when the server said. */
   get retryAfterSeconds(): number {
     const value = this.detail?.retry_after;
-    return typeof value === "number" ? value : 0;
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
   }
 
   /** Retrying will not help: the server rejected the request itself. */
@@ -357,13 +357,18 @@ async function request<T>(
         `Something went wrong on the server (ref ${requestId.slice(0, 8)}).`,
         res.status,
         "",
-        { request_id: requestId }
+        { request_id: requestId, ...retryDetail }
       );
     }
     if (raw && typeof raw === "object") {
       const structured = raw as { error?: string; code?: string; retry_after?: number };
       const detail =
-        retryDetail && typeof structured.retry_after !== "number"
+        retryDetail &&
+        !(
+          typeof structured.retry_after === "number" &&
+          Number.isFinite(structured.retry_after) &&
+          structured.retry_after > 0
+        )
           ? { ...structured, ...retryDetail }
           : structured;
       throw new ProctorApiError(

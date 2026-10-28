@@ -1,4 +1,5 @@
 "use client";
+import { isAllowedClipboard, registerAllowedClipboard } from "./clipboard-provenance";
 
 import { canNavigateDiagnostic, type DiagnosticNavigation } from "./compiler-diagnostics";
 import { report as reportViolation } from "@/lib/violation-queue";
@@ -537,17 +538,6 @@ function setNativeEscapeBlocked(blocked: boolean) {
   void tauri?.core.invoke("set_escape_blocked", { blocked }).catch(() => {});
 }
 
-/// F6 clipboard anti-cheat — distinguishes paste of editor-internal / allowed
-/// content (always permitted) from external content (soft-blocked when it looks
-/// like a code dump). Tracks the last thing copied *out of* the editor and any
-/// content explicitly marked allowed (e.g. the sample "Copy" button), normalised
-/// so trivial whitespace differences don't cause a false external classification.
-let lastInternalCopy = { text: "", ts: 0 };
-
-const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-
-/// Mark a string as an allowed clipboard source — pasting it back will be
-/// classified internal, not external. Used by the statement sample "Copy" button.
 /**
  * The pane currently on screen, so the toolbar can format without the
  * command being drilled through EditorPanel. Same shape as
@@ -559,10 +549,6 @@ let activeView: EditorView | null = null;
  *  nothing to change, which the caller uses to stay quiet. */
 export function formatActiveEditor(): boolean {
   return activeView ? formatView(activeView) : false;
-}
-
-export function registerAllowedClipboard(text: string) {
-  lastInternalCopy = { text: norm(text), ts: Date.now() };
 }
 
 /// Fire-and-forget proctoring event to the native audit log. Metadata only —
@@ -599,12 +585,6 @@ function logClipboardEvent(kind: string, detail: string, payload: Record<string,
   }
 }
 
-// External paste is soft-blocked only when it looks like a code dump (multi-line
-// or long); a short single-line paste (e.g. an identifier) is allowed but logged.
-const EXTERNAL_PASTE_MIN = 80;
-// Internal-copy provenance only counts for a few minutes — stale matches are external.
-const INTERNAL_COPY_TTL_MS = 5 * 60 * 1000;
-
 function createEditorExtensions(
   onCodeChange: (value: string) => void,
   editorTheme: ContestEditorThemeId,
@@ -626,7 +606,7 @@ function createEditorExtensions(
           view.state.selection.main.from,
           view.state.selection.main.to
         );
-        lastInternalCopy = { text: norm(sel), ts: Date.now() };
+        registerAllowedClipboard(sel);
         logClipboardEvent("clipboard_copy", "Editor copy", {
           ...metaPayload,
           source: "editor",
@@ -640,7 +620,7 @@ function createEditorExtensions(
           view.state.selection.main.from,
           view.state.selection.main.to
         );
-        lastInternalCopy = { text: norm(sel), ts: Date.now() };
+        registerAllowedClipboard(sel);
         logClipboardEvent("clipboard_copy", "Editor cut", {
           ...metaPayload,
           source: "editor",
@@ -653,18 +633,7 @@ function createEditorExtensions(
         const text = event.clipboardData?.getData("text/plain") ?? "";
         if (!text) return false;
 
-        const n = norm(text);
-        const prev = lastInternalCopy.text;
-        const fresh = Date.now() - lastInternalCopy.ts < INTERNAL_COPY_TTL_MS;
-        // Exact match always counts as internal. Substring matches (paste a piece
-        // of what you copied, or vice-versa) only count when the copied block was
-        // itself substantial — otherwise a one-char internal copy (e.g. "}") would
-        // whitelist any external dump that merely contains it, defeating the block.
-        const internal =
-          n.length > 0 &&
-          fresh &&
-          (n === prev ||
-            (prev.length >= EXTERNAL_PASTE_MIN && (prev.includes(n) || n.includes(prev))));
+        const internal = isAllowedClipboard(text);
 
         const lines = text.split("\n").length;
 
@@ -679,30 +648,18 @@ function createEditorExtensions(
           return false; // allow.
         }
 
-        // External, and large enough to look like a code dump → soft-block.
-        if (lines > 1 || text.length >= EXTERNAL_PASTE_MIN) {
-          event.preventDefault();
-          logClipboardEvent("clipboard_paste_blocked", "External paste blocked", {
-            ...metaPayload,
-            external: true,
-            len: text.length,
-            lines,
-            severity: "high",
-          });
-          onBlockedPaste?.();
-          return true; // handled → CodeMirror does NOT insert.
-        }
-
-        // External but trivial (short, single line) — allow, but log it.
-        logClipboardEvent("clipboard_paste", "External trivial paste", {
+        // External content is blocked regardless of length, including text
+        // copied before entering the contest. No clipboard content is logged.
+        event.preventDefault();
+        logClipboardEvent("clipboard_paste_blocked", "External paste blocked", {
           ...metaPayload,
           external: true,
-          trivial: true,
           len: text.length,
           lines,
-          severity: "low",
+          severity: "high",
         });
-        return false; // allow.
+        onBlockedPaste?.();
+        return true;
       },
     }),
     lineNumbers(),

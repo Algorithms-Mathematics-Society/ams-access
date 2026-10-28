@@ -337,7 +337,7 @@ test("session binding failures remain visible instead of navigating in the same 
   assert.doesNotMatch(branch, /router\.(?:push|replace)/);
 });
 
-test("final setup rechecks macOS Location before session creation and returns missing grants to camera setup", async () => {
+test("macOS entry no longer queries Location or blocks an otherwise ready candidate", async () => {
   for (const status of ["not_determined", "denied", "restricted", null, "authorized"]) {
     const stages = [],
       checks = [];
@@ -357,14 +357,17 @@ test("final setup rechecks macOS Location before session creation and returns mi
         setCurrentStage: (stage) => stages.push(stage),
         startSession: async () => {
           sessions++;
-          throw new Error("stop after Location gate");
+          throw new Error("stop at session creation");
         },
       },
     });
     await f.finalize();
-    assert.deepEqual(checks.filter((command) => command !== "disable_keyboard_intercept"), ["wifi_location_status"]);
-    assert.equal(sessions, status === "authorized" ? 1 : 0);
-    if (status !== "authorized") assert.deepEqual(stages, [6]);
+    assert.deepEqual(
+      checks.filter((command) => command !== "disable_keyboard_intercept"),
+      []
+    );
+    assert.equal(sessions, 1);
+    assert.deepEqual(stages, [12]);
   }
 });
 
@@ -384,19 +387,22 @@ test("final setup never queries Location on Windows or Linux", async () => {
           throw new Error(command);
         },
         startSession: async () => {
-          throw new Error("stop after Location gate");
+          throw new Error("stop at session creation");
         },
       },
     });
     await f.finalize();
-    assert.deepEqual(commands.filter((command) => command !== "disable_keyboard_intercept"), []);
+    assert.deepEqual(
+      commands.filter((command) => command !== "disable_keyboard_intercept"),
+      []
+    );
   }
 });
 
-test("final setup permits the Location bypass only with both a dev build and relaxed gating", async () => {
+test("neither production nor development setup asks for Location", async () => {
   for (const [env, relaxed, expectedQueries] of [
-    ["production", true, 1],
-    ["development", false, 1],
+    ["production", true, 0],
+    ["development", false, 0],
     ["development", true, 0],
   ]) {
     let queries = 0,
@@ -419,7 +425,7 @@ test("final setup permits the Location bypass only with both a dev build and rel
         },
         startSession: async () => {
           sessions++;
-          throw new Error("stop after Location gate");
+          throw new Error("stop at session creation");
         },
       },
     });

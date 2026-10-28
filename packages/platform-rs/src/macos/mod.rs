@@ -25,10 +25,6 @@ mod power;
 mod remote_access;
 mod system_settings;
 mod watchdog;
-mod wifi;
-pub use wifi::{
-    finish_location_request, location_status as wifi_location_status, request_location,
-};
 
 pub use allowlist::{enable_and_follow, resolve_allowlist};
 pub use displays::{scan_displays, DisplayReport};
@@ -923,9 +919,6 @@ pub fn open_privacy_pane(section: &str) -> Result<(), String> {
         }
         "screen_recording" => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-        }
-        "location" => {
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices"
         }
         "camera" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
         "microphone" => {
@@ -2157,128 +2150,6 @@ fn request_media_permission(audio: bool, completion: impl Fn(bool) + Send + 'sta
             },
             &block,
         );
-    }
-}
-
-// ── wireless ────────────────────────────────────────────────────────────────
-//
-// Saved-network listing uses networksetup; password joins use CoreWLAN.
-
-/// The wireless interface, usually `en0` but not on every model.
-fn wifi_interface() -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/networksetup")
-        .arg("-listallhardwareports")
-        .bounded_output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut lines = text.lines().peekable();
-    while let Some(line) = lines.next() {
-        if line.contains("Wi-Fi") || line.contains("AirPort") {
-            for next in lines.by_ref() {
-                if let Some(device) = next.strip_prefix("Device: ") {
-                    return Some(device.trim().to_string());
-                }
-                if next.trim().is_empty() {
-                    break;
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Association and visible SSID are separate: modern macOS can hide the name.
-fn current_ssid(interface: &str) -> (Option<String>, bool) {
-    let output = Command::new("/usr/sbin/networksetup")
-        .args(["-getairportnetwork", interface])
-        .bounded_checked_output()
-        .ok();
-    let current = output.as_ref().and_then(|out| {
-        crate::wifi_parse::parse_networksetup_current(&String::from_utf8_lossy(&out.stdout))
-    });
-    if current.is_some() {
-        return (current, true);
-    }
-    let summary = Command::new("/usr/sbin/ipconfig")
-        .args(["getsummary", interface])
-        .bounded_checked_output()
-        .ok();
-    let connected = summary.is_some_and(|out| {
-        crate::wifi_parse::parse_ipconfig_wifi_associated(&String::from_utf8_lossy(&out.stdout))
-    });
-    (None, connected)
-}
-
-/// Saved networks, with the joined one marked.
-pub fn wifi_scan() -> crate::WifiScan {
-    let Some(interface) = wifi_interface() else {
-        return crate::WifiScan::default();
-    };
-    let (current, connected) = current_ssid(&interface);
-    let Ok(output) = std::process::Command::new("/usr/sbin/networksetup")
-        .args(["-listpreferredwirelessnetworks", &interface])
-        .bounded_output()
-    else {
-        return crate::WifiScan::default();
-    };
-    if !output.status.success() {
-        return crate::WifiScan::default();
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let saved = crate::wifi_parse::parse_networksetup_list(&text);
-    let (rows, saved_only) = crate::wifi_parse::macos_scan_rows(
-        wifi::scan(&interface, false).unwrap_or_default(),
-        saved,
-        current.as_deref(),
-    );
-    crate::WifiScan {
-        networks: crate::wifi_parse::tidy(rows, current.as_deref()),
-        saved_only,
-        current,
-        connected,
-        supported: true,
-    }
-}
-
-/// Only the user's Rescan action performs an active radio scan.
-pub fn wifi_rescan() -> Result<crate::WifiScan, String> {
-    let interface = wifi_interface().ok_or("No wireless interface on this Mac.")?;
-    let nearby = wifi::scan(&interface, true)?;
-    let mut scan = wifi_scan();
-    scan.saved_only = nearby.is_empty();
-    let mut rows = nearby;
-    scan.networks
-        .retain(|saved| !rows.iter().any(|row| row.ssid == saved.ssid));
-    rows.extend(scan.networks);
-    scan.networks = crate::wifi_parse::tidy(rows, scan.current.as_deref());
-    scan.supported = true;
-    Ok(scan)
-}
-
-/// Join a network. A saved one needs no password.
-pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
-    let Some(interface) = wifi_interface() else {
-        return Err("No wireless interface on this Mac.".into());
-    };
-    if let Some(secret) = password.filter(|p| !p.is_empty()) {
-        return wifi::connect(&interface, ssid, secret);
-    }
-    let mut command = std::process::Command::new("/usr/sbin/networksetup");
-    command.args(["-setairportnetwork", &interface, ssid]);
-    // Associating plus DHCP routinely outlasts the 3 s default; a killed join reads as a failure.
-    match command.bounded_output_with_timeout(std::time::Duration::from_secs(20)) {
-        // networksetup exits 0 even when it failed, and says so on stdout.
-        Ok(out) => {
-            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if out.status.success() && text.is_empty() {
-                Ok(())
-            } else if !text.is_empty() {
-                Err(text)
-            } else {
-                Err("Could not join that Wi-Fi network.".into())
-            }
-        }
-        Err(error) => Err(format!("Could not run networksetup: {error}")),
     }
 }
 

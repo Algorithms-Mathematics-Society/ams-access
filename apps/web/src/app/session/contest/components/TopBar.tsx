@@ -12,7 +12,6 @@ import { type ContestMeta } from "./questions";
 import { ReferenceSheetButton } from "./ReferenceSheet";
 import { ContestInformation } from "./ContestInformation";
 import { BatteryStatus } from "./BatteryStatus";
-import { WifiControl } from "./WifiControl";
 
 export interface FinishQuestionReview {
   id: string;
@@ -181,7 +180,6 @@ export function TopBar({
         </Text>
       </HStack>
       <CountdownBadge clock={clock} onExpiry={handleContestExpiry} />
-      <WifiControl online={online} />
       <BatteryStatus />
       <HStack
         gap={2}

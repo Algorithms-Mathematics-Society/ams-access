@@ -324,30 +324,15 @@ Accepted submission receipts remain visible while history refresh recovers.
 Reset code asks for confirmation, restores the current language's starter, and
 saves through the existing draft path without changing other questions or attempts.
 
-The reconnect dialog expands Wi-Fi choices inline within its scrollable content,
-so network names and password controls stay inside the dialog at narrow sizes.
-The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
-Wi-Fi names and the connected network come only from the native OS integration.
-Browser builds show guidance to use system Wi-Fi settings, without sample networks,
-password prompts, simulated joins or background scan polling. Native scan failures
-show a retry message rather than invented networks. On macOS, CoreWLAN scans nearby
-networks with a saved-only fallback that warns profiles may be out of range.
-Stage 7 requires Location access on macOS only, alongside camera setup. The
-candidate selects **Allow Location access**; status is checked every second for up
-to 60 seconds after the request and whenever the window regains focus. Denied or
-restricted access blocks setup with System Settings guidance and a **Quit & reopen
-AMS Access** action that first releases setup controls. If no prompt appears, the
-Allow button remains available with manual Location Services guidance. Only
-`isGatingRelaxed()` in a development build may bypass it, with a visible “skipped in
-dev build” note. Production builds still require access even if that flag is set.
-The setup flow rechecks before creating a session and returns missing grants to
-Stage 7. This is a macOS-only setup gate, not a new shared readiness CheckKind;
-Windows/Linux UI and the policy fixture remain unchanged. The contest Wi-Fi picker
-only points to Location Services in System Settings when access is unavailable,
-since a system prompt cannot appear above the kiosk. No location updates are
-started, and location coordinates are never recorded or sent. If a child scan
-still cannot see names after authorization, a single in-app worker retries within
-the scan deadline.
+The app does not scan, join or manage Wi-Fi networks and does not ask for Location
+permission. After 12 seconds of a continuous observed connection failure, the
+recovery dialog offers **Check Again** and **Exit Contest**. Check Again rechecks
+the session; Exit Contest uses the existing draft-save confirmation and local
+restoration path. Candidates reconnect through OS settings and resume under the
+contest's current entry rules. Exiting does not Finish or submit the attempt.
+A browser offline event starts the 12-second grace immediately; a server-only
+failure starts it when the existing heartbeat reports failure. No extra polling
+is added, so the grace is not a promise of detecting every server outage in 12 seconds.
 
 Device setup lets AppShell own page scrolling to avoid nested viewport-height
 scroll regions. The MediaPipe loader routes its exact CPU delegate startup
@@ -379,6 +364,7 @@ checked again. Reusing the scan takes a fresh reference photo during presence
 verification, saves it through the native face-image command and uploads it through
 the existing session identity-photo endpoint. Capture, save or upload failure runs
 the full face scan. Missing or invalid recovery data runs complete setup.
+
 ## Public sign-in help
 
 Login opens `LoginHelpDialog` without reading participant authentication or sending

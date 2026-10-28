@@ -44,7 +44,9 @@ export function startResumePolling(
   };
   const poll = async () => {
     if (cancelled) return;
-    let delay = 3000;
+    // Spread healthy approval polling too: a hall entering together must not
+    // remain synchronized after recovery. Never poll faster than the old 3s floor.
+    let delay = 3000 + random() * 1000;
     try {
       await refresh(() => cancelled);
       failures = 0;

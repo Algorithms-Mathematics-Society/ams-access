@@ -630,20 +630,6 @@ export default function OnboardingPage() {
               await invokeStrict("disable_keyboard_intercept");
             }
           );
-      // Recheck before creating a session: access can change after the camera stage.
-      if (
-        (deviceState.platform ?? platform)?.toLowerCase().startsWith("mac") &&
-        !(process.env.NODE_ENV === "development" && isGatingRelaxed()) &&
-        (await wait(
-          "Location access check",
-          () => invokeStrict<string>("wifi_location_status"),
-          5000
-        )) !== "authorized"
-      ) {
-        setCurrentStage(6);
-        setReadyForStart(false);
-        return;
-      }
       if (isGatingRelaxed()) {
         // TEST-ONLY (build-time flag): present a healthy network + installed helper
         // so the readiness gate treats network as fine. Default builds use the real
@@ -1805,7 +1791,6 @@ export default function OnboardingPage() {
                               policy={effectivePolicy}
                               overrideActive={cameraOverride}
                               platform={platform}
-                              onQuitAndReopen={() => void quitAndReopen()}
                             />
                           )}
                           {currentStage === 7 && (

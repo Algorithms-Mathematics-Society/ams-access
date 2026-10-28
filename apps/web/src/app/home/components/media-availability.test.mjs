@@ -83,22 +83,23 @@ test("a timed-out permission request stops a stream that arrives late", async (t
   assert.equal(stopped, 1);
 });
 
-test("overlapping readiness probes share camera/mic requests, release tracks, and later rescan freshly", async (t) => {
+test("Home shares camera probes and never requests microphone access, including rescans", async (t) => {
   let calls = 0,
     stops = 0;
-  media(t, async () => {
+  media(t, async (constraints) => {
+    assert.deepEqual(constraints, { video: true });
     calls++;
     return { getTracks: () => [{ stop: () => stops++ }] };
   });
   const first = getBrowserMediaAvailability(),
     second = getBrowserMediaAvailability();
   assert.equal(first, second);
-  assert.deepEqual(await first, { cameraAvailable: true, microphoneAvailable: true });
+  assert.deepEqual(await first, { cameraAvailable: true, microphoneAvailable: null });
+  assert.equal(calls, 1);
+  assert.equal(stops, 1);
+  await getBrowserMediaAvailability();
   assert.equal(calls, 2);
   assert.equal(stops, 2);
-  await getBrowserMediaAvailability();
-  assert.equal(calls, 4);
-  assert.equal(stops, 4);
 });
 
 test("request ownership rejects superseded grants and keeps camera and microphone independent", async () => {
@@ -436,7 +437,7 @@ test("missing mediaDevices produces an unavailable report rather than an unhandl
   media(t, undefined);
   assert.deepEqual(await getBrowserMediaAvailability(), {
     cameraAvailable: false,
-    microphoneAvailable: false,
+    microphoneAvailable: null,
   });
 });
 

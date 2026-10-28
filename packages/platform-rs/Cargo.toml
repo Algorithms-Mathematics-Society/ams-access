@@ -29,7 +29,6 @@ windows = { version = "0.61", features = [
     "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
-    "Win32_NetworkManagement_WiFi",
     "Win32_NetworkManagement_Ndis",
     "Win32_Security",
     "Win32_System_Com",

@@ -13,36 +13,6 @@ pub struct BatteryStatus {
     pub plugged_in: Option<bool>,
 }
 
-/// One wireless network the machine can see.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct WifiNetwork {
-    pub ssid: String,
-    /// 0-100 where the OS reports it, else None.
-    pub signal: Option<u8>,
-    pub secured: bool,
-    /// Known to the OS as a saved network (macOS).
-    pub saved: bool,
-    pub current: bool,
-}
-
-/// What a scan found, and which radio it came from.
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct WifiScan {
-    pub networks: Vec<WifiNetwork>,
-    /// Nearby scanning failed or exposed no names; using saved profiles.
-    pub saved_only: bool,
-    /// Whether Wi-Fi is associated, even when macOS hides its name.
-    pub connected: bool,
-    /// The SSID currently joined, if the OS exposes it.
-    pub current: Option<String>,
-    /// False when there is no wireless interface, or the OS refused to list.
-    /// The UI shows nothing at all rather than an empty list, which would
-    /// read as "no networks in range".
-    pub supported: bool,
-}
-
-pub mod wifi_parse;
-
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         pub mod linux;

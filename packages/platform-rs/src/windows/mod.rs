@@ -10,7 +10,6 @@ pub mod instance;
 mod keyboard_policy;
 mod power_request;
 mod registry_recovery;
-mod wifi;
 pub use hook_delivery::{DeliverySnapshot, DeliveryStatus};
 pub use registry_recovery::RegistryLockdownStatus;
 
@@ -2348,29 +2347,4 @@ mod firewall_inventory_query_tests {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
     }
-}
-
-// ── wireless ────────────────────────────────────────────────────────────────
-//
-/// Cached wireless visibility and association, preserving native SSID bytes.
-pub fn wifi_scan() -> crate::WifiScan {
-    wifi::scan()
-}
-
-/// Remove only verified app-created Wi-Fi profiles, waiting for any active join.
-pub fn cleanup_wifi_profiles(shutdown: bool) -> Result<(), String> {
-    wifi::cleanup(shutdown)
-}
-
-/// Explicit user rescan; background reads do not trigger radio scans.
-pub fn wifi_rescan() -> Result<crate::WifiScan, String> {
-    wifi::rescan()
-}
-
-/// Join a network.
-///
-/// Native WLAN accepts an in-memory temporary profile, so a failed join never
-/// replaces a saved profile or leaves a password in a temporary file.
-pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
-    wifi::connect(ssid, password.unwrap_or(""))
 }
