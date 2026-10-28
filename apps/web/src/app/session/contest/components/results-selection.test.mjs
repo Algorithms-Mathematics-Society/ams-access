@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { candidateCheckFailed } from "../result-summary.ts";
 import { mergeAttemptTestResults } from "../attempt-adapter.ts";
 
 const { outputText } = ts.transpileModule(
@@ -38,6 +39,7 @@ function harness() {
           },
         };
       if (name === "react/jsx-runtime") return { jsx: () => null, jsxs: () => null };
+      if (name === "../result-summary") return { candidateCheckFailed };
       if (name === "../sample-join") return { sampleOrdinals: () => [] };
       if (name === "../family-summary") return { GATE_KIND: "symbolic" };
       return {};

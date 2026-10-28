@@ -158,6 +158,12 @@ Camera settings retain observed device-list states independently of permission/c
 
 Linux keyboard setup checks are temporary native probes with restoration before completion. Show aggregate capability separately from individual shortcut enforcement: individual rows remain “Not individually verified.” Keep one pending probe, discard late results after navigation, and provide warning/continuation according to contest policy after the presentation deadline. A successful settings check must not imply gesture prevention, complete shortcut coverage, or Cinnamon support.
 
+macOS requires Location access during camera setup so the candidate can reconnect
+using nearby Wi-Fi networks. Keep the permission row, System Settings and safe
+relaunch actions outside the contest kiosk; the contest picker gives Settings
+guidance without requesting permission. Only relaxed development builds may skip
+this setup gate, with a visible note. Windows and Linux have no Location step.
+
 Network-helper warnings use explicit retry or policy-aware warning continuation. Recovery feedback reports verified state: fulfilled commands without a successful pending-state query are insufficient to declare everything restored. Keep desktop and network recovery claims separate when their outcomes differ.
 
 Published contest references use an ordinary in-app overlay, below mandatory
@@ -176,3 +182,12 @@ history. Keep pending retries tied to their original identifiers. Support must
 yield to mandatory overlays without changing exam state. The organization portal
 owns the separate staff inbox. Device incident reporting with diagnostics remains
 a separate contest action.
+Recent same-device resumes may reuse a passed face scan for five minutes with
+the same camera. Setup says when it reuses the scan and performs a fresh presence
+check with a new reference photo saved through the normal native capture and
+identity-photo upload paths. Capture or upload failure runs the full face scan;
+volatile device checks and final entry policy remain authoritative.
+Signed-out sign-in help uses the shared dialog with local guidance and a public
+browser contact handoff. Keep the URL/address selectable, diagnostics explicitly
+reviewable, and copy/open feedback distinct from message delivery. It must remain
+usable without participant authentication or network-dependent initialization.

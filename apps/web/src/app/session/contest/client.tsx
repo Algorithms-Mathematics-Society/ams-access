@@ -1,5 +1,7 @@
 "use client";
 
+import { ServiceStatus } from "@/components/ServiceStatus";
+
 import { formatSource } from "./format-code";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
@@ -11,6 +13,8 @@ import { Text, Heading } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Dialog } from "@astryxdesign/core/Dialog";
+import { AccessDialog } from "@/components/AccessDialog";
+import { releaseDeviceControls, releaseRestoreStatus } from "@/lib/release-device-controls";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
@@ -266,6 +270,7 @@ declare global {
           }>
         >;
         getCurrentWindow: () => {
+          close: () => Promise<void>;
           setFullscreen: (v: boolean) => Promise<void>;
           /** macOS: full-screen without a Space of its own. Elsewhere the same as setFullscreen. */
           setSimpleFullscreen: (v: boolean) => Promise<void>;
@@ -532,6 +537,7 @@ export default function ContestPageClient() {
   // whether backing up has been given up for this session.
   const serverDraftRef = useRef<Record<string, string>>({});
   const draftBackupOffRef = useRef(false);
+  const draftBackupFlightRef = useRef(false);
   const submitInFlightRef = useRef(false);
   // Retain an unacknowledged request only for retries of its exact payload.
   const submitKeyRef = useRef<{
@@ -551,6 +557,9 @@ export default function ContestPageClient() {
   // locally). The exit teardown still runs — they are never trapped.
   const [submitWarning, setSubmitWarning] = useState<string | null>(null);
   const [submitConfirm, setSubmitConfirm] = useState(false);
+  const [leaveConfirm, setLeaveConfirm] = useState(false);
+  const [leaveDraftSaved, setLeaveDraftSaved] = useState(false);
+  const leavingWorkspaceRef = useRef(false);
   const [proctoringOk, setProctoringOk] = useState(true);
   // Drives the full-screen soft-block/grace-period ONLY — a cheap, fast (1s)
   // camera-stream-health check, NOT real face detection. Left untouched here.
@@ -789,7 +798,7 @@ export default function ContestPageClient() {
     (async () => {
       try {
         const engaged = await invoke<boolean>("is_lockdown_engaged");
-        if (cancelled) return;
+        if (cancelled || leavingWorkspaceRef.current) return;
         if (engaged) {
           setLockGate("ok");
         } else {
@@ -801,7 +810,7 @@ export default function ContestPageClient() {
         }
       } catch {
         // Tauri unavailable (dev/browser) — no real lockdown exists here.
-        if (!cancelled) setLockGate("ok");
+        if (!cancelled && !leavingWorkspaceRef.current) setLockGate("ok");
       }
     })();
     return () => {
@@ -1410,7 +1419,7 @@ export default function ContestPageClient() {
       // `getSession` validates ownership server-side — someone else's session
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
       let live = await getSession(stored.id);
-      if (disposed) return;
+      if (disposed || leavingWorkspaceRef.current) return;
       unauthorizedAtRef.current = null;
       livePhase = live.phase;
 
@@ -1421,14 +1430,14 @@ export default function ContestPageClient() {
       }
 
       const { index, questions } = await loadContestPaper(contestId);
-      if (disposed) return;
+      if (disposed || leavingWorkspaceRef.current) return;
       if (live.status === "pending" && index.phase === "running") {
         // Created during verification and never activated: heartbeat does not
         // promote it, and run/submit refuse a pending session. Re-open it —
         // the same idempotent POST onboarding uses, with the server's own
         // eligibility checks — now that the server says the clock started.
         live = await startSession({ contestUid: contestId });
-        if (disposed) return;
+        if (disposed || leavingWorkspaceRef.current) return;
         if (live.status === "pending") throw new Error("Session is not active yet.");
       }
       // Held for the cleanup below. Blob URLs are document references the
@@ -1444,6 +1453,7 @@ export default function ContestPageClient() {
         id: index.uid,
         reference_sheet: initialReferenceSheet,
         title: index.title,
+        start_at: index.starts_at,
         end_at: index.ends_at,
         status: index.phase === "running" ? "ACTIVE" : index.phase.toUpperCase(),
         // cxxprobe judges C++ only, so there is nothing to negotiate. The old
@@ -2205,7 +2215,7 @@ export default function ContestPageClient() {
     try {
       // Remember which session this was before dropping it. The results
       // screen opens after this runs and has nothing else to go on.
-      if (!preserveSession) {
+      if (!preserveSession && readStoredSession()?.id === sessionId) {
         const finished = localStorage.getItem(ACTIVE_SESSION_KEY);
         if (finished) localStorage.setItem(STORAGE_KEYS.LAST_SESSION, finished);
         localStorage.removeItem(ACTIVE_SESSION_KEY);
@@ -2213,12 +2223,9 @@ export default function ContestPageClient() {
     } catch {
       // ignore storage errors
     }
-    // Capture is synchronous before upload starts. Release local controls while
-    // the upload runs, then await delivery before navigating away.
-    const exitPhoto = startedExitPhoto ?? exitPhotoRef.current().catch(() => {});
-
-    // The one place the camera is genuinely finished with: the exam is over
-    // and the candidate is leaving the locked-down shell.
+    // Capture reads the bearer synchronously before upload starts. An already
+    // started photo is reused after sign-out; upload never gates local recovery.
+    void (startedExitPhoto ?? exitPhotoRef.current()).catch(() => {});
     cameraClosedRef.current = true;
     try {
       cameraSession.release();
@@ -2227,74 +2234,47 @@ export default function ContestPageClient() {
     }
     cameraStreamRef.current = null;
     setCameraStream(null);
-    try {
-      const win = window.__TAURI__?.window.getCurrentWindow();
-      if (win) {
-        await withTimeout(win.setFullscreen(false), 5000, "Window release timed out").catch(() => {
-          released = false;
-        });
-        await withTimeout(win.setAlwaysOnTop(false), 5000, "Window release timed out").catch(() => {
-          released = false;
-        });
-        await withTimeout(win.setDecorations(true), 5000, "Window release timed out").catch(() => {
-          released = false;
-        });
-      }
-    } catch {
-      released = false;
-    }
-    // Even if the native unlock fails, the window chrome above is already
-    // restored. What must not happen is leaving quietly: a candidate whose
-    // trackpad gestures did not come back is told which settings, and how to
-    // fix them, on the screen they see next.
-    let unlockFailed = false;
-    try {
-      if (window.__TAURI__) {
-        await withTimeout(
-          window.__TAURI__.core.invoke("unlock_desktop"),
-          10000,
-          "Device release timed out"
-        );
-      }
-    } catch {
-      unlockFailed = true;
-    }
-    // The network lockdown (macOS PF / firewall allowlist) is released apart
-    // from the desktop, and the restore status below does not track it.
-    let networkFailed = false;
-    try {
-      if (window.__TAURI__) {
-        await withTimeout(
-          window.__TAURI__.core.invoke("disable_network_lockdown"),
-          10000,
-          "Network release timed out"
-        );
-      }
-    } catch {
-      networkFailed = true;
-    }
-    const status = window.__TAURI__
-      ? await withTimeout(
-          window.__TAURI__.core.invoke<RestoreStatus>("get_lockdown_restore_status"),
-          5000,
-          "Restore status timed out"
-        ).catch(() => null)
-      : null;
-    if (status?.pending || unlockFailed || networkFailed || (window.__TAURI__ && status === null)) {
-      setRestoreStatus(status?.pending ? status : { pending: true, items: status?.items ?? [] });
-      released = false;
-    } else {
-      setRestoreStatus(null);
-    }
-    await exitPhoto;
+    const release = await releaseDeviceControls();
+    const pending = releaseRestoreStatus(release);
+    setRestoreStatus(
+      released
+        ? pending
+        : {
+            pending: true,
+            items: [
+              ...(pending?.items ?? []),
+              { label: "Camera release could not be confirmed", fix_command: "" },
+            ],
+          }
+    );
+    released = released && (release.outcome === "confirmed" || release.outcome === "browser");
     return released;
   }
 
   // Redirects release native controls without finishing the exam or removing
-  // its recovery record. Revoke upload credentials as soon as the exit-photo
-  // request starts; the native recording binding remains for teardown evidence.
-  async function redirectAfterRelease(destination: string) {
-    if (redirectInFlightRef.current || exitInFlightRef.current) return;
+  // its recovery record. Revoke upload credentials while retaining the native
+  // recording binding, so teardown evidence remains with the same session.
+  function requestLeave() {
+    // Refresh local persistence before describing it in the confirmation.
+    let saved = false;
+    try {
+      saved = redirectSaveRef.current() && unsavedOnDeviceRef.current.length === 0;
+    } catch {
+      /* Save state remains unverified. */
+    }
+    setLeaveDraftSaved(saved);
+    setSubmitConfirm(false);
+    setLeaveConfirm(true);
+  }
+
+  async function redirectAfterRelease(destination: string, allowPendingFinish = false) {
+    if (
+      redirectInFlightRef.current ||
+      (exitInFlightRef.current && !allowPendingFinish && !leavingWorkspaceRef.current)
+    )
+      return;
+    leavingWorkspaceRef.current = true;
+    setLeaveConfirm(false);
     redirectInFlightRef.current = true;
     setPendingRedirect(destination);
     setLoadError(null);
@@ -2315,33 +2295,38 @@ export default function ContestPageClient() {
         // Storage failures must never prevent releasing native controls.
       }
       if (destination === "/login") {
-        // The request reads its bearer synchronously before its first await.
-        // Sign out now, without waiting for the upload or native cleanup.
+        // Start the evidence request while its bearer still exists, then revoke
+        // credentials immediately. Do not wait for optional evidence delivery.
         exitPhoto = exitPhotoRef.current().catch(() => {});
         signOut();
       }
-      try {
-        if (window.__TAURI__) {
-          await withTimeout(
-            window.__TAURI__.core.invoke("configure_event_stream", {
-              apiUrl: "",
-              sessionId: null,
-              token: null,
-              preserveBinding: true,
-            }),
-            5000,
-            "Credential cleanup timed out"
-          );
+      // Start local restoration before credential cleanup. A stalled event
+      // stream must not delay restoring fullscreen, input or network controls.
+      const releaseWork = runExitTeardown(true, exitPhoto);
+      const revokeWork = (async () => {
+        try {
+          if (window.__TAURI__) {
+            await withTimeout(
+              window.__TAURI__.core.invoke("configure_event_stream", {
+                apiUrl: "",
+                sessionId: null,
+                token: null,
+                preserveBinding: true,
+              }),
+              5000,
+              "Credential cleanup timed out"
+            );
+          }
+        } catch {
+          revoked = false;
         }
-      } catch {
-        revoked = false;
-      }
-      const released = await runExitTeardown(true, exitPhoto);
+      })();
+      const [released] = await Promise.all([releaseWork, revokeWork]);
       if (released && revoked) {
         router.replace(destination);
       } else {
         setLoadError(
-          "Device cleanup could not be confirmed. Your saved work and session recovery are kept. Retry cleanup before continuing; ask an invigilator if device controls remain restricted."
+          "Device cleanup could not be confirmed. Session recovery is kept, but a local draft is not a submitted solution. Retry restoration; ask an invigilator if device controls remain restricted."
         );
       }
     } finally {
@@ -2353,12 +2338,14 @@ export default function ContestPageClient() {
   // A finish acknowledgement and a draft-save acknowledgement are separate.
   // Retry is bounded; teardown still runs on failure so nobody is trapped.
   async function handleSubmitConfirmed() {
-    if (exitInFlightRef.current) return;
+    if (exitInFlightRef.current || leavingWorkspaceRef.current) return;
     // Check the ref as well as disabling the button: React may not have rendered
     // the submitting state yet when a second action arrives. Judging can continue
     // after acceptance; only the outstanding submission request blocks finish.
     if (submitInFlightRef.current) {
-      setSubmitError("Wait for your solution submission to finish before exiting.");
+      setSubmitError(
+        "Wait for your solution submission to finish before finishing the attempt. You can still leave the workspace."
+      );
       return;
     }
     exitInFlightRef.current = true;
@@ -2370,7 +2357,9 @@ export default function ContestPageClient() {
     const receipt = sessionId
       ? await requestFinish({
           save: handleSave,
+          isCancelled: () => leavingWorkspaceRef.current,
           finish: async () => {
+            if (leavingWorkspaceRef.current) throw new Error("Workspace left");
             const controller = new AbortController();
             try {
               return await withTimeout(
@@ -2399,6 +2388,9 @@ export default function ContestPageClient() {
             ),
         })
       : { confirmed: false, draftSaved: false };
+    // Leaving retains recovery for normal server reconciliation. A late finish
+    // reply must not clear another session or navigate back into this workspace.
+    if (leavingWorkspaceRef.current) return;
     const draftSaved = receipt.draftSaved && unsavedOnDeviceRef.current.length === 0;
     setFinalDraftSaved(draftSaved);
     if (!draftSaved)
@@ -2908,32 +2900,39 @@ export default function ContestPageClient() {
     if (!sessionId || questions.length === 0) return;
     let cancelled = false;
     const backup = async () => {
-      for (const question of questions) {
-        if (cancelled || draftBackupOffRef.current) return;
-        const next = draftBackup(
-          readAnswerBuffer(localStorage, sessionId, question.id),
-          serverDraftRef.current[question.id]
-        );
-        if (!next) continue;
-        try {
-          const saved = await saveDraft(sessionId, question.id, {
-            source: next.source,
-            language: next.language,
-            clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
-          });
-          // The server answers with what it holds, which is another device's
-          // copy when ours was stale; the next tick then supersedes it.
-          draftRevisionsRef.current[question.id] = Math.max(
-            draftRevisionsRef.current[question.id] ?? 0,
-            saved.client_revision
+      if (cancelled || draftBackupFlightRef.current) return;
+      draftBackupFlightRef.current = true;
+      try {
+        for (const question of questions) {
+          if (cancelled || draftBackupOffRef.current) return;
+          const next = draftBackup(
+            readAnswerBuffer(localStorage, sessionId, question.id),
+            serverDraftRef.current[question.id]
           );
-          serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
-        } catch (caught) {
-          if (caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
-            draftBackupOffRef.current = true;
+          if (!next) continue;
+          try {
+            const saved = await saveDraft(sessionId, question.id, {
+              source: next.source,
+              language: next.language,
+              clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
+            });
+            if (cancelled) return;
+            // The server answers with what it holds, which is another device's
+            // copy when ours was stale; the next tick then supersedes it.
+            draftRevisionsRef.current[question.id] = Math.max(
+              draftRevisionsRef.current[question.id] ?? 0,
+              saved.client_revision
+            );
+            serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
+          } catch (caught) {
+            if (!cancelled && caught instanceof ProctorApiError && stopsDraftBackup(caught.status)) {
+              draftBackupOffRef.current = true;
+            }
+            return;
           }
-          return;
         }
+      } finally {
+        draftBackupFlightRef.current = false;
       }
     };
     const id = setInterval(() => void backup(), DRAFT_BACKUP_MS);
@@ -3046,7 +3045,10 @@ export default function ContestPageClient() {
     const unlisten = listen<{ kind: string; detail: string; payload?: { slept_secs?: number } }>(
       "lockdown-event",
       (event) => {
-        if (event?.kind !== "system_woke") return;
+        if (cancelled || event?.kind !== "system_woke") return;
+        // performance.now() can pause during Mac sleep. Refresh the server
+        // anchor immediately through the existing single-flight heartbeat.
+        retryBeatRef.current?.();
         const sleptSecs = event.payload?.slept_secs ?? 0;
         const body = {
           category: "system_sleep",
@@ -4337,29 +4339,15 @@ export default function ContestPageClient() {
     !bellRung &&
     !sessionEnded &&
     timeUpState === "idle";
-  const networkDialogRef = useFocusTrap<HTMLDialogElement>(networkOverlayActive);
+  const networkDialogRef = useFocusTrap<HTMLDialogElement>(networkOverlayActive && !leaveConfirm);
 
-  // How long the connection has to stay down before the dialog offers a way
-  // out. A blip of a few seconds reconnects on its own and should not tempt
-  // anyone out of their exam; a dead network never does, and until now left
-  // them with a modal that has no buttons and a desktop they cannot reach.
-  const OFFLINE_EXIT_AFTER_MS = 20_000;
-  const [offlineTooLong, setOfflineTooLong] = useState(false);
-  useEffect(() => {
-    if (!networkOverlayActive) {
-      setOfflineTooLong(false);
-      return;
-    }
-    const id = setTimeout(() => setOfflineTooLong(true), OFFLINE_EXIT_AFTER_MS);
-    return () => clearTimeout(id);
-  }, [networkOverlayActive]);
   const lockViolationDialogRef = useFocusTrap<HTMLDivElement>(
-    lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle"
+    lockGraceActive && lockGraceCountdown === 0 && timeUpState === "idle" && !leaveConfirm
   );
   // No focus trap: the candidate is still typing, and this must not take
   // the keyboard away to tell them to look up.
   const mediaWarningDialogRef = useFocusTrap<HTMLDivElement>(
-    showMediaToggleWarning && !networkOverlayActive && timeUpState === "idle",
+    showMediaToggleWarning && !leaveConfirm && !networkOverlayActive && timeUpState === "idle",
     cancelMediaToggle
   );
   const supportChatActive =
@@ -4372,10 +4360,14 @@ export default function ContestPageClient() {
   const closeSupportChat = useCallback(() => setShowSupportChat(false), []);
   const supportChatDialogRef = useFocusTrap<HTMLDivElement>(supportChatActive, closeSupportChat);
   const supportDialogRef = useFocusTrap<HTMLDivElement>(
-    showSupportModal && !criticalOverlayActive && !networkOverlayActive && timeUpState === "idle",
+    showSupportModal &&
+      !leaveConfirm &&
+      !criticalOverlayActive &&
+      !networkOverlayActive &&
+      timeUpState === "idle",
     closeSupport
   );
-  const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle");
+  const finishReceiptDialogRef = useFocusTrap<HTMLDivElement>(timeUpState !== "idle" && !leaveConfirm);
   // No dismissal callback: Escape must not close an announcement. The only
   // way out is the acknowledgement, which is the record staff rely on.
   const announcementDialogRef = useFocusTrap<HTMLDivElement>(
@@ -4419,12 +4411,14 @@ export default function ContestPageClient() {
   // unlocked direct-entry back to onboarding — render a neutral securing screen.
   // Never flash the contest UI before lockdown is confirmed engaged.
   if (lockGate !== "ok") {
-    return <BootScreen label="Securing session…" />;
+    return (
+      <BootScreen label="Securing session…" onExit={() => void redirectAfterRelease("/home")} />
+    );
   }
 
   if (loading) {
     const phase = entryWaitPhase(bootWaitedMs);
-    return <BootScreen label={phase.label} detail={phase.detail} />;
+    return <BootScreen label={phase.label} detail={phase.detail} onExit={() => void redirectAfterRelease("/home")} />;
   }
 
   if (loadError) {
@@ -4461,6 +4455,22 @@ export default function ContestPageClient() {
         style={{ height: "100%", minHeight: 0, overflow: "hidden", paddingTop: topSafeInset }}
       >
         <KioskBanner />
+        <ServiceStatus
+          components={["judging", "submissions", "support"]}
+          localFailure={networkDisconnected}
+          suspended={
+            leaveConfirm ||
+            criticalOverlayActive ||
+            networkOverlayActive ||
+            submitConfirm ||
+            showSupportModal ||
+            showMediaToggleWarning ||
+            timeUpState !== "idle" ||
+            bellRung ||
+            Boolean(sessionEnded) ||
+            referenceOpen
+          }
+        />
         {lockGraceActive && lockGraceCountdown > 0 && (
           <LockGraceToast lockGraceCountdown={lockGraceCountdown} />
         )}
@@ -4468,15 +4478,17 @@ export default function ContestPageClient() {
           <BlockedAppsOverlay
             lockViolationDialogRef={lockViolationDialogRef}
             blockedApps={blockedApps}
-            onExit={() => void redirectAfterRelease("/home")}
+            onExit={requestLeave}
           />
         )}
         <TopBar
+          onLeave={requestLeave}
           online={!networkDisconnected}
           markedQuestionIds={markedQuestionIds}
           workspaceControls={
             <WorkspaceControls
               suspended={
+                leaveConfirm ||
                 criticalOverlayActive ||
                 networkOverlayActive ||
                 submitConfirm ||
@@ -4524,6 +4536,7 @@ export default function ContestPageClient() {
           }
           finishDraftNeedsAttention={unsavedOnDevice.length > 0}
           finishReviewSuspended={
+            leaveConfirm ||
             criticalOverlayActive ||
             networkOverlayActive ||
             showSupportModal ||
@@ -4774,7 +4787,7 @@ export default function ContestPageClient() {
         className="contest-network-dialog"
         ref={networkDialogRef}
         tabIndex={-1}
-        isOpen={networkOverlayActive}
+        isOpen={networkOverlayActive && !leaveConfirm}
         onOpenChange={() => {}}
         purpose="required"
         padding={6}
@@ -4787,14 +4800,17 @@ export default function ContestPageClient() {
           <Heading level={2} id="network-disconnection-title">
             Reconnecting to the exam server
           </Heading>
+          <ServiceStatus components={["judging", "submissions", "support"]} localFailure expanded />
           <Text id="network-disconnection-assurance" role="status">
             {connectionDraftAssurance(unsavedOnDevice.length === 0)}
           </Text>
           <HStack gap={3} align="center">
             <Spinner />
-            <Text color="secondary">Your workspace will resume when the connection returns.</Text>
+            <Text color="secondary">We will check your session when the connection returns.</Text>
           </HStack>
-          <Text color="secondary">Keep this app open. The contest timer continues to run.</Text>
+          <Text color="secondary">
+            The contest timer continues to run while disconnected or away.
+          </Text>
           {/* The picker, here as well as in the top bar.
               This dialog is a native modal, so everything behind it is in the
               inert top layer and the top bar cannot be clicked through it. It
@@ -4806,35 +4822,55 @@ export default function ContestPageClient() {
           <HStack gap={3} justify="end">
             <Button label="Retry now" variant="secondary" onClick={() => retryBeatRef.current()} />
           </HStack>
-          {offlineTooLong && (
-            /* The way out of a dead network.
-               This dialog had no buttons at all and `purpose="required"`, so
-               a candidate whose wifi died could not dismiss it, and on macOS
-               could not reach the wifi menu either: the kiosk hides the menu
-               bar and the window cannot be moved or minimised. The only
-               remaining move was holding the power button, which is what
-               people were doing.
-               It leaves without finishing. `redirectAfterRelease` releases
-               the desktop and the network lockdown while keeping the session
-               and its recovery record, which is what lets them join another
-               network and come straight back in. The native calls it makes
-               are local, so they work with no connection. */
-            <VStack gap={2}>
-              <Text color="secondary">
-                Still disconnected. You can leave the exam to change network and come back. Your
-                answers are saved on this device and your session stays open.
-              </Text>
-              <HStack gap={3} justify="end">
-                <Button
-                  label="Exit to change network"
-                  variant="secondary"
-                  onClick={() => void redirectAfterRelease("/home")}
-                />
-              </HStack>
-            </VStack>
-          )}
+          <VStack gap={2}>
+            <Text color="secondary">
+              You can leave to change network. Leaving does not finish your attempt; returning
+              depends on the contest’s current entry rules.
+            </Text>
+            <Button label="Leave to change network" variant="secondary" onClick={requestLeave} />
+          </VStack>
         </VStack>
       </Dialog>
+
+      {leaveConfirm && (
+        <AccessDialog
+          open
+          onClose={() => setLeaveConfirm(false)}
+          title="Leave this workspace?"
+          width="calc(var(--spacing-10) * 12)"
+          labelId="leave-contest-title"
+        >
+          <VStack gap={4}>
+            <Text>
+              Leaving restores device controls. It does not submit your solutions or confirm that
+              your attempt has finished. The contest timer does not pause.
+            </Text>
+            <Text color="secondary">
+              {!leaveDraftSaved
+                ? "The latest draft save could not be confirmed. Leaving may lose unsaved edits."
+                : "Your drafts are saved on this device. Drafts are not submitted solutions."}{" "}
+              Returning depends on the contest’s current entry rules.
+            </Text>
+            {(isSubmitting || timeUpState === "submitting") && (
+              <Text color="secondary">
+                A server request is still pending. Leaving cannot confirm or cancel its outcome.
+              </Text>
+            )}
+            <HStack gap={3} wrap="wrap" justify="end">
+              <Button
+                label="Stay here"
+                variant="secondary"
+                onClick={() => setLeaveConfirm(false)}
+              />
+              <Button
+                label="Leave workspace"
+                variant="primary"
+                onClick={() => void redirectAfterRelease("/home", true)}
+              />
+            </HStack>
+          </VStack>
+        </AccessDialog>
+      )}
 
       {shouldShowFaceBlock && (
         /* The same toast the kiosk banner uses when the window comes back:
@@ -4936,7 +4972,11 @@ export default function ContestPageClient() {
                   Waiting for the server to acknowledge your finish request.
                 </Text>
               </HStack>
-              <Text color="secondary">Keep this window open until the result appears.</Text>
+              <Text color="secondary">
+                You can restore device controls without waiting. Completion is not yet confirmed;
+                session recovery will be kept if you leave.
+              </Text>
+              <Button label="Restore device controls" variant="secondary" onClick={requestLeave} />
             </VStack>
           )}
           {timeUpState === "submitted" && (
@@ -4987,7 +5027,12 @@ export default function ContestPageClient() {
               <Banner
                 status="warning"
                 title="Some device settings are still changed"
-                description="AMS Access keeps retrying in the background. To fix one now, run its command in Terminal. Back to home opens Settings, which lists the same commands with copy buttons."
+                description="Restoration is incomplete or could not be verified. Retry restoration, or return home to review recovery guidance in Settings."
+              />
+              <Button
+                label="Retry restoration"
+                variant="secondary"
+                onClick={() => void runExitTeardown(timeUpState !== "submitted")}
               />
               {restoreStatus.items.length > 0 && (
                 <List>
@@ -5130,6 +5175,7 @@ export default function ContestPageClient() {
               </HStack>
             </>
           )}
+          <Button label="Leave contest" variant="ghost" onClick={requestLeave} />
           {sentReports.some((report) => report.sessionId === sessionId) && (
             <VStack
               as="section"

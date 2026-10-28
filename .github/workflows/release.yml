@@ -328,6 +328,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      - name: Verify macOS release identity, architecture and Gatekeeper
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          EXPECTED_APPLE_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(target/${{ matrix.target }}/release/bundle/macos/*.app)
+          [ "${#apps[@]}" -eq 1 ] || { echo "Expected exactly one Mac app bundle"; exit 1; }
+          arch=x86_64
+          [ '${{ matrix.target }}' != aarch64-apple-darwin ] || arch=arm64
+          version=$(node -p "require('./apps/web/package.json').version")
+          python3 scripts/verify-macos-release.py --app "${apps[0]}" \
+            --version "$version" --arch "$arch" --team "$EXPECTED_APPLE_TEAM"
+
       - name: Collect artifact paths
         shell: bash
         run: |

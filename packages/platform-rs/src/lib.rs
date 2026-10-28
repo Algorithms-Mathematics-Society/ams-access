@@ -14,12 +14,14 @@ pub struct BatteryStatus {
 }
 
 /// One wireless network the machine can see.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WifiNetwork {
     pub ssid: String,
     /// 0-100 where the OS reports it, else None.
     pub signal: Option<u8>,
     pub secured: bool,
+    /// Known to the OS as a saved network (macOS).
+    pub saved: bool,
     pub current: bool,
 }
 
@@ -27,6 +29,8 @@ pub struct WifiNetwork {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct WifiScan {
     pub networks: Vec<WifiNetwork>,
+    /// Nearby scanning failed or exposed no names; using saved profiles.
+    pub saved_only: bool,
     /// Whether Wi-Fi is associated, even when macOS hides its name.
     pub connected: bool,
     /// The SSID currently joined, if the OS exposes it.
@@ -73,3 +77,13 @@ mod windows_hook_lifecycle_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 #[path = "windows/keyboard_policy.rs"]
 mod windows_keyboard_policy_tests;
+
+// Mac AppKit dispatch cancellation is pure and can be exercised on every host.
+#[cfg(all(test, not(target_os = "macos")))]
+#[path = "macos/deferred_job.rs"]
+mod macos_deferred_job_tests;
+
+#[cfg(all(test, not(target_os = "macos")))]
+#[path = "macos/keyboard_policy.rs"]
+#[allow(dead_code)]
+mod macos_keyboard_policy_tests;

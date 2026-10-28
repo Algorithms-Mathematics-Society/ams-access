@@ -38,6 +38,7 @@ export function createEntryAttemptController(
       return active;
     },
     current,
+    hasPendingWork: () => pending.size > 0,
     assertSettled(key: string) {
       if (pending.has(key))
         throw new EntryTimeoutError(

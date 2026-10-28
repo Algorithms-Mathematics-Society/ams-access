@@ -1,3 +1,34 @@
+# AMS Access 4.8.0
+
+## macOS readiness and recovery
+
+- Improve keyboard, fullscreen, permission and desktop-restoration lifecycle handling, including stale callback cancellation and an idle Quit action.
+- Discover nearby Wi-Fi networks on explicit rescan; add Location permission setup while preserving bounded radio operations and Windows reconnect feedback.
+- Resume recent same-device setup while still capturing a fresh reference photo.
+- Refresh server time after waking from sleep and improve approval polling/backoff.
+- Validate signed release artifacts, architecture and Gatekeeper acceptance in macOS release CI.
+
+## Contest reliability and feedback
+
+- Preserve per-problem drafts, serialize background backups and ignore late responses after navigation.
+- Retain submission retry identity, authoritative deadlines and explicit Finish recovery.
+- Improve run navigation, template reset, judging summaries and behavior diagnostics; distinguish missing output from empty output with the companion worker update.
+- Refresh published reference sheets and preserve offline reference access.
+- Deliver contest-workspace announcements with acknowledgement and retain guest issue reporting before sign-in plus authenticated organizer chat.
+- Improve service-status, entry progress, required-update and local restoration feedback.
+
+## Deployment and validation notes
+
+- API draft saves require the CORS PUT fix from ams-api #32. Output compatibility requires cxxprobe-worker #1 and judges running cxxprobe 1.0.0. A desktop update does not deploy those services.
+- Advisory service status requires the companion public-service-status API; unavailable status is not treated as evidence of a healthy service.
+- The integrated source passed 134 web test files and TypeScript locally. Cross-platform package/build checks and artifact checks run in CI.
+- Native Mac acceptance remains tracked in MACOS-ACCEPTANCE.md. Home/setup/finish announcement coverage, a combined 3,000-participant rehearsal and organizer fairness decisions are not claimed completed by this release.
+- Network Lockdown removal remains separate uncommitted work and is not included in this release branch.
+
+Download the installer matching your operating system and CPU architecture. Compare its SHA-256 with the accompanying SHA256SUMS file. Previously installed clients must update to receive bundled UI fixes.
+
+---
+
 # AMS Access 4.7.0
 
 Identical to 4.6.1 in behaviour. It is a minor release because the update prompt compares major and minor only: 4.6.1 was a patch, so nobody running 4.6.0 would ever have been told to install it, and the focus fix below is one everybody sitting an exam needs.

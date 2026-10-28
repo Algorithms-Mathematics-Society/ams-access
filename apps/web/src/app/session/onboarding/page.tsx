@@ -1,5 +1,9 @@
 "use client";
 
+import { entryProgressLabel } from "./entry-progress";
+import { CloseAppButton } from "@/components/CloseAppButton";
+import { ServiceStatus } from "@/components/ServiceStatus";
+
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BatteryStatus } from "../contest/components/BatteryStatus";
 import { useRouter } from "next/navigation";
@@ -28,12 +32,22 @@ import {
 } from "@ams/api-client";
 import { SessionBindingError } from "@/lib/api-client";
 import { participantToken } from "@/lib/candidate-auth";
-import { getContest, serverNow, startSession, type ContestIndex } from "@/lib/proctor-api";
+import {
+  getContest,
+  getSession,
+  serverNow,
+  startSession,
+  uploadIdentityPhoto,
+  type ContestIndex,
+} from "@/lib/proctor-api";
+import { captureFrame } from "@/lib/identity-photo";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
 import { blockedMessage, decideEntry, shouldRunChecks } from "./entry-gate";
 import { isGatingRelaxed, warnGatingRelaxed } from "@/lib/gating";
 import { exitToHome } from "@/lib/exit-to-home";
 import { dateTimeFormatter } from "@/lib/date-time-format";
+import { releaseDeviceControls } from "@/lib/release-device-controls";
+import { hasPendingFullscreenWork } from "./components/stages/fullscreen-lifecycle";
 import { decideNetworkLockdown } from "./network-gate";
 import { effectiveReadinessPolicy } from "./effective-policy";
 import { readinessBlockMessage, readinessErrorText } from "./components/labels";
@@ -55,6 +69,12 @@ import {
   entryMediaFacts,
   refreshEntryValue,
 } from "./entry-attempt";
+import {
+  RESUME_SETUP_KEY,
+  readResumeSetup,
+  canReuseFaceScan,
+  type ResumeSetup,
+} from "./resume-setup";
 import { createStageAdvanceController } from "./components/stage-advance";
 import {
   buildFaceReviewEvent,
@@ -175,6 +195,8 @@ export default function OnboardingPage() {
   const [contextError, setContextError] = useState<string | null>(null);
   const [entryRetryAvailable, setEntryRetryAvailable] = useState(false);
   const entryAttemptsRef = useRef(createEntryAttemptController());
+  const setupLeavingRef = useRef(false);
+  const [setupLeaving, setSetupLeaving] = useState(false);
   useEffect(() => {
     entryAttemptsRef.current.activate();
     return () => entryAttemptsRef.current.cancel();
@@ -183,6 +205,7 @@ export default function OnboardingPage() {
     new Map<number, { detail: string; record: ReturnType<typeof createFaceReviewRequest> }>()
   );
   const [transitioning, setTransitioning] = useState(false);
+  const [entryProgress, setEntryProgress] = useState("Checking contest eligibility");
   const [policyBlock, setPolicyBlock] = useState<string | null>(null);
   const [faceReviewSaveFailed, setFaceReviewSaveFailed] = useState(false);
   // The server's own view of the window, including `phase`. The entry gate is
@@ -200,6 +223,42 @@ export default function OnboardingPage() {
   const [waitMs, setWaitMs] = useState<number>(0);
   const [readyForStart, setReadyForStart] = useState(false);
   const preparedSessionIdRef = useRef<string | null>(null);
+  const resumeSetupRef = useRef<ResumeSetup | null>(null);
+  const passedFaceRef = useRef<{ cameraId: string; passedAt: number } | null>(null);
+  const [reusedFaceScan, setReusedFaceScan] = useState(false);
+
+  useEffect(() => {
+    if (dryRun || !contestId || !hasNativeBridge()) return;
+    let cancelled = false;
+    try {
+      const active = JSON.parse(localStorage.getItem("ams_active_session") ?? "null");
+      if (!active?.id || active.contest_id !== contestId) return;
+      const saved = readResumeSetup(localStorage.getItem(RESUME_SETUP_KEY), {
+        sessionId: active.id,
+        contestId,
+        deviceId: getOrCreateDeviceId(),
+      });
+      if (!saved) return;
+      void getSession(saved.sessionId)
+        .then((session) => {
+          if (
+            cancelled ||
+            session.uid !== saved.sessionId ||
+            session.contest_uid !== contestId ||
+            !["active", "pending"].includes(session.status.toLowerCase())
+          )
+            return;
+          resumeSetupRef.current = saved;
+          setCurrentStage((stage) => (stage === 0 ? 1 : stage));
+        })
+        .catch(() => {});
+    } catch {
+      // Missing or unreadable recovery data falls back to complete setup.
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [contestId, dryRun]);
   const [isTestAccount, setIsTestAccount] = useState(false);
   // Authoritative device platform ("windows" | "macos" | "linux"), resolved
   // once via the Tauri `get_platform` command. Drives the Windows-only entry
@@ -429,11 +488,14 @@ export default function OnboardingPage() {
   }
 
   const finalizeSecureStart = useCallback(async () => {
+    if (setupLeavingRef.current) return;
     const attempts = entryAttemptsRef.current;
     const attempt = attempts.begin();
     if (attempt === null) return;
-    const wait = <T,>(key: string, start: () => Promise<T>, ms = 15000) =>
-      attempts.run(attempt, key, start, ms, `${key} timed out. Retry contest entry.`);
+    const wait = <T,>(key: string, start: () => Promise<T>, ms = 15000) => {
+      if (attempts.current(attempt)) setEntryProgress(entryProgressLabel(key));
+      return attempts.run(attempt, key, start, ms, `${key} timed out. Retry contest entry.`);
+    };
     let windowMeta = contestWindow;
     setPolicyBlock(null);
     setFaceReviewSaveFailed(false);
@@ -447,11 +509,20 @@ export default function OnboardingPage() {
         const tauriBridge = window.__TAURI__;
         if (tauriBridge) {
           try {
-            const ok = await tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
-              allowedDomains: [getNetworkLockdownAllowlistHost()],
-            });
+            await attempts.recoverResource(attempt, "practice network lockdown");
+            const ok = await attempts.runResource(
+              attempt,
+              "practice network lockdown",
+              () =>
+                tauriBridge.core.invoke<boolean>("enable_network_lockdown", {
+                  allowedDomains: [getNetworkLockdownAllowlistHost()],
+                }),
+              15000,
+              () => tauriBridge.core.invoke<void>("disable_network_lockdown")
+            );
             setDryRunNetwork(ok ? "ok" : "failed");
-          } catch {
+          } catch (error) {
+            if (error instanceof EntryCancelledError || !attempts.current(attempt)) throw error;
             setDryRunNetwork("failed");
           }
           // Always release — a rehearsal must never leave the machine locked down.
@@ -519,6 +590,7 @@ export default function OnboardingPage() {
       // A timed-out start may still acquire native controls. Its rollback must
       // settle before another setup probe or entry can share the desktop.
       await attempts.recoverResource(attempt, "secure session start");
+      await attempts.recoverResource(attempt, "native device scan");
       let devices: MediaDeviceInfo[] | null = null;
       try {
         if (navigator.mediaDevices?.enumerateDevices) {
@@ -540,9 +612,11 @@ export default function OnboardingPage() {
         cameraAttempted: cameraAttemptedRef.current,
         devices,
       });
+      setEntryProgress("Verifying current device capabilities");
       const deviceState = !nativeAvailable
         ? browserDeviceState({ ...mediaFacts, platform: platform ?? null })
-        : await wait(
+        : await attempts.runResource(
+            attempt,
             "native device scan",
             () =>
               collectDeviceState({
@@ -551,8 +625,25 @@ export default function OnboardingPage() {
                 ...mediaFacts,
                 activateKeyboard: true,
               }),
-            45000
+            45000,
+            async () => {
+              await invokeStrict("disable_keyboard_intercept");
+            }
           );
+      // Recheck before creating a session: access can change after the camera stage.
+      if (
+        (deviceState.platform ?? platform)?.toLowerCase().startsWith("mac") &&
+        !(process.env.NODE_ENV === "development" && isGatingRelaxed()) &&
+        (await wait(
+          "Location access check",
+          () => invokeStrict<string>("wifi_location_status"),
+          5000
+        )) !== "authorized"
+      ) {
+        setCurrentStage(6);
+        setReadyForStart(false);
+        return;
+      }
       if (isGatingRelaxed()) {
         // TEST-ONLY (build-time flag): present a healthy network + installed helper
         // so the readiness gate treats network as fine. Default builds use the real
@@ -716,6 +807,7 @@ export default function OnboardingPage() {
       // Outside the desktop shell (dev / browser preview) there is nothing to
       // lock, so this is skipped.
       const tauriBridge = window.__TAURI__;
+      setEntryProgress("Checking network protection");
       if (tauriBridge) {
         let engaged = false;
         let lockdownError: string | null = null;
@@ -811,6 +903,7 @@ export default function OnboardingPage() {
       // The contest's own lockdown choices (whether an extra display or a
       // remote-access tool blocks entry) go on first, so an organizer's
       // waiver below still wins over them.
+      setEntryProgress("Applying contest protection requirements");
       const lockdownConfig = freshIndex?.lockdown ?? null;
       const policy = applyOrganizerOverrides(
         applyLockdownConfig(strictContestPolicy(devicePlatform), lockdownConfig),
@@ -897,6 +990,22 @@ export default function OnboardingPage() {
         }
       }
 
+      if (passedFaceRef.current && preparedSessionIdRef.current) {
+        try {
+          localStorage.setItem(
+            RESUME_SETUP_KEY,
+            JSON.stringify({
+              ...passedFaceRef.current,
+              sessionId: preparedSessionIdRef.current,
+              contestId,
+              deviceId: getOrCreateDeviceId(),
+            } satisfies ResumeSetup)
+          );
+        } catch {
+          // Recovery is optional; storage failure must not prevent entry.
+        }
+      }
+      setEntryProgress("Opening the contest workspace");
       attempts.commit(attempt);
       setReadyForStart(false);
       router.push(`/session/contest?contestId=${contestId}`);
@@ -978,6 +1087,11 @@ export default function OnboardingPage() {
       onBegin: (stage, status) => {
         setTransitioning(true);
         setResults((r) => ({ ...r, [stage]: status }));
+        if (stage === 7) {
+          const cameraId = cameraStreamRef.current?.getVideoTracks()[0]?.getSettings().deviceId;
+          passedFaceRef.current =
+            status === "pass" && cameraId ? { cameraId, passedAt: Date.now() } : null;
+        }
         if (status !== "warn")
           setWarningDetails((previous) => {
             const next = { ...previous };
@@ -986,6 +1100,19 @@ export default function OnboardingPage() {
           });
       },
       onAdvance: (nextStage) => {
+        const saved = resumeSetupRef.current;
+        const cameraId = cameraStreamRef.current?.getVideoTracks()[0]?.getSettings().deviceId ?? "";
+        if (
+          nextStage === 7 &&
+          saved &&
+          canReuseFaceScan(saved, cameraId) &&
+          cameraStreamRef.current?.getVideoTracks().some(isTrackDelivering)
+        ) {
+          passedFaceRef.current = { cameraId, passedAt: saved.passedAt };
+          setResults((r) => ({ ...r, 7: "pass" }));
+          setReusedFaceScan(true);
+          nextStage = 8;
+        }
         setCurrentStage(nextStage);
         setTransitioning(false);
       },
@@ -996,6 +1123,7 @@ export default function OnboardingPage() {
   }
   const advanceController = advanceControllerRef.current;
   useLayoutEffect(() => {
+    if (setupLeavingRef.current) return;
     advanceController.activate(stageRun);
     // A policy jump or retry may supersede the pending animation timer.
     // Its cleanup cancels advancement, so reset that presentation state here.
@@ -1040,6 +1168,54 @@ export default function OnboardingPage() {
     [advanceController, stageRun, dryRun]
   );
 
+  const saveResumeReferencePhoto = useCallback(async (video: HTMLVideoElement | null) => {
+    const saved = resumeSetupRef.current;
+    const track = cameraStreamRef.current?.getVideoTracks()[0];
+    if (
+      !saved ||
+      !track ||
+      !track.enabled ||
+      !isTrackDelivering(track) ||
+      !video ||
+      video.readyState < 2 ||
+      video.videoWidth === 0 ||
+      video.videoHeight === 0 ||
+      !canReuseFaceScan(saved, track.getSettings().deviceId ?? "")
+    )
+      return false;
+    const frame = captureFrame(video);
+    if (!frame) return false;
+    const result = await withTimeout(
+      invokeStrict<{ face_verified: boolean }>("save_face_image", {
+        imageData: `data:image/jpeg;base64,${frame}`,
+        index: 0,
+        dryRun: false,
+      }),
+      5000,
+      "Reference photo save timed out"
+    );
+    if (!result?.face_verified) return false;
+    return uploadIdentityPhoto(saved.sessionId, "entry", frame, 0);
+  }, []);
+
+  const retryFullFaceScan = useCallback(() => {
+    resumeSetupRef.current = null;
+    passedFaceRef.current = null;
+    setReusedFaceScan(false);
+    try {
+      localStorage.removeItem(RESUME_SETUP_KEY);
+    } catch {
+      // The in-memory checkpoint is already invalidated for this setup.
+    }
+    setResults((previous) => {
+      const next = { ...previous };
+      delete next[7];
+      delete next[8];
+      return next;
+    });
+    setCurrentStage(7);
+  }, []);
+
   const leaveSetup = useCallback(async (nav: { push: (href: string) => void }) => {
     entryAttemptsRef.current.cancel();
     cameraSession.release();
@@ -1048,7 +1224,6 @@ export default function OnboardingPage() {
 
     await exitToHome(nav);
   }, []);
-  const emergencyExit = useCallback(() => leaveSetup(router), [leaveSetup, router]);
 
   // macOS applies an Input Monitoring grant, and sometimes Accessibility, only
   // to a new process. Release everything setup changed, then relaunch.
@@ -1059,6 +1234,55 @@ export default function OnboardingPage() {
     // Still here: this build cannot relaunch. Go home released, to quit by hand.
     router.push(destination);
   }, [leaveSetup, router]);
+  const exitInProgressRef = useRef(false);
+  const [exitingSetup, setExitingSetup] = useState(false);
+  const [exitError, setExitError] = useState<string | null>(null);
+  const emergencyExit = useCallback(async () => {
+    if (exitInProgressRef.current) return;
+    exitInProgressRef.current = true;
+    setupLeavingRef.current = true;
+    setSetupLeaving(true);
+    advanceController.deactivate(stageRun);
+    setExitingSetup(true);
+    setExitError(null);
+    const acquisitionWasPending =
+      entryAttemptsRef.current.hasPendingWork() || hasPendingFullscreenWork();
+    entryAttemptsRef.current.cancel();
+    try {
+      let mediaReleased = true;
+      try {
+        cameraSession.release();
+      } catch {
+        mediaReleased = false;
+      }
+      cameraStreamRef.current = null;
+      setCameraStream(null);
+      const result = await releaseDeviceControls();
+      if (
+        acquisitionWasPending ||
+        !mediaReleased ||
+        entryAttemptsRef.current.hasPendingWork() ||
+        hasPendingFullscreenWork()
+      ) {
+        setExitError(
+          "Setup has stopped, but an earlier device operation is still running or its restoration is unverified. Retry Exit setup to check again, or use Close app for normal shutdown."
+        );
+        return;
+      }
+      router.push(
+        result.outcome === "confirmed" || result.outcome === "browser"
+          ? "/home"
+          : "/home?restore=pending"
+      );
+    } catch {
+      setExitError(
+        "Device restoration could not be verified. Retry Exit setup or use the app's normal Quit control."
+      );
+    } finally {
+      exitInProgressRef.current = false;
+      setExitingSetup(false);
+    }
+  }, [router, advanceController, stageRun]);
 
   useEffect(() => {
     function handleEmergencyKey(e: KeyboardEvent) {
@@ -1140,6 +1364,7 @@ export default function OnboardingPage() {
           color: "var(--color-text-primary)",
         }}
       >
+        <ServiceStatus components={["contest_entry"]} localFailure={Boolean(contextError)} />
         <HStack as="header" justify="between" align="center" gap={4} wrap="wrap">
           <HStack gap={3} align="center">
             <AccessLogo />
@@ -1158,7 +1383,8 @@ export default function OnboardingPage() {
             <Button
               type="button"
               variant="secondary"
-              label="Exit setup"
+              label={exitingSetup ? "Restoring controls…" : "Exit setup"}
+              isDisabled={exitingSetup}
               onClick={() => void emergencyExit()}
               aria-label="Exit setup. Shortcut: Control Shift Q."
               aria-keyshortcuts="Control+Shift+Q"
@@ -1166,9 +1392,23 @@ export default function OnboardingPage() {
             />
           </HStack>
         </HStack>
+        <Text type="supporting" role="status">
+          {exitError ??
+            (exitingSetup
+              ? "Leaving setup and restoring device controls…"
+              : "Exit setup restores device controls. It does not finish an open attempt or pause its timer.")}
+        </Text>
         <Divider />
 
-        {!presentationReady ? (
+        {setupLeaving ? (
+          <VStack gap={4}>
+            <Text>
+              Setup has stopped. Returning requires the usual entry checks. No attempt completion
+              was requested.
+            </Text>
+            <CloseAppButton />
+          </VStack>
+        ) : !presentationReady ? (
           <VStack gap={4} align="center" style={{ paddingBlock: "var(--spacing-10)" }}>
             <Spinner />
             <Text color="secondary">Preparing your setup…</Text>
@@ -1497,14 +1737,16 @@ export default function OnboardingPage() {
                             !dryRun &&
                             (!contestWindow || waitMs <= 0) && (
                               <VStack gap={4}>
-                                <Heading level={2}>Opening your contest.</Heading>
+                                <Heading level={2}>Verifying contest entry</Heading>
                                 <Text color="secondary">
-                                  Keep this window open while your secure workspace is prepared.
+                                  Your setup results are retained. We now verify the current contest
+                                  session and device protection before opening the workspace. Exit
+                                  setup stays available.
                                 </Text>
                                 <HStack gap={3} align="center">
                                   <Spinner />
                                   <Text type="supporting" color="secondary">
-                                    Checking contest entry…
+                                    {entryProgress}…
                                   </Text>
                                 </HStack>
                               </VStack>
@@ -1562,6 +1804,8 @@ export default function OnboardingPage() {
                               onWarn={advanceWarn}
                               policy={effectivePolicy}
                               overrideActive={cameraOverride}
+                              platform={platform}
+                              onQuitAndReopen={() => void quitAndReopen()}
                             />
                           )}
                           {currentStage === 7 && (
@@ -1574,9 +1818,19 @@ export default function OnboardingPage() {
                               onFaceFallback={handleFaceFallback}
                             />
                           )}
+                          {currentStage === 8 && reusedFaceScan && (
+                            <Text color="secondary">
+                              Reusing your recent face scan. Checking your presence again and taking
+                              a new reference photo.
+                            </Text>
+                          )}
                           {currentStage === 8 && (
                             <Stage9_PresenceVerification
                               stream={cameraStream}
+                              onReferencePhoto={
+                                reusedFaceScan ? saveResumeReferencePhoto : undefined
+                              }
+                              onPhotoFailure={retryFullFaceScan}
                               onPass={advancePass}
                               onWarn={advanceWarn}
                             />

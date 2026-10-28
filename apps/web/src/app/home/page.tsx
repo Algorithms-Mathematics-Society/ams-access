@@ -1,5 +1,9 @@
 "use client";
 
+import { CloseAppButton } from "@/components/CloseAppButton";
+
+import { ServiceStatus } from "@/components/ServiceStatus";
+
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
@@ -79,6 +83,7 @@ import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { SecurityOperationsLog } from "./components/SecurityOperationsLog";
 import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
+import { approvalMessage } from "./components/approval-feedback";
 import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
 import { dateTimeFormatter } from "@/lib/date-time-format";
 import { exitToHome } from "@/lib/exit-to-home";
@@ -137,28 +142,32 @@ export default function HomePage() {
   useEffect(() => {
     if (!hasNativeBridge()) return;
     let inFlight = false;
+    let cancelled = false;
     const macos = invoke<{ os?: string }>("get_platform")
       .then((platform) => platform?.os === "macos")
       .catch(() => false);
     const check = () => {
-      if (inFlight) return;
+      if (cancelled || inFlight) return;
       inFlight = true;
       invoke<boolean>("is_lockdown_engaged")
         .then(async (engaged) => {
+          if (cancelled) return;
           if (engaged) {
             await exitToHome({
               push: (href) => {
-                if (href.includes("restore=pending")) setActiveNav("settings");
+                if (!cancelled && href.includes("restore=pending")) setActiveNav("settings");
               },
             });
             return;
           }
           // Home is never kiosk full screen. On macOS that is simple full screen
           // only; native full screen there is the candidate's own green button.
+          const isMac = await macos;
+          if (cancelled) return;
           const win = window.__TAURI__?.window.getCurrentWindow();
           await Promise.all([
             win?.setSimpleFullscreen(false),
-            (await macos) ? undefined : win?.setFullscreen(false),
+            isMac ? undefined : win?.setFullscreen(false),
           ]);
         })
         .catch(() => {})
@@ -168,7 +177,10 @@ export default function HomePage() {
     };
     check();
     const id = setInterval(check, 5_000);
-    return () => clearInterval(id);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
   const [signingOut, setSigningOut] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
@@ -190,6 +202,7 @@ export default function HomePage() {
   }, []);
   const [resumeStatus, setResumeStatus] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [approvalUnavailable, setApprovalUnavailable] = useState(false);
   const [resumeVerification, setResumeVerification] = useState<ResumeVerificationState>("none");
   // Who is signed in, for display. There is no email: candidates sign in with
   // a printed slip and the platform has no address for them.
@@ -629,7 +642,15 @@ export default function HomePage() {
       activeSessionRef.current?.resume_request_status !== session.resume_request_status;
     try {
       const latest = await latestResumeRequest(session.id);
-      if (!latest || isStale()) return;
+      if (isStale()) return;
+      if (!latest) {
+        setApprovalUnavailable(true);
+        setResumeStatus(
+          "The server returned no current approval request. Your last-known status is retained; ask your invigilator for help."
+        );
+        return;
+      }
+      setApprovalUnavailable(false);
       const request = {
         id: latest.uid,
         status: latest.status,
@@ -639,26 +660,38 @@ export default function HomePage() {
       const currentSession = activeSessionRef.current!;
       const nextSession = mergeResumeRequestIntoSession(currentSession, request);
       if (nextSession !== currentSession) {
-        localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
         setActiveSession(nextSession);
+        try {
+          localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+        } catch {
+          appendSecurityEvent(
+            "RECOVERY: latest approval decision could not be saved on this device",
+            "warn"
+          );
+        }
       }
 
       const requestStatus = String(request.status ?? "").toUpperCase();
       if (requestStatus === "PENDING") {
-        setResumeStatus("Resume requested. Waiting for organizer approval.");
+        setResumeStatus(approvalMessage("PENDING"));
         setResumeBusy(false);
       } else if (requestStatus === "REJECTED") {
-        setResumeStatus(request.review_note?.trim() || "Organizer rejected this resume request.");
+        setResumeStatus(approvalMessage("REJECTED", request.review_note));
         setResumeBusy(false);
       } else if (requestStatus === "EXPIRED") {
-        setResumeStatus("Resume request expired. Submit it again to rejoin.");
+        setResumeStatus(approvalMessage("EXPIRED"));
         setResumeBusy(false);
       } else if (requestStatus === "APPROVED") {
-        setResumeStatus("Resume approved. Choose Resume to rejoin the contest.");
+        setResumeStatus(approvalMessage("APPROVED"));
+        setResumeBusy(false);
+      } else {
+        setResumeStatus(approvalMessage(requestStatus, request.review_note));
         setResumeBusy(false);
       }
-    } catch {
-      if (!isStale()) setResumeStatus("Waiting for organizer approval.");
+    } catch (error) {
+      if (!isStale()) { setApprovalUnavailable(true); setResumeStatus("Could not check organizer approval. Retrying shortly."); }
+      // Preserve Retry-After for the poller instead of retrying every three seconds.
+      throw error;
     } finally {
       resumePollInFlightRef.current = false;
     }
@@ -671,7 +704,8 @@ export default function HomePage() {
     resumeRequestInFlightRef.current = true;
     const epoch = recoveryEpochRef.current;
     setResumeBusy(true);
-    setResumeStatus("Requesting organizer approval...");
+    setApprovalUnavailable(false);
+    setResumeStatus("Sending your re-entry request…");
     appendSecurityEvent("SESSION: Resume approval requested");
     try {
       const created = await requestResume(session.id, {
@@ -686,15 +720,29 @@ export default function HomePage() {
         review_note: created.review_note,
       };
       const nextSession = mergeResumeRequestIntoSession(session, request);
-      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+      if (activeSessionRef.current?.id !== session.id) return;
       setActiveSession(nextSession);
-      setResumeStatus("Resume requested. Waiting for organizer approval.");
+      let persisted = true;
+      try {
+        localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
+      } catch {
+        persisted = false;
+      }
+      setResumeStatus(
+        approvalMessage(created.status, created.review_note) +
+          (persisted
+            ? ""
+            : " The request was received, but its recovery details could not be saved on this device. Keep the app open and ask your invigilator for help.")
+      );
     } catch {
       if (recoveryCurrent(session.id, epoch)) {
-        setResumeStatus("Could not request organizer approval.");
-        setResumeBusy(false);
+        setApprovalUnavailable(true);
+        setResumeStatus(
+          "Delivery of the re-entry request could not be confirmed. Choose Resume to check the current server status before trying again."
+        );
       }
     } finally {
+      if (recoveryCurrent(session.id, epoch)) setResumeBusy(false);
       resumeRequestInFlightRef.current = false;
     }
   }
@@ -784,6 +832,7 @@ export default function HomePage() {
       // endpoint must not keep a completed or mismatched session recoverable.
       const pending = await latestResumeRequest(session.id);
       if (isStale()) return null;
+      setApprovalUnavailable(false);
       data.resume_request_status = pending?.status;
       data.resume_request = pending
         ? {
@@ -805,7 +854,7 @@ export default function HomePage() {
       const withResume = mergeResumeRequestIntoSession(verifiedSession, data.resume_request);
       const resumeRequestStatus = String(data.resume_request_status ?? "").toUpperCase();
       if (resumeRequestStatus === "PENDING") {
-        setResumeStatus("Resume requested. Waiting for organizer approval.");
+        setResumeStatus(approvalMessage("PENDING"));
       } else if (resumeRequestStatus === "REJECTED") {
         setResumeStatus(
           data.resume_request?.review_note?.trim() ||
@@ -907,8 +956,8 @@ export default function HomePage() {
   ]);
 
   async function handleResumeActiveSession() {
-    setResumeStatus(null);
     if (resumeBusy || resumeInFlightRef.current) return;
+    setResumeStatus(null);
     resumeInFlightRef.current = true;
     if (!activeSession?.id) {
       resumeInFlightRef.current = false;
@@ -1044,6 +1093,7 @@ export default function HomePage() {
       onResume={handleResumeActiveSession}
       resumeBusy={resumeBusy}
       resumeStatus={resumeStatus}
+      approvalUnavailable={approvalUnavailable}
       resumeVerification={resumeVerification}
       sessionsError={sessionsError}
       theme={theme}
@@ -1069,17 +1119,28 @@ export default function HomePage() {
           ) : undefined
         }
         headerAction={
-          activeNav === "overview" ? (
-            <AstryxButton label="Get help" variant="ghost" onClick={() => setHomeHelpOpen(true)} />
-          ) : activeNav === "settings" ? (
-            <AstryxButton
-              label={telemetryQuery.isLoading ? "Running..." : "Run Full Diagnostic"}
-              isDisabled={telemetryQuery.isLoading}
-              onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
-            />
-          ) : undefined
+          <HStack gap={2} wrap="wrap">
+            <CloseAppButton />
+            {activeNav === "overview" ? (
+              <AstryxButton
+                label="Get help"
+                variant="ghost"
+                onClick={() => setHomeHelpOpen(true)}
+              />
+            ) : activeNav === "settings" ? (
+              <AstryxButton
+                label={telemetryQuery.isLoading ? "Running..." : "Run Full Diagnostic"}
+                isDisabled={telemetryQuery.isLoading}
+                onClick={() => void refreshTelemetry(true, "run-full-diagnostic")}
+              />
+            ) : undefined}
+          </HStack>
         }
       >
+        <ServiceStatus
+          components={["contest_entry", "support"]}
+          localFailure={Boolean(invitedContestsQuery.error)}
+        />
         {activeNav === "overview" && (
           <DashboardColumns
             readiness={

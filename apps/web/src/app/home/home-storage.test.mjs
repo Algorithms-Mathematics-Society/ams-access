@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { approvalMessage } from "./components/approval-feedback.ts";
 const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 const requestStart = source.indexOf("  async function submitResumeRequest(");
 const requestEnd = source.indexOf("\n  async function validateStoredActiveSession(", requestStart);
@@ -17,6 +18,9 @@ function approvalRequestHarness() {
     states = [];
   let resolve, reject;
   const context = {
+    approvalMessage,
+    setApprovalUnavailable() {},
+    activeSessionRef: { current: { id: "A" } },
     resumeRequestInFlightRef: { current: false },
     recoveryEpochRef: { current: 0 },
     recoveryCurrent: (_id, epoch) => epoch === context.recoveryEpochRef.current,
@@ -199,6 +203,10 @@ function validationHarness({ error, approvalError, live, writeDenied = false } =
   const context = {
     recoveryEpochRef: { current: 0 },
     ProctorApiError: ApiError,
+    approvalMessage,
+    setApprovalUnavailable: (value) => {
+      state.approvalUnavailable = value;
+    },
     getSession: async () => {
       if (error) throw error;
       return live ?? { uid: "saved", contest_uid: "contest", status: "ACTIVE" };
@@ -478,7 +486,7 @@ const panelSource = readFileSync(
   new URL("./components/SessionActionsPanel.tsx", import.meta.url),
   "utf8"
 );
-const panelStart = panelSource.indexOf("  const resumeRetryable =");
+const panelStart = panelSource.indexOf("  const requestStatus =");
 const panelEnd = panelSource.indexOf("\n  const hasQuietEmptyState", panelStart);
 const panelCode =
   panelSource.slice(panelStart, panelEnd) +
@@ -492,6 +500,7 @@ test("retry is actionable with a saved pending approval; checking and verified p
   ]) {
     const context = {
       activeSession: { resume_request_status: "PENDING" },
+      resumeStatus: null,
       resumeVerification: verification,
       resumeBusy: false,
     };

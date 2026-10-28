@@ -32,7 +32,10 @@ const routeJsBudgetsKiB = {
   "/": 600,
   "/login/": 680,
   "/home/": 960,
-  "/session/onboarding/": 770,
+  // v4.8.0 adds Location setup, fresh-photo resume and service/recovery UI.
+  // The integrated CI export measures 0.77 MiB (~789 KiB). Allow 800 KiB
+  // for that reviewed feature growth; other route/chunk/asset caps stay fixed.
+  "/session/onboarding/": 800,
   "/results/": 640,
   "/session/contest/": 1900,
 };

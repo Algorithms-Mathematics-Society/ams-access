@@ -146,9 +146,11 @@ function finishHarness({
     releases: 0,
   };
   const exitInFlightRef = { current: false };
+  const leavingWorkspaceRef = { current: false };
   const submitInFlightRef = { current: pending };
   const deps = {
     exitInFlightRef,
+    leavingWorkspaceRef,
     submitInFlightRef,
     sessionId: "session-1",
     API_URL: "https://fixture.invalid",
@@ -185,6 +187,7 @@ function finishHarness({
     state,
     signals,
     exitInFlightRef,
+    leavingWorkspaceRef,
     submitInFlightRef,
     run: new Function(...Object.keys(deps), `${finishJs}; return handleSubmitConfirmed;`)(
       ...Object.values(deps)
@@ -299,4 +302,41 @@ test("stalled Finish error body cannot hold native release", async () => {
   assert.equal(h.signals[1].aborted, true);
   assert.equal(h.state.releases, 1);
   assert.equal(h.state.phase, "submitted");
+});
+
+test("late finish acknowledgement after intentional leave cannot clear session recovery", async () => {
+  let acknowledge;
+  const h = finishHarness({
+    finish: () =>
+      new Promise((resolve) => {
+        acknowledge = resolve;
+      }),
+  });
+  const pending = h.run();
+  while (!acknowledge) await Promise.resolve();
+  h.leavingWorkspaceRef.current = true;
+  h.state.active = "newer-session";
+  acknowledge({ ok: true, json: async () => ({}) });
+  await pending;
+  assert.equal(h.state.active, "newer-session");
+  assert.equal(h.state.releases, 0);
+  assert.equal(h.state.phase, "submitting");
+});
+
+test("leaving during a failed finish prevents further network attempts", async () => {
+  let reject;
+  const h = finishHarness({
+    finish: () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+  });
+  const pending = h.run();
+  while (!reject) await Promise.resolve();
+  h.leavingWorkspaceRef.current = true;
+  reject(Error("offline"));
+  await pending;
+  assert.equal(h.state.calls, 1);
+  assert.equal(h.state.releases, 0);
+  assert.equal(h.state.active, "session-1");
 });

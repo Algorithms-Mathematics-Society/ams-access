@@ -43,14 +43,17 @@ export async function requestFinish(deps: {
   save: () => Promise<boolean>;
   finish: () => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
   wait: (attempt: number) => Promise<void>;
+  isCancelled?: () => boolean;
 }): Promise<FinishReceipt> {
   let draftSaved = false;
   for (let attempt = 0; attempt < 4; attempt++) {
+    if (deps.isCancelled?.()) return { confirmed: false, draftSaved };
     try {
       draftSaved = (await deps.save()) || draftSaved;
     } catch {
       /* A later failed retry cannot erase an acknowledged, locked-source save. */
     }
+    if (deps.isCancelled?.()) return { confirmed: false, draftSaved };
     try {
       const response = await deps.finish();
       if (response.ok) return { confirmed: true, draftSaved };

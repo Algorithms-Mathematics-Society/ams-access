@@ -23,6 +23,7 @@ pub fn tidy(mut rows: Vec<WifiNetwork>, current: Option<&str>) -> Vec<WifiNetwor
                 existing.signal = row.signal;
             }
             existing.secured |= row.secured;
+            existing.saved |= row.saved;
             existing.current |= row.current;
             continue;
         }
@@ -61,6 +62,7 @@ pub fn parse_nmcli(stdout: &str) -> (Vec<WifiNetwork>, Option<String>) {
             signal,
             secured: !security.is_empty() && security != "--",
             current: active,
+            saved: false,
         });
     }
     (rows, current)
@@ -113,6 +115,7 @@ pub fn parse_netsh(stdout: &str) -> Vec<WifiNetwork> {
                 signal: None,
                 secured: true,
                 current: false,
+                saved: false,
             });
             continue;
         }
@@ -149,8 +152,49 @@ pub fn parse_networksetup_list(stdout: &str) -> Vec<WifiNetwork> {
             // joining a secured one without asking.
             secured: true,
             current: false,
+            saved: true,
         })
         .collect()
+}
+
+/// CoreWLAN RSSI is dBm; expose a clamped percentage like the other platforms.
+pub fn rssi_percent(rssi: isize) -> Option<u8> {
+    (rssi < 0).then(|| ((rssi.clamp(-100, -50) + 100) * 2) as u8)
+}
+
+/// Prefer nearby named networks; saved profiles are an explicitly labelled fallback.
+pub fn macos_scan_rows(
+    nearby: Vec<WifiNetwork>,
+    saved: Vec<WifiNetwork>,
+    current: Option<&str>,
+) -> (Vec<WifiNetwork>, bool) {
+    // CoreWLAN can return unnamed/redacted rows without a usable network.
+    // Filter them here, without trimming valid SSIDs or changing Windows parsing.
+    let nearby = nearby
+        .into_iter()
+        .filter(|row| !row.ssid.trim().is_empty() && row.ssid != "<redacted>")
+        .collect();
+    let mut rows = tidy(nearby, current);
+    let saved_only = rows.is_empty();
+    if saved_only {
+        rows = saved;
+    } else {
+        for row in &mut rows {
+            row.saved = saved.iter().any(|profile| profile.ssid == row.ssid);
+        }
+    }
+    if let Some(name) = current {
+        if !rows.iter().any(|row| row.ssid == name) {
+            rows.push(WifiNetwork {
+                ssid: name.to_string(),
+                signal: None,
+                secured: true,
+                saved: false,
+                current: true,
+            });
+        }
+    }
+    (tidy(rows, current), saved_only)
 }
 
 /// Only the success label contains an SSID; errors can contain colons too.
@@ -175,6 +219,70 @@ pub fn parse_ipconfig_wifi_associated(stdout: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corewlan_rssi_uses_real_strength_and_clamps_the_percentage() {
+        for (rssi, expected) in [
+            (-120, Some(0)),
+            (-100, Some(0)),
+            (-75, Some(50)),
+            (-50, Some(100)),
+            (-30, Some(100)),
+            (0, None),
+            (10, None),
+        ] {
+            assert_eq!(rssi_percent(rssi), expected);
+        }
+    }
+
+    #[test]
+    fn nearby_rows_exclude_out_of_range_profiles_and_mark_saved_and_current() {
+        let mut nearby = parse_networksetup_list("header\nCampus\nHotspot\nCampus\nGuest");
+        for (row, signal) in nearby.iter_mut().zip([20, 90, 60, 40]) {
+            row.signal = Some(signal);
+        }
+        let saved = parse_networksetup_list("header\nCampus\nOut of range");
+        let (rows, saved_only) = macos_scan_rows(nearby, saved, Some("Campus"));
+        assert!(!saved_only);
+        assert_eq!(
+            rows.iter().map(|row| row.ssid.as_str()).collect::<Vec<_>>(),
+            ["Campus", "Hotspot", "Guest"]
+        );
+        assert!(rows[0].current && rows[0].saved);
+        assert_eq!(rows[0].signal, Some(60));
+        assert!(!rows[1].saved && !rows[1].current);
+    }
+
+    #[test]
+    fn missing_or_unnamed_scan_uses_saved_profiles_without_inventing_a_connection() {
+        let saved = parse_networksetup_list("header\nCampus\nOut of range");
+        for nearby in [
+            Vec::new(),
+            vec![WifiNetwork {
+                ssid: " ".into(),
+                signal: Some(99),
+                secured: false,
+                saved: false,
+                current: true,
+            }],
+        ] {
+            let (rows, saved_only) = macos_scan_rows(nearby, saved.clone(), None);
+            assert!(saved_only);
+            assert_eq!(rows.len(), 2);
+            assert!(rows
+                .iter()
+                .all(|row| row.saved && !row.current && row.signal.is_none()));
+        }
+    }
+
+    #[test]
+    fn visible_current_is_included_even_when_missing_from_the_scan() {
+        let nearby = parse_networksetup_list("header\nGuest");
+        let (rows, saved_only) = macos_scan_rows(nearby, Vec::new(), Some("Campus"));
+        assert!(!saved_only);
+        assert_eq!(rows[0].ssid, "Campus");
+        assert!(rows[0].current);
+    }
 
     #[test]
     fn macos_current_name_requires_a_success_label_and_visible_name() {
@@ -234,24 +342,28 @@ mod tests {
                 signal: Some(40),
                 secured: false,
                 current: false,
+                saved: false,
             },
             WifiNetwork {
                 ssid: "Campus".into(),
                 signal: Some(75),
                 secured: true,
                 current: false,
+                saved: true,
             },
             WifiNetwork {
                 ssid: "Other".into(),
                 signal: Some(90),
                 secured: true,
                 current: false,
+                saved: false,
             },
         ];
         let tidied = tidy(rows, Some("Campus"));
         assert_eq!(tidied.len(), 2);
         assert_eq!(tidied[0].ssid, "Campus", "the joined network sorts first");
         assert!(tidied[0].current);
+        assert!(tidied[0].saved);
         assert_eq!(tidied[0].signal, Some(75), "strongest of the duplicates");
         assert!(tidied[0].secured, "secured if any duplicate was");
     }
@@ -264,12 +376,14 @@ mod tests {
                 signal: Some(80),
                 secured: true,
                 current: false,
+                saved: false,
             },
             WifiNetwork {
                 ssid: "Real".into(),
                 signal: Some(10),
                 secured: true,
                 current: false,
+                saved: false,
             },
         ];
         assert_eq!(tidy(rows, None).len(), 1);
@@ -300,5 +414,6 @@ mod tests {
         let rows = parse_networksetup_list(out);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].ssid, "CampusWiFi");
+        assert!(rows.iter().all(|row| row.saved && row.signal.is_none()));
     }
 }

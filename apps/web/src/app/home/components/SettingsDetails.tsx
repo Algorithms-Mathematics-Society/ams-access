@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -11,8 +11,13 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { Token } from "@astryxdesign/core/Token";
-import { manualRecoveryCommand, recoveryFailureMessage } from "@/lib/recovery-message";
 import { useAppVersion } from "@/lib/use-app-version";
+import { manualRecoveryCommand } from "@/lib/recovery-message";
+import {
+  getLastReleaseResult,
+  releaseDeviceControls,
+  releaseRestoreStatus,
+} from "@/lib/release-device-controls";
 import { AccessDialog } from "@/components/AccessDialog";
 import type { ReadinessState, SecurityLogLevel, TelemetryQueryState } from "./types";
 
@@ -64,7 +69,29 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
   // macOS: the settings lockdown changed that are still not back, each with
   // the exact command that puts it back. The app keeps retrying on its own;
   // this is what the candidate can do meanwhile.
-  const [unrestored, setUnrestored] = useState<RestoreStatus | null>(null);
+  const pendingRecoveryRef = useRef(
+    typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("restore") === "pending"
+  );
+  const unknownRecovery: RestoreStatus = {
+    pending: true,
+    items: [
+      {
+        label:
+          "Previous device restoration was not verified. Retry restoration to check all controls.",
+        fix_command: "",
+      },
+    ],
+  };
+  const [unrestored, setUnrestored] = useState<RestoreStatus | null>(() => {
+    const previous = getLastReleaseResult();
+    return previous
+      ? releaseRestoreStatus(previous)
+      : pendingRecoveryRef.current
+        ? unknownRecovery
+        : null;
+  });
+  const restoringRef = useRef(false);
   const [retrying, setRetrying] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [discarding, setDiscarding] = useState(false);
@@ -76,7 +103,13 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
   useEffect(() => {
     let disposed = false;
     const accept = (next: RestoreStatus | null) => {
-      if (!disposed) setUnrestored(next?.pending ? next : null);
+      const previous = getLastReleaseResult();
+      const unresolved = previous
+        ? releaseRestoreStatus(previous)
+        : pendingRecoveryRef.current
+          ? unknownRecovery
+          : null;
+      if (!disposed) setUnrestored(unresolved ?? (next?.pending ? next : null));
     };
     invoke<RestoreStatus>("get_lockdown_restore_status")
       .then(accept)
@@ -91,81 +124,47 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
   async function retryRestore() {
     setRetrying(true);
     try {
-      const next = await invoke<RestoreStatus>("retry_lockdown_restore");
-      setUnrestored(next.pending ? next : null);
-      if (!next.pending) {
-        setStatus("done");
-        setDetail("Every system setting changed for the contest has been restored.");
-        setManualCommand(null);
-        onSecurityEvent("RECOVERY: remaining system settings restored");
-      }
-    } catch {
-      setStatus("error");
-      setDetail(
-        "The restore retry did not complete. AMS Access has not verified that every setting was restored. Try again or ask an invigilator for help."
-      );
-      onSecurityEvent("RECOVERY: restore retry failed", "warn");
+      await restore();
     } finally {
       setRetrying(false);
     }
   }
 
   async function restore() {
+    if (restoringRef.current) return;
+    restoringRef.current = true;
     setStatus("working");
     setDetail(null);
-    // unlock_desktop is the important one — it restores the trackpad gesture
-    // prefs and reaps caffeinate. The other two clear the keyboard intercept
-    // and flush the firewall allowlist. Independent and idempotent, so run them
-    // together and report on the aggregate.
-    const results = await Promise.allSettled([
-      invoke("unlock_desktop"),
-      invoke("disable_keyboard_intercept"),
-      invoke("disable_network_lockdown"),
-    ]);
-
-    const remaining = await invoke<RestoreStatus>("get_lockdown_restore_status").catch(() => null);
-    setUnrestored(remaining?.pending ? remaining : null);
-    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-    // Thrown by the api-client when not running inside the desktop shell.
-    if (rejected.some((r) => String(r.reason).includes("bridge unavailable"))) {
-      setStatus("error");
-      setDetail("Recovery is only available inside the AMS Access desktop app.");
-      return;
-    }
-    // Settings the restore is still retrying are listed below with their fix
-    // commands; the generic "relaunch" error would only repeat them less
-    // usefully. Only an unlock_desktop failure is explained by that list.
-    if (remaining?.pending && rejected.every((r) => r === results[0])) {
-      setStatus("idle");
-      setManualCommand(null);
-      onSecurityEvent("RECOVERY: some system settings still pending restore", "warn");
-      return;
-    }
-    if (remaining === null && rejected.length === 0) {
+    setManualCommand(null);
+    try {
+      const result = await releaseDeviceControls();
+      setUnrestored(releaseRestoreStatus(result));
+      if (result.outcome === "confirmed") {
+        pendingRecoveryRef.current = false;
+        setStatus("done");
+        setDetail(
+          "The app confirmed restoration of its window, desktop, keyboard and network controls."
+        );
+        onSecurityEvent("RECOVERY: device controls restored");
+      } else {
+        setStatus("error");
+        if (result.steps.some((step) => step.id === "network" && step.state !== "confirmed"))
+          setManualCommand(manualRecoveryCommand(platform));
+        setDetail(
+          result.outcome === "browser"
+            ? "Recovery is only available inside the AMS Access desktop app."
+            : "Some device controls could not be verified as restored. A timed-out native operation may still be running. Retry restoration or ask an invigilator for help."
+        );
+        onSecurityEvent("RECOVERY: device restoration unverified", "warn");
+      }
+    } catch {
       setStatus("error");
       setDetail(
-        "AMS Access ran the restore steps but could not verify their result. Try again inside the desktop app or ask an invigilator for help."
+        "Device restoration could not be verified. Retry or use the app's normal Quit control."
       );
-      setManualCommand(null);
-      onSecurityEvent("RECOVERY: restore result could not be verified", "warn");
-      return;
+    } finally {
+      restoringRef.current = false;
     }
-    if (rejected.length > 0) {
-      setStatus("error");
-      // Platform-correct, because the previous single string told a Linux
-      // candidate to restart their Mac and to relaunch the app, neither of
-      // which clears the firewall they are stuck behind. See recovery-message.ts.
-      setDetail(recoveryFailureMessage(platform));
-      setManualCommand(manualRecoveryCommand(platform));
-      onSecurityEvent("RECOVERY: manual restore reported errors", "warn");
-      return;
-    }
-    setStatus("done");
-    setManualCommand(null);
-    setDetail(
-      "Trackpad gestures, keyboard shortcuts, screen sleep, and network access have been restored."
-    );
-    onSecurityEvent("RECOVERY: system settings restored by user");
   }
 
   async function discardKeyboardRecovery() {
@@ -176,7 +175,14 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
       const remaining = await invoke<RestoreStatus>("get_lockdown_restore_status").catch(
         () => null
       );
-      setUnrestored(remaining?.pending ? remaining : null);
+      const lastRelease = getLastReleaseResult();
+      setUnrestored(
+        (lastRelease
+          ? releaseRestoreStatus(lastRelease)
+          : pendingRecoveryRef.current
+            ? unknownRecovery
+            : null) ?? (remaining?.pending ? remaining : null)
+      );
       setDiscardOpen(false);
       setDiscardResult({
         status: "success",

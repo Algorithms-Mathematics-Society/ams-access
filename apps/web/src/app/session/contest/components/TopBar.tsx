@@ -10,6 +10,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessMark } from "@/components/AccessLogo";
 import { type ContestMeta } from "./questions";
 import { ReferenceSheetButton } from "./ReferenceSheet";
+import { ContestInformation } from "./ContestInformation";
 import { BatteryStatus } from "./BatteryStatus";
 import { WifiControl } from "./WifiControl";
 
@@ -22,6 +23,7 @@ export interface FinishQuestionReview {
 }
 
 export interface TopBarProps {
+  onLeave?: () => void;
   contest: ContestMeta | null;
   clock: ClockSnapshot;
   handleContestExpiry: () => void | Promise<void>;
@@ -47,6 +49,7 @@ export interface TopBarProps {
 }
 
 export function TopBar({
+  onLeave,
   contest,
   clock,
   handleContestExpiry,
@@ -188,6 +191,10 @@ export function TopBar({
         style={{ flex: 1, minWidth: 0 }}
       >
         <ThemeToggle />
+        <ContestInformation
+          contest={contest}
+          suspended={finishReviewSuspended || submitConfirm || timeUpState !== "idle"}
+        />
         {workspaceControls}
         {contest?.reference_sheet && (
           <ReferenceSheetButton
@@ -204,6 +211,7 @@ export function TopBar({
           icon={<Headset size={16} />}
           onClick={() => setShowSupportModal(true)}
         />
+        <Button label="Leave contest" variant="ghost" onClick={onLeave} />
         <Button
           ref={triggerRef}
           label="Finish contest"
@@ -325,7 +333,8 @@ export function TopBar({
             </VStack>
             {submissionPending && (
               <Text role="status" color="secondary">
-                Waiting for your solution submission to finish before you can exit.
+                Waiting for your solution submission before finishing the attempt. You can still go
+                back and choose Leave contest.
               </Text>
             )}
             {submitError && (

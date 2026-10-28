@@ -236,3 +236,16 @@ test("readiness error copy does not blame advisory platform warnings for a real 
   assert.match(message, /Camera — Camera is unavailable/);
   assert.doesNotMatch(message, /platform/i);
 });
+
+test("Mac advisory review preserves the exact warning without claiming entry is guaranteed", () => {
+  const detail = "Microphone access was declined; continue without microphone.";
+  const tree = render({ platform: "macos", results: { 1: "warn" }, warningDetails: { 1: detail } });
+  const summary = tree.find((node) => node.type === "Banner");
+  assert.match(summary.props.title, /advisory warning/);
+  assert.match(text(summary.props.description), /entry requirements are checked/);
+  assert.ok(tree.some((node) => text(node) === detail));
+  assert.ok(tree.some((node) => node.type === "Button" && node.props.label === "Continue"));
+  const repaired = render({ platform: "macos", results: { 1: "pass" }, warningDetails: { 1: detail } });
+  assert.ok(!repaired.some((node) => text(node) === detail));
+  assert.equal(repaired.find((node) => node.type === "Banner").props.title, "Your setup checks passed");
+});

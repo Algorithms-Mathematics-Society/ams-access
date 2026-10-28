@@ -9,6 +9,7 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { Button } from "@astryxdesign/core/Button";
 import { InlineAlert } from "./ui-primitives";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
+import { approvalLabel, acceptedRequestTime } from "./approval-feedback";
 import type { ActiveSession, ResumeVerificationState } from "./types";
 
 export function SessionActionsPanel({
@@ -16,6 +17,7 @@ export function SessionActionsPanel({
   onResume,
   resumeBusy,
   resumeStatus,
+  approvalUnavailable = false,
   resumeVerification,
   sessionsError,
   theme,
@@ -24,18 +26,22 @@ export function SessionActionsPanel({
   onResume: () => void;
   resumeBusy: boolean;
   resumeStatus: string | null;
+  approvalUnavailable?: boolean;
   resumeVerification: ResumeVerificationState;
   sessionsError: string | null;
   theme: "dark" | "light";
 }) {
   const [helpOpen, setHelpOpen] = useState(false);
+  const requestTime = acceptedRequestTime(activeSession?.resume_request_requested_at);
+  const requestStatus = activeSession?.resume_request_status?.toUpperCase();
   const resumeFailed =
-    !!resumeStatus && /rejected|expired|failed|not found|mismatch|could not/i.test(resumeStatus);
+    requestStatus === "REJECTED" ||
+    requestStatus === "EXPIRED" ||
+    (!!resumeStatus && /rejected|expired|failed|not found|mismatch|could not/i.test(resumeStatus));
   const resumeRetryable = resumeVerification === "retryable";
   const resumeVerified = resumeVerification === "verified";
   const resumeChecking = resumeVerification === "checking" || resumeVerification === "unverified";
-  const resumeRequestPending =
-    String(activeSession?.resume_request_status ?? "").toUpperCase() === "PENDING";
+  const resumeRequestPending = requestStatus === "PENDING";
   const resumeAvailable = Boolean(activeSession && (resumeVerified || resumeRetryable));
   const resumeButtonDisabled =
     resumeBusy || resumeChecking || (resumeRequestPending && !resumeRetryable) || !resumeAvailable;
@@ -88,7 +94,10 @@ export function SessionActionsPanel({
                 <Token
                   size="sm"
                   color={
-                    resumeRequestPending
+                    approvalUnavailable ||
+                    resumeRequestPending ||
+                    requestStatus === "REJECTED" ||
+                    requestStatus === "EXPIRED"
                       ? "yellow"
                       : resumeVerified
                         ? "green"
@@ -97,8 +106,8 @@ export function SessionActionsPanel({
                           : "red"
                   }
                   label={
-                    resumeRequestPending
-                      ? "Approval pending"
+                    approvalUnavailable || (resumeVerified && requestStatus)
+                      ? approvalLabel(requestStatus, approvalUnavailable)
                       : resumeVerified
                         ? "Verified"
                         : resumeChecking
@@ -137,29 +146,29 @@ export function SessionActionsPanel({
                   : undefined
             }
           />
-          {resumeFailed && <Button label="Get help rejoining" onClick={() => setHelpOpen(true)} />}
+          {(resumeFailed || resumeRequestPending || approvalUnavailable) && (
+            <Button label="Get help rejoining" onClick={() => setHelpOpen(true)} />
+          )}
         </HStack>
       </HStack>
+      {requestTime && activeSession?.resume_request_id && (
+        <Text type="supporting">Request received {requestTime} (your device timezone).</Text>
+      )}
+      {resumeRequestPending && (
+        <Text type="supporting">
+          Waiting for approval does not pause the contest clock. If you need help, contact your
+          invigilator. Approval timing is not guaranteed.
+        </Text>
+      )}
       {resumeStatus &&
-        (/verified/i.test(resumeStatus) &&
-        !/failed|not found|expired|mismatch|could not/i.test(resumeStatus) ? (
+        (resumeFailed || approvalUnavailable ? (
+          <InlineAlert theme={theme} tone="danger">
+            {resumeStatus}
+          </InlineAlert>
+        ) : (
           <Text type="supporting" role="status">
             {resumeStatus}
           </Text>
-        ) : (
-          <InlineAlert
-            theme={theme}
-            tone={
-              /verified/i.test(resumeStatus) &&
-              !/failed|not found|expired|mismatch|could not/i.test(resumeStatus)
-                ? "success"
-                : /validat/i.test(resumeStatus)
-                  ? "accent"
-                  : "danger"
-            }
-          >
-            {resumeStatus}
-          </InlineAlert>
         ))}
 
       <HelpRequestModal

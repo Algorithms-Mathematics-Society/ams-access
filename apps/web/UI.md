@@ -330,7 +330,24 @@ The contest toolbar keeps its compact Wi-Fi dropdown. Long network names wrap.
 Wi-Fi names and the connected network come only from the native OS integration.
 Browser builds show guidance to use system Wi-Fi settings, without sample networks,
 password prompts, simulated joins or background scan polling. Native scan failures
-show a retry message rather than a fallback network list.
+show a retry message rather than invented networks. On macOS, CoreWLAN scans nearby
+networks with a saved-only fallback that warns profiles may be out of range.
+Stage 7 requires Location access on macOS only, alongside camera setup. The
+candidate selects **Allow Location access**; status is checked every second for up
+to 60 seconds after the request and whenever the window regains focus. Denied or
+restricted access blocks setup with System Settings guidance and a **Quit & reopen
+AMS Access** action that first releases setup controls. If no prompt appears, the
+Allow button remains available with manual Location Services guidance. Only
+`isGatingRelaxed()` in a development build may bypass it, with a visible “skipped in
+dev build” note. Production builds still require access even if that flag is set.
+The setup flow rechecks before creating a session and returns missing grants to
+Stage 7. This is a macOS-only setup gate, not a new shared readiness CheckKind;
+Windows/Linux UI and the policy fixture remain unchanged. The contest Wi-Fi picker
+only points to Location Services in System Settings when access is unavailable,
+since a system prompt cannot appear above the kiosk. No location updates are
+started, and location coordinates are never recorded or sent. If a child scan
+still cannot see names after authorization, a single in-app worker retries within
+the scan deadline.
 
 Device setup lets AppShell own page scrolling to avoid nested viewport-height
 scroll regions. The MediaPipe loader routes its exact CPU delegate startup
@@ -354,3 +371,66 @@ Build preparation strips external CSS/SVG resource references and omits upstream
 JavaScript; bundle checks reject unsafe copied assets. Native top-level navigation
 is restricted to the app origin (or the configured development origin), and the
 external-browser command refuses requests while native exam lockdown is active.
+
+A native resume of an active session on the same device skips the introduction
+and reuses a passed face scan for at most five minutes when the camera is unchanged.
+Presence, media permissions, displays, applications, network and lockdown are
+checked again. Reusing the scan takes a fresh reference photo during presence
+verification, saves it through the native face-image command and uploads it through
+the existing session identity-photo endpoint. Capture, save or upload failure runs
+the full face scan. Missing or invalid recovery data runs complete setup.
+## Public sign-in help
+
+Login opens `LoginHelpDialog` without reading participant authentication or sending
+an incident. Bundled topic guidance, the public support URL and `team@amshq.in`
+remain readable offline. The fixed HTTPS contact link opens the browser with
+Support selected; only the website composes and sends a message. Copying/opening
+never claims delivery or organizer notification. Credential reissue remains with
+the organizer's identity-verification process.
+
+Optional native version metadata is read only while help is mounted. Candidates
+can review the exact bounded troubleshooting summary before copying: coarse
+browser-reported platform, validated app version, help-open device time and a
+fixed error category. No login ID, password, free-form server errors, storage or
+raw logs are included. Clipboard failure keeps selectable text and manual
+instructions. Closing help preserves login fields; reopening starts fresh local
+help state. Authenticated `HelpRequestModal` and its receipts are unchanged.
+
+Production inbox receipt/staff coverage and packaged browser handoff on Windows,
+macOS and Linux require separate acceptance; browser tests do not establish them.
+
+## Public service status
+
+Candidate screens share one credential-free `/client/status` reader. A compact,
+fixed-height advisory row opens manually requested details; sign-in help and the
+reconnect/load-error views render details inline. Published incident context never
+changes authentication, setup policy, timers, drafts, submission or exit decisions.
+Status details close when a higher-priority contest overlay appears, without
+restoring focus behind that overlay. Current authority requires validated bounded
+JSON, a nondecreasing revision, trusted response time and unexpired publication.
+Failed refreshes retain explicitly last-known context. A missing deployment is
+not reported as healthy or as a confirmed outage. Polling is single-flight,
+jittered, paused offline/hidden, timeout/body bounded and backed off on failures.
+Native network access and operator publication remain deployment acceptance gates.
+
+## Local exit and restoration
+
+Leave contest restores local controls without requesting attempt completion.
+Finish remains a separate server acknowledgement. Both routes preserve truthful
+draft/recovery outcomes; network requests and evidence upload never gate local
+recovery. Login/home/update screens offer normal Close app, with pending restoration
+shown before explicit shutdown. Browser preview does not claim native recovery.
+
+Shared release bounds presentation waits and retains native operation ownership
+after timeout. Setup stops progression before release; late acquisitions own their
+rollback. Settings must retain network/window uncertainty even when desktop-only
+status succeeds. Packaged OS restoration, real latency and participant comprehension
+remain release acceptance checks.
+
+## Candidate confidence and result authority
+
+Readiness distinguishes unavailable checks from advisory warnings. Setup progress counts required checks rather than estimating a percentage. Approval requests remain single-flight and accepted even if local persistence fails; unavailable status retains explicitly last-known context and help stays reachable. Existing polling and entry policy remain unchanged.
+
+Contest information is an on-demand dialog with explicit UTC schedule, action meanings and reference availability; it adds no polling. Reference shows publication time. Result summaries require an authoritative overall verdict and keep zero-row judging failures visible. Compiler diagnostics belong to the selected attempt.
+
+Support previews and submits the same allowlisted automatic context. User-entered contact and message remain explicit fields, with credential-sharing guidance. Update screens describe an official-download handoff without claiming installation success. Native behavior and candidate comprehension remain acceptance checks.

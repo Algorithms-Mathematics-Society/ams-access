@@ -1,5 +1,7 @@
 "use client";
 
+import { ServiceStatus } from "@/components/ServiceStatus";
+
 /**
  * Sign-in, by handle.
  *
@@ -20,6 +22,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { useRouter } from "next/navigation";
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { MacQuitButton } from "@/components/MacQuitButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccessLogo } from "@/components/AccessLogo";
 import { invoke } from "@ams/api-client";
@@ -39,6 +42,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [serviceFailure, setServiceFailure] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<"handle" | "password" | null>(null);
   // `host · CODE` for a status-0. Shown small and quiet under the error: the
@@ -71,6 +75,7 @@ export default function LoginPage() {
     event.preventDefault();
     if (loading || loginInFlightRef.current || performance.now() < cooldownUntil.current) return;
     setError(null);
+    setServiceFailure(false);
     setDiagnostic(null);
     setInvalidField(null);
     const missingField = !loginId.trim() ? "handle" : !password ? "password" : null;
@@ -131,6 +136,7 @@ export default function LoginPage() {
         return;
       }
 
+      setServiceFailure(caught.status === 0 || caught.status === 429 || caught.status >= 500);
       if (caught.needsUpgrade) {
         // The one error where telling them exactly what to do is the whole
         // point: a version mismatch is unfixable from inside the app, so give
@@ -171,6 +177,12 @@ export default function LoginPage() {
         }).catch(() => {});
         return;
       }
+      if (caught.status === 429) {
+        const seconds = Number.isFinite(caught.retryAfterSeconds) && caught.retryAfterSeconds > 0
+          ? Math.ceil(caught.retryAfterSeconds) : 0;
+        setError(`${caught.message} ${seconds > 0 ? `The server asks you to wait ${seconds} seconds before trying again.` : "Wait before trying again; repeated attempts may be limited."}`);
+        return;
+      }
       // The server's own wording. It already distinguishes "incorrect",
       // "revoked" and "too many attempts" carefully, and paraphrasing it here
       // would lose the difference at exactly the moment it matters.
@@ -197,7 +209,10 @@ export default function LoginPage() {
       >
         <HStack as="header" gap={4} justify="between" align="center">
           <AccessLogo />
-          <ThemeToggle />
+          <HStack gap={2} align="center">
+            <MacQuitButton />
+            <ThemeToggle />
+          </HStack>
         </HStack>
 
         <HStack
@@ -252,6 +267,7 @@ export default function LoginPage() {
                 This exam is proctored. After signing in, you’ll set up your camera and check your
                 device before entering a contest.
               </Text>
+              <ServiceStatus components={["sign_in", "support"]} localFailure={serviceFailure} />
               <Divider />
               <VStack gap={3} align="start">
                 {/* Credentials can be reissued by an invigilator, not recovered here. */}

@@ -81,6 +81,7 @@ async function setup(t, { expiry = Date.now() + 3600000, failedKey = "all" } = {
     setCooldownSeconds() {},
     setError: (value) => errors.push(value),
     setDiagnostic() {},
+    setServiceFailure() {},
     setInvalidField() {},
     setLoading() {},
     router: { push: (path) => routes.push(path) },
