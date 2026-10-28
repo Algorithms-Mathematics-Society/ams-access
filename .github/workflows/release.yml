@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to rebuild without moving it
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -17,6 +23,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -35,7 +43,7 @@ jobs:
       # an expensive build or can upload an asset.
       - name: Verify manifests and release tag
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: pnpm check:versions
 
       - name: Test JavaScript and TypeScript packages
@@ -82,6 +90,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -328,6 +338,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      # A manual repair builds application code from the unchanged release tag,
+      # while using the corrected verifier from this workflow's revision.
+      - name: Checkout release verification tooling
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: scripts
+
       - name: Verify macOS release identity, architecture and Gatekeeper
         if: runner.os == 'macOS'
         shell: bash
@@ -336,12 +356,16 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apps=(target/${{ matrix.target }}/release/bundle/macos/*.app)
-          [ "${#apps[@]}" -eq 1 ] || { echo "Expected exactly one Mac app bundle"; exit 1; }
+          dmgs=(target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          [ "${#dmgs[@]}" -eq 1 ] || { echo "Expected exactly one Mac DMG"; exit 1; }
+          verifier=scripts/verify-macos-release.py
+          if [ '${{ github.event_name }}' = workflow_dispatch ]; then
+            verifier=.release-tooling/scripts/verify-macos-release.py
+          fi
           arch=x86_64
           [ '${{ matrix.target }}' != aarch64-apple-darwin ] || arch=arm64
           version=$(node -p "require('./apps/web/package.json').version")
-          python3 scripts/verify-macos-release.py --app "${apps[0]}" \
+          python3 "$verifier" --dmg "${dmgs[0]}" \
             --version "$version" --arch "$arch" --team "$EXPECTED_APPLE_TEAM"
 
       - name: Collect artifact paths
@@ -421,7 +445,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          name: "AMS Access ${{ github.ref_name }}"
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: "AMS Access ${{ inputs.release_tag || github.ref_name }}"
           body_path: CHANGELOG.md
           fail_on_unmatched_files: false
           files: ${{ env.RELEASE_FILES }}

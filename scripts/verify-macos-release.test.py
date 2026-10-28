@@ -1,6 +1,7 @@
 """Exercise release rejection paths without a Mac or weakening host security."""
 import importlib.util
 import plistlib
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,6 +62,59 @@ class ArtifactGate(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout='', stderr='Identifier=com.ams.access\nTeamIdentifier=EXPECTED\nSignature=adhoc')
         with self.assertRaisesRegex(ValueError, 'Developer ID'):
             verify.check(self.app, '4.7.0', 'arm64', 'EXPECTED', adhoc)
+
+    def dmg_runner(self, *, apps=1, reject_gate=False, reject_mount=False, reject_detach=False):
+        calls = []
+        def native(command, **kwargs):
+            calls.append(command)
+            if command[0].endswith('hdiutil'):
+                if command[1] == 'attach':
+                    self.assertIn('-readonly', command)
+                    self.assertIn('-nobrowse', command)
+                    if reject_mount:
+                        return SimpleNamespace(returncode=1, stdout='', stderr='bad image')
+                    mount = Path(command[command.index('-mountpoint') + 1])
+                    for index in range(apps):
+                        shutil.copytree(self.app, mount / f'AMS {index}.app')
+                elif reject_detach:
+                    return SimpleNamespace(returncode=1, stdout='', stderr='busy')
+                return SimpleNamespace(returncode=0, stdout='', stderr='')
+            if reject_gate and '--assess' in command:
+                return SimpleNamespace(returncode=1, stdout='', stderr='untrusted')
+            return self.native(command, **kwargs)
+        return native, calls
+
+    def test_dmg_only_release_checks_the_mounted_payload_and_detaches(self):
+        native, calls = self.dmg_runner()
+        result = verify.check_dmg(Path('AMS Access.dmg'), '4.7.0', 'arm64', 'EXPECTED', native)
+        self.assertEqual(result['signature_and_gatekeeper'], 'accepted')
+        self.assertEqual(calls[-1][1], 'detach')
+        self.assertTrue(any('--assess' in command for command in calls))
+        self.assertFalse(Path(calls[-1][-1]).exists())
+
+    def test_dmg_rejection_still_detaches(self):
+        native, calls = self.dmg_runner(reject_gate=True)
+        with self.assertRaisesRegex(ValueError, 'spctl'):
+            verify.check_dmg(Path('app.dmg'), '4.7.0', 'arm64', 'EXPECTED', native)
+        self.assertEqual(calls[-1][1], 'detach')
+
+    def test_missing_or_ambiguous_dmg_payload_is_rejected(self):
+        for count in (0, 2):
+            native, calls = self.dmg_runner(apps=count)
+            with self.assertRaisesRegex(ValueError, 'exactly one'):
+                verify.check_dmg(Path('app.dmg'), '4.7.0', 'arm64', 'EXPECTED', native)
+            self.assertEqual(calls[-1][1], 'detach')
+
+    def test_mount_failure_does_not_check_an_unmounted_directory(self):
+        native, calls = self.dmg_runner(reject_mount=True)
+        with self.assertRaisesRegex(ValueError, 'mount failed'):
+            verify.check_dmg(Path('app.dmg'), '4.7.0', 'arm64', 'EXPECTED', native)
+        self.assertEqual(len(calls), 1)
+
+    def test_detach_failure_is_not_reported_as_a_success(self):
+        native, _ = self.dmg_runner(reject_detach=True)
+        with self.assertRaisesRegex(ValueError, 'detach failed'):
+            verify.check_dmg(Path('app.dmg'), '4.7.0', 'arm64', 'EXPECTED', native)
 
 
 if __name__ == '__main__':
