@@ -654,10 +654,172 @@ fn authorize_client(stream: &UnixStream) -> Result<(), String> {
 
     let pid = peer_pid(stream)?;
     let actual = pid_path(pid)?;
-    if actual == expected {
-        Ok(())
-    } else {
-        Err("unauthorized client".to_string())
+    if actual != expected {
+        return Err("unauthorized client".to_string());
+    }
+    peer_signature::verify(stream)
+}
+
+/// Code-signature check of the connected client. Enforced only when this
+/// helper is itself team-signed (release builds); an ad-hoc local build keeps
+/// the path check alone so it can be tested against a local backend.
+#[cfg(target_os = "macos")]
+mod peer_signature {
+    use std::ffi::{c_char, c_void, CString};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::ptr::null;
+    use std::sync::OnceLock;
+
+    type CFTypeRef = *const c_void;
+    const UTF8: u32 = 0x0800_0100;
+    const SIGNING_INFORMATION: u32 = 1 << 1;
+    const LOCAL_PEERTOKEN: libc::c_int = 6;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFTypeDictionaryKeyCallBacks: u8;
+        static kCFTypeDictionaryValueCallBacks: u8;
+        fn CFRelease(cf: CFTypeRef);
+        fn CFDataCreate(alloc: CFTypeRef, bytes: *const u8, len: isize) -> CFTypeRef;
+        fn CFDictionaryCreate(
+            alloc: CFTypeRef,
+            keys: *const CFTypeRef,
+            values: *const CFTypeRef,
+            count: isize,
+            key_callbacks: *const u8,
+            value_callbacks: *const u8,
+        ) -> CFTypeRef;
+        fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
+        fn CFGetTypeID(cf: CFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+        fn CFStringCreateWithCString(alloc: CFTypeRef, text: *const c_char, enc: u32) -> CFTypeRef;
+        fn CFStringGetCString(text: CFTypeRef, buf: *mut c_char, size: isize, enc: u32) -> bool;
+    }
+
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        static kSecGuestAttributeAudit: CFTypeRef;
+        static kSecCodeInfoTeamIdentifier: CFTypeRef;
+        fn SecCodeCopySelf(flags: u32, code: *mut CFTypeRef) -> i32;
+        fn SecCodeCopySigningInformation(code: CFTypeRef, flags: u32, info: *mut CFTypeRef) -> i32;
+        fn SecCodeCopyGuestWithAttributes(
+            host: CFTypeRef,
+            attributes: CFTypeRef,
+            flags: u32,
+            guest: *mut CFTypeRef,
+        ) -> i32;
+        fn SecRequirementCreateWithString(
+            text: CFTypeRef,
+            flags: u32,
+            requirement: *mut CFTypeRef,
+        ) -> i32;
+        fn SecCodeCheckValidity(code: CFTypeRef, flags: u32, requirement: CFTypeRef) -> i32;
+    }
+
+    /// This helper's own team ID; `None` when it is ad-hoc signed.
+    fn own_team() -> Option<&'static str> {
+        static TEAM: OnceLock<Option<String>> = OnceLock::new();
+        TEAM.get_or_init(|| unsafe {
+            let mut code: CFTypeRef = null();
+            if SecCodeCopySelf(0, &mut code) != 0 || code.is_null() {
+                return None;
+            }
+            let mut info: CFTypeRef = null();
+            let rc = SecCodeCopySigningInformation(code, SIGNING_INFORMATION, &mut info);
+            CFRelease(code);
+            if rc != 0 || info.is_null() {
+                return None;
+            }
+            let team = CFDictionaryGetValue(info, kSecCodeInfoTeamIdentifier);
+            let mut buf = [0 as c_char; 64];
+            let found = !team.is_null()
+                && CFGetTypeID(team) == CFStringGetTypeID()
+                && CFStringGetCString(team, buf.as_mut_ptr(), buf.len() as isize, UTF8);
+            CFRelease(info);
+            let team = found.then(|| {
+                std::ffi::CStr::from_ptr(buf.as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            })?;
+            // Team IDs are short alphanumerics; anything else never reaches
+            // the requirement text.
+            (!team.is_empty() && team.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(team)
+        })
+        .as_deref()
+    }
+
+    pub(super) fn verify(stream: &UnixStream) -> Result<(), String> {
+        match own_team() {
+            Some(team) => check(stream, team),
+            None => Ok(()),
+        }
+    }
+
+    /// The peer, identified by its audit token (not a pid that can be reused
+    /// or exec'd over), must be signed by `team` under an Apple-issued chain.
+    fn check(stream: &UnixStream, team: &str) -> Result<(), String> {
+        let mut token = [0u8; 32];
+        let mut len = token.len() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                0,
+                LOCAL_PEERTOKEN,
+                token.as_mut_ptr().cast(),
+                &mut len,
+            )
+        };
+        if rc != 0 || len as usize != token.len() {
+            return Err("unable to identify client code".to_string());
+        }
+        let requirement = CString::new(format!(
+            "anchor apple generic and certificate leaf[subject.OU] = \"{team}\""
+        ))
+        .map_err(|_| "invalid team identifier".to_string())?;
+        unsafe {
+            let data = CFDataCreate(null(), token.as_ptr(), token.len() as isize);
+            if data.is_null() {
+                return Err("unable to identify client code".to_string());
+            }
+            let keys = [kSecGuestAttributeAudit];
+            let values = [data];
+            let attributes = CFDictionaryCreate(
+                null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+            CFRelease(data);
+            if attributes.is_null() {
+                return Err("unable to identify client code".to_string());
+            }
+            let mut guest: CFTypeRef = null();
+            let rc = SecCodeCopyGuestWithAttributes(null(), attributes, 0, &mut guest);
+            CFRelease(attributes);
+            if rc != 0 || guest.is_null() {
+                return Err("unable to identify client code".to_string());
+            }
+            let text = CFStringCreateWithCString(null(), requirement.as_ptr(), UTF8);
+            let mut parsed: CFTypeRef = null();
+            let created =
+                !text.is_null() && SecRequirementCreateWithString(text, 0, &mut parsed) == 0;
+            if !text.is_null() {
+                CFRelease(text);
+            }
+            let valid = created && !parsed.is_null() && SecCodeCheckValidity(guest, 0, parsed) == 0;
+            if !parsed.is_null() {
+                CFRelease(parsed);
+            }
+            CFRelease(guest);
+            if valid {
+                Ok(())
+            } else {
+                Err("unauthorized client: not signed by this helper's team".to_string())
+            }
+        }
     }
 }
 
