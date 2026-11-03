@@ -53,6 +53,12 @@ pub(super) struct Policy {
     pub clipboard_blocked: bool,
 }
 
+/// The physical QWERTY Q, W, H and M keys: with Command, Quit, Close, Hide
+/// and Minimize on a QWERTY layout.
+pub(super) fn is_quit_close_hide_minimize_key(kc: i64) -> bool {
+    matches!(kc, VK_Q | VK_W | VK_H | VK_M)
+}
+
 /// The shortcut policy, free of FFI so it reads as one table.
 pub(super) fn should_block_key(kc: i64, flags: u64, policy: Policy) -> bool {
     let cmd = (flags & FLAG_CMD) != 0;

@@ -227,11 +227,17 @@ function isContestEditorTheme(value: string | null): value is ContestEditorTheme
 // tap in platform-rs; every other Cmd combo (copy, paste, undo, find, select
 // all...) must reach the editor. `code` is used because Shift changes `key`.
 function isBlockedCmdShortcut(e: KeyboardEvent): boolean {
-  if (["Tab", "Backquote", "KeyQ", "KeyW", "KeyH", "KeyM", "Space"].includes(e.code)) return true;
-  // macOS: also by character. On AZERTY or Dvorak "q" is not on KeyQ, and the
-  // app menu's Quit, Close, Hide and Minimize match by character.
-  if (/Mac/i.test(navigator.userAgent) && ["q", "w", "h", "m"].includes(e.key.toLowerCase()))
+  // macOS: Quit, Close, Hide and Minimize go by the letter typed. On AZERTY or
+  // Dvorak "q" is not on KeyQ, and KeyQ / KeyW type "a" / "z" on AZERTY, whose
+  // Cmd+A and Cmd+Z must reach the editor.
+  const letter =
+    /Mac/i.test(navigator.userAgent) && /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : null;
+  if (letter) {
+    if (["q", "w", "h", "m"].includes(letter)) return true;
+  } else if (["KeyQ", "KeyW", "KeyH", "KeyM"].includes(e.code)) {
     return true;
+  }
+  if (["Tab", "Backquote", "Space"].includes(e.code)) return true;
   if (e.altKey && ["Escape", "KeyD", "KeyI", "KeyJ", "KeyU"].includes(e.code)) return true;
   if (e.shiftKey && ["Digit3", "Digit4", "Digit5", "Digit6"].includes(e.code)) return true;
   return e.ctrlKey && e.code === "KeyF";

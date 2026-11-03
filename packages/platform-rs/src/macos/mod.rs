@@ -534,19 +534,22 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
     let flags = CGEventGetFlags(event);
-    // Quit, Close, Hide and Minimize by the character as well as the key: the
-    // menu matches by character, and on AZERTY or Dvorak "q" is not keycode 12.
+    // Quit, Close, Hide and Minimize go by the letter typed: the menu matches
+    // by character, and on AZERTY or Dvorak "q" is not keycode 12.
     if flags & FLAG_CMD != 0 {
         let mut buf = [0u16; 4];
         let mut len = 0usize;
         CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
-        if len == 1
-            && matches!(
-                buf[0],
-                0x71 | 0x51 | 0x77 | 0x57 | 0x68 | 0x48 | 0x6d | 0x4d
-            )
-        {
-            return true;
+        let letter = u8::try_from(buf[0])
+            .ok()
+            .filter(|c| len == 1 && c.is_ascii_alphabetic())
+            .map(|c| c.to_ascii_lowercase());
+        match letter {
+            Some(b'q' | b'w' | b'h' | b'm') => return true,
+            // On AZERTY the physical Q and W keys type "a" and "z": Cmd+A and
+            // Cmd+Z must reach the editor though their keycodes are Q's and W's.
+            Some(_) if keyboard_policy::is_quit_close_hide_minimize_key(kc) => return false,
+            _ => {}
         }
     }
     keyboard_policy::should_block_key(
