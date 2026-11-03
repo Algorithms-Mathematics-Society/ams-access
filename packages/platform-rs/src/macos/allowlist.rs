@@ -102,11 +102,10 @@ fn refresh() {
     };
     // Resolved without the lock: a slow lookup must not hold up a release.
     let fresh = resolve_domains(&domains);
-    let fresh_resolvers = if fresh.is_empty() {
-        Vec::new()
-    } else {
-        dns_resolvers()
-    };
+    // Always the current resolvers, even when the API did not resolve: after a
+    // move to a network with another DNS server, that server is blocked until
+    // it is added, so waiting for the API to resolve first would wait forever.
+    let fresh_resolvers = dns_resolvers();
     let mut guard = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
