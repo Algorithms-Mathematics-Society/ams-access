@@ -1281,8 +1281,12 @@ fn spawn_space_watchdog() {
 }
 
 /// The Siri panel. Matched by full path: the basename lookup skips anything
-/// under /System so a restricted-app name never hits an OS component.
-const SIRI_UI: &str = "/System/Library/CoreServices/Siri.app/Contents/MacOS/Siri";
+/// under /System so a restricted-app name never hits an OS component. macOS 27
+/// ships it as "Siri AI.app" (com.apple.campo) under /System/Applications.
+const SIRI_UI: [&str; 2] = [
+    "/System/Library/CoreServices/Siri.app/Contents/MacOS/Siri",
+    "/System/Applications/Siri AI.app/Contents/MacOS/Siri AI",
+];
 
 /// Siri is kept closed for the test instead of switched off in its saved
 /// settings, which would outlive a power cut. The tap already drops its
@@ -1299,7 +1303,7 @@ fn quit_siri() {
         let Some((pid, comm)) = line.trim_start().split_once(char::is_whitespace) else {
             continue;
         };
-        if comm.trim() == SIRI_UI {
+        if SIRI_UI.contains(&comm.trim()) {
             let _ = Command::new("/bin/kill")
                 .args(["-TERM", pid])
                 .bounded_output();
