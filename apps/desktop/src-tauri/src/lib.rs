@@ -2556,7 +2556,9 @@ async fn engage_desktop(
     entry_generation: u64,
 ) -> Result<(), String> {
     KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
-    tauri::async_runtime::spawn_blocking(move || {
+    #[cfg(target_os = "macos")]
+    let menu_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2591,7 +2593,52 @@ async fn engage_desktop(
         }
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    if result.is_ok() {
+        set_contest_menu(&menu_app, true);
+    }
+    result
+}
+
+/// macOS: the default menu's Quit ⌘Q, Close ⌘W, Hide ⌘H and Minimize ⌘M
+/// match by character, so they got past the keycode-based tap on AZERTY and
+/// Dvorak. Quit goes straight to `terminate:`, which no Tauri hook can
+/// cancel, so while the contest is locked the menu has no such items. Edit
+/// stays: WebKit's copy, paste and undo go through it.
+#[cfg(target_os = "macos")]
+fn set_contest_menu(app: &tauri::AppHandle, locked: bool) {
+    use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+    let menu = if locked {
+        (|| -> tauri::Result<Menu<tauri::Wry>> {
+            let app_menu = Submenu::with_items(
+                app,
+                "AMS Access",
+                true,
+                &[&PredefinedMenuItem::about(app, None, None)?],
+            )?;
+            let edit = Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?;
+            Menu::with_items(app, &[&app_menu, &edit])
+        })()
+    } else {
+        Menu::default(app)
+    };
+    if let Ok(menu) = menu {
+        let _ = app.set_menu(menu);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2716,6 +2763,8 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
 #[tauri::command]
 async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
     KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
+    #[cfg(target_os = "macos")]
+    set_contest_menu(&app, false);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()

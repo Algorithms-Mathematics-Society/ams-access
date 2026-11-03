@@ -351,7 +351,7 @@ const FULL_LOCK_MASK: u64 = KB_EVENT_MASK
     | (1u64 << CG_EVENT_SWIPE)
     | (1u64 << CG_EVENT_SYSTEM_DEFINED);
 
-use keyboard_policy::{FLAG_CTRL, VK_FN};
+use keyboard_policy::{FLAG_CMD, FLAG_CTRL, VK_FN};
 
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {
@@ -383,6 +383,12 @@ extern "C" {
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
+    fn CGEventKeyboardGetUnicodeString(
+        event: *mut c_void,
+        max_len: usize,
+        actual_len: *mut usize,
+        buf: *mut u16,
+    );
 }
 
 #[allow(non_upper_case_globals)]
@@ -521,6 +527,21 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
     let flags = CGEventGetFlags(event);
+    // Quit, Close, Hide and Minimize by the character as well as the key: the
+    // menu matches by character, and on AZERTY or Dvorak "q" is not keycode 12.
+    if flags & FLAG_CMD != 0 {
+        let mut buf = [0u16; 4];
+        let mut len = 0usize;
+        CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
+        if len == 1
+            && matches!(
+                buf[0],
+                0x71 | 0x51 | 0x77 | 0x57 | 0x68 | 0x48 | 0x6d | 0x4d
+            )
+        {
+            return true;
+        }
+    }
     keyboard_policy::should_block_key(
         kc,
         flags,
