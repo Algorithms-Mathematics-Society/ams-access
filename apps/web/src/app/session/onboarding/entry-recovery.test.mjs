@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { assertSetupAuthorization } from "./setup-authorization.ts";
 import { entryProgressLabel } from "./entry-progress.ts";
 
 import {
@@ -84,6 +85,14 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
   const context = {
     entryAttemptsRef: { current: attempts },
     setupLeavingRef: { current: false },
+    setupAccessReady: true,
+    preparedSessionIdRef: { current: "session" },
+    setupGateRef: { current: { kind: "ready", session: { uid: "session" } } },
+    setupAttemptRef: { current: "10000000-0000-4000-8000-000000000001" },
+    assertSetupAuthorization,
+    clearSetupAttempt() {},
+    markSetupHandoff() {},
+    sessionStorage: {},
     preparedEntryRef: { current: null },
     contestWindow: null,
     contestId: "contest",
@@ -463,7 +472,12 @@ test("prepare session and readiness before T=0, then enter once without repeatin
       localStorage: { setItem() {} },
       startSession: async () => {
         sessions++;
-        return { uid: "session" };
+        return {
+          uid: "session",
+          contest_uid: "contest",
+          status: "active",
+          entry_attempt_id: "10000000-0000-4000-8000-000000000001",
+        };
       },
       evaluateEntryGateFromServer: async () => {
         eligibility++;
@@ -514,7 +528,12 @@ test("3000 prepared candidates create no new sessions or readiness writes at the
         },
         startSession: async () => {
           calls++;
-          return { uid: "session" };
+          return {
+            uid: "session",
+            contest_uid: "contest",
+            status: "active",
+            entry_attempt_id: "10000000-0000-4000-8000-000000000001",
+          };
         },
       },
     })
@@ -594,12 +613,41 @@ test("unmount releases prepared waiting controls but transfers controls to an en
   }
 });
 
-test("the room relies on server activation and never recreates a prepared session at T=0", () => {
+test("the room still waits for server activation before exposing the paper", () => {
   const room = readFileSync(new URL("../contest/client.tsx", import.meta.url), "utf8");
-  assert.doesNotMatch(room, /startSession/);
   const read = room.indexOf("const live = await getSession(stored.id)");
   const pending = room.indexOf('if (live.status === "pending")', read);
   const paper = room.indexOf("await loadContestPaper(contestId)", read);
   assert.ok(read > 0 && pending > read && paper > pending);
   assert.match(room.slice(pending, paper), /failRetryable/);
+});
+
+test("failed completed-setup persistence stays retryable and never marks entry as transferred", async () => {
+  for (const alreadyPrepared of [false, true]) {
+    let deny = true;
+    const prepared = { current: alreadyPrepared ? { contestId: "contest", entered: false } : null };
+    const f = desktopFixture({
+      overrides: {
+        preparedEntryRef: prepared,
+        markSetupHandoff() {
+          if (deny) throw Error("storage full");
+        },
+      },
+    });
+    await f.finalize();
+    assert.equal(prepared.current.entered, false);
+    assert.deepEqual(f.state.navigation, []);
+    assert.equal(f.state.retries.at(-1), true);
+    assert.match(String(f.state.blocks.at(-1)), /storage|save completed setup/);
+    const starts = f.desktop.starts;
+    deny = false;
+    await f.finalize();
+    assert.equal(prepared.current.entered, true);
+    assert.deepEqual(f.state.navigation, ["/session/contest?contestId=contest"]);
+    assert.equal(
+      f.desktop.starts,
+      starts,
+      "retrying the handoff does not reacquire desktop controls"
+    );
+  }
 });

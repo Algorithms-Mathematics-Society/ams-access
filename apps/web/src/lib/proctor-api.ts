@@ -1,3 +1,5 @@
+import { clearSetupHandoff } from "../app/session/onboarding/setup-handoff.ts";
+import { clearSetupAttempt } from "../app/session/onboarding/setup-authorization.ts";
 /**
  * The proctor's client for ams-api.
  *
@@ -207,6 +209,12 @@ export function setToken(value: string | null, expiresInSeconds?: number): void 
   // invalidates the previous participant's local chat capability, even when
   // localStorage is unavailable and the prior identity cannot be compared.
   clearSignedInSupportReceipt();
+  try {
+    clearSetupHandoff(sessionStorage);
+    clearSetupAttempt(sessionStorage);
+  } catch {
+    // The in-memory invalidation still prevents reuse; new setup must persist a fresh attempt.
+  }
   token = value;
   authenticationGeneration += 1;
   for (const listener of authChangeListeners) listener();
@@ -220,8 +228,16 @@ export function setToken(value: string | null, expiresInSeconds?: number): void 
     }
     store.setItem(TOKEN_KEY, value);
     // Older installations used these names; never leave a usable old session behind.
-    for (const key of ["ams_participant_token", "ams_participant_token_expires_at", "ams_candidate_token"]) {
-      try { store.removeItem(key); } catch { /* This build cannot restore these keys. */ }
+    for (const key of [
+      "ams_participant_token",
+      "ams_participant_token_expires_at",
+      "ams_candidate_token",
+    ]) {
+      try {
+        store.removeItem(key);
+      } catch {
+        /* This build cannot restore these keys. */
+      }
     }
     if (expiresInSeconds) {
       store.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + expiresInSeconds * 1000));
@@ -245,12 +261,21 @@ export function restoreToken(): boolean {
       // Clear identity/session metadata, not draft buffers or device preferences.
       // Failed removals cannot restore an old token: v5 never reads its key.
       for (const key of [
-        "ams_participant_token", "ams_participant_token_expires_at", "ams_candidate_token",
-        STORAGE_KEYS.ACTIVE_SESSION, STORAGE_KEYS.LAST_SESSION,
-        STORAGE_KEYS.ACTIVE_CONTEST, STORAGE_KEYS.ACTIVE_CONTEST_TITLE,
-        STORAGE_KEYS.DISPLAY_NAME, STORAGE_KEYS.UNLOCKED_CONTESTS,
+        "ams_participant_token",
+        "ams_participant_token_expires_at",
+        "ams_candidate_token",
+        STORAGE_KEYS.ACTIVE_SESSION,
+        STORAGE_KEYS.LAST_SESSION,
+        STORAGE_KEYS.ACTIVE_CONTEST,
+        STORAGE_KEYS.ACTIVE_CONTEST_TITLE,
+        STORAGE_KEYS.DISPLAY_NAME,
+        STORAGE_KEYS.UNLOCKED_CONTESTS,
       ]) {
-        try { store.removeItem(key); } catch { /* Best-effort legacy cleanup. */ }
+        try {
+          store.removeItem(key);
+        } catch {
+          /* Best-effort legacy cleanup. */
+        }
       }
       clearSignedInSupportReceipt();
       return false;
@@ -442,6 +467,8 @@ export type SessionStatus = "pending" | "active" | "submitted" | "terminated" | 
 export type SessionPhase = "before_window" | "verification" | "running" | "ended";
 
 export type ProctorSession = {
+  /** Echoed only by a successful entry authorization POST, never a GET. */
+  entry_attempt_id?: string | null;
   uid: string;
   contest_uid: string;
   status: SessionStatus;
@@ -651,6 +678,7 @@ export function logout(): void {
  * after a crash, so callers must not treat an existing session as an error. */
 export async function startSession(input: {
   contestUid: string;
+  entryAttemptId: string;
   deviceFingerprint?: string;
   osName?: string;
   appVersion?: string;
@@ -660,6 +688,7 @@ export async function startSession(input: {
     "/participant/sessions",
     {
       contest_uid: input.contestUid,
+      entry_attempt_id: input.entryAttemptId,
       device_fingerprint: input.deviceFingerprint ?? "",
       os_name: input.osName ?? "",
       app_version: input.appVersion ?? "",

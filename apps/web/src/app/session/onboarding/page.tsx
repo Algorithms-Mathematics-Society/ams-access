@@ -32,11 +32,16 @@ import {
 import { participantToken } from "@/lib/candidate-auth";
 import {
   getContest,
-  getSession,
+  authGeneration,
+  subscribeAuthChanges,
+  latestResumeRequest,
+  requestResume,
   serverNow,
   startSession,
   uploadIdentityPhoto,
   type ContestIndex,
+  type ProctorSession,
+  type ResumeRequest,
 } from "@/lib/proctor-api";
 import { captureFrame } from "@/lib/identity-photo";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
@@ -73,6 +78,16 @@ import {
   canReuseFaceScan,
   type ResumeSetup,
 } from "./resume-setup";
+import {
+  setupAttemptId,
+  clearSetupAttempt,
+  createSetupAuthorization,
+  authorizeSetupEntry,
+  assertSetupAuthorization,
+  type SetupAccess,
+} from "./setup-authorization";
+import { markSetupHandoff, clearSetupHandoff } from "./setup-handoff";
+import { approvalMessage } from "@/app/home/components/approval-feedback";
 import { createStageAdvanceController } from "./components/stage-advance";
 import {
   buildFaceReviewEvent,
@@ -238,38 +253,243 @@ export default function OnboardingPage() {
   const passedFaceRef = useRef<{ cameraId: string; passedAt: number } | null>(null);
   const [reusedFaceScan, setReusedFaceScan] = useState(false);
 
+  type SetupGate =
+    | SetupAccess<ProctorSession, ResumeRequest>
+    | { kind: "checking" }
+    | { kind: "unavailable"; message: string };
+  const [setupGate, setSetupGate] = useState<SetupGate>({ kind: "checking" });
+  const setupGateRef = useRef<SetupGate>(setupGate);
+  setupGateRef.current = setupGate;
+  const setupAttemptRef = useRef<string | null>(null);
+  const authorizationRef = useRef(
+    createSetupAuthorization<SetupAccess<ProctorSession, ResumeRequest>>()
+  );
+  const authorizationEpochRef = useRef(0);
+  const approvalRequestPendingRef = useRef(false);
+  const [approvalRequestBusy, setApprovalRequestBusy] = useState(false);
+  const authorizedContextRef = useRef<{ contestId: string; auth: number } | null>(null);
+  const setupAccessReady =
+    dryRun ||
+    (setupGate.kind === "ready" &&
+      authorizedContextRef.current?.contestId === contestId &&
+      authorizedContextRef.current.auth === authGeneration());
+
+  const authorizeSetup = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      if (setupLeavingRef.current) return;
+      if (dryRun) return;
+      const epoch = authorizationEpochRef.current;
+      const auth = authGeneration();
+      setSetupGate({ kind: "checking" });
+      try {
+        const access = await authorizationRef.current.run(async () => {
+          if (!contestId) throw new Error("Choose a contest from Home before starting setup.");
+          const attemptId = setupAttemptId(sessionStorage, contestId, () => crypto.randomUUID());
+          setupAttemptRef.current = attemptId;
+          return authorizeSetupEntry(
+            { contestId, attemptId },
+            {
+              start: () =>
+                startSession({
+                  contestUid: contestId,
+                  entryAttemptId: attemptId,
+                  deviceFingerprint: getOrCreateDeviceId(),
+                  osName: navigator.platform,
+                }),
+              latest: latestResumeRequest,
+            }
+          );
+        }, `${contestId}:${auth}`);
+        if (
+          isCancelled() ||
+          setupLeavingRef.current ||
+          epoch !== authorizationEpochRef.current ||
+          auth !== authGeneration()
+        )
+          return;
+        if (access.kind === "ready") {
+          localStorage.setItem(
+            "ams_active_session",
+            JSON.stringify({
+              id: access.session.uid,
+              contest_id: contestId,
+              status: access.session.status,
+              updated_at: new Date().toISOString(),
+            })
+          );
+        } else {
+          // Recovery metadata is presentation only. The next POST still authorizes setup.
+          localStorage.setItem(
+            "ams_active_session",
+            JSON.stringify({
+              id: access.sessionId,
+              contest_id: contestId,
+              resume_request_id: access.request?.uid,
+              resume_request_status: access.request?.status,
+              resume_request_requested_at: access.request?.created_at,
+              resume_request_review_note: access.request?.review_note,
+            })
+          );
+        }
+        authorizedContextRef.current = { contestId, auth };
+        setSetupGate(access);
+      } catch (error) {
+        if (
+          !isCancelled() &&
+          !setupLeavingRef.current &&
+          epoch === authorizationEpochRef.current &&
+          auth === authGeneration()
+        )
+          setSetupGate({ kind: "unavailable", message: readinessErrorText(error) });
+      }
+    },
+    [contestId, dryRun]
+  );
+
   useEffect(() => {
-    if (dryRun || !contestId || !hasNativeBridge()) return;
     let cancelled = false;
+    void authorizeSetup(() => cancelled);
+    return () => {
+      cancelled = true;
+      authorizationEpochRef.current++;
+    };
+  }, [authorizeSetup]);
+
+  useEffect(
+    () =>
+      subscribeAuthChanges(() => {
+        authorizationEpochRef.current++;
+        authorizationRef.current.invalidate();
+        authorizedContextRef.current = null;
+        setupGateRef.current = {
+          kind: "unavailable",
+          message: "Your sign-in changed. Return Home before starting setup again.",
+        };
+        setSetupGate(setupGateRef.current);
+        entryAttemptsRef.current.cancel();
+        resumeSetupRef.current = null;
+        try {
+          cameraSession.release();
+        } catch {
+          // Restore device controls independently of camera cleanup.
+        }
+        void releaseDeviceControls().catch(() => {});
+      }),
+    []
+  );
+
+  async function requestSetupApproval() {
+    const gate = setupGateRef.current;
+    if (gate.kind !== "approval" || approvalRequestPendingRef.current || setupLeavingRef.current)
+      return;
+    approvalRequestPendingRef.current = true;
+    const epoch = authorizationEpochRef.current;
+    const auth = authGeneration();
+    setApprovalRequestBusy(true);
     try {
-      const active = JSON.parse(localStorage.getItem("ams_active_session") ?? "null");
-      if (!active?.id || active.contest_id !== contestId) return;
+      const request = await requestResume(gate.sessionId, {
+        deviceFingerprint: getOrCreateDeviceId(),
+        reason: "The participant is requesting approval before re-entry setup.",
+      });
+      if (
+        setupLeavingRef.current ||
+        setupGateRef.current !== gate ||
+        epoch !== authorizationEpochRef.current ||
+        auth !== authGeneration()
+      )
+        return;
+      setSetupGate({ ...gate, request });
+      // An accepted request must remain accepted even if optional recovery storage fails.
+      try {
+        localStorage.setItem(
+          "ams_active_session",
+          JSON.stringify({
+            id: gate.sessionId,
+            contest_id: contestId,
+            resume_request_id: request.uid,
+            resume_request_status: request.status,
+            resume_request_requested_at: request.created_at,
+            resume_request_review_note: request.review_note,
+          })
+        );
+      } catch {
+        /* Home will re-read the authoritative status. */
+      }
+    } catch {
+      if (
+        !setupLeavingRef.current &&
+        setupGateRef.current === gate &&
+        epoch === authorizationEpochRef.current &&
+        auth === authGeneration()
+      )
+        setSetupGate({
+          kind: "unavailable",
+          message:
+            "Delivery could not be confirmed. Check approval status before sending another request.",
+        });
+    } finally {
+      approvalRequestPendingRef.current = false;
+      setApprovalRequestBusy(false);
+    }
+  }
+
+  async function refreshSetupApproval() {
+    const gate = setupGateRef.current;
+    if (gate.kind !== "approval" || approvalRequestPendingRef.current || setupLeavingRef.current)
+      return;
+    approvalRequestPendingRef.current = true;
+    const epoch = authorizationEpochRef.current;
+    const auth = authGeneration();
+    setApprovalRequestBusy(true);
+    try {
+      const request = await latestResumeRequest(gate.sessionId);
+      if (
+        setupLeavingRef.current ||
+        setupGateRef.current !== gate ||
+        epoch !== authorizationEpochRef.current ||
+        auth !== authGeneration()
+      )
+        return;
+      setSetupGate({ ...gate, request });
+    } catch {
+      if (
+        !setupLeavingRef.current &&
+        epoch === authorizationEpochRef.current &&
+        auth === authGeneration()
+      )
+        setSetupGate({
+          kind: "unavailable",
+          message:
+            "Could not check approval. Device setup remains stopped. Retry entry authorization or return Home for help.",
+        });
+    } finally {
+      approvalRequestPendingRef.current = false;
+      setApprovalRequestBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (
+      dryRun ||
+      !contestId ||
+      !setupAccessReady ||
+      setupGate.kind !== "ready" ||
+      !hasNativeBridge()
+    )
+      return;
+    try {
       const saved = readResumeSetup(localStorage.getItem(RESUME_SETUP_KEY), {
-        sessionId: active.id,
+        sessionId: setupGate.session.uid,
         contestId,
         deviceId: getOrCreateDeviceId(),
       });
       if (!saved) return;
-      void getSession(saved.sessionId)
-        .then((session) => {
-          if (
-            cancelled ||
-            session.uid !== saved.sessionId ||
-            session.contest_uid !== contestId ||
-            !["active", "pending"].includes(session.status.toLowerCase())
-          )
-            return;
-          resumeSetupRef.current = saved;
-          setCurrentStage((stage) => (stage === 0 ? 1 : stage));
-        })
-        .catch(() => {});
+      resumeSetupRef.current = saved;
+      setCurrentStage((stage) => (stage === 0 ? 1 : stage));
     } catch {
-      // Missing or unreadable recovery data falls back to complete setup.
+      // Optional recovery falls back to complete setup after authorization.
     }
-    return () => {
-      cancelled = true;
-    };
-  }, [contestId, dryRun]);
+  }, [contestId, dryRun, setupGate, setupAccessReady]);
   const [isTestAccount, setIsTestAccount] = useState(false);
   // Authoritative device platform ("windows" | "macos" | "linux"), resolved
   // once via the Tauri `get_platform` command. Drives the Windows-only entry
@@ -298,6 +518,7 @@ export default function OnboardingPage() {
   // Resolve the authoritative device platform once. Outside the Tauri shell
   // (dev / browser preview) this stays null, so no Windows-only block engages.
   useEffect(() => {
+    if (!setupAccessReady) return;
     let cancelled = false;
     withTimeout(invokeStrict<{ os: string }>("get_platform"), 5000, "Platform check timed out")
       .then((p) => {
@@ -313,14 +534,14 @@ export default function OnboardingPage() {
     return () => {
       cancelled = true;
     };
-  }, [contextRetry]);
+  }, [contextRetry, setupAccessReady]);
 
   // Fetch organizer overrides early so the Windows display hard-block can be
   // relaxed for a pre-approved candidate before they reach Stage 3. A fetch
   // failure (offline / endpoint absent) yields no overrides — the candidate is
   // never hard-failed on the fetch itself; enforcement just stays at baseline.
   useEffect(() => {
-    if (!contestId) return;
+    if (!contestId || !setupAccessReady) return;
     let cancelled = false;
     fetchOrganizerOverrides(API_URL, contestId, getOrCreateDeviceId(), participantToken() ?? "")
       .then((list) => {
@@ -330,15 +551,15 @@ export default function OnboardingPage() {
     return () => {
       cancelled = true;
     };
-  }, [contestId]);
+  }, [contestId, setupAccessReady]);
 
   useEffect(() => {
-    if (isTestAccount && currentStage === 0 && !dryRunComplete) {
+    if (setupAccessReady && isTestAccount && currentStage === 0 && !dryRunComplete) {
       setCurrentStage(FINAL_STAGE);
       setReadyForStart(true);
       setPolicyBlock(null);
     }
-  }, [currentStage, dryRunComplete, isTestAccount]);
+  }, [currentStage, dryRunComplete, isTestAccount, setupAccessReady]);
 
   const externalDisplayOverride = overrides.some(
     (o) => o.check_kind === "external_display" && o.expires_at_ms > Date.now()
@@ -403,12 +624,12 @@ export default function OnboardingPage() {
   }, []);
 
   useEffect(() => {
-    if (!isTestAccount) return;
+    if (!isTestAccount || !setupAccessReady) return;
     setCurrentStage(FINAL_STAGE);
     setReadyForStart(true);
     setPolicyBlock(null);
     setTransitioning(false);
-  }, [isTestAccount]);
+  }, [isTestAccount, setupAccessReady]);
 
   // The camera is deliberately NOT released here. This effect used to stop
   // every track on unmount — and the unmount that matters is the one caused by
@@ -499,7 +720,11 @@ export default function OnboardingPage() {
   }
 
   const finalizeSecureStart = useCallback(async () => {
-    if (setupLeavingRef.current) return;
+    if (
+      setupLeavingRef.current ||
+      (!dryRun && (!setupAccessReady || setupGateRef.current.kind !== "ready"))
+    )
+      return;
     // Session creation, readiness delivery and native protection setup already
     // completed while waiting. T=0 does not repeat those writes or scans.
     const prepared = preparedEntryRef.current;
@@ -513,8 +738,23 @@ export default function OnboardingPage() {
           return;
         }
       }
+      try {
+        markSetupHandoff(sessionStorage, {
+          contestId,
+          sessionId: preparedSessionIdRef.current!,
+          entryAttemptId: setupAttemptRef.current!,
+        });
+      } catch {
+        setPolicyBlock(
+          "Could not save completed setup on this device. Retry contest entry, or Exit setup to restore device settings."
+        );
+        setEntryRetryAvailable(true);
+        setReadyForStart(false);
+        return;
+      }
       prepared.entered = true;
       setReadyForStart(false);
+      setPolicyBlock(null);
       router.push(`/session/contest?contestId=${contestId}`);
       return;
     }
@@ -679,10 +919,17 @@ export default function OnboardingPage() {
             // that times out may have landed, and the next entry attempt resumes it.
             startSession({
               contestUid: contestId,
+              entryAttemptId: setupAttemptRef.current!,
               deviceFingerprint: getOrCreateDeviceId(),
               osName: navigator.platform,
             }),
           60000
+        );
+        assertSetupAuthorization(
+          body,
+          contestId,
+          setupAttemptRef.current!,
+          setupGateRef.current.kind === "ready" ? setupGateRef.current.session.uid : undefined
         );
         if (body?.uid) {
           localStorage.setItem(
@@ -1010,9 +1257,14 @@ export default function OnboardingPage() {
         setPolicyBlock(null);
         return;
       }
-      preparedEntryRef.current.entered = true;
       setEntryProgress("Opening the contest workspace");
       setReadyForStart(false);
+      markSetupHandoff(sessionStorage, {
+        contestId,
+        sessionId: preparedSessionIdRef.current!,
+        entryAttemptId: setupAttemptRef.current!,
+      });
+      preparedEntryRef.current.entered = true;
       router.push(`/session/contest?contestId=${contestId}`);
     } catch (error) {
       if (error instanceof EntryCancelledError || !attempts.current(attempt)) return;
@@ -1051,6 +1303,7 @@ export default function OnboardingPage() {
     overrides,
     isTestAccount,
     contestIndex,
+    setupAccessReady,
   ]);
 
   useEffect(() => {
@@ -1230,6 +1483,13 @@ export default function OnboardingPage() {
     if (exitInProgressRef.current) return;
     exitInProgressRef.current = true;
     setupLeavingRef.current = true;
+    let attemptCleared = true;
+    try {
+      clearSetupHandoff(sessionStorage);
+      clearSetupAttempt(sessionStorage);
+    } catch {
+      attemptCleared = false;
+    }
     setSetupLeaving(true);
     advanceController.deactivate(stageRun);
     setExitingSetup(true);
@@ -1248,13 +1508,16 @@ export default function OnboardingPage() {
       setCameraStream(null);
       const result = await releaseDeviceControls();
       if (
+        !attemptCleared ||
         acquisitionWasPending ||
         !mediaReleased ||
         entryAttemptsRef.current.hasPendingWork() ||
         hasPendingFullscreenWork()
       ) {
         setExitError(
-          "Setup has stopped, but an earlier device operation is still running or its restoration is unverified. Retry Exit setup to check again, or use Close app for normal shutdown."
+          !attemptCleared
+            ? "Setup has stopped and device restoration was attempted, but the entry attempt could not be cleared. Retry Exit setup before rejoining."
+            : "Setup has stopped, but an earlier device operation is still running or its restoration is unverified. Retry Exit setup to check again, or use Close app for normal shutdown."
         );
         return;
       }
@@ -1321,7 +1584,7 @@ export default function OnboardingPage() {
       clearTimeout(id);
     };
   }, [isTooEarly, contestId, tooEarlyPoll]);
-  const canRunChecks = isTestAccount || shouldRunChecks(entry);
+  const canRunChecks = setupAccessReady && (isTestAccount || shouldRunChecks(entry));
   // An entry refused as too early leaves its block up; once the poll above sees
   // check-in open, retry it, or the promised automatic entry needs a click.
   useEffect(() => {
@@ -1417,7 +1680,72 @@ export default function OnboardingPage() {
                   : undefined
               }
             />
-            {policyBlock && (
+            {!setupAccessReady && (
+              <VStack gap={4} aria-live="polite" data-setup-authorization={setupGate.kind}>
+                <Banner
+                  status={setupGate.kind === "unavailable" ? "error" : "info"}
+                  title={
+                    setupGate.kind === "checking"
+                      ? "Checking permission to start setup"
+                      : "Organizer approval before setup"
+                  }
+                  description={
+                    setupGate.kind === "checking"
+                      ? "Please keep this app open while the server verifies this entry attempt."
+                      : setupGate.kind === "unavailable"
+                        ? setupGate.message
+                        : setupGate.kind === "approval"
+                          ? setupGate.request
+                            ? approvalMessage(
+                                setupGate.request.status,
+                                setupGate.request.review_note
+                              )
+                            : "Ask for organizer approval before running the device checks."
+                          : ""
+                  }
+                />
+                <HStack gap={3} wrap="wrap">
+                  {setupGate.kind === "approval" &&
+                    !["pending", "approved"].includes(setupGate.request?.status ?? "") && (
+                      <Button
+                        label="Request re-entry approval"
+                        onClick={() => void requestSetupApproval()}
+                        isLoading={approvalRequestBusy}
+                        isDisabled={approvalRequestBusy}
+                      />
+                    )}
+                  {setupGate.kind !== "checking" && (
+                    <Button
+                      label={
+                        setupGate.kind === "approval" && setupGate.request?.status === "approved"
+                          ? "Continue to setup"
+                          : setupGate.kind === "unavailable"
+                            ? "Retry entry authorization"
+                            : "Check approval status"
+                      }
+                      onClick={() =>
+                        void (setupGate.kind === "approval" &&
+                        setupGate.request?.status !== "approved"
+                          ? refreshSetupApproval()
+                          : authorizeSetup())
+                      }
+                      isDisabled={approvalRequestBusy}
+                    />
+                  )}
+                  <Button
+                    label="Back to contests"
+                    onClick={() => void emergencyExit()}
+                    isDisabled={exitingSetup}
+                  />
+                </HStack>
+                <Text color="secondary">
+                  Device checks start only after the server permits entry. Return to Home to wait
+                  for automatic approval updates or get help rejoining. Waiting does not pause the
+                  contest clock.
+                </Text>
+              </VStack>
+            )}
+            {setupAccessReady && policyBlock && (
               <Banner
                 status="error"
                 title="Setup needs your attention"
@@ -1441,7 +1769,7 @@ export default function OnboardingPage() {
                 }
               />
             )}
-            {currentStage === 0 && !dryRunComplete && (
+            {setupAccessReady && currentStage === 0 && !dryRunComplete && (
               <HStack
                 gap={10}
                 align="start"
@@ -1525,7 +1853,9 @@ export default function OnboardingPage() {
                     variant="primary"
                     size="lg"
                     label="Begin setup"
-                    onClick={() => setCurrentStage(1)}
+                    onClick={() => {
+                      if (setupAccessReady) setCurrentStage(1);
+                    }}
                     style={{
                       width: "100%",
                       minHeight: "calc(var(--spacing-10) + var(--spacing-1))",
@@ -1557,7 +1887,7 @@ export default function OnboardingPage() {
               </VStack>
             )}
 
-            {currentStage > 0 && !dryRunComplete && (
+            {setupAccessReady && currentStage > 0 && !dryRunComplete && (
               <HStack
                 gap={10}
                 align="stretch"

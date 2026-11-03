@@ -34,7 +34,7 @@ test("unchanged approval response preserves session identity; decision and note 
   );
 });
 
-test("polls immediately then at the three-second floor with zero jitter", async (t) => {
+test("first approval read is delayed and healthy reads use the fifteen-second floor", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let calls = 0;
   const stop = startResumePolling(
@@ -44,20 +44,20 @@ test("polls immediately then at the three-second floor with zero jitter", async 
     () => 0
   );
   await settle();
-  assert.equal(calls, 1);
-  t.mock.timers.tick(2999);
+  assert.equal(calls, 0);
+  t.mock.timers.tick(14999);
   await settle();
-  assert.equal(calls, 1);
+  assert.equal(calls, 0);
   t.mock.timers.tick(1);
   await settle();
+  assert.equal(calls, 1);
+  t.mock.timers.tick(15000);
+  await settle();
   assert.equal(calls, 2);
-  t.mock.timers.tick(3000);
-  await settle();
-  assert.equal(calls, 3);
   stop();
-  t.mock.timers.tick(9000);
+  t.mock.timers.tick(90000);
   await settle();
-  assert.equal(calls, 3);
+  assert.equal(calls, 2);
 });
 
 test("slow requests never overlap and disposal invalidates the outstanding response", async (t) => {
@@ -66,15 +66,20 @@ test("slow requests never overlap and disposal invalidates the outstanding respo
     complete,
     cancelled,
     applied = false;
-  const stop = startResumePolling(async (isCancelled) => {
-    calls++;
-    cancelled = isCancelled;
-    await new Promise((resolve) => {
-      complete = resolve;
-    });
-    if (!isCancelled()) applied = true;
-  });
-  t.mock.timers.tick(12_000);
+  const stop = startResumePolling(
+    async (isCancelled) => {
+      calls++;
+      cancelled = isCancelled;
+      await new Promise((resolve) => {
+        complete = resolve;
+      });
+      if (!isCancelled()) applied = true;
+    },
+    () => 0
+  );
+  t.mock.timers.tick(15000);
+  await settle();
+  t.mock.timers.tick(90000);
   await settle();
   assert.equal(calls, 1);
   stop();
@@ -90,24 +95,26 @@ test("503/429 server delay is respected, then success restores normal cadence", 
   const stop = startResumePolling(
     async () => {
       calls++;
-      if (calls === 1) throw { status: 503, retryAfterSeconds: 20 };
+      if (calls === 1) throw { status: 503, retryAfterSeconds: 40 };
     },
     () => 0
   );
+  t.mock.timers.tick(15000);
   await settle();
-  t.mock.timers.tick(19999);
+  assert.equal(calls, 1);
+  t.mock.timers.tick(39999);
   await settle();
   assert.equal(calls, 1);
   t.mock.timers.tick(1);
   await settle();
   assert.equal(calls, 2);
-  t.mock.timers.tick(3000);
+  t.mock.timers.tick(15000);
   await settle();
   assert.equal(calls, 3);
   stop();
 });
 
-test("persistent failures back off with jitter, never accumulate missed requests, and stop", async (t) => {
+test("persistent failures back off with jitter and never queue missed requests", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let calls = 0;
   const stop = startResumePolling(
@@ -117,10 +124,12 @@ test("persistent failures back off with jitter, never accumulate missed requests
     },
     () => 0.5
   );
+  t.mock.timers.tick(17500);
   await settle();
-  for (const delay of [7500, 13500, 25500, 31500, 31500]) {
+  assert.equal(calls, 1);
+  for (let i = 0; i < 5; i++) {
     const before = calls;
-    t.mock.timers.tick(delay - 1);
+    t.mock.timers.tick(31499);
     await settle();
     assert.equal(calls, before);
     t.mock.timers.tick(1);
@@ -143,6 +152,7 @@ test("long Retry-After cannot overflow the timer into immediate requests", async
     },
     () => 0
   );
+  t.mock.timers.tick(15000);
   await settle();
   t.mock.timers.tick(86_400_000);
   await settle();
@@ -150,7 +160,7 @@ test("long Retry-After cannot overflow the timer into immediate requests", async
   stop();
 });
 
-test("3000 healthy approval waiters spread follow-up reads without adding requests", async (t) => {
+test("3000 pending clients spread initial reads across 15–20s without immediate duplicate reads", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const counts = Array(3000).fill(0);
   const stops = counts.map((_, i) =>
@@ -162,23 +172,23 @@ test("3000 healthy approval waiters spread follow-up reads without adding reques
     )
   );
   await settle();
-  assert(counts.every((n) => n === 1));
-  t.mock.timers.tick(2999);
+  assert(counts.every((n) => n === 0));
+  t.mock.timers.tick(14999);
   await settle();
-  assert(counts.every((n) => n === 1));
-  t.mock.timers.tick(501);
+  assert(counts.every((n) => n === 0));
+  t.mock.timers.tick(2501);
   await settle();
-  const refreshed = counts.filter((n) => n === 2).length;
+  const refreshed = counts.filter((n) => n === 1).length;
   assert(refreshed >= 1500 && refreshed < 1510);
-  assert(counts.every((n) => n <= 2));
-  t.mock.timers.tick(500);
+  assert(counts.every((n) => n <= 1));
+  t.mock.timers.tick(2500);
   await settle();
-  assert(counts.every((n) => n === 2));
+  assert(counts.every((n) => n === 1));
   stops.forEach((stop) => stop());
   t.mock.timers.tick(60_000);
   await settle();
   assert(
-    counts.every((n) => n === 2),
-    "unmount stops every waiter without catch-up requests"
+    counts.every((n) => n === 1),
+    "disposal stops all pending timers"
   );
 });

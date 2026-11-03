@@ -19,7 +19,6 @@ import { STORAGE_KEYS } from "@/constants/storage-keys";
 import {
   type ContestSummary,
   ProctorApiError,
-  consumeResume,
   getContest,
   getSession,
   hasToken,
@@ -79,13 +78,13 @@ import { ReadinessWidget } from "./components/ReadinessPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { SecurityOperationsLog } from "./components/SecurityOperationsLog";
-import { SessionReadinessModal } from "./components/SessionReadinessModal";
 import { ResolveModal } from "./components/ResolveModal";
 import { approvalMessage } from "./components/approval-feedback";
 import { mergeResumeRequestIntoSession, startResumePolling } from "./components/resume-polling";
 import { dateTimeFormatter } from "@/lib/date-time-format";
 import { exitToHome } from "@/lib/exit-to-home";
-import { preflightSessionTypeFor } from "./components/home-contest-presentation";
+import { clearSetupHandoff } from "@/app/session/onboarding/setup-handoff";
+import { clearSetupAttempt, setupAttemptId } from "@/app/session/onboarding/setup-authorization";
 import { deriveContestantReadiness } from "./components/readiness-context";
 
 // Keys that belong to the machine, not the candidate, so sign-out keeps them.
@@ -206,11 +205,9 @@ export default function HomePage() {
   // a printed slip and the platform has no address for them.
   const [displayName, setDisplayName] = useState("");
   const [identityHydrated, setIdentityHydrated] = useState(false);
-  const [preflightContestId, setPreflightContestId] = useState<string | null>(null);
-  const preflightSessionType = preflightSessionTypeFor(preflightContestId, activeSession);
   const [activeResolveModal, setActiveResolveModal] = useState<string | null>(null);
   const resumeInFlightRef = useRef(false);
-  const resumeConsumeInFlightRef = useRef(false);
+  const entryNavigationRef = useRef(false);
   const resumePollInFlightRef = useRef(false);
   const resumeRequestInFlightRef = useRef(false);
   // Invalidate responses that started before sign-out or this Home visit ended.
@@ -427,9 +424,24 @@ export default function HomePage() {
   const refreshContests = useCallback(() => {
     void loadContests();
   }, [loadContests]);
-  const openPreflight = useCallback((contestId: string) => {
-    setPreflightContestId(contestId);
-  }, []);
+  const openPreflight = useCallback(
+    (contestId: string) => {
+      if (entryNavigationRef.current) return;
+      entryNavigationRef.current = true;
+      // Persist a fresh attempt before navigation; old recovery cannot authorize a new entry.
+      try {
+        clearSetupHandoff(sessionStorage);
+        setupAttemptId(sessionStorage, contestId, () => crypto.randomUUID(), true);
+        router.push(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+      } catch {
+        entryNavigationRef.current = false;
+        setResumeStatus(
+          "Could not start a new setup attempt on this device. Ask your invigilator for help before rejoining."
+        );
+      }
+    },
+    [router]
+  );
 
   async function runIntegrityScan(cancelledRef?: { current: boolean }, contestId?: string | null) {
     const generation = ++scanGenerationRef.current;
@@ -565,15 +577,14 @@ export default function HomePage() {
   useEffect(() => {
     if (!identityHydrated) return;
     const cancelled = { current: false };
-    // Closing preflight starts a fresh baseline; cancelling its strict scan
-    // alone would otherwise leave Home's shared summary stuck on checking.
-    void runIntegrityScan(cancelled, preflightContestId);
+    // Home readiness is informational; entry checks belong behind onboarding authorization.
+    void runIntegrityScan(cancelled);
     return () => {
       cancelled.current = true;
-      // Also invalidate a manual rescan when this preflight closes or changes.
+      // Invalidate any manual scan when this Home visit ends.
       scanGenerationRef.current += 1;
     };
-  }, [preflightContestId, identityHydrated]);
+  }, [identityHydrated]);
 
   function clearStoredActiveSession(reason: string) {
     localStorage.removeItem(ACTIVE_SESSION_KEY);
@@ -594,35 +605,6 @@ export default function HomePage() {
     }
   }
 
-  async function consumeApprovedResume(session: ActiveSession) {
-    if (!session.id || !session.contest_id || resumeConsumeInFlightRef.current) return;
-    const epoch = recoveryEpochRef.current;
-    resumeConsumeInFlightRef.current = true;
-    setResumeBusy(true);
-    try {
-      // 409 here means the grant was spent, rejected or has lapsed — the
-      // server decides, and it is the only thing that can.
-      await consumeResume(session.id);
-      if (!recoveryCurrent(session.id, epoch)) return;
-      const nextSession = mergeResumeRequestIntoSession(session, { status: "CONSUMED" });
-      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(nextSession));
-      setActiveSession(nextSession);
-      setResumeStatus("Resume approved. Re-entering contest...");
-      // SECURITY: route the reconnect through onboarding so the session is
-      // re-verified and the desktop lockdown (lock_desktop) is re-engaged before
-      // the contest renders. Going straight to /session/contest would re-enter a
-      // live contest with no lockdown. Onboarding reuses the existing
-      // IN_PROGRESS session, so this does not create a duplicate session.
-      router.push(`/session/onboarding?contestId=${encodeURIComponent(session.contest_id)}`);
-    } catch {
-      if (recoveryCurrent(session.id, epoch))
-        setResumeStatus("Could not consume organizer approval. Try again.");
-    } finally {
-      if (recoveryCurrent(session.id, epoch)) setResumeBusy(false);
-      resumeConsumeInFlightRef.current = false;
-    }
-  }
-
   /**
    * Poll the resume request.
    *
@@ -636,14 +618,13 @@ export default function HomePage() {
    * Approval now means re-entry is *available*, not that it happens.
    */
   async function refreshResumeRequest(session: ActiveSession, isCancelled = () => false) {
-    if (!session.id || resumePollInFlightRef.current || resumeConsumeInFlightRef.current) return;
+    if (!session.id || resumePollInFlightRef.current) return;
     const epoch = recoveryEpochRef.current;
     resumePollInFlightRef.current = true;
     const isStale = () =>
       isCancelled() ||
       !recoveryCurrent(session.id, epoch) ||
       resumeInFlightRef.current ||
-      resumeConsumeInFlightRef.current ||
       activeSessionRef.current?.id !== session.id ||
       activeSessionRef.current?.resume_request_id !== session.resume_request_id ||
       activeSessionRef.current?.resume_request_status !== session.resume_request_status;
@@ -906,6 +887,15 @@ export default function HomePage() {
     // The token outlives the page: restoring it here is what lets a candidate
     // whose app restarted mid-exam carry on instead of signing in again.
     restoreToken();
+    // Returning Home ends setup ownership. A later entry needs fresh server authorization.
+    try {
+      clearSetupHandoff(sessionStorage);
+      clearSetupAttempt(sessionStorage);
+    } catch {
+      setResumeStatus(
+        "Saved setup attempt could not be cleared. Starting again must save a fresh attempt before entry."
+      );
+    }
     try {
       setDisplayName(localStorage.getItem(STORAGE_KEYS.DISPLAY_NAME) ?? "");
     } catch {
@@ -953,7 +943,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!activeSession?.id || resumeVerification !== "verified") return;
     const requestStatus = String(activeSession.resume_request_status ?? "").toUpperCase();
-    if (requestStatus !== "PENDING" && requestStatus !== "APPROVED") return;
+    if (requestStatus !== "PENDING") return;
     return startResumePolling((isCancelled) => {
       const current = activeSessionRef.current;
       if (current) return refreshResumeRequestRef.current(current, isCancelled);
@@ -981,12 +971,12 @@ export default function HomePage() {
       if (!verifiedSession?.contest_id) return;
       const requestStatus = String(verifiedSession.resume_request_status ?? "").toUpperCase();
       if (requestStatus === "APPROVED") {
-        // Validation already fetched the approval; a background poll must not drop this click.
-        await consumeApprovedResume(verifiedSession);
+        // Approval is consumed atomically by onboarding's explicit authorization POST.
+        openPreflight(verifiedSession.contest_id);
         return;
       }
       if (requestStatus === "PENDING") return;
-      setPreflightContestId(verifiedSession.contest_id);
+      await submitResumeRequest(verifiedSession);
     } finally {
       resumeInFlightRef.current = false;
     }
@@ -1219,35 +1209,6 @@ export default function HomePage() {
         details={{ source: "home_dashboard" }}
       />
 
-      {preflightContestId && (
-        <SessionReadinessModal
-          contestId={preflightContestId}
-          sessionType={preflightSessionType}
-          theme={theme}
-          onClose={() => setPreflightContestId(null)}
-          onProceed={
-            // The server reopens an active or pending session without an
-            // invigilator, so those go straight to onboarding (the modal's own
-            // link); only a submitted or terminated one needs approval.
-            preflightSessionType === "resume" &&
-            activeSession &&
-            activeSession.contest_id === preflightContestId &&
-            !["active", "pending"].includes(String(activeSession.status ?? "").toLowerCase())
-              ? async () => {
-                  setPreflightContestId(null);
-                  await submitResumeRequest(activeSession);
-                }
-              : undefined
-          }
-          readiness={readiness}
-          readinessReport={readinessReport}
-          onSettingsRedirect={() => {
-            setPreflightContestId(null);
-            setActiveNav("settings");
-          }}
-          onRescan={() => runIntegrityScan(undefined, preflightContestId)}
-        />
-      )}
       {activeResolveModal && (
         <ResolveModal
           isOpen={true}

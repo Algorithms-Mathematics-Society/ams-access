@@ -63,6 +63,9 @@ test("stalled response body times out and the next resume polling tick can retry
     () => 0
   );
   await settle();
+  assert.equal(calls, 0);
+  t.mock.timers.tick(15_000);
+  await settle();
   assert.equal(calls, 1);
   for (let i = 0; i < 7; i++) {
     t.mock.timers.tick(3000);
@@ -71,9 +74,9 @@ test("stalled response body times out and the next resume polling tick can retry
   assert.equal(errors.length, 1);
   assert(errors[0] instanceof ProctorApiError);
   assert.equal(errors[0].code, "TIMEOUT");
-  t.mock.timers.tick(3000);
+  t.mock.timers.tick(15_000);
   await settle();
-  assert(calls >= 2);
+  assert.equal(calls, 2);
   assert.equal(decisions.at(-1).status, "APPROVED");
   stop();
 });

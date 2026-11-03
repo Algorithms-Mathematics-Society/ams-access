@@ -45,8 +45,8 @@ export function startResumePolling(
   const poll = async () => {
     if (cancelled) return;
     // Spread healthy approval polling too: a hall entering together must not
-    // remain synchronized after recovery. Never poll faster than the old 3s floor.
-    let delay = 3000 + random() * 1000;
+    // remain synchronized after recovery. Never poll faster than the 15s floor.
+    let delay = 15_000 + random() * 5000;
     try {
       await refresh(() => cancelled);
       failures = 0;
@@ -55,12 +55,12 @@ export function startResumePolling(
       const hint = (error as { retryAfterSeconds?: unknown } | null)?.retryAfterSeconds;
       const serverWait =
         typeof hint === "number" && Number.isFinite(hint) && hint > 0 ? hint * 1000 : 0;
-      delay = Math.max(serverWait, Math.min(30_000, 3000 * 2 ** failures)) + random() * 3000;
+      delay = Math.max(serverWait, Math.min(30_000, 15_000 * 2 ** failures)) + random() * 3000;
     } finally {
       if (!cancelled) schedule(delay);
     }
   };
-  void poll();
+  schedule(15_000 + random() * 5000);
   return () => {
     cancelled = true;
     if (timer !== undefined) clearTimeout(timer);

@@ -187,6 +187,15 @@ the same camera. Setup says when it reuses the scan and performs a fresh presenc
 check with a new reference photo saved through the normal native capture and
 identity-photo upload paths. Capture or upload failure runs the full face scan;
 volatile device checks and final entry policy remain authoritative.
+
+Graded re-entry asks for organizer approval before device setup. Home entry,
+direct setup links and refresh all use the same server authorization POST with
+a per-entry UUID; a matching POST acknowledgement is required before mounting
+checks or reusing a face scan. Pending, declined, expired and unavailable states
+stay outside setup, with explicit request, status check, continuation and exit
+actions. Approval polling never consumes a grant or navigates. A completed setup
+handoff and another matching server acknowledgement protect the workspace route.
+This requires the companion entry-attempt API rollout; older servers fail closed.
 Signed-out sign-in help uses the shared dialog with local guidance and a public
 browser contact handoff. Keep the URL/address selectable, diagnostics explicitly
 reviewable, and copy/open feedback distinct from message delivery. It must remain
