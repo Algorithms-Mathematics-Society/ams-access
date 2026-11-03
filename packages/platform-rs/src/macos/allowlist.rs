@@ -18,7 +18,10 @@ const REFRESH_EVERY: Duration = Duration::from_secs(60);
 
 struct Live {
     domains: Vec<String>,
+    /// The API's addresses: every port.
     ips: Vec<String>,
+    /// DNS servers: port 53/853 only.
+    resolvers: Vec<String>,
 }
 
 /// What the live lockdown was built from; `None` once it is released.
@@ -27,6 +30,16 @@ static REFRESHER: AtomicBool = AtomicBool::new(false);
 
 /// Every allowed domain resolved to IPs, plus the system's DNS resolvers.
 pub fn resolve_allowlist(domains: &[String]) -> Vec<String> {
+    let ips = resolve_domains(domains);
+    // Resolvers only when the API itself resolved: a list of nothing but DNS
+    // servers must not pass for a working lockdown.
+    if ips.is_empty() {
+        return ips;
+    }
+    merged(&ips, &dns_resolvers())
+}
+
+fn resolve_domains(domains: &[String]) -> Vec<String> {
     let mut ips: Vec<String> = Vec::new();
     for domain in domains {
         if domain.parse::<IpAddr>().is_ok() {
@@ -36,12 +49,7 @@ pub fn resolve_allowlist(domains: &[String]) -> Vec<String> {
             ips = merged(&ips, &found);
         }
     }
-    // Resolvers only when the API itself resolved: a list of nothing but DNS
-    // servers must not pass for a working lockdown.
-    if ips.is_empty() {
-        return ips;
-    }
-    merged(&ips, &dns_resolvers())
+    ips
 }
 
 /// Apply the lockdown for `domains` and keep it current until it is released.
@@ -49,10 +57,16 @@ pub fn enable_and_follow(domains: &[String], ips: &[String]) -> Result<(), Strin
     let mut live = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    super::enable_network_lockdown(ips)?;
+    // `ips` comes from resolve_allowlist: split the resolvers back out so the
+    // helper can hold them to the DNS ports.
+    let current = dns_resolvers();
+    let (resolvers, ips): (Vec<String>, Vec<String>) =
+        ips.iter().cloned().partition(|ip| current.contains(ip));
+    super::enable_network_lockdown(&ips, &resolvers)?;
     *live = Some(Live {
         domains: domains.to_vec(),
-        ips: ips.to_vec(),
+        ips,
+        resolvers,
     });
     drop(live);
     if !REFRESHER.swap(true, Ordering::SeqCst) {
@@ -87,7 +101,12 @@ fn refresh() {
         return;
     };
     // Resolved without the lock: a slow lookup must not hold up a release.
-    let fresh = resolve_allowlist(&domains);
+    let fresh = resolve_domains(&domains);
+    let fresh_resolvers = if fresh.is_empty() {
+        Vec::new()
+    } else {
+        dns_resolvers()
+    };
     let mut guard = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -95,8 +114,11 @@ fn refresh() {
         return; // released, or re-armed for another contest, meanwhile
     };
     let next = merged(&live.ips, &fresh);
-    if next.len() != live.ips.len() && super::enable_network_lockdown(&next).is_ok() {
+    let next_resolvers = merged(&live.resolvers, &fresh_resolvers);
+    let changed = next.len() != live.ips.len() || next_resolvers.len() != live.resolvers.len();
+    if changed && super::enable_network_lockdown(&next, &next_resolvers).is_ok() {
         live.ips = next;
+        live.resolvers = next_resolvers;
     }
 }
 

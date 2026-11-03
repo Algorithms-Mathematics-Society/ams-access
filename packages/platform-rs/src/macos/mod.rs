@@ -1682,7 +1682,9 @@ fn helper_send(json: &str) -> Result<(), String> {
 ///
 /// The helper runs pfctl as root — this function needs no elevated privileges.
 /// If the helper is not installed, returns `Err("helper_not_installed")`.
-pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+/// `resolvers` are allowed on the DNS ports only. They are listed in `ips` as
+/// well, so an older installed helper that ignores `resolvers` keeps DNS.
+pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> Result<(), String> {
     if !network_helper_running() {
         return Err("helper_not_installed".to_string());
     }
@@ -1691,9 +1693,17 @@ pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
     // marker is what lets a later restore know the firewall may be active.
     write_lockdown_marker().map_err(|e| format!("write lockdown marker: {e}"))?;
 
+    let mut ips = allowed_ips.to_vec();
+    ips.extend(
+        resolvers
+            .iter()
+            .filter(|r| !allowed_ips.contains(r))
+            .cloned(),
+    );
     let request = serde_json::json!({
         "cmd": "enable",
-        "ips": allowed_ips,
+        "ips": ips,
+        "resolvers": resolvers,
     })
     .to_string();
 

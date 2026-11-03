@@ -819,8 +819,8 @@ fn dispatch(json: &str) -> String {
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
-                    let _ = (&token, &resolvers);
-                    firewall_enable(&ips)
+                    let _ = &token;
+                    firewall_enable(&ips, &resolvers)
                 }
             };
             match result {
@@ -850,10 +850,24 @@ fn dispatch(json: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn firewall_enable(ips: &[String]) -> Result<(), String> {
+fn firewall_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
-    let ips = validate_ipv4_allowlist(ips)?;
-    pfctl_enable(&ips)
+    // Resolvers are DNS-only. The client also lists them in `ips` so an older
+    // helper keeps DNS; here they are taken out of the all-ports table.
+    let mut dns: Vec<Ipv4Addr> = Vec::new();
+    for raw in resolvers {
+        match raw.parse::<IpAddr>() {
+            Ok(IpAddr::V4(ip)) if !dns.contains(&ip) => dns.push(ip),
+            Ok(_) => {}
+            Err(_) => return Err(format!("invalid resolver IP: {raw}")),
+        }
+    }
+    let mut ips = validate_ipv4_allowlist(ips)?;
+    ips.retain(|ip| !dns.contains(ip));
+    if ips.is_empty() {
+        return Err("no IPv4 addresses available for lockdown allowlist".to_string());
+    }
+    pfctl_enable(&ips, &dns)
 }
 
 #[cfg(target_os = "macos")]
@@ -936,7 +950,7 @@ fn finish_cleanup(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn firewall_enable(_ips: &[String]) -> Result<(), String> {
+fn firewall_enable(_ips: &[String], _resolvers: &[String]) -> Result<(), String> {
     Err("network lockdown not supported on this platform".to_string())
 }
 
@@ -996,7 +1010,7 @@ fn pfctl_load_anchor(anchor: &str, rules: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
+fn pfctl_enable(ips: &[Ipv4Addr], dns: &[Ipv4Addr]) -> Result<(), String> {
     let enabled = command_output(Command::new(PFCTL).arg("-e"), None)
         .map_err(|error| format!("pfctl enable: {error}"))?;
     if !enabled.status.success()
@@ -1016,9 +1030,23 @@ fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join(", ");
 
+    let dns_table = if dns.is_empty() {
+        "table <ams_dns> persist".to_string()
+    } else {
+        let dns_list = dns
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("table <ams_dns> persist {{ {dns_list} }}")
+    };
+
     let rules = format!(
         "table <ams_allowed> persist {{ {ip_list} }}\n\
+         {dns_table}\n\
          pass out quick on lo0 all\n\
+         pass out quick inet proto {{ udp tcp }} to <ams_dns> port 53\n\
+         pass out quick inet proto tcp to <ams_dns> port 853\n\
          pass out quick inet to <ams_allowed>\n\
          block out quick inet all\n\
          block out quick inet6 all\n"
