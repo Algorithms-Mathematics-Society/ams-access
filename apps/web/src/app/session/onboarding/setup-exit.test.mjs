@@ -25,6 +25,9 @@ function harness({ pending = false, mediaFailure = false, outcome = "confirmed" 
     calls = [];
   let pendingNow = pending;
   const bindings = {
+    clearSetupAttempt() {},
+    clearSetupHandoff() {},
+    sessionStorage: {},
     exitInProgressRef: { current: false },
     setupLeavingRef: { current: false },
     setSetupLeaving() {},

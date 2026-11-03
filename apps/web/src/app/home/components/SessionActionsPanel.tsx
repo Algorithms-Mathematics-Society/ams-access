@@ -43,12 +43,11 @@ export function SessionActionsPanel({
   const resumeChecking = resumeVerification === "checking" || resumeVerification === "unverified";
   const resumeRequestPending = requestStatus === "PENDING";
   const resumeAvailable = Boolean(activeSession && (resumeVerified || resumeRetryable));
-  const resumeButtonDisabled =
-    resumeBusy || resumeChecking || (resumeRequestPending && !resumeRetryable) || !resumeAvailable;
+  const resumeButtonDisabled = resumeBusy || resumeChecking || !resumeAvailable;
   const resumeButtonLabel = resumeRetryable
     ? "Retry verification"
     : resumeRequestPending
-      ? "Awaiting Approval"
+      ? "Check approval status"
       : resumeBusy || resumeChecking
         ? "Validating..."
         : "Resume Active Session";

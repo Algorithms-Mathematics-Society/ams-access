@@ -71,13 +71,13 @@ function harness() {
   // across renders while deferred promises capture their own scan arguments.
   const scopedCreate = new Function(
     ...keys,
-    `let preflightContestId = null, identityHydrated = false; ${program}\nreturn { scan: runIntegrityScan, start: (target, hydrated = true) => { preflightContestId = target; identityHydrated = hydrated; return effect(); } };`
+    `let identityHydrated = false; ${program}\nreturn { scan: runIntegrityScan, start: (target, hydrated = true) => { identityHydrated = hydrated; return effect(); } };`
   );
   const { start, scan: manual } = scopedCreate(...Object.values(context));
   return { start, manual, calls, applied, logs, readiness: () => readiness };
 }
 
-test("closing pending preflight starts a fresh baseline and rejects stale baseline/strict reports", async () => {
+test("Home stays informational and rejects stale automatic/manual readiness reports", async () => {
   const h = harness();
   assert.equal(h.start(null, false), undefined);
   await settle();
@@ -86,7 +86,7 @@ test("closing pending preflight starts a fresh baseline and rejects stale baseli
   await settle();
   assert.equal(h.calls[0].options.policy.profile, "internal_pilot");
   cleanup();
-  cleanup = h.start("contest");
+  const strict = h.manual(undefined, "contest");
   await settle();
   assert.equal(h.calls[1].options.policy.profile, "strict_contest");
   cleanup();
@@ -95,6 +95,7 @@ test("closing pending preflight starts a fresh baseline and rejects stale baseli
   assert.equal(h.calls[2].options.policy.profile, "internal_pilot");
   h.calls[1].resolve({ id: "stale-strict", decision: "blocked" });
   h.calls[0].resolve({ id: "stale-baseline", decision: "allowed" });
+  await strict;
   await settle();
   assert.equal(h.applied.length, 0);
   assert.equal(h.readiness().camera, "checking");
@@ -109,7 +110,7 @@ test("closing pending preflight starts a fresh baseline and rejects stale baseli
   cleanup();
 });
 
-test("changing contests also invalidates an outstanding manual rescan", async () => {
+test("a new Home scan invalidates an outstanding manual rescan", async () => {
   const h = harness();
   let cleanup = h.start("first");
   await settle();
@@ -129,6 +130,7 @@ test("changing contests also invalidates an outstanding manual rescan", async ()
     h.applied.map((report) => report.id),
     ["second-contest"]
   );
-  assert.equal(h.calls[2].options.contestId, "second");
+  assert.equal(h.calls[2].options.contestId, null);
+  assert.equal(h.calls[2].options.policy.profile, "internal_pilot");
   cleanup();
 });

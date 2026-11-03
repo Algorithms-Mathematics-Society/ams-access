@@ -126,6 +126,11 @@ import {
 import { readReferenceSheet } from "./reference-sheet";
 import { loadContestPaper } from "./load-contest-problems";
 import {
+  clearSetupHandoff,
+  createSetupHandoffValidator,
+  readSetupHandoff,
+} from "../onboarding/setup-handoff";
+import {
   type Announcement,
   nextToShow,
   readAnnouncements,
@@ -159,10 +164,13 @@ import {
 } from "@/lib/heartbeat-policy";
 import {
   ProctorApiError,
+  authGeneration,
+  subscribeAuthChanges,
   acknowledgeAnnouncement,
   getPublishedReferenceSheet,
   getRun,
   getSession,
+  startSession,
   heartbeat,
   listAnnouncements,
   listDrafts,
@@ -360,16 +368,22 @@ export default function ContestPageClient() {
   const contestId = searchParams?.get("contestId") ?? "";
   const isDryRun = (searchParams?.get("mode") ?? "") === "dry-run";
 
-  // SECURITY (defense-in-depth chokepoint): a real (non-dry-run) proctored
-  // session may only render the contest if the desktop lockdown is engaged.
-  // The ONLY legitimate way in is onboarding → lock_desktop → navigate here, so
-  // a lock-engaged check passing means the candidate came through onboarding.
-  // States: "checking" (probe in flight — render a neutral securing screen),
-  // "ok" (lockdown engaged, dry-run, or no Tauri bridge i.e. dev/browser), or
-  // "redirecting" (reached the contest unlocked — bounce back to onboarding).
-  const [lockGate, setLockGate] = useState<"checking" | "ok" | "redirecting">(
-    isDryRun ? "ok" : "checking"
-  );
+  // Completion, exact server authorization, then the native lockdown gate.
+  // An existing early-created session or engaged lock alone grants no entry.
+  const [lockGate, setLockGate] = useState<"checking" | "ok" | "redirecting">("checking");
+  const setupValidatorRef = useRef(createSetupHandoffValidator());
+  const setupContextRef = useRef<{
+    contestId: string;
+    generation: number;
+    token: string;
+    isCurrent: () => boolean;
+  } | null>(null);
+  const entryReady =
+    lockGate === "ok" &&
+    setupContextRef.current?.contestId === contestId &&
+    setupContextRef.current.generation === authGeneration() &&
+    setupContextRef.current.token === (participantToken() ?? "") &&
+    setupContextRef.current.isCurrent();
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const activeContestIdRef = useRef<string | null>(null);
@@ -781,37 +795,103 @@ export default function ContestPageClient() {
     Record<string, { language: string; content: string }>
   >({});
 
-  // SECURITY (defense-in-depth): verify the desktop lockdown is engaged before
-  // the contest is usable. Practice (dry-run) is intentionally unlocked, so it
-  // is exempt. Outside the Tauri shell (dev/browser preview) there is no real
-  // lockdown to engage — the invoke throws "Tauri bridge unavailable" and we
-  // ALLOW rather than trap the developer. Only a genuine direct-entry into a
-  // live contest (Tauri present, lock NOT engaged) triggers the bounce back to
-  // onboarding (replace, not push, to avoid a back-button loop). The normal
-  // flow — onboarding locks first, then navigates here — passes the check.
+  // No native probe, paper fetch or proctor acquisition before completed setup.
+  // URL mode=dry-run exempts native lockdown only, never setup authorization.
   useEffect(() => {
-    if (isDryRun) return; // practice mode is intentionally unlocked
     let cancelled = false;
+    const generation = authGeneration();
+    const token = participantToken() ?? "";
+    setupContextRef.current = null;
+    setLockGate("checking");
+    const unsubscribe = subscribeAuthChanges(() => {
+      cancelled = true;
+      setupContextRef.current = null;
+      setLockGate("redirecting");
+      setSessionId(null);
+      setQuestions([]);
+      void redirectAfterRelease("/home");
+    });
+    const currentAuth = () =>
+      generation === authGeneration() && token === (participantToken() ?? "");
+    let currentSetup = currentAuth;
+    const redirect = () => {
+      if (cancelled || !currentAuth() || leavingWorkspaceRef.current) return;
+      setLockGate("redirecting");
+      void redirectAfterRelease(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+    };
     (async () => {
-      try {
-        const engaged = await invoke<boolean>("is_lockdown_engaged");
-        if (cancelled || leavingWorkspaceRef.current) return;
-        if (engaged) {
-          setLockGate("ok");
-        } else {
-          // Reached the contest without lockdown — never render it.
-          setLockGate("redirecting");
-          void redirectAfterRelease(
-            `/session/onboarding?contestId=${encodeURIComponent(contestId)}`
-          );
+      const mockFixture =
+        (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") &&
+        isDryRun &&
+        isGatingRelaxed();
+      if (!mockFixture) {
+        const stored = readStoredSession();
+        const handoff =
+          stored?.contest_id === contestId
+            ? readSetupHandoff(sessionStorage, contestId, stored.id)
+            : null;
+        if (!token || !handoff) {
+          redirect();
+          return;
         }
-      } catch {
-        // Tauri unavailable (dev/browser) — no real lockdown exists here.
-        if (!cancelled && !leavingWorkspaceRef.current) setLockGate("ok");
+        const current = () => {
+          try {
+            return (
+              currentAuth() &&
+              readStoredSession()?.id === handoff.sessionId &&
+              readStoredSession()?.contest_id === contestId &&
+              readSetupHandoff(sessionStorage, contestId, handoff.sessionId)?.entryAttemptId ===
+                handoff.entryAttemptId
+            );
+          } catch {
+            return false;
+          }
+        };
+        currentSetup = current;
+        await setupValidatorRef.current(
+          handoff,
+          generation,
+          () =>
+            startSession({
+              contestUid: contestId,
+              entryAttemptId: handoff.entryAttemptId,
+            }),
+          current
+        );
+        if (cancelled || leavingWorkspaceRef.current) return;
+        if (!current()) {
+          redirect();
+          return;
+        }
       }
-    })();
+      if (cancelled || !currentAuth() || leavingWorkspaceRef.current) return;
+      if (!isDryRun) {
+        try {
+          const engaged = await invoke<boolean>("is_lockdown_engaged");
+          if (cancelled || !currentAuth() || leavingWorkspaceRef.current) return;
+          if (!engaged) {
+            redirect();
+            return;
+          }
+        } catch {
+          // Browser fixtures have no native lock. Native probe failures deny entry.
+          if (window.__TAURI__) {
+            redirect();
+            return;
+          }
+        }
+      }
+      if (cancelled || !currentAuth() || leavingWorkspaceRef.current) return;
+      if (!currentSetup()) {
+        redirect();
+        return;
+      }
+      setupContextRef.current = { contestId, generation, token, isCurrent: currentSetup };
+      setLockGate("ok");
+    })().catch(redirect);
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [isDryRun, contestId, router]);
 
@@ -1323,6 +1403,7 @@ export default function ContestPageClient() {
   );
 
   useEffect(() => {
+    if (!entryReady) return;
     if (!contestId) {
       setLoadError("Missing contest ID. Please relaunch from your contest list.");
       setLoading(false);
@@ -1384,6 +1465,12 @@ export default function ContestPageClient() {
 
     const abortController = new AbortController();
     let disposed = false;
+    const context = setupContextRef.current;
+    const isCurrentLoad = () =>
+      !disposed &&
+      !leavingWorkspaceRef.current &&
+      context === setupContextRef.current &&
+      context?.isCurrent();
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     // Server phase from the session read, so a 409 after the end is not
     // mistaken for "not started yet" and polled for nothing.
@@ -1400,10 +1487,7 @@ export default function ContestPageClient() {
       retryTimer = setTimeout(() => setLoadAttempt((n) => n + 1), delay);
     };
 
-    // The room does not create sessions. Onboarding does, because it is the
-    // only place that can attest the lockdown engaged first — a session
-    // minted here would be one that never passed a check. This *adopts* what
-    // onboarding wrote, and sends anyone without one back to get checked.
+    // Adopt only the completed setup whose exact nonce POST passed the gate.
     let loadedObjectUrls: string[] = [];
 
     const stored = readStoredSession();
@@ -1416,7 +1500,7 @@ export default function ContestPageClient() {
       // `getSession` validates ownership server-side — someone else's session
       // is a 404, not a 403 — and syncs the clock offset as a side effect.
       const live = await getSession(stored.id);
-      if (disposed || leavingWorkspaceRef.current) return;
+      if (!isCurrentLoad()) return;
       unauthorizedAtRef.current = null;
       livePhase = live.phase;
 
@@ -1426,9 +1510,7 @@ export default function ContestPageClient() {
         return;
       }
 
-      // The API's get-session path activates pending sessions using its own
-      // clock and current roster. Never recreate/reopen at the bell: doing so
-      // would put every pre-created session back into the same POST burst.
+      // Paper retries use GET; the gate's exact nonce POST is once per mount.
       if (live.status === "pending") {
         failRetryable(
           "Waiting for the server to open your session. This page will retry automatically."
@@ -1437,7 +1519,14 @@ export default function ContestPageClient() {
       }
 
       const { index, questions } = await loadContestPaper(contestId);
-      if (disposed || leavingWorkspaceRef.current) return;
+      if (!isCurrentLoad()) {
+        releaseCandidateQuestionAssets(
+          questions.flatMap((question) =>
+            (question.cxxprobe?.assets ?? []).map((asset) => asset.object_url).filter(Boolean)
+          )
+        );
+        return;
+      }
       // Held for the cleanup below. Blob URLs are document references the
       // browser keeps alive until revoked explicitly, not garbage-collected
       // values.
@@ -1488,7 +1577,7 @@ export default function ContestPageClient() {
       // when it is newer or the buffer is gone (a spare machine), which
       // `chooseRestore` decides; failing to fetch it must not stop the room.
       const serverDrafts = await listDrafts(live.uid).catch(() => [] as Draft[]);
-      if (disposed) return;
+      if (!isCurrentLoad()) return;
       const restoredFiles: Record<string, EditorFile[]> = {};
       const restoredActiveFiles: Record<string, string> = {};
       // A first offline draft may have no server row at all. Enumerate the paper.
@@ -1536,7 +1625,8 @@ export default function ContestPageClient() {
       }
       setLoading(false);
     })().catch((error) => {
-      if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (!isCurrentLoad() || (error instanceof DOMException && error.name === "AbortError"))
+        return;
       if (error instanceof ProctorApiError && error.status === 401) {
         const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
         unauthorizedAtRef.current = step.firstAt;
@@ -1589,7 +1679,7 @@ export default function ContestPageClient() {
       releaseCandidateQuestionAssets(loadedObjectUrls);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contestId, loadAttempt]);
+  }, [contestId, loadAttempt, entryReady]);
 
   function loadQuestionWithAnswers(
     q: Question,
@@ -2205,6 +2295,11 @@ export default function ContestPageClient() {
     preserveSession = false,
     startedExitPhoto?: Promise<void>
   ): Promise<boolean> {
+    try {
+      clearSetupHandoff(sessionStorage);
+    } catch {
+      /* Storage is inaccessible. */
+    }
     let released = true;
     try {
       // Remember which session this was before dropping it. The results
@@ -2476,7 +2571,8 @@ export default function ContestPageClient() {
   }, []);
 
   useEffect(() => {
-    if (loading) return; // Wait for contest load to ensure <video> ref is in DOM
+    if (!entryReady) return;
+    if (loading) return; // Wait for contest load to ensure <video> ref is in DOM.
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("Camera access is unavailable in this environment.");
       setProctoringOk(false);
@@ -2658,7 +2754,7 @@ export default function ContestPageClient() {
       cameraStreamRef.current = null;
       setCameraVideoReady(false);
     };
-  }, [loading, cameraPickKey]);
+  }, [loading, cameraPickKey, entryReady]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -2972,7 +3068,7 @@ export default function ContestPageClient() {
   // second screen for two hours is one flag rather than seven hundred.
   const extraScreensReportedRef = useRef(false);
   useEffect(() => {
-    if (!window.__TAURI__ || bellRung) return;
+    if (!entryReady || !window.__TAURI__ || bellRung) return;
     let cancelled = false;
     const look = async () => {
       try {
@@ -3002,7 +3098,7 @@ export default function ContestPageClient() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [bellRung, contestId]);
+  }, [bellRung, contestId, entryReady]);
 
   // A steady flush, because reconnecting was the only thing that sent one.
   //
@@ -3571,6 +3667,7 @@ export default function ContestPageClient() {
 
   // Periodic process scan — every 5s, log + alert on violation
   useEffect(() => {
+    if (!entryReady) return;
     const tauriCore = window.__TAURI__?.core;
     if (!tauriCore) return;
     const invoke = tauriCore.invoke.bind(tauriCore);
@@ -3690,7 +3787,7 @@ export default function ContestPageClient() {
     void scan();
     const id = setInterval(() => void scan(), 5000);
     return () => clearInterval(id);
-  }, [contestId, sessionId]);
+  }, [contestId, sessionId, entryReady]);
 
   useEffect(() => {
     function blockShortcuts(e: KeyboardEvent) {
@@ -3720,6 +3817,7 @@ export default function ContestPageClient() {
   // the immediate signal; a native backstop exists elsewhere. Debounced so one
   // switch (which can fire both blur and visibilitychange) logs at most once.
   useEffect(() => {
+    if (!entryReady) return;
     const reportFocusLoss = (detail: "document_hidden" | "window_blur") => {
       const now = Date.now();
       if (now - lastFocusLossRef.current < 1000) return;
@@ -3755,7 +3853,7 @@ export default function ContestPageClient() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("blur", onBlur);
     };
-  }, []);
+  }, [entryReady]);
 
   // Statement copy proctoring (F6) — copying *out of the problem statement* is a
   // weak cheating signal (e.g. pasting it into an external tool), so log it as a
@@ -4427,7 +4525,7 @@ export default function ContestPageClient() {
   // SECURITY: while the lockdown probe is pending — or while bouncing an
   // unlocked direct-entry back to onboarding — render a neutral securing screen.
   // Never flash the contest UI before lockdown is confirmed engaged.
-  if (lockGate !== "ok") {
+  if (!entryReady && timeUpState === "idle") {
     return (
       <BootScreen label="Securing session…" onExit={() => void redirectAfterRelease("/home")} />
     );

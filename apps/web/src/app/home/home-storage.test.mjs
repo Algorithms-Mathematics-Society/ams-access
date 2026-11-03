@@ -97,6 +97,9 @@ function hydrate({ deniedRead, session, deniedRemoval = false } = {}) {
       cleanup = effect();
     },
     restoreToken() {},
+    clearSetupAttempt() {},
+    clearSetupHandoff() {},
+    sessionStorage: {},
     setDisplayName: (value) => {
       state.name = value;
     },
@@ -178,7 +181,7 @@ const validationCode = ts.transpileModule(source.slice(validationStart, validati
 }).outputText;
 const recoveryCheckStart = source.indexOf("  function recoveryCurrent(");
 const recoveryCheckEnd = source.indexOf(
-  "\n  async function consumeApprovedResume",
+  "\n  /**\n   * Poll the resume request.",
   recoveryCheckStart
 );
 assert.ok(recoveryCheckStart >= 0 && recoveryCheckEnd > recoveryCheckStart);
@@ -311,39 +314,6 @@ test("sign-out prevents an earlier verification response from restoring saved re
   await pending;
   assert.equal(h.state.stored, null, "old verification must not restore A after sign-out");
 });
-test("sign-out cannot be followed by a late approval-consume redirect", async () => {
-  const start = source.indexOf("  async function consumeApprovedResume(");
-  const end = source.indexOf("  async function refreshResumeRequest(", start);
-  assert.ok(start >= 0 && end > start);
-  const code = ts.transpileModule(source.slice(start, end), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  let resolveConsume;
-  const writes = [];
-  const navigation = [];
-  const recoveryEpochRef = { current: 0 };
-  const context = {
-    recoveryEpochRef,
-    recoveryCurrent: (_id, epoch) => epoch === recoveryEpochRef.current,
-    resumeConsumeInFlightRef: { current: false },
-    setResumeBusy: () => {},
-    setResumeStatus: () => {},
-    consumeResume: () => new Promise((resolve) => (resolveConsume = resolve)),
-    mergeResumeRequestIntoSession: () => ({ id: "A", contest_id: "contest" }),
-    localStorage: { setItem: (...args) => writes.push(args) },
-    ACTIVE_SESSION_KEY: "ams_active_session",
-    setActiveSession: () => writes.push("state"),
-    router: { push: (path) => navigation.push(path) },
-    encodeURIComponent,
-  };
-  vm.runInNewContext(code, context);
-  const pending = context.consumeApprovedResume({ id: "A", contest_id: "contest" });
-  recoveryEpochRef.current += 1; // signOut invalidates work started under the old identity
-  resolveConsume({});
-  await pending;
-  assert.deepEqual(writes, []);
-  assert.deepEqual(navigation, []);
-});
 for (const error of [
   new TypeError("offline"),
   new Error("timeout"),
@@ -413,7 +383,7 @@ test("denied verification persistence does not erase existing recovery", async (
   assert.equal(h.state.verification, "retryable");
 });
 
-test("Resume consumes a verified approval even while a background poll is in flight", async () => {
+test("Resume routes a verified approval to the early setup gate without consuming", async () => {
   const start = source.indexOf("  async function handleResumeActiveSession() {");
   const end = source.indexOf("\n  function handleSignOut()", start);
   const code = ts.transpileModule(source.slice(start, end), {
@@ -432,8 +402,8 @@ test("Resume consumes a verified approval even while a background poll is in fli
       contest_id: "contest",
       resume_request_status: "APPROVED",
     }),
-    consumeApprovedResume: async (session) => {
-      consumed.push(session.id);
+    openPreflight: (contestId) => {
+      consumed.push(contestId);
     },
     refreshResumeRequest: async () => {
       polled++;
@@ -441,12 +411,12 @@ test("Resume consumes a verified approval even while a background poll is in fli
   };
   vm.runInNewContext(code, context);
   await Promise.all([context.handleResumeActiveSession(), context.handleResumeActiveSession()]);
-  assert.deepEqual(consumed, ["saved"]);
+  assert.deepEqual(consumed, ["contest"]);
   assert.equal(polled, 0);
   assert.equal(context.resumeInFlightRef.current, false);
 });
 
-test("a late approval poll cannot reset Resume state during consumption", async () => {
+test("a late approval poll cannot reset Resume state during explicit Resume validation", async () => {
   const start = source.indexOf("  async function refreshResumeRequest(");
   const end = source.indexOf("\n  const refreshResumeRequestRef", start);
   const code = ts.transpileModule(source.slice(start, end), {
@@ -475,7 +445,7 @@ test("a late approval poll cannot reset Resume state during consumption", async 
   vm.runInNewContext(code, context);
   const pending = context.refreshResumeRequest(session);
   assert.equal(context.resumePollInFlightRef.current, true);
-  context.resumeConsumeInFlightRef.current = true;
+  context.resumeInFlightRef.current = true;
   resolvePoll({ uid: "request", status: "APPROVED" });
   await pending;
   assert.deepEqual(writes, []);
@@ -491,12 +461,12 @@ const panelEnd = panelSource.indexOf("\n  const hasQuietEmptyState", panelStart)
 const panelCode =
   panelSource.slice(panelStart, panelEnd) +
   "\nresult = { resumeButtonDisabled, resumeButtonLabel };";
-test("retry is actionable with a saved pending approval; checking and verified pending remain disabled", () => {
+test("retry is actionable with a saved pending approval; pending status can be checked explicitly after verification", () => {
   for (const [verification, disabled, label] of [
     ["retryable", false, "Retry verification"],
-    ["checking", true, "Awaiting Approval"],
-    ["verified", true, "Awaiting Approval"],
-    ["invalid", true, "Awaiting Approval"],
+    ["checking", true, "Check approval status"],
+    ["verified", false, "Check approval status"],
+    ["invalid", true, "Check approval status"],
   ]) {
     const context = {
       activeSession: { resume_request_status: "PENDING" },
@@ -507,5 +477,42 @@ test("retry is actionable with a saved pending approval; checking and verified p
     vm.runInNewContext(panelCode, context);
     assert.equal(context.result.resumeButtonDisabled, disabled);
     assert.equal(context.result.resumeButtonLabel, label);
+  }
+});
+
+// Execute the actual Enter handler: fresh nonce persistence is required before navigation.
+const enterStart = source.indexOf("  const openPreflight = useCallback(");
+const enterEnd = source.indexOf("\n  async function runIntegrityScan", enterStart);
+const enterCode = ts.transpileModule(source.slice(enterStart, enterEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+test("Enter owns one navigation and cannot reuse an old attempt when fresh persistence fails", () => {
+  for (const deny of [false, true]) {
+    const calls = [];
+    const context = {
+      useCallback: (fn) => fn,
+      entryNavigationRef: { current: false },
+      clearSetupHandoff() {},
+      setupAttemptId: (_storage, contestId, uuid, fresh) => {
+        assert.equal(fresh, true);
+        calls.push([contestId, uuid()]);
+        if (deny) throw Error("storage unavailable");
+      },
+      sessionStorage: {},
+      crypto: { randomUUID: () => "fresh-attempt" },
+      router: { push: (path) => calls.push(path) },
+      setResumeStatus: (message) => calls.push(message),
+    };
+    const enter = new Function(...Object.keys(context), `${enterCode}; return openPreflight;`)(
+      ...Object.values(context)
+    );
+    enter("contest");
+    if (!deny) enter("contest");
+    assert.equal(
+      calls.filter((call) => typeof call === "string" && call.startsWith("/session/")).length,
+      deny ? 0 : 1
+    );
+    assert.equal(context.entryNavigationRef.current, !deny);
+    if (deny) assert.match(calls.at(-1), /Could not start a new setup attempt/);
   }
 });

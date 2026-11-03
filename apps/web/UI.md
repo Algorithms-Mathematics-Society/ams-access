@@ -229,7 +229,44 @@ including multiple submit events before React rerenders. Failed attempts release
 ownership for explicit retry; successful login keeps ownership through navigation.
 Approval ownership is released on completion, including responses invalidated by
 sign-out. Existing server-directed login cooldown and recovery identity checks
-remain authoritative. These guards add no background work or automatic retries.
+remain authoritative. These guards add no automatic mutation retries.
+
+### Approval before re-entry setup
+
+Home Enter and Resume reach the same early onboarding authorization gate before
+device checks. `POST /participant/sessions` sends an `entry_attempt_id` UUID;
+only a matching successful POST echo for the expected contest and a pending or
+active session permits setup. A GET session, approval status, saved face scan or
+local nonce alone never authorizes checks. An approved grant is consumed by an
+explicit entry action. Checking pending approval status only reads the decision.
+First entry and practice remain supported; a dry-run rehearsal creates no session.
+
+The nonce survives refresh and setup retry in this window's session storage.
+Home starts a fresh nonce before a new entry, and Exit setup/sign-in changes clear
+its ownership. Storage failure blocks progression rather than reusing an earlier
+attempt. Final launch reuses the same server-authorized nonce, preserves face
+review delivery, and records a completed setup handoff immediately before opening
+the workspace. The contest route checks that handoff and reauthorizes the same
+nonce; it cannot adopt an early setup session record as completed setup.
+
+There is no approval poller in onboarding. Home polls only pending requests,
+delays the first read after validation, then reads every 15–20 seconds with one
+request at a time. Failures wait at least 30 seconds plus jitter and respect longer
+Retry-After values. Polling stops on approval or a terminal decision; explicit
+status checks remain available. At 3,000 pending clients the sustained healthy bound is
+200 reads/second averaged over polling intervals and the expected rate is about
+171/second, excluding initial
+validation and deliberate manual actions. These client tests do not prove server
+capacity: staging must validate synchronized entry bursts, approval reads and
+transactional grant consumption at 3,000 participants.
+
+Deploy the companion `ams-api#43` entry-attempt contract first. New clients fail
+closed if a server does not echo the nonce. Nonce-upgraded graded sessions reject
+legacy writes without a nonce; require the API's enforcement flag for all graded
+sessions after the client rollout. Do not claim global enforcement while legacy
+compatibility remains enabled. The normal web test script includes executable
+authorization, lifecycle, handoff and polling regressions. Installed native
+behavior and production load remain separate acceptance checks.
 
 Startup keeps a visible status after the intro while version and sign-in checks
 finish. Empty credentials are checked before requesting sign-in, and the login ID
