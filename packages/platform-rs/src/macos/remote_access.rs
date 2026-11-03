@@ -183,6 +183,29 @@ pub fn scan_remote_access(running: &[String]) -> Vec<String> {
     found
 }
 
+/// macOS's own remote services that run only while someone is connected.
+const LIVE_SESSION_PROCESSES: &[&str] =
+    &["screensharingd", "AppleVNCServer", "sshd", "sshd-session"];
+
+/// Remote viewing that is live right now: a Screen Sharing or SSH session, or
+/// a shared screen. Services that are merely switched on are left to the
+/// entry check, so a lab Mac managed over Remote Management is not flagged
+/// for the whole exam.
+pub(super) fn live_sessions(running: &[String]) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for (process, name) in REMOTE_PROCESSES {
+        if LIVE_SESSION_PROCESSES.contains(process)
+            && running.iter().any(|p| p.eq_ignore_ascii_case(process))
+        {
+            add(&mut found, name);
+        }
+    }
+    if super::session_screen_is_shared() {
+        add(&mut found, "Screen is being shared");
+    }
+    found
+}
+
 fn add(found: &mut Vec<String>, name: &str) {
     if !found.iter().any(|seen| seen == name) {
         found.push(name.to_string());

@@ -1437,6 +1437,23 @@ pub fn scan_processes() -> ProcessScanResult {
     restricted_in(&running, _budget.failure().is_none())
 }
 
+/// The in-exam scan: restricted apps plus remote viewing started after entry
+/// (see `remote_access::live_sessions`).
+pub fn scan_processes_in_exam() -> ProcessScanResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
+    let running = ps_basenames_checked();
+    let mut result = restricted_in(&running, _budget.failure().is_none());
+    for name in remote_access::live_sessions(&running) {
+        if !result.found.contains(&name) {
+            result.found.push(name);
+        }
+    }
+    if !result.found.is_empty() {
+        result.clean = false;
+    }
+    result
+}
+
 /// Restricted apps and remote access from ONE `ps` snapshot, so the two
 /// readiness rows cannot disagree about what was running.
 pub fn scan_processes_and_remote() -> (ProcessScanResult, Vec<String>) {

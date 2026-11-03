@@ -1419,6 +1419,12 @@ async fn checked_informational_probe<T: Send + 'static>(
 /// Scan running processes for known restricted applications.
 #[tauri::command]
 async fn scan_processes() -> Result<ProcessScanResult, String> {
+    // macOS, in the exam: a Screen Sharing or SSH session started after entry
+    // counts too. Setup's Restricted apps step is unchanged.
+    #[cfg(target_os = "macos")]
+    if LOCKDOWN_ENGAGED.load(Ordering::SeqCst) {
+        return checked_informational_probe(platform_rs::macos::scan_processes_in_exam).await;
+    }
     checked_informational_probe(native_scan_processes).await
 }
 
