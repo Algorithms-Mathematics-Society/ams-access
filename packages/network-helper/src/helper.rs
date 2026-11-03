@@ -524,6 +524,10 @@ fn admit_client(
 }
 
 fn handle_client(stream: UnixStream) {
+    #[cfg(target_os = "macos")]
+    if let Ok(pid) = peer_pid(&stream) {
+        PEER_PID.with(|peer| peer.set(pid));
+    }
     serve_client(stream, REQUEST_TIMEOUT, authorize_client, dispatch);
 }
 
@@ -846,13 +850,33 @@ fn pf_boot_time() -> String {
     .unwrap_or_default()
 }
 
-/// The token holding this boot's rules; `None` when nothing claims them.
+// The connected client's pid, taken from the socket (never from the request),
+// so an enable can record which process armed the rules.
 #[cfg(target_os = "macos")]
-fn pf_owner_token() -> Option<String> {
+thread_local! {
+    static PEER_PID: std::cell::Cell<libc::pid_t> = const { std::cell::Cell::new(0) };
+}
+
+/// The token holding this boot's rules and the pid of the app that armed
+/// them; `None` when nothing claims them.
+#[cfg(target_os = "macos")]
+fn pf_owner() -> Option<(String, libc::pid_t)> {
     let recorded = std::fs::read_to_string(OWNER_PATH).ok()?;
-    let (boot, token) = recorded.split_once('\n')?;
-    let token = token.trim();
-    (boot == pf_boot_time() && !token.is_empty()).then(|| token.to_string())
+    let mut lines = recorded.lines();
+    let boot = lines.next()?;
+    let token = lines.next()?.trim();
+    let pid = lines
+        .next()
+        .and_then(|p| p.trim().parse().ok())
+        .unwrap_or(0);
+    (boot == pf_boot_time() && !token.is_empty()).then(|| (token.to_string(), pid))
+}
+
+/// Root may signal any live process, so only ESRCH means it is gone.
+#[cfg(target_os = "macos")]
+fn pid_alive(pid: libc::pid_t) -> bool {
+    let signalled = unsafe { libc::kill(pid, 0) } == 0;
+    signalled || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(target_os = "macos")]
@@ -867,16 +891,21 @@ fn write_pf_owner(token: &str) -> Result<(), String> {
         .mode(0o600)
         .open(&tmp)
         .map_err(|e| format!("write lockdown owner: {e}"))?;
-    file.write_all(format!("{}\n{token}", pf_boot_time()).as_bytes())
+    let pid = PEER_PID.with(std::cell::Cell::get);
+    file.write_all(format!("{}\n{token}\n{pid}", pf_boot_time()).as_bytes())
         .and_then(|()| std::fs::rename(&tmp, OWNER_PATH))
         .map_err(|e| format!("write lockdown owner: {e}"))
 }
 
-/// Only the session that armed the rules may change or lift them.
+/// Only the session that armed the rules may change or lift them, unless the
+/// app that armed them has exited: then a restore without its token (its
+/// marker lost or deleted) can still lift them instead of waiting for a reboot.
 #[cfg(target_os = "macos")]
 fn check_pf_owner(token: &str) -> Result<(), String> {
-    match pf_owner_token() {
-        Some(owner) if owner != token => Err("unauthorized: token mismatch".to_string()),
+    match pf_owner() {
+        Some((owner, pid)) if owner != token && (pid <= 0 || pid_alive(pid)) => {
+            Err("unauthorized: token mismatch".to_string())
+        }
         _ => Ok(()),
     }
 }
