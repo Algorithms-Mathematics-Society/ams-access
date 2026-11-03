@@ -197,6 +197,13 @@ fn owns_desktop(generation: u64) -> bool {
 // Per-contest key policy, read by the tap callback without locking.
 static CLIPBOARD_BLOCKED: AtomicBool = AtomicBool::new(false);
 static FUNCTION_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
+/// Event time (ns) of the last bare Command press; 0 after any key-down, so
+/// only Command, Command in quick succession counts as a double-press.
+static LAST_COMMAND_PRESS: AtomicU64 = AtomicU64::new(0);
+/// Double-press Command opens Type to Siri (or Dictation, if chosen).
+const DOUBLE_COMMAND_NS: u64 = 600_000_000;
+const VK_COMMAND: i64 = 55;
+const VK_RIGHT_COMMAND: i64 = 54;
 static MEDIA_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
 // The live tap, so the callback can re-enable it the moment macOS disables it
 // instead of leaving keys unguarded until the 2 s watchdog tick.
@@ -358,7 +365,7 @@ const FULL_LOCK_MASK: u64 = KB_EVENT_MASK
     | (1u64 << CG_EVENT_SWIPE)
     | (1u64 << CG_EVENT_SYSTEM_DEFINED);
 
-use keyboard_policy::{FLAG_CMD, FLAG_CTRL, VK_FN};
+use keyboard_policy::{FLAG_CMD, FLAG_CTRL, FLAG_OPT, FLAG_SHIFT, VK_FN};
 
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {
@@ -390,6 +397,7 @@ extern "C" {
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
+    fn CGEventGetTimestamp(event: *mut c_void) -> u64;
     fn CGEventKeyboardGetUnicodeString(
         event: *mut c_void,
         max_len: usize,
@@ -525,11 +533,25 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
     // whichever the candidate chose. It arrives as a modifier change, not a
     // key-down, so it is matched here rather than in should_block_key.
     if event_type == CG_EVENT_FLAGS_CHANGED {
-        return FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed)
-            && CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE) == VK_FN;
+        let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
+        if kc == VK_COMMAND || kc == VK_RIGHT_COMMAND {
+            // The second of two bare Command presses: Type to Siri. The 2 s
+            // Siri watch still closes Siri however else it was opened.
+            let modifiers = CGEventGetFlags(event) & (FLAG_CMD | FLAG_SHIFT | FLAG_CTRL | FLAG_OPT);
+            if modifiers == FLAG_CMD {
+                let now = CGEventGetTimestamp(event);
+                let last = LAST_COMMAND_PRESS.swap(now, Ordering::Relaxed);
+                return last != 0 && now.saturating_sub(last) < DOUBLE_COMMAND_NS;
+            }
+            return false;
+        }
+        return FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed) && kc == VK_FN;
     }
     if event_type != CG_EVENT_KEY_DOWN && event_type != CG_EVENT_KEY_UP {
         return false;
+    }
+    if event_type == CG_EVENT_KEY_DOWN {
+        LAST_COMMAND_PRESS.store(0, Ordering::Relaxed);
     }
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);

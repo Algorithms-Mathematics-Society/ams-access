@@ -1,9 +1,9 @@
 //! Pure Mac shortcut decisions, shared by the event tap and portable regressions.
 // CGEventFlags modifier masks
 pub(super) const FLAG_CMD: u64 = 0x0010_0000;
-const FLAG_SHIFT: u64 = 0x0002_0000;
+pub(super) const FLAG_SHIFT: u64 = 0x0002_0000;
 pub(super) const FLAG_CTRL: u64 = 0x0004_0000;
-const FLAG_OPT: u64 = 0x0008_0000;
+pub(super) const FLAG_OPT: u64 = 0x0008_0000;
 // kCGEventFlagMaskSecondaryFn: the fn / Globe key.
 const FLAG_FN: u64 = 0x0080_0000;
 
