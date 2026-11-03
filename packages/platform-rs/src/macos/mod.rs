@@ -113,6 +113,13 @@ const RESTRICTED: &[&str] = &[
     "scrcpy",
     "RustDesk",
     "Screen Sharing",
+    // Apple apps under /System: the candidate's phone on screen, script
+    // runners that replace Terminal, and a way to kill AMS processes.
+    "iPhone Mirroring",
+    "Script Editor",
+    "Shortcuts",
+    "Automator",
+    "Activity Monitor",
     // The Screen Sharing and Remote Management daemons are reported by the
     // remote-access scan with a "turn it off in Sharing" hint. They are root
     // services: listing them here offered a Close button that could not work.
@@ -1481,6 +1488,11 @@ const APPLE_SHIPPED: &[&str] = &[
     "dtrace",
     "lldb",
     "gdb",
+    "iPhone Mirroring",
+    "Script Editor",
+    "Shortcuts",
+    "Automator",
+    "Activity Monitor",
 ];
 
 /// Basename of a `ps -o comm=` path, or `None` for an OS component that only
@@ -2045,11 +2057,16 @@ pub fn is_restricted_name(name: &str) -> bool {
     // Of the names macOS ships, only real apps a candidate can quit are
     // closable. Daemons (sshd, screencapture, …) belong to the system or to
     // Settings, and asking AppleScript to quit them shows a chooser dialog.
-    const QUITTABLE_APPLE_APPS: [&str; 4] = [
+    const QUITTABLE_APPLE_APPS: [&str; 9] = [
         "Terminal",
         "QuickTime Player",
         "Screenshot",
         "Screen Sharing",
+        "iPhone Mirroring",
+        "Script Editor",
+        "Shortcuts",
+        "Automator",
+        "Activity Monitor",
     ];
     if APPLE_SHIPPED.iter().any(|n| n.eq_ignore_ascii_case(name))
         && !QUITTABLE_APPLE_APPS
