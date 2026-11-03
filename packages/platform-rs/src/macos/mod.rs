@@ -1691,7 +1691,10 @@ pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> 
 
     // Marker-first: if the app or helper dies after the rules land, the
     // marker is what lets a later restore know the firewall may be active.
-    write_lockdown_marker().map_err(|e| format!("write lockdown marker: {e}"))?;
+    // Reused while this boot's lockdown is recorded: the 60 s refresh and a
+    // re-arm must present the token the helper already holds.
+    let token = lockdown_token().unwrap_or_else(mint_token);
+    write_lockdown_marker(&token).map_err(|e| format!("write lockdown marker: {e}"))?;
 
     let mut ips = allowed_ips.to_vec();
     ips.extend(
@@ -1704,6 +1707,7 @@ pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> 
         "cmd": "enable",
         "ips": ips,
         "resolvers": resolvers,
+        "token": token,
     })
     .to_string();
 
@@ -1724,7 +1728,9 @@ pub fn disable_network_lockdown() -> Result<(), String> {
             Ok(())
         };
     }
-    helper_send(r#"{"cmd":"disable"}"#)?;
+    // The helper lifts the rules only for the token that armed them.
+    let token = lockdown_token().unwrap_or_default();
+    helper_send(&serde_json::json!({ "cmd": "disable", "token": token }).to_string())?;
     clear_lockdown_marker().map_err(|e| format!("network restored but marker cleanup failed: {e}"))
 }
 
@@ -1748,12 +1754,51 @@ fn boot_time() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn write_lockdown_marker() -> std::io::Result<()> {
+/// Line 1: the boot time. Line 2: the per-lockdown token the helper requires
+/// to lift the rules. Readable by this user only.
+fn write_lockdown_marker(token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let path = lockdown_marker_path().ok_or_else(|| std::io::Error::other("HOME is not set"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, boot_time().unwrap_or_default())
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)?;
+    // An older marker was created 0644; `mode` only applies to new files.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(format!("{}\n{token}", boot_time().unwrap_or_default()).as_bytes())
+}
+
+/// The token of the lockdown recorded this boot, if there is one.
+fn lockdown_token() -> Option<String> {
+    let recorded = std::fs::read_to_string(lockdown_marker_path()?).ok()?;
+    let (boot, token) = recorded.split_once('\n')?;
+    let token = token.trim();
+    let this_boot = match boot_time() {
+        Some(now) => boot.is_empty() || boot == now,
+        None => true,
+    };
+    (this_boot && !token.is_empty()).then(|| token.to_string())
+}
+
+fn mint_token() -> String {
+    use std::io::Read;
+    let mut buf = [0u8; 16];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf.iter().map(|b| format!("{b:02x}")).collect();
+        }
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:032x}", nanos ^ ((std::process::id() as u128) << 80))
 }
 
 fn clear_lockdown_marker() -> std::io::Result<()> {
@@ -1776,6 +1821,7 @@ fn lockdown_marker_may_exist() -> bool {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(_) => true,
         Ok(recorded) => {
+            let recorded = recorded.lines().next().unwrap_or_default();
             let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && recorded != now);
             if stale {
                 let _ = clear_lockdown_marker();

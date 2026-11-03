@@ -9,8 +9,8 @@
 //! Protocol (shared verbatim with the macOS/Linux clients): newline-delimited
 //! JSON, one request -> one response.
 //!   Request:  {"cmd":"ping"}
-//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"]}
-//!             {"cmd":"disable"}
+//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"],"token":"<hex>"}
+//!             {"cmd":"disable","token":"<token from enable>"}
 //!   Response: {"ok":true}
 //!             {"ok":false,"error":"<message>"}
 
@@ -812,34 +812,14 @@ fn dispatch(json: &str) -> String {
             resolvers,
             token,
         }) => {
-            let result = {
-                #[cfg(target_os = "linux")]
-                {
-                    firewall_enable(&ips, &resolvers, &token)
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let _ = &token;
-                    firewall_enable(&ips, &resolvers)
-                }
-            };
+            let result = firewall_enable(&ips, &resolvers, &token);
             match result {
                 Ok(()) => json_ok(),
                 Err(e) => json_err(&e),
             }
         }
         Ok(Request::Disable { token }) => {
-            let result = {
-                #[cfg(target_os = "linux")]
-                {
-                    firewall_disable(&token)
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let _ = &token;
-                    firewall_disable()
-                }
-            };
+            let result = firewall_disable(&token);
             match result {
                 Ok(()) => json_ok(),
                 Err(e) => json_err(&e),
@@ -849,9 +829,62 @@ fn dispatch(json: &str) -> String {
     }
 }
 
+/// Root-only record of the token that armed the live rules: boot time, then
+/// the token. pf rules do not survive a reboot, so neither does the claim.
 #[cfg(target_os = "macos")]
-fn firewall_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
+const OWNER_PATH: &str = "/private/var/run/ams-proctor.owner";
+
+#[cfg(target_os = "macos")]
+fn pf_boot_time() -> String {
+    command_output(
+        Command::new("/usr/sbin/sysctl").args(["-n", "kern.boottime"]),
+        None,
+    )
+    .ok()
+    .filter(|out| out.status.success())
+    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    .unwrap_or_default()
+}
+
+/// The token holding this boot's rules; `None` when nothing claims them.
+#[cfg(target_os = "macos")]
+fn pf_owner_token() -> Option<String> {
+    let recorded = std::fs::read_to_string(OWNER_PATH).ok()?;
+    let (boot, token) = recorded.split_once('\n')?;
+    let token = token.trim();
+    (boot == pf_boot_time() && !token.is_empty()).then(|| token.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn write_pf_owner(token: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = format!("{OWNER_PATH}.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("write lockdown owner: {e}"))?;
+    file.write_all(format!("{}\n{token}", pf_boot_time()).as_bytes())
+        .and_then(|()| std::fs::rename(&tmp, OWNER_PATH))
+        .map_err(|e| format!("write lockdown owner: {e}"))
+}
+
+/// Only the session that armed the rules may change or lift them.
+#[cfg(target_os = "macos")]
+fn check_pf_owner(token: &str) -> Result<(), String> {
+    match pf_owner_token() {
+        Some(owner) if owner != token => Err("unauthorized: token mismatch".to_string()),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
+    check_pf_owner(token)?;
     // Resolvers are DNS-only. The client also lists them in `ips` so an older
     // helper keeps DNS; here they are taken out of the all-ports table.
     let mut dns: Vec<Ipv4Addr> = Vec::new();
@@ -867,13 +900,25 @@ fn firewall_enable(ips: &[String], resolvers: &[String]) -> Result<(), String> {
     if ips.is_empty() {
         return Err("no IPv4 addresses available for lockdown allowlist".to_string());
     }
+    // Claim first, so rules that land are never left unclaimed. An older
+    // client sends no token and keeps the previous, unclaimed behaviour.
+    if !token.is_empty() {
+        write_pf_owner(token)?;
+    }
     pfctl_enable(&ips, &dns)
 }
 
 #[cfg(target_os = "macos")]
-fn firewall_disable() -> Result<(), String> {
+fn firewall_disable(token: &str) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
-    pfctl_disable()
+    check_pf_owner(token)?;
+    pfctl_disable()?;
+    match std::fs::remove_file(OWNER_PATH) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("network restored but owner cleanup failed: {e}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 static FIREWALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -950,12 +995,12 @@ fn finish_cleanup(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn firewall_enable(_ips: &[String], _resolvers: &[String]) -> Result<(), String> {
+fn firewall_enable(_ips: &[String], _resolvers: &[String], _token: &str) -> Result<(), String> {
     Err("network lockdown not supported on this platform".to_string())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn firewall_disable() -> Result<(), String> {
+fn firewall_disable(_token: &str) -> Result<(), String> {
     Ok(())
 }
 
