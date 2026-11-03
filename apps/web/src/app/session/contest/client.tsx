@@ -4030,7 +4030,12 @@ export default function ContestPageClient() {
   // a session an invigilator ended, a submission already made -- and not
   // because a heartbeat was slow.
   const networkDisconnected = connectionLevel(heartbeatState) === "offline" || !browserOnline;
-  const connectionInterrupted = !browserOnline || heartbeatState.consecutiveFailures > 0;
+  // macOS: a single missed beat, a Wi-Fi roam or a wake shows the banner only;
+  // the modal (which makes the editor inert) waits for a sustained outage.
+  const connectionInterrupted =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent)
+      ? networkDisconnected
+      : !browserOnline || heartbeatState.consecutiveFailures > 0;
   const [disconnectGraceExpired, setDisconnectGraceExpired] = useState(false);
   useEffect(
     () => startDisconnectGrace(connectionInterrupted, setDisconnectGraceExpired),
