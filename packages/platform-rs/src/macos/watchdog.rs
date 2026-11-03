@@ -266,11 +266,17 @@ fn run_watchdog(parent: i32, created_at_ms: u64) -> i32 {
         }
     }
 
+    // Checked before the restore, which clears the snapshot. A watchdog whose
+    // pid was already dead at start, or whose snapshot was replaced, guards
+    // nothing and must not touch another session's rules.
+    let guarded = system_settings::guards(owner, created_at_ms);
     let restored = restore_with_retries(60, || {
         system_settings::restore_owned_by(owner, created_at_ms)
     });
     // A dead app cannot lift its own egress rules.
-    let _ = super::disable_network_lockdown();
+    if guarded {
+        let _ = super::disable_network_lockdown();
+    }
     if restored {
         0
     } else {
