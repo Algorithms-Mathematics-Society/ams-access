@@ -231,7 +231,7 @@ function isBlockedCmdShortcut(e: KeyboardEvent): boolean {
   // Dvorak "q" is not on KeyQ, and KeyQ / KeyW type "a" / "z" on AZERTY, whose
   // Cmd+A and Cmd+Z must reach the editor.
   const letter =
-    /Mac/i.test(navigator.userAgent) && /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : null;
+    /^Mac/i.test(navigator.platform) && /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : null;
   if (letter) {
     if (["q", "w", "h", "m"].includes(letter)) return true;
   } else if (["KeyQ", "KeyW", "KeyH", "KeyM"].includes(e.code)) {
@@ -4043,7 +4043,7 @@ export default function ContestPageClient() {
   // macOS: a single missed beat, a Wi-Fi roam or a wake shows the banner only;
   // the modal (which makes the editor inert) waits for a sustained outage.
   const connectionInterrupted =
-    typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent)
+    typeof navigator !== "undefined" && /^Mac/i.test(navigator.platform)
       ? networkDisconnected
       : !browserOnline || heartbeatState.consecutiveFailures > 0;
   const [disconnectGraceExpired, setDisconnectGraceExpired] = useState(false);
