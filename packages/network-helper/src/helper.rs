@@ -9,8 +9,8 @@
 //! Protocol (shared verbatim with the macOS/Linux clients): newline-delimited
 //! JSON, one request -> one response.
 //!   Request:  {"cmd":"ping"}
-//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"]}
-//!             {"cmd":"disable"}
+//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"],"token":"<hex>"}
+//!             {"cmd":"disable","token":"<token from enable>"}
 //!   Response: {"ok":true}
 //!             {"ok":false,"error":"<message>"}
 
@@ -524,6 +524,10 @@ fn admit_client(
 }
 
 fn handle_client(stream: UnixStream) {
+    #[cfg(target_os = "macos")]
+    if let Ok(pid) = peer_pid(&stream) {
+        PEER_PID.with(|peer| peer.set(pid));
+    }
     serve_client(stream, REQUEST_TIMEOUT, authorize_client, dispatch);
 }
 
@@ -650,10 +654,172 @@ fn authorize_client(stream: &UnixStream) -> Result<(), String> {
 
     let pid = peer_pid(stream)?;
     let actual = pid_path(pid)?;
-    if actual == expected {
-        Ok(())
-    } else {
-        Err("unauthorized client".to_string())
+    if actual != expected {
+        return Err("unauthorized client".to_string());
+    }
+    peer_signature::verify(stream)
+}
+
+/// Code-signature check of the connected client. Enforced only when this
+/// helper is itself team-signed (release builds); an ad-hoc local build keeps
+/// the path check alone so it can be tested against a local backend.
+#[cfg(target_os = "macos")]
+mod peer_signature {
+    use std::ffi::{c_char, c_void, CString};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::ptr::null;
+    use std::sync::OnceLock;
+
+    type CFTypeRef = *const c_void;
+    const UTF8: u32 = 0x0800_0100;
+    const SIGNING_INFORMATION: u32 = 1 << 1;
+    const LOCAL_PEERTOKEN: libc::c_int = 6;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFTypeDictionaryKeyCallBacks: u8;
+        static kCFTypeDictionaryValueCallBacks: u8;
+        fn CFRelease(cf: CFTypeRef);
+        fn CFDataCreate(alloc: CFTypeRef, bytes: *const u8, len: isize) -> CFTypeRef;
+        fn CFDictionaryCreate(
+            alloc: CFTypeRef,
+            keys: *const CFTypeRef,
+            values: *const CFTypeRef,
+            count: isize,
+            key_callbacks: *const u8,
+            value_callbacks: *const u8,
+        ) -> CFTypeRef;
+        fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
+        fn CFGetTypeID(cf: CFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+        fn CFStringCreateWithCString(alloc: CFTypeRef, text: *const c_char, enc: u32) -> CFTypeRef;
+        fn CFStringGetCString(text: CFTypeRef, buf: *mut c_char, size: isize, enc: u32) -> bool;
+    }
+
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        static kSecGuestAttributeAudit: CFTypeRef;
+        static kSecCodeInfoTeamIdentifier: CFTypeRef;
+        fn SecCodeCopySelf(flags: u32, code: *mut CFTypeRef) -> i32;
+        fn SecCodeCopySigningInformation(code: CFTypeRef, flags: u32, info: *mut CFTypeRef) -> i32;
+        fn SecCodeCopyGuestWithAttributes(
+            host: CFTypeRef,
+            attributes: CFTypeRef,
+            flags: u32,
+            guest: *mut CFTypeRef,
+        ) -> i32;
+        fn SecRequirementCreateWithString(
+            text: CFTypeRef,
+            flags: u32,
+            requirement: *mut CFTypeRef,
+        ) -> i32;
+        fn SecCodeCheckValidity(code: CFTypeRef, flags: u32, requirement: CFTypeRef) -> i32;
+    }
+
+    /// This helper's own team ID; `None` when it is ad-hoc signed.
+    fn own_team() -> Option<&'static str> {
+        static TEAM: OnceLock<Option<String>> = OnceLock::new();
+        TEAM.get_or_init(|| unsafe {
+            let mut code: CFTypeRef = null();
+            if SecCodeCopySelf(0, &mut code) != 0 || code.is_null() {
+                return None;
+            }
+            let mut info: CFTypeRef = null();
+            let rc = SecCodeCopySigningInformation(code, SIGNING_INFORMATION, &mut info);
+            CFRelease(code);
+            if rc != 0 || info.is_null() {
+                return None;
+            }
+            let team = CFDictionaryGetValue(info, kSecCodeInfoTeamIdentifier);
+            let mut buf = [0 as c_char; 64];
+            let found = !team.is_null()
+                && CFGetTypeID(team) == CFStringGetTypeID()
+                && CFStringGetCString(team, buf.as_mut_ptr(), buf.len() as isize, UTF8);
+            CFRelease(info);
+            let team = found.then(|| {
+                std::ffi::CStr::from_ptr(buf.as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            })?;
+            // Team IDs are short alphanumerics; anything else never reaches
+            // the requirement text.
+            (!team.is_empty() && team.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(team)
+        })
+        .as_deref()
+    }
+
+    pub(super) fn verify(stream: &UnixStream) -> Result<(), String> {
+        match own_team() {
+            Some(team) => check(stream, team),
+            None => Ok(()),
+        }
+    }
+
+    /// The peer, identified by its audit token (not a pid that can be reused
+    /// or exec'd over), must be signed by `team` under an Apple-issued chain.
+    fn check(stream: &UnixStream, team: &str) -> Result<(), String> {
+        let mut token = [0u8; 32];
+        let mut len = token.len() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                0,
+                LOCAL_PEERTOKEN,
+                token.as_mut_ptr().cast(),
+                &mut len,
+            )
+        };
+        if rc != 0 || len as usize != token.len() {
+            return Err("unable to identify client code".to_string());
+        }
+        let requirement = CString::new(format!(
+            "anchor apple generic and certificate leaf[subject.OU] = \"{team}\""
+        ))
+        .map_err(|_| "invalid team identifier".to_string())?;
+        unsafe {
+            let data = CFDataCreate(null(), token.as_ptr(), token.len() as isize);
+            if data.is_null() {
+                return Err("unable to identify client code".to_string());
+            }
+            let keys = [kSecGuestAttributeAudit];
+            let values = [data];
+            let attributes = CFDictionaryCreate(
+                null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+            CFRelease(data);
+            if attributes.is_null() {
+                return Err("unable to identify client code".to_string());
+            }
+            let mut guest: CFTypeRef = null();
+            let rc = SecCodeCopyGuestWithAttributes(null(), attributes, 0, &mut guest);
+            CFRelease(attributes);
+            if rc != 0 || guest.is_null() {
+                return Err("unable to identify client code".to_string());
+            }
+            let text = CFStringCreateWithCString(null(), requirement.as_ptr(), UTF8);
+            let mut parsed: CFTypeRef = null();
+            let created =
+                !text.is_null() && SecRequirementCreateWithString(text, 0, &mut parsed) == 0;
+            if !text.is_null() {
+                CFRelease(text);
+            }
+            let valid = created && !parsed.is_null() && SecCodeCheckValidity(guest, 0, parsed) == 0;
+            if !parsed.is_null() {
+                CFRelease(parsed);
+            }
+            CFRelease(guest);
+            if valid {
+                Ok(())
+            } else {
+                Err("unauthorized client: not signed by this helper's team".to_string())
+            }
+        }
     }
 }
 
@@ -812,34 +978,14 @@ fn dispatch(json: &str) -> String {
             resolvers,
             token,
         }) => {
-            let result = {
-                #[cfg(target_os = "linux")]
-                {
-                    firewall_enable(&ips, &resolvers, &token)
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let _ = (&token, &resolvers);
-                    firewall_enable(&ips)
-                }
-            };
+            let result = firewall_enable(&ips, &resolvers, &token);
             match result {
                 Ok(()) => json_ok(),
                 Err(e) => json_err(&e),
             }
         }
         Ok(Request::Disable { token }) => {
-            let result = {
-                #[cfg(target_os = "linux")]
-                {
-                    firewall_disable(&token)
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let _ = &token;
-                    firewall_disable()
-                }
-            };
+            let result = firewall_disable(&token);
             match result {
                 Ok(()) => json_ok(),
                 Err(e) => json_err(&e),
@@ -849,17 +995,121 @@ fn dispatch(json: &str) -> String {
     }
 }
 
+/// Root-only record of the token that armed the live rules: boot time, then
+/// the token. pf rules do not survive a reboot, so neither does the claim.
 #[cfg(target_os = "macos")]
-fn firewall_enable(ips: &[String]) -> Result<(), String> {
-    let _guard = acquire_firewall(&FIREWALL_LOCK)?;
-    let ips = validate_ipv4_allowlist(ips)?;
-    pfctl_enable(&ips)
+const OWNER_PATH: &str = "/private/var/run/ams-proctor.owner";
+
+#[cfg(target_os = "macos")]
+fn pf_boot_time() -> String {
+    command_output(
+        Command::new("/usr/sbin/sysctl").args(["-n", "kern.boottime"]),
+        None,
+    )
+    .ok()
+    .filter(|out| out.status.success())
+    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    .unwrap_or_default()
+}
+
+// The connected client's pid, taken from the socket (never from the request),
+// so an enable can record which process armed the rules.
+#[cfg(target_os = "macos")]
+thread_local! {
+    static PEER_PID: std::cell::Cell<libc::pid_t> = const { std::cell::Cell::new(0) };
+}
+
+/// The token holding this boot's rules and the pid of the app that armed
+/// them; `None` when nothing claims them.
+#[cfg(target_os = "macos")]
+fn pf_owner() -> Option<(String, libc::pid_t)> {
+    let recorded = std::fs::read_to_string(OWNER_PATH).ok()?;
+    let mut lines = recorded.lines();
+    let boot = lines.next()?;
+    let token = lines.next()?.trim();
+    let pid = lines
+        .next()
+        .and_then(|p| p.trim().parse().ok())
+        .unwrap_or(0);
+    (boot == pf_boot_time() && !token.is_empty()).then(|| (token.to_string(), pid))
+}
+
+/// Root may signal any live process, so only ESRCH means it is gone.
+#[cfg(target_os = "macos")]
+fn pid_alive(pid: libc::pid_t) -> bool {
+    let signalled = unsafe { libc::kill(pid, 0) } == 0;
+    signalled || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(target_os = "macos")]
-fn firewall_disable() -> Result<(), String> {
+fn write_pf_owner(token: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = format!("{OWNER_PATH}.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("write lockdown owner: {e}"))?;
+    let pid = PEER_PID.with(std::cell::Cell::get);
+    file.write_all(format!("{}\n{token}\n{pid}", pf_boot_time()).as_bytes())
+        .and_then(|()| std::fs::rename(&tmp, OWNER_PATH))
+        .map_err(|e| format!("write lockdown owner: {e}"))
+}
+
+/// Only the session that armed the rules may change or lift them, unless the
+/// app that armed them has exited: then a restore without its token (its
+/// marker lost or deleted) can still lift them instead of waiting for a reboot.
+#[cfg(target_os = "macos")]
+fn check_pf_owner(token: &str) -> Result<(), String> {
+    match pf_owner() {
+        Some((owner, pid)) if owner != token && (pid <= 0 || pid_alive(pid)) => {
+            Err("unauthorized: token mismatch".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
-    pfctl_disable()
+    check_pf_owner(token)?;
+    // Resolvers are DNS-only. The client also lists them in `ips` so an older
+    // helper keeps DNS; here they are taken out of the all-ports table.
+    let mut dns: Vec<Ipv4Addr> = Vec::new();
+    for raw in resolvers {
+        match raw.parse::<IpAddr>() {
+            Ok(IpAddr::V4(ip)) if !dns.contains(&ip) => dns.push(ip),
+            Ok(_) => {}
+            Err(_) => return Err(format!("invalid resolver IP: {raw}")),
+        }
+    }
+    let mut ips = validate_ipv4_allowlist(ips)?;
+    ips.retain(|ip| !dns.contains(ip));
+    if ips.is_empty() {
+        return Err("no IPv4 addresses available for lockdown allowlist".to_string());
+    }
+    // Claim first, so rules that land are never left unclaimed. An older
+    // client sends no token and keeps the previous, unclaimed behaviour.
+    if !token.is_empty() {
+        write_pf_owner(token)?;
+    }
+    pfctl_enable(&ips, &dns)
+}
+
+#[cfg(target_os = "macos")]
+fn firewall_disable(token: &str) -> Result<(), String> {
+    let _guard = acquire_firewall(&FIREWALL_LOCK)?;
+    check_pf_owner(token)?;
+    pfctl_disable()?;
+    match std::fs::remove_file(OWNER_PATH) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("network restored but owner cleanup failed: {e}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 static FIREWALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -936,12 +1186,12 @@ fn finish_cleanup(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn firewall_enable(_ips: &[String]) -> Result<(), String> {
+fn firewall_enable(_ips: &[String], _resolvers: &[String], _token: &str) -> Result<(), String> {
     Err("network lockdown not supported on this platform".to_string())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn firewall_disable() -> Result<(), String> {
+fn firewall_disable(_token: &str) -> Result<(), String> {
     Ok(())
 }
 
@@ -996,7 +1246,7 @@ fn pfctl_load_anchor(anchor: &str, rules: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
+fn pfctl_enable(ips: &[Ipv4Addr], dns: &[Ipv4Addr]) -> Result<(), String> {
     let enabled = command_output(Command::new(PFCTL).arg("-e"), None)
         .map_err(|error| format!("pfctl enable: {error}"))?;
     if !enabled.status.success()
@@ -1016,9 +1266,23 @@ fn pfctl_enable(ips: &[Ipv4Addr]) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join(", ");
 
+    let dns_table = if dns.is_empty() {
+        "table <ams_dns> persist".to_string()
+    } else {
+        let dns_list = dns
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("table <ams_dns> persist {{ {dns_list} }}")
+    };
+
     let rules = format!(
         "table <ams_allowed> persist {{ {ip_list} }}\n\
+         {dns_table}\n\
          pass out quick on lo0 all\n\
+         pass out quick inet proto {{ udp tcp }} to <ams_dns> port 53\n\
+         pass out quick inet proto tcp to <ams_dns> port 853\n\
          pass out quick inet to <ams_allowed>\n\
          block out quick inet all\n\
          block out quick inet6 all\n"

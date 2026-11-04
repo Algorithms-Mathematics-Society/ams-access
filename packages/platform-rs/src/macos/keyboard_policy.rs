@@ -1,9 +1,9 @@
 //! Pure Mac shortcut decisions, shared by the event tap and portable regressions.
 // CGEventFlags modifier masks
-const FLAG_CMD: u64 = 0x0010_0000;
-const FLAG_SHIFT: u64 = 0x0002_0000;
+pub(super) const FLAG_CMD: u64 = 0x0010_0000;
+pub(super) const FLAG_SHIFT: u64 = 0x0002_0000;
 pub(super) const FLAG_CTRL: u64 = 0x0004_0000;
-const FLAG_OPT: u64 = 0x0008_0000;
+pub(super) const FLAG_OPT: u64 = 0x0008_0000;
 // kCGEventFlagMaskSecondaryFn: the fn / Globe key.
 const FLAG_FN: u64 = 0x0080_0000;
 
@@ -51,6 +51,12 @@ pub(super) struct Policy {
     pub function_keys_blocked: bool,
     pub escape_blocked: bool,
     pub clipboard_blocked: bool,
+}
+
+/// The physical QWERTY Q, W, H and M keys: with Command, Quit, Close, Hide
+/// and Minimize on a QWERTY layout.
+pub(super) fn is_quit_close_hide_minimize_key(kc: i64) -> bool {
+    matches!(kc, VK_Q | VK_W | VK_H | VK_M)
 }
 
 /// The shortcut policy, free of FFI so it reads as one table.

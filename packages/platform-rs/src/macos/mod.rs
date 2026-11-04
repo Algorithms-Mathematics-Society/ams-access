@@ -113,6 +113,13 @@ const RESTRICTED: &[&str] = &[
     "scrcpy",
     "RustDesk",
     "Screen Sharing",
+    // Apple apps under /System: the candidate's phone on screen, script
+    // runners that replace Terminal, and a way to kill AMS processes.
+    "iPhone Mirroring",
+    "Script Editor",
+    "Shortcuts",
+    "Automator",
+    "Activity Monitor",
     // The Screen Sharing and Remote Management daemons are reported by the
     // remote-access scan with a "turn it off in Sharing" hint. They are root
     // services: listing them here offered a Close button that could not work.
@@ -190,6 +197,13 @@ fn owns_desktop(generation: u64) -> bool {
 // Per-contest key policy, read by the tap callback without locking.
 static CLIPBOARD_BLOCKED: AtomicBool = AtomicBool::new(false);
 static FUNCTION_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
+/// Event time (ns) of the last bare Command press; 0 after any key-down, so
+/// only Command, Command in quick succession counts as a double-press.
+static LAST_COMMAND_PRESS: AtomicU64 = AtomicU64::new(0);
+/// Double-press Command opens Type to Siri (or Dictation, if chosen).
+const DOUBLE_COMMAND_NS: u64 = 600_000_000;
+const VK_COMMAND: i64 = 55;
+const VK_RIGHT_COMMAND: i64 = 54;
 static MEDIA_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
 // The live tap, so the callback can re-enable it the moment macOS disables it
 // instead of leaving keys unguarded until the 2 s watchdog tick.
@@ -351,7 +365,7 @@ const FULL_LOCK_MASK: u64 = KB_EVENT_MASK
     | (1u64 << CG_EVENT_SWIPE)
     | (1u64 << CG_EVENT_SYSTEM_DEFINED);
 
-use keyboard_policy::{FLAG_CTRL, VK_FN};
+use keyboard_policy::{FLAG_CMD, FLAG_CTRL, FLAG_OPT, FLAG_SHIFT, VK_FN};
 
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {
@@ -383,6 +397,13 @@ extern "C" {
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
+    fn CGEventGetTimestamp(event: *mut c_void) -> u64;
+    fn CGEventKeyboardGetUnicodeString(
+        event: *mut c_void,
+        max_len: usize,
+        actual_len: *mut usize,
+        buf: *mut u16,
+    );
 }
 
 #[allow(non_upper_case_globals)]
@@ -512,15 +533,47 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
     // whichever the candidate chose. It arrives as a modifier change, not a
     // key-down, so it is matched here rather than in should_block_key.
     if event_type == CG_EVENT_FLAGS_CHANGED {
-        return FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed)
-            && CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE) == VK_FN;
+        let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
+        if kc == VK_COMMAND || kc == VK_RIGHT_COMMAND {
+            // The second of two bare Command presses: Type to Siri. The 2 s
+            // Siri watch still closes Siri however else it was opened.
+            let modifiers = CGEventGetFlags(event) & (FLAG_CMD | FLAG_SHIFT | FLAG_CTRL | FLAG_OPT);
+            if modifiers == FLAG_CMD {
+                let now = CGEventGetTimestamp(event);
+                let last = LAST_COMMAND_PRESS.swap(now, Ordering::Relaxed);
+                return last != 0 && now.saturating_sub(last) < DOUBLE_COMMAND_NS;
+            }
+            return false;
+        }
+        return FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed) && kc == VK_FN;
     }
     if event_type != CG_EVENT_KEY_DOWN && event_type != CG_EVENT_KEY_UP {
         return false;
     }
+    if event_type == CG_EVENT_KEY_DOWN {
+        LAST_COMMAND_PRESS.store(0, Ordering::Relaxed);
+    }
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
     let flags = CGEventGetFlags(event);
+    // Quit, Close, Hide and Minimize go by the letter typed: the menu matches
+    // by character, and on AZERTY or Dvorak "q" is not keycode 12.
+    if flags & FLAG_CMD != 0 {
+        let mut buf = [0u16; 4];
+        let mut len = 0usize;
+        CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
+        let letter = u8::try_from(buf[0])
+            .ok()
+            .filter(|c| len == 1 && c.is_ascii_alphabetic())
+            .map(|c| c.to_ascii_lowercase());
+        match letter {
+            Some(b'q' | b'w' | b'h' | b'm') => return true,
+            // On AZERTY the physical Q and W keys type "a" and "z": Cmd+A and
+            // Cmd+Z must reach the editor though their keycodes are Q's and W's.
+            Some(_) if keyboard_policy::is_quit_close_hide_minimize_key(kc) => return false,
+            _ => {}
+        }
+    }
     keyboard_policy::should_block_key(
         kc,
         flags,
@@ -1260,8 +1313,12 @@ fn spawn_space_watchdog() {
 }
 
 /// The Siri panel. Matched by full path: the basename lookup skips anything
-/// under /System so a restricted-app name never hits an OS component.
-const SIRI_UI: &str = "/System/Library/CoreServices/Siri.app/Contents/MacOS/Siri";
+/// under /System so a restricted-app name never hits an OS component. macOS 27
+/// ships it as "Siri AI.app" (com.apple.campo) under /System/Applications.
+const SIRI_UI: [&str; 2] = [
+    "/System/Library/CoreServices/Siri.app/Contents/MacOS/Siri",
+    "/System/Applications/Siri AI.app/Contents/MacOS/Siri AI",
+];
 
 /// Siri is kept closed for the test instead of switched off in its saved
 /// settings, which would outlive a power cut. The tap already drops its
@@ -1278,7 +1335,7 @@ fn quit_siri() {
         let Some((pid, comm)) = line.trim_start().split_once(char::is_whitespace) else {
             continue;
         };
-        if comm.trim() == SIRI_UI {
+        if SIRI_UI.contains(&comm.trim()) {
             let _ = Command::new("/bin/kill")
                 .args(["-TERM", pid])
                 .bounded_output();
@@ -1412,6 +1469,23 @@ pub fn scan_processes() -> ProcessScanResult {
     restricted_in(&running, _budget.failure().is_none())
 }
 
+/// The in-exam scan: restricted apps plus remote viewing started after entry
+/// (see `remote_access::live_sessions`).
+pub fn scan_processes_in_exam() -> ProcessScanResult {
+    let _budget = Budget::new(std::time::Duration::from_secs(5));
+    let running = ps_basenames_checked();
+    let mut result = restricted_in(&running, _budget.failure().is_none());
+    for name in remote_access::live_sessions(&running) {
+        if !result.found.contains(&name) {
+            result.found.push(name);
+        }
+    }
+    if !result.found.is_empty() {
+        result.clean = false;
+    }
+    result
+}
+
 /// Restricted apps and remote access from ONE `ps` snapshot, so the two
 /// readiness rows cannot disagree about what was running.
 pub fn scan_processes_and_remote() -> (ProcessScanResult, Vec<String>) {
@@ -1439,6 +1513,11 @@ const APPLE_SHIPPED: &[&str] = &[
     "dtrace",
     "lldb",
     "gdb",
+    "iPhone Mirroring",
+    "Script Editor",
+    "Shortcuts",
+    "Automator",
+    "Activity Monitor",
 ];
 
 /// Basename of a `ps -o comm=` path, or `None` for an OS component that only
@@ -1682,18 +1761,32 @@ fn helper_send(json: &str) -> Result<(), String> {
 ///
 /// The helper runs pfctl as root — this function needs no elevated privileges.
 /// If the helper is not installed, returns `Err("helper_not_installed")`.
-pub fn enable_network_lockdown(allowed_ips: &[String]) -> Result<(), String> {
+/// `resolvers` are allowed on the DNS ports only. They are listed in `ips` as
+/// well, so an older installed helper that ignores `resolvers` keeps DNS.
+pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> Result<(), String> {
     if !network_helper_running() {
         return Err("helper_not_installed".to_string());
     }
 
     // Marker-first: if the app or helper dies after the rules land, the
     // marker is what lets a later restore know the firewall may be active.
-    write_lockdown_marker().map_err(|e| format!("write lockdown marker: {e}"))?;
+    // Reused while this boot's lockdown is recorded: the 60 s refresh and a
+    // re-arm must present the token the helper already holds.
+    let token = lockdown_token().unwrap_or_else(mint_token);
+    write_lockdown_marker(&token).map_err(|e| format!("write lockdown marker: {e}"))?;
 
+    let mut ips = allowed_ips.to_vec();
+    ips.extend(
+        resolvers
+            .iter()
+            .filter(|r| !allowed_ips.contains(r))
+            .cloned(),
+    );
     let request = serde_json::json!({
         "cmd": "enable",
-        "ips": allowed_ips,
+        "ips": ips,
+        "resolvers": resolvers,
+        "token": token,
     })
     .to_string();
 
@@ -1714,7 +1807,9 @@ pub fn disable_network_lockdown() -> Result<(), String> {
             Ok(())
         };
     }
-    helper_send(r#"{"cmd":"disable"}"#)?;
+    // The helper lifts the rules only for the token that armed them.
+    let token = lockdown_token().unwrap_or_default();
+    helper_send(&serde_json::json!({ "cmd": "disable", "token": token }).to_string())?;
     clear_lockdown_marker().map_err(|e| format!("network restored but marker cleanup failed: {e}"))
 }
 
@@ -1738,12 +1833,51 @@ fn boot_time() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn write_lockdown_marker() -> std::io::Result<()> {
+/// Line 1: the boot time. Line 2: the per-lockdown token the helper requires
+/// to lift the rules. Readable by this user only.
+fn write_lockdown_marker(token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let path = lockdown_marker_path().ok_or_else(|| std::io::Error::other("HOME is not set"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, boot_time().unwrap_or_default())
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)?;
+    // An older marker was created 0644; `mode` only applies to new files.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(format!("{}\n{token}", boot_time().unwrap_or_default()).as_bytes())
+}
+
+/// The token of the lockdown recorded this boot, if there is one.
+fn lockdown_token() -> Option<String> {
+    let recorded = std::fs::read_to_string(lockdown_marker_path()?).ok()?;
+    let (boot, token) = recorded.split_once('\n')?;
+    let token = token.trim();
+    let this_boot = match boot_time() {
+        Some(now) => boot.is_empty() || boot == now,
+        None => true,
+    };
+    (this_boot && !token.is_empty()).then(|| token.to_string())
+}
+
+fn mint_token() -> String {
+    use std::io::Read;
+    let mut buf = [0u8; 16];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf.iter().map(|b| format!("{b:02x}")).collect();
+        }
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:032x}", nanos ^ ((std::process::id() as u128) << 80))
 }
 
 fn clear_lockdown_marker() -> std::io::Result<()> {
@@ -1766,6 +1900,7 @@ fn lockdown_marker_may_exist() -> bool {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(_) => true,
         Ok(recorded) => {
+            let recorded = recorded.lines().next().unwrap_or_default();
             let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && recorded != now);
             if stale {
                 let _ = clear_lockdown_marker();
@@ -1947,11 +2082,16 @@ pub fn is_restricted_name(name: &str) -> bool {
     // Of the names macOS ships, only real apps a candidate can quit are
     // closable. Daemons (sshd, screencapture, …) belong to the system or to
     // Settings, and asking AppleScript to quit them shows a chooser dialog.
-    const QUITTABLE_APPLE_APPS: [&str; 4] = [
+    const QUITTABLE_APPLE_APPS: [&str; 9] = [
         "Terminal",
         "QuickTime Player",
         "Screenshot",
         "Screen Sharing",
+        "iPhone Mirroring",
+        "Script Editor",
+        "Shortcuts",
+        "Automator",
+        "Activity Monitor",
     ];
     if APPLE_SHIPPED.iter().any(|n| n.eq_ignore_ascii_case(name))
         && !QUITTABLE_APPLE_APPS
