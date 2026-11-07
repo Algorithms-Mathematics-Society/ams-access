@@ -42,6 +42,7 @@ function connectSrc(csp) {
 //
 // The workflow no longer sets it. The test below makes that permanent.
 const apiOrigin = new URL(resolveApiBase()).origin;
+const voiceOrigin = apiOrigin.replace(/^https:/, "wss:");
 
 test("the release CSP allows the production API origin", () => {
   const sources = connectSrc(config.app.security.csp);
@@ -75,7 +76,7 @@ test("no retired backend hosts remain in either CSP", () => {
 test("connect-src does not allow arbitrary hosts", () => {
   // The point of pinning the origin is lost if a wildcard is sitting next to
   // it. localhost is permitted in devCsp only.
-  const allowed = new Set(["'self'", apiOrigin]);
+  const allowed = new Set(["'self'", apiOrigin, voiceOrigin]);
   const devExtra = new Set(["http://localhost:*", "ws://localhost:*"]);
 
   for (const source of connectSrc(config.app.security.csp)) {
@@ -118,4 +119,27 @@ test("the production API host cannot be overridden by the environment", () => {
       else process.env[key] = value;
     }
   }
+});
+
+test("both desktop CSPs permit exactly the production voice signaling origin", () => {
+  for (const csp of [config.app.security.csp, config.app.security.devCsp]) {
+    const sources = connectSrc(csp);
+    assert.ok(sources.includes(voiceOrigin));
+    assert.equal(sources.filter((source) => source === voiceOrigin).length, 1);
+    assert.ok(!sources.includes("wss:"));
+    assert.ok(!sources.includes("ws:"));
+    assert.ok(!sources.includes("*"));
+  }
+});
+
+test("voice does not loosen release frames, objects, or media sources", () => {
+  const directives = new Map(
+    config.app.security.csp.split(";").map((part) => {
+      const [name, ...values] = part.trim().split(/\s+/);
+      return [name, values];
+    })
+  );
+  assert.deepEqual(directives.get("frame-src"), ["'self'"]);
+  assert.deepEqual(directives.get("object-src"), ["'none'"]);
+  assert.deepEqual(directives.get("media-src"), ["'self'", "blob:", "mediastream:"]);
 });
