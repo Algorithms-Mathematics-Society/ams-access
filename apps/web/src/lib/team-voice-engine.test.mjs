@@ -390,3 +390,25 @@ test("owned microphone ending surfaces unavailable and releases the session", as
   assert.equal(h.timers.size, 0);
   assert.equal(h.pcs[0].closed, true);
 });
+
+test("queued SDP and ICE cannot reach a replacement with the same member uid", async () => {
+  const h = harness();
+  await h.welcome();
+  const old = h.pcs[0];
+  old.onicecandidate({ candidate: { toJSON: () => ({ candidate: "obsolete-ice" }) } });
+  old.onnegotiationneeded();
+  await h.flush();
+  assert.equal(h.sockets[0].sent.filter((m) => m.type === "signal").length, 0);
+  h.message({ type: "peer-joined", member_uid: "peer0", display_name: "Replacement" });
+  await h.flush();
+  h.pcs[1].onicecandidate({ candidate: { toJSON: () => ({ candidate: "replacement-ice" }) } });
+  await h.tick(500);
+  const signals = h.sockets[0].sent.filter((m) => m.type === "signal");
+  assert.deepEqual(
+    signals.map((m) => m.data.candidate),
+    ["replacement-ice"]
+  );
+  assert.equal(old.closed, true);
+  assert.equal(h.pcs[1].closed, false);
+  h.session.stop();
+});
