@@ -15,6 +15,7 @@ import {
   pollVoiceTeam,
   readVoiceTeam,
   readVoiceCredentials,
+  resumeVoiceAfterPollFailure,
   type VoiceTeam,
 } from "@/lib/team-voice-api";
 import {
@@ -43,6 +44,8 @@ export function TeamVoiceControls({
   const unsubscribeSession = useRef<(() => void) | null>(null);
   const open = useRef(false);
   const lifecycleAbort = useRef<AbortController | null>(null);
+  const resumeAfterPoll = useRef(false);
+  const connectCurrent = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     setTeam(null);
@@ -75,13 +78,21 @@ export function TeamVoiceControls({
           setTeam(result.team);
           setMessage(null);
           open.current = result.team.phase.voice_open;
-          if (!open.current) stopSession();
+          if (!open.current) {
+            resumeAfterPoll.current = false;
+            stopSession();
+          } else if (resumeAfterPoll.current) {
+            resumeAfterPoll.current = false;
+            void connectCurrent.current();
+          }
         } else if (result.kind === "solo") {
+          resumeAfterPoll.current = false;
           open.current = false;
           stopSession();
           setTeam(null);
           setMessage(null);
         } else if (result.kind === "unpublished") {
+          resumeAfterPoll.current = false;
           open.current = false;
           stopSession();
           setMessage(
@@ -89,8 +100,14 @@ export function TeamVoiceControls({
           );
         }
       },
-      onError: () => {
+      onError: (error) => {
         if (!current.current()) return;
+        const status = session.current?.getSnapshot().status;
+        resumeAfterPoll.current = resumeVoiceAfterPollFailure(
+          resumeAfterPoll.current,
+          status,
+          error
+        );
         open.current = false;
         stopSession();
         setMessage("Team voice status is unavailable. Checking again shortly.");
@@ -98,6 +115,7 @@ export function TeamVoiceControls({
     });
     const terminate = () => {
       alive = false;
+      resumeAfterPoll.current = false;
       lifecycle.abort();
       open.current = false;
       stopPolling();
@@ -167,6 +185,8 @@ export function TeamVoiceControls({
     }
   }
 
+  connectCurrent.current = connect;
+
   useEffect(() => {
     function muteShortcut(event: KeyboardEvent) {
       const active = session.current;
@@ -219,7 +239,7 @@ export function TeamVoiceControls({
         {team?.phase.voice_open && !connected && (
           <Button
             label={busy ? "Connecting…" : "Join voice / retry microphone"}
-            isDisabled={busy}
+            isDisabled={busy || !open.current}
             onClick={() => void connect()}
           />
         )}
@@ -229,15 +249,17 @@ export function TeamVoiceControls({
             onClick={() => session.current?.setMuted(!snapshot?.muted)}
           />
         )}
-        {connected && (
+        {(connected || busy || resumeAfterPoll.current) && (
           <Button
             label="Leave voice"
             onClick={() => {
+              resumeAfterPoll.current = false;
               unsubscribeSession.current?.();
               unsubscribeSession.current = null;
               session.current?.stop();
               session.current = null;
               setSnapshot(null);
+              setMessage("You left team voice. Choose Join voice to reconnect.");
             }}
           />
         )}

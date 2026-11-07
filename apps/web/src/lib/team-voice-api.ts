@@ -10,6 +10,14 @@ export type TeamVoiceRead =
   | { kind: "solo" }
   | { kind: "unpublished" };
 
+export class TeamVoiceApiError extends Error {
+  status: number;
+  constructor(status: number) {
+    super(`Team voice status unavailable (${status})`);
+    this.status = status;
+  }
+}
+
 export async function readVoiceTeam(
   apiBase: string,
   contestUid: string,
@@ -33,7 +41,7 @@ export async function readVoiceTeam(
     if (body?.detail === "this contest is not a team round") return { kind: "solo" };
     if (body?.detail === "teams have not been published yet") return { kind: "unpublished" };
   }
-  if (!response.ok) throw new Error(`Team voice status unavailable (${response.status})`);
+  if (!response.ok) throw new TeamVoiceApiError(response.status);
   const team = (await response.json()) as VoiceTeam;
   if (
     typeof team?.phase?.voice_open !== "boolean" ||
@@ -52,7 +60,7 @@ export function voicePollDelay(hidden: boolean, random = Math.random): number {
 export function pollVoiceTeam(options: {
   read: (signal: AbortSignal, etag: string | null) => Promise<TeamVoiceRead>;
   onRead: (result: TeamVoiceRead) => void;
-  onError: () => void;
+  onError: (error: unknown) => void;
   hidden: () => boolean;
   random?: () => number;
 }) {
@@ -70,9 +78,11 @@ export function pollVoiceTeam(options: {
       if (result.kind === "team") etag = result.etag;
       terminal = result.kind === "solo";
       options.onRead(result);
-    } catch {
+    } catch (error) {
       etag = null;
-      if (!stopped) options.onError();
+      terminal =
+        error instanceof TeamVoiceApiError && (error.status === 401 || error.status === 403);
+      if (!stopped) options.onError(error);
     } finally {
       clearTimeout(deadline);
       pending = undefined;
@@ -111,4 +121,14 @@ export async function readVoiceCredentials(
   );
   if (!response.ok) throw new Error("Voice relay credentials unavailable");
   return response.json();
+}
+
+export function resumeVoiceAfterPollFailure(
+  previous: boolean,
+  status: string | undefined,
+  error: unknown
+): boolean {
+  if (error instanceof TeamVoiceApiError && (error.status === 401 || error.status === 403))
+    return false;
+  return previous || status === "connected" || status === "connecting" || status === "reconnecting";
 }

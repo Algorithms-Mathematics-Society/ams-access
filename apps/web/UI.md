@@ -464,6 +464,9 @@ non-dry-run session. The adapter runs only in the Windows desktop WebView; it
 reads the published team projection and uses `phase.voice_open` as authority.
 A solo-round 404 stops polling; an unpublished-team 404 continues checking.
 Unknown failures close local voice and require a fresh successful team read.
+An active connection resumes once after a transient poll failure when the server
+confirms the window is open; explicit Leave, terminal voice states and auth
+rejection do not resume automatically. HTTP 401/403 stop polling.
 Team GETs use ETags, an eight-second deadline, no overlap, completion-scheduled
 3–5 second jitter when visible and 15 seconds when hidden. At 3,000 active
 visible participants the average is approximately 750 GETs/second (a 1,000/s

@@ -6,6 +6,8 @@ import {
   voicePollDelay,
   pollVoiceTeam,
   acquireVoiceMicrophone,
+  TeamVoiceApiError,
+  resumeVoiceAfterPollFailure,
 } from "./team-voice-api.ts";
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -219,4 +221,33 @@ test("shared microphone is cloned; fallback explicitly requests audio without ca
     },
   });
   assert.equal(await acquireVoiceMicrophone(null), "owned audio");
+});
+
+test("poll failures preserve only a previously active connection intent and auth failures are terminal", async (t) => {
+  assert.equal(resumeVoiceAfterPollFailure(false, "connected", new Error("offline")), true);
+  assert.equal(resumeVoiceAfterPollFailure(true, undefined, new Error("still offline")), true);
+  for (const status of ["closed", "replaced", "unavailable", "idle", undefined])
+    assert.equal(resumeVoiceAfterPollFailure(false, status, new Error("offline")), false);
+  assert.equal(resumeVoiceAfterPollFailure(true, "connected", new TeamVoiceApiError(401)), false);
+  assert.equal(resumeVoiceAfterPollFailure(true, "connected", new TeamVoiceApiError(403)), false);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let calls = 0,
+    errors = 0;
+  const stop = pollVoiceTeam({
+    read: async () => {
+      calls++;
+      throw new TeamVoiceApiError(401);
+    },
+    onRead: () => assert.fail(),
+    onError: () => {
+      errors++;
+    },
+    hidden: () => false,
+  });
+  await flush();
+  t.mock.timers.tick(60000);
+  await flush();
+  assert.equal(calls, 1);
+  assert.equal(errors, 1);
+  stop();
 });
