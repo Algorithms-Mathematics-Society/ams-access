@@ -16,6 +16,8 @@ mod reference_navigation;
 mod shutdown;
 #[cfg(target_os = "windows")]
 mod windows_firewall;
+#[cfg(any(target_os = "windows", test))]
+mod windows_media_origin;
 
 use base64::Engine as _;
 use core_rs::exam::{
@@ -4036,39 +4038,62 @@ pub fn run() {
                     .expect("with_webview failed — camera/mic permission handler not registered");
                 }
             }
-            // On Windows, WebView2 raises PermissionRequested for getUserMedia.
-            // Mirror the Linux webkit2gtk auto-allow: grant camera/microphone to
-            // the bundled exam UI so the candidate only ever deals with the
-            // OS-level privacy toggle (which Stage 8 deep-links to), and a one-off
-            // webview "Deny" can never be persisted and dead-end the camera stage.
+            // Grant media only to the bundled Windows origin (or the configured
+            // development origin in debug builds), preserving OS privacy checks.
             #[cfg(target_os = "windows")]
             {
                 use tauri::Manager;
                 if let Some(win) = app.get_webview_window("main") {
-                    win.with_webview(|wv| unsafe {
+                    #[cfg(debug_assertions)]
+                    let dev_url = app.config().build.dev_url.clone();
+                    #[cfg(not(debug_assertions))]
+                    let dev_url: Option<tauri::Url> = None;
+                    win.with_webview(move |wv| unsafe {
                         use webview2_com::Microsoft::Web::WebView2::Win32::{
                             COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
                             COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
                             COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                            COREWEBVIEW2_PERMISSION_STATE_DENY,
                         };
-                        use webview2_com::PermissionRequestedEventHandler;
+                        use webview2_com::{CoTaskMemPWSTR, PermissionRequestedEventHandler};
+                        use windows_core::PWSTR;
 
                         let Ok(core) = wv.controller().CoreWebView2() else {
                             return;
                         };
-                        let handler =
-                            PermissionRequestedEventHandler::create(Box::new(|_core, args| {
+                        let handler = PermissionRequestedEventHandler::create(Box::new(
+                            move |_core, args| {
                                 if let Some(args) = args {
                                     let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
                                     args.PermissionKind(&mut kind)?;
                                     if kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
                                         || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
                                     {
-                                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                                        // Deny before reading the requesting frame's URI, so
+                                        // retrieval/decoding failure cannot leave a default grant.
+                                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                                        let mut uri = PWSTR::null();
+                                        let result = args.Uri(&mut uri);
+                                        // Own even an allocation returned alongside an HRESULT
+                                        // failure; Drop releases it with CoTaskMemFree.
+                                        let _allocation = CoTaskMemPWSTR::from(uri);
+                                        if result.is_err() || uri.is_null() {
+                                            return Ok(());
+                                        }
+                                        let Ok(uri) = uri.to_string() else {
+                                            return Ok(());
+                                        };
+                                        if windows_media_origin::is_allowed_media_origin(
+                                            &uri,
+                                            dev_url.as_ref(),
+                                        ) {
+                                            args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                                        }
                                     }
                                 }
                                 Ok(())
-                            }));
+                            },
+                        ));
                         let mut token = 0i64;
                         let _ = core.add_PermissionRequested(&handler, &mut token);
                     })
