@@ -29,7 +29,8 @@ import {
   strictContestPolicy,
   type OrganizerOverride,
 } from "@ams/api-client";
-import { participantToken } from "@/lib/candidate-auth";
+import { authHeaders, participantToken } from "@/lib/candidate-auth";
+import { readVoiceTeam } from "@/lib/team-voice-api";
 import {
   getContest,
   authGeneration,
@@ -1251,7 +1252,27 @@ export default function OnboardingPage() {
       // questions, so a postponement/revocation cannot expose an early paper.
       preparedEntryRef.current = { contestId, entered: false };
       attempts.commit(attempt);
-      if (windowMeta && !isTestAccount && new Date(windowMeta.startAt).getTime() > serverNow()) {
+      // Only a fully secured Windows team entry may reach the precontest room.
+      // A failed team lookup retains the existing setup wait, never grants entry.
+      let teamRoom = false;
+      if (nativeAvailable && (devicePlatform ?? "").toLowerCase() === "windows" && !dryRun) {
+        const membership = await attempts.runAdvisory(
+          attempt,
+          "team lobby availability",
+          () => readVoiceTeam(API_URL, contestId, authHeaders(), AbortSignal.timeout(8_000)),
+          9000,
+          "team lobby availability timed out"
+        );
+        teamRoom =
+          membership.status === "completed" &&
+          (membership.value.kind === "team" || membership.value.kind === "unpublished");
+      }
+      if (
+        windowMeta &&
+        !isTestAccount &&
+        new Date(windowMeta.startAt).getTime() > serverNow() &&
+        !teamRoom
+      ) {
         setCurrentStage(FINAL_STAGE);
         setReadyForStart(true);
         setPolicyBlock(null);

@@ -617,7 +617,7 @@ test("the room still waits for server activation before exposing the paper", () 
   const room = readFileSync(new URL("../contest/client.tsx", import.meta.url), "utf8");
   const read = room.indexOf("const live = await getSession(stored.id)");
   const pending = room.indexOf('if (live.status === "pending")', read);
-  const paper = room.indexOf("await loadContestPaper(contestId)", read);
+  const paper = room.indexOf("const paper = await loadContestPaper(", read);
   assert.ok(read > 0 && pending > read && paper > pending);
   assert.match(room.slice(pending, paper), /failRetryable/);
 });

@@ -10,35 +10,29 @@ import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { authGeneration, subscribeAuthChanges } from "@/lib/proctor-api";
 import { cameraSession } from "@/lib/camera-session";
 import { resolveApiBase } from "@/lib/api-base";
-import {
-  acquireVoiceMicrophone,
-  pollVoiceTeam,
-  readVoiceTeam,
-  readVoiceCredentials,
-  resumeVoiceAfterPollFailure,
-  type VoiceTeam,
-} from "@/lib/team-voice-api";
+import { acquireVoiceMicrophone, readVoiceCredentials, type VoiceTeam } from "@/lib/team-voice-api";
 import {
   createTeamVoiceSession,
   type TeamVoiceSession,
   type TeamVoiceSnapshot,
 } from "@/lib/team-voice-engine";
 
-/** Windows-only contest adapter. The missing team lobby (#293) can reuse the same API seam. */
+/** One voice session consumes the room’s shared team projection across lobby and workspace. */
 export function TeamVoiceControls({
   contestUid,
   enabled,
   suspended = false,
+  projection,
 }: {
   contestUid: string;
   enabled: boolean;
   suspended?: boolean;
+  projection: { board: VoiceTeam | null; status: string; error: string | null };
 }) {
-  const [team, setTeam] = useState<VoiceTeam | null>(null);
+  const team = projection.board;
   const [snapshot, setSnapshot] = useState<TeamVoiceSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
-  const [retry, setRetry] = useState(0);
   const session = useRef<TeamVoiceSession | null>(null);
   const current = useRef<() => boolean>(() => false);
   const unsubscribeSession = useRef<(() => void) | null>(null);
@@ -48,7 +42,6 @@ export function TeamVoiceControls({
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
-    setTeam(null);
     setSnapshot(null);
     setMessage(null);
     setOutputs([]);
@@ -68,59 +61,12 @@ export function TeamVoiceControls({
       session.current = null;
       setSnapshot(null);
     };
-    const stopPolling = pollVoiceTeam({
-      read: (signal, etag) =>
-        readVoiceTeam(resolveApiBase(), contestUid, authHeaders(), signal, etag),
-      hidden: () => document.hidden,
-      onRead: (result) => {
-        if (!current.current()) return;
-        if (result.kind === "team") {
-          setTeam(result.team);
-          setMessage(null);
-          open.current = result.team.phase.voice_open;
-          if (!open.current) {
-            resumeAfterPoll.current = false;
-            stopSession();
-          } else if (resumeAfterPoll.current) {
-            resumeAfterPoll.current = false;
-            void connectCurrent.current();
-          }
-        } else if (result.kind === "solo") {
-          resumeAfterPoll.current = false;
-          open.current = false;
-          stopSession();
-          setTeam(null);
-          setMessage(null);
-        } else if (result.kind === "unpublished") {
-          resumeAfterPoll.current = false;
-          open.current = false;
-          stopSession();
-          setMessage(
-            "Teams have not been published yet. Voice will be available when your team is published and its voice window opens."
-          );
-        }
-      },
-      onError: (error) => {
-        if (!current.current()) return;
-        const status = session.current?.getSnapshot().status;
-        resumeAfterPoll.current = resumeVoiceAfterPollFailure(
-          resumeAfterPoll.current,
-          status,
-          error
-        );
-        open.current = false;
-        stopSession();
-        setMessage("Team voice status is unavailable. Checking again shortly.");
-      },
-    });
     const terminate = () => {
       alive = false;
       resumeAfterPoll.current = false;
       lifecycle.abort();
       open.current = false;
-      stopPolling();
       stopSession();
-      setTeam(null);
       setMessage(null);
     };
     const unsubscribeAuth = subscribeAuthChanges(terminate);
@@ -132,7 +78,26 @@ export function TeamVoiceControls({
       window.removeEventListener("pagehide", terminate);
       window.removeEventListener("beforeunload", terminate);
     };
-  }, [contestUid, enabled, retry]);
+  }, [contestUid, enabled]);
+
+  useEffect(() => {
+    const available = enabled && projection.status === "team" && Boolean(team?.phase.voice_open);
+    open.current = available;
+    if (!available) {
+      const status = session.current?.getSnapshot().status;
+      if (projection.status === "error" && (status === "connected" || status === "reconnecting"))
+        resumeAfterPoll.current = true;
+      else if (projection.status !== "error") resumeAfterPoll.current = false;
+      unsubscribeSession.current?.();
+      unsubscribeSession.current = null;
+      session.current?.stop();
+      session.current = null;
+      setSnapshot(null);
+    } else if (resumeAfterPoll.current) {
+      resumeAfterPoll.current = false;
+      void connectCurrent.current();
+    }
+  }, [projection.status, team, enabled]);
 
   async function connect() {
     const authorized = current.current;
@@ -209,7 +174,13 @@ export function TeamVoiceControls({
     return () => window.removeEventListener("keydown", muteShortcut);
   }, [suspended]);
 
-  if (!enabled || (!team && !message)) return null;
+  const projectionMessage =
+    projection.status === "error"
+      ? "Team voice status is unavailable. Checking again shortly."
+      : projection.status === "unpublished"
+        ? "Teams have not been published yet. Voice will be available when your team is published and its voice window opens."
+        : null;
+  if (!enabled || (!team && !message && !projectionMessage)) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   const busy = snapshot?.status === "connecting";
   return (
@@ -276,9 +247,6 @@ export function TeamVoiceControls({
             }
           />
         )}
-        {message && (
-          <Button label="Check voice status" onClick={() => setRetry((value) => value + 1)} />
-        )}
       </HStack>
       {snapshot?.status === "unavailable" && (
         <Text>
@@ -286,7 +254,9 @@ export function TeamVoiceControls({
           voice to retry. The voice relay must also be available.
         </Text>
       )}
-      {(message || snapshot?.error) && <Text role="status">{message ?? snapshot?.error}</Text>}
+      {(message || projectionMessage || snapshot?.error) && (
+        <Text role="status">{message ?? projectionMessage ?? snapshot?.error}</Text>
+      )}
       {connected && (
         <HStack gap={4} wrap="wrap" align="start">
           {team?.members.map((member, index) => (

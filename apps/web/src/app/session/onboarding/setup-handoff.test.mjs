@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { workspaceAlreadyLoaded } from "../contest/team-workspace-entry.ts";
 import { SETUP_ATTEMPT_KEY } from "./setup-authorization.ts";
 import {
   SETUP_HANDOFF_KEY,
@@ -311,7 +312,7 @@ test("pending POST cannot apply after account switch, unmount or handoff clear",
 
 test("paper loading and proctor acquisition effects return before any work when entry is denied", () => {
   for (const fragment of [
-    "loadContestPaper(contestId)",
+    "const paper = await loadContestPaper(",
     "cameraSession.ensure({ audio: true })",
     '"count_monitors"',
     '"scan_processes"',
@@ -320,4 +321,66 @@ test("paper loading and proctor acquisition effects return before any work when 
     const effect = effectContaining(fragment, { entryReady: false });
     assert.equal(effect(), undefined, fragment);
   }
+});
+
+test("same team assignment recovery preserves live unsaved edits and assets without draft reinstall", async () => {
+  const files = [{ content: "unsaved live edit" }];
+  let paperReads = 0,
+    draftReads = 0,
+    released = 0,
+    error = "prior session read failed",
+    loading = true;
+  const context = { isCurrent: () => true };
+  const retries = { current: 2 };
+  const identity = { contestId: "contest", sessionId: "session", generation: 1, label: "A" };
+  const effect = effectContaining("const paper = await loadContestPaper(", {
+    entryReady: true,
+    showTeamLobby: false,
+    contestId: "contest",
+    isDryRun: false,
+    participantToken: () => "token",
+    setupContextRef: { current: context },
+    leavingWorkspaceRef: { current: false },
+    autoLoadRetriesRef: retries,
+    readStoredSession: () => ({ id: "session", contest_id: "contest" }),
+    getSession: async () => ({ uid: "session", status: "active", phase: "running" }),
+    unauthorizedAtRef: { current: null },
+    windowsTeamRoom: true,
+    lobbyState: { status: "team" },
+    teamOwnLabel: "A",
+    authGeneration: () => 1,
+    loadedTeamWorkspace: { current: identity },
+    workspaceAlreadyLoaded,
+    setLoadError: (value) => {
+      error = value;
+    },
+    setLoadRetryable: () => {},
+    setLoading: (value) => {
+      loading = value;
+    },
+    loadContestPaper: async () => {
+      paperReads++;
+      throw new Error("must not reload paper");
+    },
+    listDrafts: async () => {
+      draftReads++;
+      return [];
+    },
+    setQuestionFiles: () => {
+      files[0].content = "older draft";
+    },
+    releaseCandidateQuestionAssets: () => {
+      released++;
+    },
+  });
+  const cleanup = effect();
+  await tick();
+  cleanup();
+  assert.equal(files[0].content, "unsaved live edit");
+  assert.equal(paperReads, 0);
+  assert.equal(draftReads, 0);
+  assert.equal(released, 0);
+  assert.equal(error, null);
+  assert.equal(loading, false);
+  assert.equal(retries.current, 0);
 });

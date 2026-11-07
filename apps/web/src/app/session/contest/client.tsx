@@ -42,6 +42,13 @@ import {
 import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
+import { createTeamLobbyController, type LobbyState } from "@/lib/team-lobby";
+import {
+  assignedWorkspaceLabel,
+  teamWorkspaceAllowed,
+  workspaceAlreadyLoaded,
+  type WorkspaceIdentity,
+} from "./team-workspace-entry";
 import { clearQueryCache, fetchJson, postJsonKeepalive } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
@@ -111,6 +118,10 @@ import dynamic from "next/dynamic";
 
 // Voice is optional, Windows-only media UI. Keep its engine and controls out
 // of the contest's initial JS; the component still owns auth/media teardown.
+const TeamLobby = dynamic(
+  () => import("./components/TeamLobby").then((module) => module.TeamLobby),
+  { ssr: false }
+);
 const TeamVoiceControls = dynamic(
   () => import("./components/TeamVoiceControls").then((module) => module.TeamVoiceControls),
   { ssr: false }
@@ -402,6 +413,64 @@ export default function ContestPageClient() {
     setupContextRef.current.generation === authGeneration() &&
     setupContextRef.current.token === (participantToken() ?? "") &&
     setupContextRef.current.isCurrent();
+
+  const windowsTeamRoom =
+    entryReady &&
+    !isDryRun &&
+    typeof window !== "undefined" &&
+    Boolean(window.__TAURI__) &&
+    /^Win/i.test(navigator.platform);
+  const [lobbyState, setLobbyState] = useState<LobbyState>({
+    board: null,
+    status: "loading",
+    pending: false,
+    error: null,
+    sampledAt: 0,
+  });
+  const lobbyController = useRef<ReturnType<typeof createTeamLobbyController> | null>(null);
+  const [enteredTeamPart, setEnteredTeamPart] = useState(false);
+  const loadedTeamWorkspace = useRef<WorkspaceIdentity | null>(null);
+  const paperAssets = useRef<string[]>([]);
+  useEffect(
+    () => () => {
+      releaseCandidateQuestionAssets(paperAssets.current);
+      paperAssets.current = [];
+      loadedTeamWorkspace.current = null;
+    },
+    [contestId, entryReady]
+  );
+  useEffect(() => {
+    setEnteredTeamPart(false);
+    if (!windowsTeamRoom) return;
+    const generation = authGeneration();
+    const token = participantToken();
+    const controller = createTeamLobbyController({
+      apiBase: API_URL,
+      contestUid: contestId,
+      headers: authHeaders,
+      hidden: () => document.hidden,
+      onState: (state) => {
+        if (generation === authGeneration() && token === participantToken()) setLobbyState(state);
+      },
+    });
+    lobbyController.current = controller;
+    const stop = subscribeAuthChanges(() => controller.stop());
+    const visible = () => {
+      if (!document.hidden) controller.refresh();
+    };
+    document.addEventListener("visibilitychange", visible);
+    const stored = readStoredSession();
+    if (stored?.contest_id === contestId) setSessionId(stored.id);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", visible);
+      controller.stop();
+      lobbyController.current = null;
+    };
+  }, [windowsTeamRoom, contestId]);
+  const teamOwnLabel = assignedWorkspaceLabel(lobbyState);
+  const teamWorkspaceReady = teamWorkspaceAllowed(lobbyState, enteredTeamPart);
+  const showTeamLobby = windowsTeamRoom && !teamWorkspaceReady;
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const activeContestIdRef = useRef<string | null>(null);
@@ -1421,7 +1490,7 @@ export default function ContestPageClient() {
   );
 
   useEffect(() => {
-    if (!entryReady) return;
+    if (!entryReady || showTeamLobby) return;
     if (!contestId) {
       setLoadError("Missing contest ID. Please relaunch from your contest list.");
       setLoading(false);
@@ -1536,7 +1605,29 @@ export default function ContestPageClient() {
         return;
       }
 
-      const { index, questions } = await loadContestPaper(contestId);
+      const workspaceIdentity =
+        windowsTeamRoom && lobbyState.status === "team" && teamOwnLabel
+          ? { contestId, sessionId: live.uid, generation: authGeneration(), label: teamOwnLabel }
+          : null;
+      if (
+        workspaceIdentity &&
+        workspaceAlreadyLoaded(loadedTeamWorkspace.current, workspaceIdentity)
+      ) {
+        setLoadError(null);
+        setLoadRetryable(false);
+        autoLoadRetriesRef.current = 0;
+        setLoading(false);
+        return;
+      }
+      const paper = await loadContestPaper(
+        contestId,
+        windowsTeamRoom && lobbyState.status === "team" ? (teamOwnLabel ?? undefined) : undefined
+      );
+      const index = paper.index;
+      const questions =
+        windowsTeamRoom && lobbyState.status === "team"
+          ? paper.questions.filter((question) => question.id === teamOwnLabel)
+          : paper.questions;
       if (!isCurrentLoad()) {
         releaseCandidateQuestionAssets(
           questions.flatMap((question) =>
@@ -1551,6 +1642,9 @@ export default function ContestPageClient() {
       loadedObjectUrls = questions.flatMap((question) =>
         (question.cxxprobe?.assets ?? []).map((asset) => asset.object_url).filter(Boolean)
       );
+
+      releaseCandidateQuestionAssets(paperAssets.current);
+      paperAssets.current = loadedObjectUrls;
 
       const initialReferenceSheet = readReferenceSheet(index.reference_sheet);
       referenceRevisionRef.current = initialReferenceSheet?.revision ?? 0;
@@ -1635,6 +1729,7 @@ export default function ContestPageClient() {
       setActiveQ(0);
       setQuestions(questions);
       if (questions.length > 0) {
+        loadedTeamWorkspace.current = workspaceIdentity;
         loadQuestionWithAnswers(questions[0], answersMap, "C++23");
         setLoadError(null);
         autoLoadRetriesRef.current = 0;
@@ -1689,15 +1784,10 @@ export default function ContestPageClient() {
       disposed = true;
       abortController.abort();
       if (retryTimer) clearTimeout(retryTimer);
-      // Statement images are held as blob URLs, which the browser keeps alive
-      // until they are revoked explicitly — a document reference, not a
-      // garbage-collected one. `releaseCandidateQuestionAssets` existed and
-      // had no caller, so every diagram in every problem would have stayed
-      // resident for the life of the window.
-      releaseCandidateQuestionAssets(loadedObjectUrls);
+      // Adopted statement assets remain owned by the authorized workspace.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contestId, loadAttempt, entryReady]);
+  }, [contestId, loadAttempt, entryReady, showTeamLobby, teamOwnLabel]);
 
   function loadQuestionWithAnswers(
     q: Question,
@@ -2590,7 +2680,7 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!entryReady) return;
-    if (loading) return; // Wait for contest load to ensure <video> ref is in DOM.
+    if (loading && !windowsTeamRoom) return; // The secured lobby also mounts the camera.
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("Camera access is unavailable in this environment.");
       setProctoringOk(false);
@@ -2772,7 +2862,7 @@ export default function ContestPageClient() {
       cameraStreamRef.current = null;
       setCameraVideoReady(false);
     };
-  }, [loading, cameraPickKey, entryReady]);
+  }, [loading && !windowsTeamRoom, cameraPickKey, entryReady]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -4554,7 +4644,27 @@ export default function ContestPageClient() {
     );
   }
 
-  if (loading) {
+  const cameraTile = (
+    <CameraTile
+      presenceStatus={presenceStatus}
+      onPickCamera={handlePickCamera}
+      cameraVideoRef={cameraVideoRef}
+      cameraStream={cameraStream}
+      cameraError={cameraError}
+      sidebarCollapsed={sidebarCollapsed}
+      cameraStatusLabel={cameraStatusLabel}
+      cameraCollapsed={cameraCollapsed}
+      cameraHealthy={cameraHealthy}
+      cameraEnabled={cameraEnabled}
+      micEnabled={micEnabled}
+      handleToggleMedia={handleToggleMedia}
+    />
+  );
+
+  const renderTeamLobby =
+    showTeamLobby || (windowsTeamRoom && lobbyState.status !== "solo" && loading);
+
+  if (loading && !renderTeamLobby) {
     const phase = entryWaitPhase(bootWaitedMs);
     return (
       <BootScreen
@@ -4565,7 +4675,7 @@ export default function ContestPageClient() {
     );
   }
 
-  if (loadError) {
+  if (loadError && !showTeamLobby) {
     return (
       <ContestLoadErrorScreen
         loadError={loadError}
@@ -4610,76 +4720,79 @@ export default function ContestPageClient() {
             onExit={requestLeave}
           />
         )}
-        <TopBar
-          online={!networkDisconnected}
-          markedQuestionIds={markedQuestionIds}
-          workspaceControls={
-            <WorkspaceControls
-              suspended={
-                leaveConfirm ||
-                criticalOverlayActive ||
-                networkOverlayActive ||
-                submitConfirm ||
-                showSupportModal ||
-                showSupportChat ||
-                showMediaToggleWarning ||
-                timeUpState !== "idle"
-              }
-              focused={editorFocused}
-              onFocus={toggleEditorFocus}
-              onReset={resetWorkspaceLayout}
-              onNavigate={navigateWorkspace}
-            />
-          }
-          contest={contest}
-          clock={clock}
-          handleContestExpiry={onContestExpiry}
-          setShowSupportModal={setShowSupportChat}
-          submitConfirm={submitConfirm}
-          setSubmitConfirm={setSubmitConfirm}
-          submitError={submitError}
-          setSubmitError={setSubmitError}
-          handleSubmitConfirmed={handleSubmitConfirmed}
-          submissionPending={isSubmitting}
-          timeUpState={timeUpState}
-          finishHistoryStatus={submissionHistoryStatus}
-          finishQuestions={questions.map((q) => ({
-            id: q.id,
-            title: q.title,
-            submissionCount: (submissionsByQuestion[q.id] ?? []).length,
-            pendingCount: (submissionsByQuestion[q.id] ?? []).filter((sub) =>
-              isPendingSubmissionStatus(sub.status)
-            ).length,
-            hasAccepted: (submissionsByQuestion[q.id] ?? []).some(
-              (sub) => (sub.final_verdict ?? sub.status) === "AC"
-            ),
-          }))}
-          finishDraftStatus={
-            unsavedOnDevice.length
-              ? `Not saved on this device: ${questions
-                  .filter((q) => unsavedOnDevice.includes(q.id))
-                  .map((q) => q.title)
-                  .join(", ")}. That code exists only in the open editor.`
-              : "Drafts: Saved on this device."
-          }
-          finishDraftNeedsAttention={unsavedOnDevice.length > 0}
-          finishReviewSuspended={
-            leaveConfirm ||
-            criticalOverlayActive ||
-            networkOverlayActive ||
-            showSupportModal ||
-            showSupportChat ||
-            showMediaToggleWarning ||
-            timeUpState !== "idle"
-          }
-          onReviewQuestion={onSwitchQuestion}
-        />
+        {!renderTeamLobby && (
+          <TopBar
+            online={!networkDisconnected}
+            markedQuestionIds={markedQuestionIds}
+            workspaceControls={
+              <WorkspaceControls
+                suspended={
+                  leaveConfirm ||
+                  criticalOverlayActive ||
+                  networkOverlayActive ||
+                  submitConfirm ||
+                  showSupportModal ||
+                  showSupportChat ||
+                  showMediaToggleWarning ||
+                  timeUpState !== "idle"
+                }
+                focused={editorFocused}
+                onFocus={toggleEditorFocus}
+                onReset={resetWorkspaceLayout}
+                onNavigate={navigateWorkspace}
+              />
+            }
+            contest={contest}
+            clock={clock}
+            handleContestExpiry={onContestExpiry}
+            setShowSupportModal={setShowSupportChat}
+            submitConfirm={submitConfirm}
+            setSubmitConfirm={setSubmitConfirm}
+            submitError={submitError}
+            setSubmitError={setSubmitError}
+            handleSubmitConfirmed={handleSubmitConfirmed}
+            submissionPending={isSubmitting}
+            timeUpState={timeUpState}
+            finishHistoryStatus={submissionHistoryStatus}
+            finishQuestions={questions.map((q) => ({
+              id: q.id,
+              title: q.title,
+              submissionCount: (submissionsByQuestion[q.id] ?? []).length,
+              pendingCount: (submissionsByQuestion[q.id] ?? []).filter((sub) =>
+                isPendingSubmissionStatus(sub.status)
+              ).length,
+              hasAccepted: (submissionsByQuestion[q.id] ?? []).some(
+                (sub) => (sub.final_verdict ?? sub.status) === "AC"
+              ),
+            }))}
+            finishDraftStatus={
+              unsavedOnDevice.length
+                ? `Not saved on this device: ${questions
+                    .filter((q) => unsavedOnDevice.includes(q.id))
+                    .map((q) => q.title)
+                    .join(", ")}. That code exists only in the open editor.`
+                : "Drafts: Saved on this device."
+            }
+            finishDraftNeedsAttention={unsavedOnDevice.length > 0}
+            finishReviewSuspended={
+              leaveConfirm ||
+              criticalOverlayActive ||
+              networkOverlayActive ||
+              showSupportModal ||
+              showSupportChat ||
+              showMediaToggleWarning ||
+              timeUpState !== "idle"
+            }
+            onReviewQuestion={onSwitchQuestion}
+          />
+        )}
         {entryReady &&
           typeof window !== "undefined" &&
           window.__TAURI__ &&
           /^Win/i.test(navigator.platform) && (
             <TeamVoiceControls
               contestUid={contestId}
+              projection={lobbyState}
               enabled={
                 entryReady &&
                 Boolean(sessionId) &&
@@ -4699,241 +4812,274 @@ export default function ContestPageClient() {
               }
             />
           )}
-        <HStack
-          gap={0}
-          className="contest-body"
-          data-editor-focus={editorFocused ? "true" : "false"}
-          align="stretch"
-          style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}
-        >
-          <QuestionRail
-            markedQuestionIds={markedQuestionIds}
-            questions={questions}
-            activeQ={activeQ}
-            switchQuestion={onSwitchQuestion}
-            sidebarCollapsed={sidebarCollapsed}
-            setSidebarCollapsed={setSidebarCollapsed}
-            questionStatusMap={questionStatusMap}
-            acceptedQuestionCount={acceptedQuestionCount}
-            cameraPreviewAvailable={Boolean(cameraStream ?? cameraError)}
-            cameraPreviewVisible={!cameraCollapsed && Boolean(cameraStream ?? cameraError)}
-            onToggleCameraPreview={() => setCameraCollapsed((collapsed) => !collapsed)}
-            referenceOpen={referenceOpen}
-            onToggleReference={() => setReferenceOpen((open) => !open)}
-          />
-          <ProblemPane
-            markedQuestionIds={markedQuestionIds}
-            toggleQuestionMark={toggleQuestionMark}
-            problemPaneWidth={problemPaneWidth}
-            availableProblemTabs={availableProblemTabs}
-            activeProblemTab={activeProblemTab}
-            setProblemTab={setProblemTab}
-            questions={questions}
-            activeQ={activeQ}
-            problemBodyHtml={problemBodyHtml}
-            handleProblemBodyClick={handleProblemBodyClick}
-          />
-          <WorkspaceResizeHandle
-            className="contest-splitter"
-            direction="horizontal"
-            value={problemPaneWidth}
-            min={28}
-            max={52}
-            onChange={updateProblemWidth}
-            containerSelector=".contest-body"
-            label="Resize problem and editor panes"
-          />
-          <VStack
-            gap={0}
-            className="contest-editor-output"
-            style={{
-              flex: 1,
-              minHeight: 0,
-              minWidth: 0,
-              background: "var(--color-background-body)",
-            }}
-          >
-            <AnimatePresence initial={false}>
-              {showRecoveryBanner && (
-                <RecoveryBannerRegion
-                  key={`recovery-${currentQId}`}
-                  gap={0}
-                  initial={false}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{
-                    height: { duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] },
-                    opacity: { duration: reduceMotion ? 0 : 0.12 },
-                  }}
-                  style={{ overflow: "hidden", flexShrink: 0 }}
-                >
-                  <Banner
-                    status="info"
-                    container="section"
-                    title="Draft restored from this device"
-                    description={`Review the recovered code. ${activeDraftStatus.confirmed ? "It is saved on this device." : "Your latest changes are not yet saved on this device."}`}
-                    isDismissable
-                    onDismiss={() => setDismissedRecoveryQuestions((prev) => [...prev, currentQId])}
-                  />
-                </RecoveryBannerRegion>
-              )}
-            </AnimatePresence>
-            {!networkOverlayActive && (!browserOnline || connection !== "online") && (
-              <Banner
-                status="warning"
-                container="section"
-                title="Reconnecting to the exam server"
-                description={connectionDraftAssurance(unsavedOnDevice.length === 0)}
-                role="status"
-              />
-            )}
-            {activeUnsavedOnDevice && (
-              <Banner
-                status="error"
-                container="section"
-                title="Your code is not saved"
-                description="This device refused to store your draft (storage full or blocked). Your code is still in the editor: do not reload or close this window. Saving is retried on every change."
-              />
-            )}
-            <EditorPanel
-              diagnosticNavigation={diagnosticNavigation}
-              editorFiles={editorFiles}
-              activeFileId={activeFileId}
-              setQuestionActiveFile={setQuestionActiveFile}
-              currentQId={currentQId}
-              selectedLanguage={selectedLanguage}
-              handleLanguageChange={handleLanguageChange}
-              contest={editorContest}
-              themeMenuOpen={themeMenuOpen}
-              setThemeMenuOpen={setThemeMenuOpen}
-              editorTheme={editorTheme}
-              handleEditorThemeChange={handleEditorThemeChange}
-              isRunning={isRunning}
-              sessionId={sessionId}
-              triggerRun={triggerRun}
-              judgingUnavailableReason={judgingUnavailableReason}
-              readOnly={editorLocked}
-              submitButton={submitButton}
-              isSubmitting={isSubmitting}
-              isEditorEmpty={isEditorEmpty}
-              handleSubmitSolution={handleSubmitSolution}
-              submissionError={submissionError}
-              activeQ={activeQ}
-              activeFile={activeFile}
-              currentCode={currentCode}
-              handleCodeChange={handleCodeChange}
-              handleResetCode={handleResetCode}
-            />
-            {!terminalCollapsed && (
-              <WorkspaceResizeHandle
-                direction="vertical"
-                reversed
-                value={outputHeightPercent}
-                min={18}
-                max={55}
-                onChange={updateOutputHeight}
-                onCollapse={() => setTerminalCollapsed(true)}
-                containerSelector=".contest-editor-output"
-                label="Resize output panel"
-              />
-            )}
-            <TerminalPanel
-              resultSelection={resultSelections[currentQId]}
-              submissionPending={
-                isSubmitting &&
-                submitKeyRef.current?.sessionId === sessionId &&
-                submitKeyRef.current?.problemLabel === currentQId
-              }
-              runBusy={isRunning}
-              runMode={runMode}
-              customCases={customCases}
-              onCustomCasesChange={mutateCustomCases}
-              onRunCustom={() => void triggerRun(true)}
-              onRunSampleAsCustom={runSampleAsCustomCase}
-              readOnly={editorLocked}
-              judgingUnavailableReason={judgingUnavailableReason}
-              compilerDiagnostic={compilerDiagnostic}
-              onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
-              outputHeightPercent={outputHeightPercent}
-              terminalCollapsed={terminalCollapsed}
-              setTerminalCollapsed={setTerminalCollapsed}
-              shouldShowRunProgress={shouldShowRunProgress}
-              runResult={runResult}
-              runViews={runViews}
-              isRunning={activeQuestionRunning}
-              runTimedOut={runTimedOut}
-              onCheckRunAgain={recheckRun}
-              runResultAttemptId={runResultAttemptId}
-              runSampleTests={runSampleTests}
-              /* The worked examples the statement already shows. The judge
-                 sends no input or expected output for a sample and does not
-                 need to -- the candidate is reading both a few inches up. */
-              sampleExamples={questions[activeQ]?.samples}
-              runError={runError}
-              isEditorEmpty={isEditorEmpty}
-              submissionsList={submissionsList}
-              problemLabel={activeQLabel}
-              loadingSubmissions={loadingSubmissions}
-              expandedAttemptId={expandedAttemptId}
-              toggleExpandAttempt={toggleExpandAttempt}
-              testResults={testResults}
-              testResultFilter={testResultFilter}
-              setTestResultFilter={setTestResultFilter}
-              latestAttempt={latestAttempt}
-              latestAttemptTests={latestAttemptTests}
-              latestAttemptPending={latestAttemptPending}
-              latestAttemptPassed={latestAttemptPassed}
-              latestAttemptFirstFailed={latestAttemptFirstFailed}
-              runStatus={runStatus}
-              runMetrics={runMetrics}
-              runProgressSteps={runProgressSteps}
-              runProgressPhase={runProgressPhase}
-              terminalUnread={terminalUnread}
-            />
-          </VStack>
-          <CameraTile
-            presenceStatus={presenceStatus}
-            onPickCamera={handlePickCamera}
-            cameraVideoRef={cameraVideoRef}
-            cameraStream={cameraStream}
-            cameraError={cameraError}
-            sidebarCollapsed={sidebarCollapsed}
-            cameraStatusLabel={cameraStatusLabel}
-            cameraCollapsed={cameraCollapsed}
-            cameraHealthy={cameraHealthy}
-            cameraEnabled={cameraEnabled}
-            micEnabled={micEnabled}
-            handleToggleMedia={handleToggleMedia}
-          />
-          {referenceOpen && (
+        {renderTeamLobby ? (
+          <VStack gap={4} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <HStack gap={3} paddingInline={4} paddingBlock={2}>
+              <Button label="Help" variant="secondary" onClick={() => setShowSupportChat(true)} />
+              <Button label="Exit contest" variant="secondary" onClick={requestLeave} />
+            </HStack>
+            {editorLocked && <Text role="status">{judgingUnavailableReason}</Text>}
             <VStack
               gap={0}
+              inert={
+                criticalOverlayActive ||
+                networkOverlayActive ||
+                leaveConfirm ||
+                showSupportChat ||
+                editorLocked ||
+                undefined
+              }
+            >
+              <TeamLobby
+                state={lobbyState}
+                onClaim={(label) => {
+                  void lobbyController.current?.claim(label);
+                }}
+                onRelease={() => {
+                  void lobbyController.current?.release();
+                }}
+                canEnter={!editorLocked}
+                onEnter={() => {
+                  if (!editorLocked) setEnteredTeamPart(true);
+                }}
+              />
+            </VStack>
+          </VStack>
+        ) : (
+          <>
+            <HStack
+              gap={0}
+              className="contest-body"
+              data-editor-focus={editorFocused ? "true" : "false"}
+              align="stretch"
               style={{
-                position: "absolute",
-                inset: 0,
-                zIndex: 6,
-                background: "var(--color-background-body)",
+                flex: 1,
                 minHeight: 0,
                 minWidth: 0,
+                overflow: "hidden",
+                position: "relative",
               }}
             >
-              <ReferencePanel onClose={() => setReferenceOpen(false)} />
-            </VStack>
-          )}
-        </HStack>
-        <FooterTrustStrip
-          proctoringOk={proctoringOk}
-          footerStatusDot={footerStatusDot}
-          cameraStatus={footerCameraStatus(cameraEnabled, cameraHealthy, cameraError)}
-          online={online}
-          saveIndicator={saveIndicator}
-          draftStatusLabel={activeDraftStatus.label}
-          draftConfirmed={activeDraftStatus.confirmed}
-          activeQ={activeQ}
-          questions={questions}
-          attemptedQuestionCount={attemptedQuestionCount}
-          acceptedQuestionCount={acceptedQuestionCount}
-          remainingQuestionCount={remainingQuestionCount}
-        />
+              <QuestionRail
+                markedQuestionIds={markedQuestionIds}
+                questions={questions}
+                activeQ={activeQ}
+                switchQuestion={onSwitchQuestion}
+                sidebarCollapsed={sidebarCollapsed}
+                setSidebarCollapsed={setSidebarCollapsed}
+                questionStatusMap={questionStatusMap}
+                acceptedQuestionCount={acceptedQuestionCount}
+                cameraPreviewAvailable={Boolean(cameraStream ?? cameraError)}
+                cameraPreviewVisible={!cameraCollapsed && Boolean(cameraStream ?? cameraError)}
+                onToggleCameraPreview={() => setCameraCollapsed((collapsed) => !collapsed)}
+                referenceOpen={referenceOpen}
+                onToggleReference={() => setReferenceOpen((open) => !open)}
+              />
+              <ProblemPane
+                markedQuestionIds={markedQuestionIds}
+                toggleQuestionMark={toggleQuestionMark}
+                problemPaneWidth={problemPaneWidth}
+                availableProblemTabs={availableProblemTabs}
+                activeProblemTab={activeProblemTab}
+                setProblemTab={setProblemTab}
+                questions={questions}
+                activeQ={activeQ}
+                problemBodyHtml={problemBodyHtml}
+                handleProblemBodyClick={handleProblemBodyClick}
+              />
+              <WorkspaceResizeHandle
+                className="contest-splitter"
+                direction="horizontal"
+                value={problemPaneWidth}
+                min={28}
+                max={52}
+                onChange={updateProblemWidth}
+                containerSelector=".contest-body"
+                label="Resize problem and editor panes"
+              />
+              <VStack
+                gap={0}
+                className="contest-editor-output"
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  background: "var(--color-background-body)",
+                }}
+              >
+                <AnimatePresence initial={false}>
+                  {showRecoveryBanner && (
+                    <RecoveryBannerRegion
+                      key={`recovery-${currentQId}`}
+                      gap={0}
+                      initial={false}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{
+                        height: { duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] },
+                        opacity: { duration: reduceMotion ? 0 : 0.12 },
+                      }}
+                      style={{ overflow: "hidden", flexShrink: 0 }}
+                    >
+                      <Banner
+                        status="info"
+                        container="section"
+                        title="Draft restored from this device"
+                        description={`Review the recovered code. ${activeDraftStatus.confirmed ? "It is saved on this device." : "Your latest changes are not yet saved on this device."}`}
+                        isDismissable
+                        onDismiss={() =>
+                          setDismissedRecoveryQuestions((prev) => [...prev, currentQId])
+                        }
+                      />
+                    </RecoveryBannerRegion>
+                  )}
+                </AnimatePresence>
+                {!networkOverlayActive && (!browserOnline || connection !== "online") && (
+                  <Banner
+                    status="warning"
+                    container="section"
+                    title="Reconnecting to the exam server"
+                    description={connectionDraftAssurance(unsavedOnDevice.length === 0)}
+                    role="status"
+                  />
+                )}
+                {activeUnsavedOnDevice && (
+                  <Banner
+                    status="error"
+                    container="section"
+                    title="Your code is not saved"
+                    description="This device refused to store your draft (storage full or blocked). Your code is still in the editor: do not reload or close this window. Saving is retried on every change."
+                  />
+                )}
+                <EditorPanel
+                  diagnosticNavigation={diagnosticNavigation}
+                  editorFiles={editorFiles}
+                  activeFileId={activeFileId}
+                  setQuestionActiveFile={setQuestionActiveFile}
+                  currentQId={currentQId}
+                  selectedLanguage={selectedLanguage}
+                  handleLanguageChange={handleLanguageChange}
+                  contest={editorContest}
+                  themeMenuOpen={themeMenuOpen}
+                  setThemeMenuOpen={setThemeMenuOpen}
+                  editorTheme={editorTheme}
+                  handleEditorThemeChange={handleEditorThemeChange}
+                  isRunning={isRunning}
+                  sessionId={sessionId}
+                  triggerRun={triggerRun}
+                  judgingUnavailableReason={judgingUnavailableReason}
+                  readOnly={editorLocked}
+                  submitButton={submitButton}
+                  isSubmitting={isSubmitting}
+                  isEditorEmpty={isEditorEmpty}
+                  handleSubmitSolution={handleSubmitSolution}
+                  submissionError={submissionError}
+                  activeQ={activeQ}
+                  activeFile={activeFile}
+                  currentCode={currentCode}
+                  handleCodeChange={handleCodeChange}
+                  handleResetCode={handleResetCode}
+                />
+                {!terminalCollapsed && (
+                  <WorkspaceResizeHandle
+                    direction="vertical"
+                    reversed
+                    value={outputHeightPercent}
+                    min={18}
+                    max={55}
+                    onChange={updateOutputHeight}
+                    onCollapse={() => setTerminalCollapsed(true)}
+                    containerSelector=".contest-editor-output"
+                    label="Resize output panel"
+                  />
+                )}
+                <TerminalPanel
+                  resultSelection={resultSelections[currentQId]}
+                  submissionPending={
+                    isSubmitting &&
+                    submitKeyRef.current?.sessionId === sessionId &&
+                    submitKeyRef.current?.problemLabel === currentQId
+                  }
+                  runBusy={isRunning}
+                  runMode={runMode}
+                  customCases={customCases}
+                  onCustomCasesChange={mutateCustomCases}
+                  onRunCustom={() => void triggerRun(true)}
+                  onRunSampleAsCustom={runSampleAsCustomCase}
+                  readOnly={editorLocked}
+                  judgingUnavailableReason={judgingUnavailableReason}
+                  compilerDiagnostic={compilerDiagnostic}
+                  onJumpToCompilerError={canJumpToCompilerError ? jumpToCompilerError : undefined}
+                  outputHeightPercent={outputHeightPercent}
+                  terminalCollapsed={terminalCollapsed}
+                  setTerminalCollapsed={setTerminalCollapsed}
+                  shouldShowRunProgress={shouldShowRunProgress}
+                  runResult={runResult}
+                  runViews={runViews}
+                  isRunning={activeQuestionRunning}
+                  runTimedOut={runTimedOut}
+                  onCheckRunAgain={recheckRun}
+                  runResultAttemptId={runResultAttemptId}
+                  runSampleTests={runSampleTests}
+                  /* The worked examples the statement already shows. The judge
+                 sends no input or expected output for a sample and does not
+                 need to -- the candidate is reading both a few inches up. */
+                  sampleExamples={questions[activeQ]?.samples}
+                  runError={runError}
+                  isEditorEmpty={isEditorEmpty}
+                  submissionsList={submissionsList}
+                  problemLabel={activeQLabel}
+                  loadingSubmissions={loadingSubmissions}
+                  expandedAttemptId={expandedAttemptId}
+                  toggleExpandAttempt={toggleExpandAttempt}
+                  testResults={testResults}
+                  testResultFilter={testResultFilter}
+                  setTestResultFilter={setTestResultFilter}
+                  latestAttempt={latestAttempt}
+                  latestAttemptTests={latestAttemptTests}
+                  latestAttemptPending={latestAttemptPending}
+                  latestAttemptPassed={latestAttemptPassed}
+                  latestAttemptFirstFailed={latestAttemptFirstFailed}
+                  runStatus={runStatus}
+                  runMetrics={runMetrics}
+                  runProgressSteps={runProgressSteps}
+                  runProgressPhase={runProgressPhase}
+                  terminalUnread={terminalUnread}
+                />
+              </VStack>
+              {!windowsTeamRoom && cameraTile}
+              {referenceOpen && (
+                <VStack
+                  gap={0}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    zIndex: 6,
+                    background: "var(--color-background-body)",
+                    minHeight: 0,
+                    minWidth: 0,
+                  }}
+                >
+                  <ReferencePanel onClose={() => setReferenceOpen(false)} />
+                </VStack>
+              )}
+            </HStack>
+            <FooterTrustStrip
+              proctoringOk={proctoringOk}
+              footerStatusDot={footerStatusDot}
+              cameraStatus={footerCameraStatus(cameraEnabled, cameraHealthy, cameraError)}
+              online={online}
+              saveIndicator={saveIndicator}
+              draftStatusLabel={activeDraftStatus.label}
+              draftConfirmed={activeDraftStatus.confirmed}
+              activeQ={activeQ}
+              questions={questions}
+              attemptedQuestionCount={attemptedQuestionCount}
+              acceptedQuestionCount={acceptedQuestionCount}
+              remainingQuestionCount={remainingQuestionCount}
+            />
+          </>
+        )}
+        {windowsTeamRoom && cameraTile}
       </VStack>
 
       <Dialog
