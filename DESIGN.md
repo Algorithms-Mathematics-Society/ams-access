@@ -200,3 +200,11 @@ Signed-out sign-in help uses the shared dialog with local guidance and a public
 browser contact handoff. Keep the URL/address selectable, diagnostics explicitly
 reviewable, and copy/open feedback distinct from message delivery. It must remain
 usable without participant authentication or network-dependent initialization.
+
+Windows team voice uses a compact, scroll-bounded Astryx control region below
+the contest top bar. Join and permission retry are explicit; connection and mute
+states have readable text, peer volume has accessible labels, and supported
+output selection uses Selector. Mandatory contest overlays make these controls
+inert. The team board owns the voice window; relay unavailability is reported as
+unavailable. This does not establish Windows native certification or delivery of
+the separate team lobby. See the candidate UI guide for lifecycle and load gates.

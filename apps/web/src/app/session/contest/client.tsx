@@ -107,6 +107,7 @@ import { ProblemPane } from "./components/ProblemPane";
 import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
+import { TeamVoiceControls } from "./components/TeamVoiceControls";
 import { deriveSaveIndicator } from "./save-indicator";
 import { getSnapshot as getAppThemeSnapshot, useTheme } from "@/lib/theme";
 import {
@@ -4665,6 +4666,26 @@ export default function ContestPageClient() {
             timeUpState !== "idle"
           }
           onReviewQuestion={onSwitchQuestion}
+        />
+        <TeamVoiceControls
+          contestUid={contestId}
+          enabled={
+            entryReady &&
+            Boolean(sessionId) &&
+            !isDryRun &&
+            !bellRung &&
+            !sessionEnded &&
+            contestPhase !== "ended"
+          }
+          suspended={
+            criticalOverlayActive ||
+            networkOverlayActive ||
+            leaveConfirm ||
+            submitConfirm ||
+            showSupportModal ||
+            showSupportChat ||
+            timeUpState !== "idle"
+          }
         />
         <HStack
           gap={0}
