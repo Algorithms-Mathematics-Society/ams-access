@@ -107,7 +107,14 @@ import { ProblemPane } from "./components/ProblemPane";
 import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
-import { TeamVoiceControls } from "./components/TeamVoiceControls";
+import dynamic from "next/dynamic";
+
+// Voice is optional, Windows-only media UI. Keep its engine and controls out
+// of the contest's initial JS; the component still owns auth/media teardown.
+const TeamVoiceControls = dynamic(
+  () => import("./components/TeamVoiceControls").then((module) => module.TeamVoiceControls),
+  { ssr: false }
+);
 import { deriveSaveIndicator } from "./save-indicator";
 import { getSnapshot as getAppThemeSnapshot, useTheme } from "@/lib/theme";
 import {
@@ -4667,26 +4674,31 @@ export default function ContestPageClient() {
           }
           onReviewQuestion={onSwitchQuestion}
         />
-        <TeamVoiceControls
-          contestUid={contestId}
-          enabled={
-            entryReady &&
-            Boolean(sessionId) &&
-            !isDryRun &&
-            !bellRung &&
-            !sessionEnded &&
-            contestPhase !== "ended"
-          }
-          suspended={
-            criticalOverlayActive ||
-            networkOverlayActive ||
-            leaveConfirm ||
-            submitConfirm ||
-            showSupportModal ||
-            showSupportChat ||
-            timeUpState !== "idle"
-          }
-        />
+        {entryReady &&
+          typeof window !== "undefined" &&
+          window.__TAURI__ &&
+          /^Win/i.test(navigator.platform) && (
+            <TeamVoiceControls
+              contestUid={contestId}
+              enabled={
+                entryReady &&
+                Boolean(sessionId) &&
+                !isDryRun &&
+                !bellRung &&
+                !sessionEnded &&
+                contestPhase !== "ended"
+              }
+              suspended={
+                criticalOverlayActive ||
+                networkOverlayActive ||
+                leaveConfirm ||
+                submitConfirm ||
+                showSupportModal ||
+                showSupportChat ||
+                timeUpState !== "idle"
+              }
+            />
+          )}
         <HStack
           gap={0}
           className="contest-body"
