@@ -129,11 +129,14 @@ export function toCandidateQuestion(
  * statement behind it yet.
  */
 export async function loadContestPaper(
-  contestUid: string
+  contestUid: string,
+  problemLabel?: string
 ): Promise<{ index: ContestIndex; questions: CandidateQuestion[] }> {
   let index = await getContest(contestUid);
   let projections = await Promise.all(
-    index.problems.map((problem) => getProblem(contestUid, problem.label))
+    index.problems
+      .filter((problem) => !problemLabel || problem.label === problemLabel)
+      .map((problem) => getProblem(contestUid, problem.label))
   );
   // Statements are available only once the contest starts. If the index was
   // fetched just before that boundary, pick up the final published reference
@@ -142,7 +145,9 @@ export async function loadContestPaper(
     index = await getContest(contestUid);
     // Keep the paper aligned if the organizer also finalized its problem list.
     projections = await Promise.all(
-      index.problems.map((problem) => getProblem(contestUid, problem.label))
+      index.problems
+        .filter((problem) => !problemLabel || problem.label === problemLabel)
+        .map((problem) => getProblem(contestUid, problem.label))
     );
   }
   const assetUrls = await Promise.all(

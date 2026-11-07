@@ -1,6 +1,7 @@
 # Windows team voice: security and acceptance
 
-Scope: Windows 10/11 packaged Access, issues #299, #300 and #301 under #294.
+Scope: Windows 10/11 packaged Access, lobby #293 and voice issues #299, #300
+and #301 under #294.
 This is an implementation/verification plan, not a native certification or a
 claim that 400 concurrent users have been tested. macOS and Linux rollout are
 outside this slice.
@@ -52,12 +53,54 @@ production logs were inspected and no actual credential exposure is asserted.
 - At most four remote peer connections per participant; bound message size,
   candidate queues, retry attempts and timers. No per-peer HTTP polling.
 - For 3,000 clients, a 25-second heartbeat is about 120 messages/second in each
-  direction. A three-to-five-second team poll ranges from600 to1000 HTTP requests/second
-  (about750/s at a four-second mean) before hidden-window backoff; 304 responses still require authentication and server work.
+  direction. The single shared lobby/voice poll runs every three to five seconds
+  while visible: 600–1,000 HTTP requests/second (about 750/s at a four-second
+  mean) before hidden-window backoff; 304 responses still require authentication
+  and server work. Hidden windows use a 15-second interval (about 200/s).
   Hidden-window backoff and nonoverlap reduce load but do not certify capacity.
 - API PR78 caps new credential expiry at scheduled round end. Existing relay
   allocations may outlive credential expiry. Client media teardown must be
   verified separately, including early contest closure and auth revocation.
+
+## Lobby entry and allocation
+
+Only installed Windows sessions use this lobby. The existing setup authorization,
+readiness, identity capture, secure-session start and lockdown verification run
+before the setup handoff. A one-shot authenticated team lookup then permits a
+published team or an explicitly unpublished team to reach the room before the
+contest start. A confirmed non-team response retains ordinary entry behavior;
+unknown lookup failures retain the setup wait. Direct workspace entry still
+requires the completed handoff and matching server authorization acknowledgement.
+
+The server owns waiting, discussion, choosing and locked phases, voice availability,
+claim/release results and automatic allocation. The room does not optimistically
+assign ownership. Claim conflicts refresh the projection. Locked allocation and
+exactly one `holder_is_me` mapping enable an explicit Go to your part action.
+The loader requests only that mapped problem label; the existing pending-session
+and authenticated paper endpoints still prevent early editor access. Display
+names are never ownership identifiers.
+
+A single controller supplies both lobby and voice state through the workspace
+transition. Requests have an eight-second deadline, never overlap, and schedule
+again after completion. In addition to the intervals above, allow for initial
+entry, explicit mutations/conflict refreshes, one wake per server phase
+deadline and a fresh GET whenever the window becomes visible. A visibility wake
+bypasses ETag even when queued behind an in-flight request, so sleep can reanchor
+the server clock. Solo and terminal authorization responses stop polling. Authentication
+changes and unmount stop the owner and fence late responses. Only the bounded
+team/member/part projection is retained; no history or integration payload grows
+in memory. Countdown anchors use the response's server time plus monotonic elapsed
+time, including across unchanged ETag responses.
+
+Voice stays in the common room shell while paper loads and the workspace opens;
+there is no second voice-only team poll. Transient board failures keep entry
+closed while retaining the current authorized workspace buffer and statement
+assets; recovering the same locked assignment does not reinstall older drafts. The lobby also retains camera monitoring,
+session heartbeat and mandatory security overlays. Voice still needs an explicit
+Join action. The roster API has no stable member UID for correlating signaling
+peers, so speaking/mute/connection feedback remains in the peer controls rather
+than being inferred from roster names. This leaves the per-member voice-state
+criterion of #293 incomplete; do not close the issue on this implementation.
 
 ## Required Windows evidence (pending)
 
@@ -68,14 +111,14 @@ or audio recordings in issue attachments.
 | Scenario                           | Acceptance                                                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Solo contest                       | No voice capture or ongoing team polling after confirmed non-team response; ordinary exam behavior unchanged.                           |
-| Team lobby and workspace           | Voice opens only in the server voice window and survives the lobby-to-workspace handoff; #293 remains a separate prerequisite.          |
+| Team lobby and workspace           | Voice opens only in the server voice window and survives the secured lobby-to-workspace handoff without duplicate sockets or capture.   |
 | Permission denied / OS privacy off | Visible recovery instructions; Retry after enabling mic works without leaving an extra capture open.                                    |
 | Five members                       | Every member hears the other four, never another team; status reflects actual connection.                                               |
 | Mute / per-member volume           | Outbound cloned track is disabled immediately; proctor camera/mic remains usable; volume affects only intended peer.                    |
 | Autoplay / device change           | Blocked playback has a user-action recovery; unsupported output selection is explained; unplug does not loop requests.                  |
 | Symmetric NAT / relay only         | Selected candidate pair is relay; UDP and TCP/TLS fallback tested under real Windows lockdown.                                          |
 | Flap / sleep / network change      | One bounded reconnect sequence, no duplicate sockets or microphone streams; no automatic retry on terminal codes.                       |
-| Replaced tab / session             | Old client receives replaced or4411 and releases voice without reconnecting.                                                            |
+| Replaced tab / session             | Old client receives replaced or 4411 and releases voice without reconnecting.                                                           |
 | Logout / end / unmount             | All owned audio tracks, remote audio elements, peer connections, event handlers and timers stop; late async grants cannot restart them. |
 | Early end / revoked membership     | Record actual server/client behavior; do not treat initial socket authentication or credential expiry as revocation enforcement.        |
 | Exit recovery                      | Existing Windows firewall/proctor cleanup still restores the prior device state.                                                        |
@@ -88,10 +131,13 @@ from the repository root. The existing web test command already includes both
 files. These checks assert exact origin allowance and preserve release frame,
 object and media restrictions; they do not test WebView2 or firewall behavior.
 
-Engine/UI branches add separate lifecycle and malformed-input regressions.
+The registered web suite includes lobby parsing, request scheduling, claim conflict,
+server-clock countdown, locked ownership and existing setup/voice lifecycle
+regressions. Mocked requests do not establish native behavior or production
+capacity.
 Require CI (including Windows Rust compilation), real Windows small-team tests,
 and reviewer/attack-agent findings to be resolved before release. After functional
 checks, separately schedule a short 400-concurrent-user capacity exercise and
 measure CPU, memory, signaling rate, relay bandwidth and disconnect rate. The
-actual event is approximately100 people for three hours; no 12-hour full-load
+actual event is approximately 100 people for three hours; no 12-hour full-load
 exercise or paid infrastructure is provisioned by this work.

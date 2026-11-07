@@ -1,0 +1,137 @@
+"use client";
+import { useEffect, useState } from "react";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Token } from "@astryxdesign/core/Token";
+import { Text } from "@astryxdesign/core/Text";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Button } from "@astryxdesign/core/Button";
+import { countdownMs, type LobbyState } from "@/lib/team-lobby";
+const duration = (ms: number) =>
+  `${Math.floor(Math.ceil(ms / 1000) / 60)
+    .toString()
+    .padStart(2, "0")}:${(Math.ceil(ms / 1000) % 60).toString().padStart(2, "0")}`;
+/** Existing contest shell owns header/security/voice; the lobby is its flowing content region.
+ * Single column at all widths; rows wrap names and keep native keyboard buttons reachable. */
+export function TeamLobby({
+  state,
+  onClaim,
+  onRelease,
+  onEnter,
+  canEnter = true,
+}: {
+  state: LobbyState;
+  onClaim: (label: string) => void;
+  onRelease: () => void;
+  onEnter: () => void;
+  canEnter?: boolean;
+}) {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(performance.now()), 250);
+    return () => clearInterval(timer);
+  }, []);
+  const board = state.board;
+  if (!board)
+    return (
+      <VStack gap={4} style={{ padding: "var(--spacing-6)" }}>
+        <Heading level={1}>Team lobby</Heading>
+        <Text role="status">
+          {state.status === "unpublished"
+            ? "Your team will appear here soon."
+            : state.status === "error"
+              ? "Team status unavailable. Reconnecting…"
+              : "Loading your team…"}
+        </Text>
+        {state.error && <Text role="alert">{state.error}</Text>}
+      </VStack>
+    );
+  const remaining = countdownMs(board, state.sampledAt, now);
+  const clock = remaining === null ? null : duration(remaining);
+  const phase = board.phase.name;
+  const choosing =
+    state.status === "team" && phase === "choosing" && !board.allocation.locked && remaining !== 0;
+  const own = board.parts.find((p) => p.holder_is_me);
+  return (
+    <VStack gap={6} style={{ padding: "var(--spacing-6)", minWidth: 0 }}>
+      <Heading level={1}>{board.team.name}</Heading>
+      <VStack gap={2} aria-label="Team selection phase">
+        <Heading level={2}>
+          {phase === "waiting"
+            ? `Your team lobby opens in ${clock ?? "—"}`
+            : phase === "discussion"
+              ? board.phase.prompt
+              : phase === "choosing"
+                ? "Choose your part"
+                : "Parts are locked"}
+        </Heading>
+        {phase === "discussion" && <Text>Claims open in {clock}</Text>}
+        {phase === "choosing" && clock !== null && <Text>Parts lock in {clock}</Text>}
+        {remaining === 0 && phase !== "locked" && (
+          <Text role="status">Checking the next phase…</Text>
+        )}
+      </VStack>
+      {state.error && <Text role="alert">{state.error}</Text>}
+      <List hasDividers header={<Heading level={2}>Members</Heading>}>
+        {board.members.map((member, index) => (
+          <ListItem
+            key={index}
+            label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
+            description={
+              <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>
+            }
+            endContent={member.assigned_by === "auto" ? <Token label="Auto-assigned" /> : undefined}
+          />
+        ))}
+      </List>
+      <List hasDividers header={<Heading level={2}>Parts</Heading>}>
+        {board.parts.map((part) => (
+          <ListItem
+            key={part.label}
+            label={`Part ${part.label} · ${part.problem_label}`}
+            description={
+              <Text>
+                {part.holder ? `${part.holder}${part.holder_is_me ? " (you)" : ""}` : "Available"}
+              </Text>
+            }
+            endContent={
+              part.holder_is_me ? (
+                <Button
+                  variant="secondary"
+                  isDisabled={!choosing || state.pending}
+                  onClick={onRelease}
+                  aria-label={`Release part ${part.label}`}
+                  label="Release"
+                />
+              ) : (
+                <Button
+                  variant="secondary"
+                  isDisabled={!choosing || state.pending || part.holder !== null}
+                  onClick={() => onClaim(part.label)}
+                  aria-label={`Claim part ${part.label}`}
+                  label={phase === "discussion" ? `Opens in ${clock}` : "Claim"}
+                />
+              )
+            }
+          />
+        ))}
+      </List>
+      {phase === "locked" && (
+        <VStack gap={2}>
+          <Text>
+            {own
+              ? `Your assigned part is ${own.label} (${own.problem_label}).`
+              : "Waiting for your server-confirmed assignment."}
+          </Text>
+          <Button
+            variant="primary"
+            isDisabled={!canEnter || !own || !board.allocation.locked || state.status !== "team"}
+            onClick={onEnter}
+            label="Go to your part"
+          />
+          {!canEnter && <Text>The workspace opens when the contest starts.</Text>}
+        </VStack>
+      )}
+    </VStack>
+  );
+}

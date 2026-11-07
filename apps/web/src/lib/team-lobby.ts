@@ -1,0 +1,333 @@
+/** Published participant projection only. Never infer allocation from local actions. */
+export type TeamLobbyBoard = {
+  team: {
+    uid: string;
+    name: string;
+    number: number;
+  };
+  members: {
+    display_name: string;
+    is_me: boolean;
+    part_label: string | null;
+    assigned_by: string | null;
+  }[];
+  parts: {
+    label: string;
+    problem_label: string;
+    holder: string | null;
+    holder_is_me: boolean;
+    revision: number | null;
+    submission_status: string | null;
+    verdict: string | null;
+  }[];
+  phase: {
+    name: "waiting" | "discussion" | "choosing" | "locked";
+    voice_open: boolean;
+    selection_opens_at: string;
+    claims_open_at: string;
+    prompt: string;
+    discussion_seconds: number;
+  };
+  allocation: {
+    locked: boolean;
+    locks_at: string | null;
+  };
+  server_time: string;
+};
+export type LobbyState = {
+  board: TeamLobbyBoard | null;
+  status: "loading" | "team" | "solo" | "unpublished" | "error";
+  pending: boolean;
+  error: string | null;
+  sampledAt: number;
+};
+const object = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
+const string = (v: unknown, max: number): v is string =>
+  typeof v === "string" && v.length > 0 && [...v].length <= max;
+const date = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
+export function parseTeamLobby(v: unknown): TeamLobbyBoard {
+  if (
+    !object(v) ||
+    !object(v.team) ||
+    !string(v.team.uid, 64) ||
+    !string(v.team.name, 200) ||
+    !Number.isInteger(v.team.number) ||
+    !Array.isArray(v.members) ||
+    v.members.length < 1 ||
+    v.members.length > 5 ||
+    !Array.isArray(v.parts) ||
+    v.parts.length < 1 ||
+    v.parts.length > 5 ||
+    !object(v.phase) ||
+    !["waiting", "discussion", "choosing", "locked"].includes(String(v.phase.name)) ||
+    typeof v.phase.voice_open !== "boolean" ||
+    !date(v.phase.selection_opens_at) ||
+    !date(v.phase.claims_open_at) ||
+    !string(v.phase.prompt, 1000) ||
+    !Number.isFinite(v.phase.discussion_seconds) ||
+    !object(v.allocation) ||
+    typeof v.allocation.locked !== "boolean" ||
+    !(v.allocation.locks_at === null || date(v.allocation.locks_at)) ||
+    !date(v.server_time)
+  )
+    throw new Error("Team status unavailable.");
+  const nullable = (x: unknown, max: number) => x === null || string(x, max);
+  if (
+    !v.members.every(
+      (m) =>
+        object(m) &&
+        string(m.display_name, 200) &&
+        typeof m.is_me === "boolean" &&
+        nullable(m.part_label, 64) &&
+        nullable(m.assigned_by, 64)
+    ) ||
+    v.members.filter((m) => m.is_me).length !== 1 ||
+    !v.parts.every(
+      (p) =>
+        object(p) &&
+        string(p.label, 64) &&
+        typeof p.problem_label === "string" &&
+        p.problem_label.length <= 64 &&
+        nullable(p.holder, 200) &&
+        typeof p.holder_is_me === "boolean" &&
+        (p.revision === null || Number.isInteger(p.revision)) &&
+        nullable(p.submission_status, 64) &&
+        nullable(p.verdict, 64)
+    ) ||
+    new Set(v.parts.map((p) => p.label)).size !== v.parts.length
+  )
+    throw new Error("Team status unavailable.");
+  // Retain only the small lobby projection, never integration/history payloads.
+  const source = v as TeamLobbyBoard;
+  return {
+    team: { uid: source.team.uid, name: source.team.name, number: source.team.number },
+    members: source.members.map(({ display_name, is_me, part_label, assigned_by }) => ({
+      display_name,
+      is_me,
+      part_label,
+      assigned_by,
+    })),
+    parts: source.parts.map(
+      ({ label, problem_label, holder, holder_is_me, revision, submission_status, verdict }) => ({
+        label,
+        problem_label,
+        holder,
+        holder_is_me,
+        revision,
+        submission_status,
+        verdict,
+      })
+    ),
+    phase: {
+      name: source.phase.name,
+      voice_open: source.phase.voice_open,
+      selection_opens_at: source.phase.selection_opens_at,
+      claims_open_at: source.phase.claims_open_at,
+      prompt: source.phase.prompt,
+      discussion_seconds: source.phase.discussion_seconds,
+    },
+    allocation: { locked: source.allocation.locked, locks_at: source.allocation.locks_at },
+    server_time: source.server_time,
+  };
+}
+export function nextDeadline(board: TeamLobbyBoard): string | null {
+  return board.phase.name === "waiting"
+    ? board.phase.selection_opens_at
+    : board.phase.name === "discussion"
+      ? board.phase.claims_open_at
+      : board.phase.name === "choosing"
+        ? board.allocation.locks_at
+        : null;
+}
+export function countdownMs(
+  board: TeamLobbyBoard,
+  sampledAt: number,
+  now = performance.now()
+): number | null {
+  const deadline = nextDeadline(board);
+  return deadline
+    ? Math.max(
+        0,
+        Date.parse(deadline) - Date.parse(board.server_time) - Math.max(0, now - sampledAt)
+      )
+    : null;
+}
+/** One shared team/voice source per authorized identity. Owner must stop on auth changes.
+ * Completion scheduled: 3–5s visible (~750 GET/s at 3,000 clients, 1,000/s
+ * interval upper bound), 15s hidden (200/s), plus one wake per server deadline,
+ * initial loads and explicit mutations/conflict refreshes. ETags save payload only.
+ */
+export function createTeamLobbyController(options: {
+  apiBase: string;
+  contestUid: string;
+  headers: () => Record<string, string>;
+  hidden: () => boolean;
+  onState: (state: LobbyState) => void;
+  request?: typeof fetch;
+  now?: () => number;
+  random?: () => number;
+}) {
+  const request = options.request ?? fetch,
+    now = options.now ?? (() => performance.now());
+  const url = `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team`;
+  let state: LobbyState = {
+    board: null,
+    status: "loading",
+    pending: false,
+    error: null,
+    sampledAt: now(),
+  };
+  let stopped = false,
+    busy = false,
+    terminal = false,
+    etag: string | null = null,
+    timer: ReturnType<typeof setTimeout> | undefined,
+    active: AbortController | undefined,
+    queued = false,
+    forceRefresh = false,
+    deadlineWoken: string | null = null;
+  const emit = (patch: Partial<LobbyState>) => {
+    if (!stopped) {
+      state = { ...state, ...patch };
+      options.onState(state);
+    }
+  };
+  const schedule = () => {
+    if (stopped || terminal) return;
+    clearTimeout(timer);
+    let delay = options.hidden()
+      ? 15000
+      : 3000 + Math.floor(Math.max(0, Math.min(1, (options.random ?? Math.random)())) * 2000);
+    const deadline = state.board && nextDeadline(state.board);
+    if (deadline && deadline !== deadlineWoken) {
+      const remaining = countdownMs(state.board!, state.sampledAt, now())!;
+      if (remaining <= delay) {
+        delay = Math.max(250, remaining + 100);
+        deadlineWoken = deadline;
+      }
+    }
+    timer = setTimeout(() => void run(), delay);
+  };
+  async function run(action?: "claim" | "release", label?: string) {
+    if (stopped || terminal) return;
+    if (busy) {
+      if (!action) queued = true;
+      return;
+    }
+    busy = true;
+    if (!action && forceRefresh) {
+      etag = null;
+      forceRefresh = false;
+    }
+    clearTimeout(timer);
+    active = new AbortController();
+    const controller = active;
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    if (action) emit({ pending: true, error: null });
+    try {
+      const response = await request(url + (action ? `/${action}` : ""), {
+        method: action ? "POST" : "GET",
+        headers: {
+          ...options.headers(),
+          ...(action
+            ? { "Content-Type": "application/json" }
+            : etag
+              ? { "If-None-Match": etag }
+              : {}),
+        },
+        ...(action === "claim" ? { body: JSON.stringify({ part_label: label }) } : {}),
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (stopped) return;
+      if (response.status === 304) return;
+      const body: unknown = await response.json().catch(() => null);
+      if (stopped) return;
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          terminal = true;
+          emit({ board: null, status: "error" });
+        }
+        if (!action && response.status === 404 && object(body)) {
+          if (body.detail === "this contest is not a team round") {
+            terminal = true;
+            emit({ board: null, status: "solo", error: null });
+            return;
+          }
+          if (body.detail === "teams have not been published yet") {
+            emit({ board: null, status: "unpublished", error: null });
+            return;
+          }
+        }
+        const detail =
+          object(body) && string(body.detail, 500)
+            ? body.detail
+            : "Team status unavailable. Please try again.";
+        if (action && response.status === 409) queued = true;
+        throw new Error(detail);
+      }
+      const board = parseTeamLobby(body);
+      etag = action ? null : response.headers.get("ETag");
+      emit({ board, status: "team", error: null, sampledAt: now() });
+    } catch (error) {
+      etag = null;
+      emit({
+        error:
+          error instanceof Error && error.name !== "AbortError"
+            ? error.message
+            : "Team request timed out. Please try again.",
+        ...(action ? {} : { status: "error" as const }),
+      });
+    } finally {
+      clearTimeout(timeout);
+      active = undefined;
+      busy = false;
+      if (action) emit({ pending: false });
+      if (queued && !stopped && !terminal) {
+        queued = false;
+        const message = state.error;
+        await run();
+        if (message) emit({ error: message });
+      } else schedule();
+    }
+  }
+  emit({});
+  void run();
+  return {
+    refresh: () => {
+      forceRefresh = true;
+      etag = null;
+      void run();
+    },
+    claim: (label: string) => {
+      if (
+        state.pending ||
+        busy ||
+        state.status !== "team" ||
+        state.board?.phase.name !== "choosing" ||
+        state.board.allocation.locked ||
+        !state.board.parts.some((p) => p.label === label && p.holder === null)
+      )
+        return;
+      void run("claim", label);
+    },
+    release: () => {
+      if (
+        state.pending ||
+        busy ||
+        state.status !== "team" ||
+        state.board?.phase.name !== "choosing" ||
+        state.board.allocation.locked ||
+        !state.board.members.some((m) => m.is_me && m.part_label)
+      )
+        return;
+      void run("release");
+    },
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+      active?.abort();
+    },
+  };
+}
