@@ -4077,17 +4077,17 @@ pub fn run() {
                                         // Own even an allocation returned alongside an HRESULT
                                         // failure; Drop releases it with CoTaskMemFree.
                                         let _allocation = CoTaskMemPWSTR::from(uri);
-                                        if result.is_ok() && !uri.is_null() {
-                                            if let Ok(uri) = uri.to_string() {
-                                                if windows_media_origin::is_allowed_media_origin(
-                                                    &uri,
-                                                    dev_url.as_ref(),
-                                                ) {
-                                                    args.SetState(
-                                                        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
-                                                    )?;
-                                                }
-                                            }
+                                        if result.is_err() || uri.is_null() {
+                                            return Ok(());
+                                        }
+                                        let Ok(uri) = uri.to_string() else {
+                                            return Ok(());
+                                        };
+                                        if windows_media_origin::is_allowed_media_origin(
+                                            &uri,
+                                            dev_url.as_ref(),
+                                        ) {
+                                            args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
                                         }
                                     }
                                 }
