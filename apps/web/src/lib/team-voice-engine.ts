@@ -106,7 +106,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   let lastPong = 0,
     muteSent = true,
     muteTimer = false;
-  const outgoing: string[] = [];
+  const outgoing: { raw: string; peer?: Peer }[] = [];
   let sending = false;
   function drain() {
     if (!outgoing.length) {
@@ -114,8 +114,13 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       return;
     }
     sending = true;
-    const raw = outgoing.shift()!;
-    if (socket?.readyState === 1 && socket.bufferedAmount < 128_000) socket.send(raw);
+    const entry = outgoing.shift()!;
+    if (
+      (!entry.peer || peers.get(entry.peer.view.memberUid) === entry.peer) &&
+      socket?.readyState === 1 &&
+      socket.bufferedAmount < 128_000
+    )
+      socket.send(entry.raw);
     later(drain, 100);
   }
   function emit(patch: Partial<TeamVoiceSnapshot> = {}) {
@@ -139,10 +144,10 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   function valid(g: number, p?: Peer) {
     return active && g === generation && (!p || peers.get(p.view.memberUid) === p);
   }
-  function send(message: unknown) {
+  function send(message: unknown, peer?: Peer) {
     const raw = JSON.stringify(message);
     if (socket?.readyState === 1 && raw.length <= 60_000 && outgoing.length < 128) {
-      outgoing.push(raw);
+      outgoing.push({ raw, peer });
       if (!sending) drain();
     }
   }
@@ -200,7 +205,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   }
   function signal(p: Peer, kind: string, data: unknown) {
     if (peers.get(p.view.memberUid) === p)
-      send({ type: "signal", to: p.view.memberUid, kind, data });
+      send({ type: "signal", to: p.view.memberUid, kind, data }, p);
   }
   function work(p: Peer, task: () => Promise<void>) {
     const g = generation;
