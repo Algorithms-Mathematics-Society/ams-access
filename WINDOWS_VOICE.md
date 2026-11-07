@@ -95,3 +95,23 @@ checks, separately schedule a short 400-concurrent-user capacity exercise and
 measure CPU, memory, signaling rate, relay bandwidth and disconnect rate. The
 actual event is approximately100 people for three hours; no 12-hour full-load
 exercise or paid infrastructure is provisioned by this work.
+
+## Implementation record — 7 November 2026
+
+- Issue299 / PR303: `feat/windows-voice-engine-299`, bounded relay-only engine.
+- Issue300 / draft PR304: `feat/windows-voice-ui-300`, stacked on enginePR303.
+- Issue301 / PR302: `fix/windows-voice-security-301`, exactWSS CSP and this guide.
+- Combined validation: `feat/windows-team-voice-integration` at `6e859d9`.
+  This branch combines the workstreams for verification; do not merge it in
+  addition to the individual PRs without reconciling duplicate commits.
+
+Final combined checks: 1,249 web tests passed with zero failures/skips; 46 focused
+checks passed; actual web TypeScript checking and changed-file formatting passed.
+The source-wiring test is supplementary, not mounted React evidence. Two Sol
+implementers, a Sol correctness reviewer and a separate Sol adversarial reviewer
+participated. Review fixes cover end-capped renewal, same-member replacement,
+queued stale signaling, audio-only SDP, microphone loss, and polling recovery.
+
+No merges, production deployments or AWS resource creation were performed.
+Pre-contest lobby#293, native Windows/TURN acceptance, server token-log redaction
+(API#79), permission-origin hardening and capacity verification remain open.
