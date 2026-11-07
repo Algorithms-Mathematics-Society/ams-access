@@ -26,7 +26,7 @@ existing API-only lockdown. DNS/IP changes and IPv4/IPv6 must be tested with the
 chosen deployment before release. Both the private WebView2 runtime and native
 process rules must retain their existing restrictions and verified cleanup.
 
-The existing Windows WebView2 permission handler in `src-tauri/src/lib.rs`
+The existing Windows WebView2 permission handler in `apps/desktop/src-tauri/src/lib.rs`
 autoallows camera/microphone requests by kind, without checking the requesting
 origin. This change does not broaden it. Origin restriction remains a security
 review item before the voice release; restrictive frame/navigation policy is
@@ -46,8 +46,8 @@ not a substitute for checking the origin at the permission boundary.
 - At most four remote peer connections per participant; bound message size,
   candidate queues, retry attempts and timers. No per-peer HTTP polling.
 - For 3,000 clients, a 25-second heartbeat is about 120 messages/second in each
-  direction. A five-second team poll is up to 600 HTTP requests/second before
-  staggering; 304 responses still require authentication and server work.
+  direction. A three-to-five-second team poll ranges from600 to1000 HTTP requests/second
+  (about750/s at a four-second mean) before hidden-window backoff; 304 responses still require authentication and server work.
   Hidden-window backoff and nonoverlap reduce load but do not certify capacity.
 - API PR78 caps new credential expiry at scheduled round end. Existing relay
   allocations may outlive credential expiry. Client media teardown must be
