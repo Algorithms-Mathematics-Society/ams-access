@@ -32,6 +32,12 @@ origin. This change does not broaden it. Origin restriction remains a security
 review item before the voice release; restrictive frame/navigation policy is
 not a substitute for checking the origin at the permission boundary.
 
+The API also accepts the participant token in the WebSocket URL. Local Uvicorn
+protocol source logs handshake paths including query strings by default. API
+issue [#79](https://github.com/Algorithms-Mathematics-Society/ams-api/issues/79)
+tracks verified application/proxy log redaction as a release blocker. No real
+production logs were inspected and no actual credential exposure is asserted.
+
 ## Media, authentication and limits
 
 - Borrow the current proctor microphone by cloning its audio track. Muting or
