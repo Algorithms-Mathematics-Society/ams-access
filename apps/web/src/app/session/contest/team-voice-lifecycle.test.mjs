@@ -9,7 +9,7 @@ test("Windows adapter retains lifecycle boundaries and mandatory overlay priorit
   assert.match(ui, /subscribeAuthChanges\(terminate\)/);
   assert.match(ui, /addEventListener\("pagehide", terminate\)/);
   assert.match(ui, /addEventListener\("beforeunload", terminate\)/);
-  assert.match(ui, /if \(!open.current\) stopSession\(\)/);
+  assert.match(ui, /if \(!open.current\) \{[\s\S]*?stopSession\(\)/);
   assert.match(ui, /inert=\{suspended/);
   assert.match(
     client.replace(/\s+/g, " "),
