@@ -1,5 +1,7 @@
 "use client";
 
+import { supportsNativeTeamPlatform } from "@/lib/team-platform";
+
 import { entryProgressLabel } from "./entry-progress";
 import { CloseAppButton } from "@/components/CloseAppButton";
 
@@ -1252,10 +1254,10 @@ export default function OnboardingPage() {
       // questions, so a postponement/revocation cannot expose an early paper.
       preparedEntryRef.current = { contestId, entered: false };
       attempts.commit(attempt);
-      // Only a fully secured Windows team entry may reach the precontest room.
+      // Only a fully secured Windows/Linux desktop team entry may reach the precontest room.
       // A failed team lookup retains the existing setup wait, never grants entry.
       let teamRoom = false;
-      if (nativeAvailable && (devicePlatform ?? "").toLowerCase() === "windows" && !dryRun) {
+      if (supportsNativeTeamPlatform(nativeAvailable, devicePlatform) && !dryRun) {
         const membership = await attempts.runAdvisory(
           attempt,
           "team lobby availability",

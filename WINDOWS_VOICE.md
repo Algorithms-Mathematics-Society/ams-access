@@ -1,21 +1,21 @@
-# Windows team voice: security and acceptance
+# Desktop team voice: Windows and Linux security and acceptance
 
-Scope: Windows 10/11 packaged Access, lobby #293 and voice issues #299, #300
-and #301 under #294.
+Scope: Windows 10/11 and Linux x86_64 native Access, lobby #293 and voice issues
+#299, #300 and #301 under #294. The filename is retained for existing links.
 This is an implementation/verification plan, not a native certification or a
-claim that 400 concurrent users have been tested. macOS and Linux rollout are
-outside this slice.
+claim that 400 concurrent users have been tested. macOS, mobile and browser
+team-room rollout remain outside this slice.
 
 ## Changes and trust boundaries
 
 The desktop CSP permits `wss://api.amsaccess.com` alongside the existing HTTPS
 API. Development retains its existing localhost WebSocket exception. No wildcard
 WebSocket destinations, remote frames, external scripts, or media URLs are added.
-ICE traffic is separate from CSP and must still obey Windows lockdown.
+ICE traffic is separate from CSP and must still obey native lockdown.
 
 `packages/platform-rs/src/windows/firewall_policy.rs` blocks the complement of
 the configured destination IPs. Onboarding currently supplies the API hostname
-only. Arbitrary teammate IPs therefore cannot be assumed reachable. The Windows
+only. Arbitrary teammate IPs therefore cannot be assumed reachable. The shared
 voice engine must use `iceTransportPolicy: "relay"`. A configured TURN endpoint
 and a reviewed fixed destination allowlist are release prerequisites. Do not
 learn firewall exceptions from SDP, ICE candidates or untrusted room messages;
@@ -27,17 +27,39 @@ existing API-only lockdown. DNS/IP changes and IPv4/IPv6 must be tested with the
 chosen deployment before release. Both the private WebView2 runtime and native
 process rules must retain their existing restrictions and verified cleanup.
 
-The existing Windows WebView2 permission handler in `apps/desktop/src-tauri/src/lib.rs`
-autoallows camera/microphone requests by kind, without checking the requesting
-origin. This change does not broaden it. Origin restriction remains a security
-review item before the voice release; restrictive frame/navigation policy is
-not a substitute for checking the origin at the permission boundary.
+Windows WebView2 grants camera/microphone only to approved requesting origins.
+Linux grants capture/device information only for a trusted top-level app/development
+origin and denies popup WebViews; its older API has no requesting-frame origin,
+so existing navigation and frame CSP restrictions remain necessary.
 
-The API also accepts the participant token in the WebSocket URL. Local Uvicorn
-protocol source logs handshake paths including query strings by default. API
-issue [#79](https://github.com/Algorithms-Mathematics-Society/ams-api/issues/79)
-tracks verified application/proxy log redaction as a release blocker. No real
-production logs were inspected and no actual credential exposure is asserted.
+API/proxy credential-log redaction was deployed and verified with synthetic
+credentials on 7 November2026 (API6dd27d99). This is historical deployment evidence,
+not permission to print real tokens or assume future logging changes remain safe.
+
+## Linux runtime and relay prerequisites
+
+The same lobby, explicit muted Join, mute/leave, part selection and error controls
+are enabled for the Linux x86_64 native WebView. Onboarding uses the native OS result;
+rendering requires Tauri plus a supported desktop platform hint. Web, macOS, Android
+and ambiguous Linux/ARM hints remain excluded. No extra polling owner is introduced.
+
+If RTCPeerConnection is missing, voice must report unavailable without acquiring
+a microphone or presenting a successful voice connection. The lobby and assigned
+workspace remain usable independently. Unsupported output-device selection remains
+feature-detected; use system audio output settings when the selector is absent.
+
+Local inspection found WebKitGTK2.54.2 with its WebRTC setting default false and no
+webrtcbin GStreamer element. Capture working does not prove WebRTC support. Enabling
+and packaging the supported WebRTC runtime, then testing a real relay call, remain
+release prerequisites. This UI change does not alter native WebKit settings or
+install media plugins.
+
+Linux's helper allows approved destination IPs, limits resolvers to DNS ports and
+drops other destinations. Onboarding currently supplies the API host only. A
+separate TURN server must be added through reviewed fixed approved destination
+configuration; SDP/ICE messages must never expand that allowlist. No firewall
+rules are relaxed by this UI change. TURN provisioning/DNS/TLS and actual relay
+connectivity under lockdown remain pending on both platforms.
 
 ## Media, authentication and limits
 
@@ -64,7 +86,7 @@ production logs were inspected and no actual credential exposure is asserted.
 
 ## Lobby entry and allocation
 
-Only installed Windows sessions use this lobby. The existing setup authorization,
+Only native Windows and Linux x86_64 sessions use this lobby. The existing setup authorization,
 readiness, identity capture, secure-session start and lockdown verification run
 before the setup handoff. A one-shot authenticated team lookup then permits a
 published team or an explicitly unpublished team to reach the room before the
@@ -102,7 +124,7 @@ peers, so speaking/mute/connection feedback remains in the peer controls rather
 than being inferred from roster names. This leaves the per-member voice-state
 criterion of #293 incomplete; do not close the issue on this implementation.
 
-## Required Windows evidence (pending)
+## Required Windows and Linux evidence (pending)
 
 Record installer version/commit, Windows version, WebView2 version, network,
 team size, expected/actual result, and sanitized diagnostics. Do not put tokens
@@ -116,7 +138,7 @@ or audio recordings in issue attachments.
 | Five members                       | Every member hears the other four, never another team; status reflects actual connection.                                               |
 | Mute / per-member volume           | Outbound cloned track is disabled immediately; proctor camera/mic remains usable; volume affects only intended peer.                    |
 | Autoplay / device change           | Blocked playback has a user-action recovery; unsupported output selection is explained; unplug does not loop requests.                  |
-| Symmetric NAT / relay only         | Selected candidate pair is relay; UDP and TCP/TLS fallback tested under real Windows lockdown.                                          |
+| Symmetric NAT / relay only         | Selected candidate pair is relay; UDP and TCP/TLS fallback tested under real Windows and Linux lockdown.                                |
 | Flap / sleep / network change      | One bounded reconnect sequence, no duplicate sockets or microphone streams; no automatic retry on terminal codes.                       |
 | Replaced tab / session             | Old client receives replaced or 4411 and releases voice without reconnecting.                                                           |
 | Logout / end / unmount             | All owned audio tracks, remote audio elements, peer connections, event handlers and timers stop; late async grants cannot restart them. |

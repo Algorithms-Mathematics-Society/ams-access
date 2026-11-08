@@ -345,7 +345,7 @@ test("same team assignment recovery preserves live unsaved edits and assets with
     readStoredSession: () => ({ id: "session", contest_id: "contest" }),
     getSession: async () => ({ uid: "session", status: "active", phase: "running" }),
     unauthorizedAtRef: { current: null },
-    windowsTeamRoom: true,
+    desktopTeamRoom: true,
     lobbyState: { status: "team" },
     teamOwnLabel: "A",
     authGeneration: () => 1,

@@ -4,6 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 import { assertSetupAuthorization } from "./setup-authorization.ts";
 import { entryProgressLabel } from "./entry-progress.ts";
+import { supportsNativeTeamPlatform } from "../../../lib/team-platform.ts";
 
 import {
   EntryCancelledError,
@@ -103,6 +104,9 @@ function fixture({ enumerateDevices, collectDeviceState, overrides = {} }) {
     setEntryProgress: (value) => state.progress.push(value),
     entryProgressLabel,
     dryRun: false,
+    supportsNativeTeamPlatform,
+    authHeaders: () => ({}),
+    readVoiceTeam: async () => ({ kind: "solo" }),
     evaluateEntryGateFromServer: async () => ({ ok: true, index: null }),
     isTestAccount: false,
     contestIndex: null,
@@ -651,3 +655,43 @@ test("failed completed-setup persistence stays retryable and never marks entry a
     );
   }
 });
+
+for (const kind of ["team", "unpublished"]) {
+  test(`secured Linux ${kind} membership hands off before the contest bell`, async () => {
+    let lookup = 0;
+    let verified = false;
+    let handoffs = 0;
+    const f = desktopFixture({
+      verify: async () => {
+        verified = true;
+        return true;
+      },
+      overrides: {
+        contestWindow: {
+          startAt: new Date(10000).toISOString(),
+          endAt: new Date(20000).toISOString(),
+        },
+        serverNow: () => 1000,
+        markSetupHandoff: () => {
+          handoffs += 1;
+        },
+        readVoiceTeam: async () => {
+          lookup += 1;
+          assert.equal(f.desktop.starts, 1, "team lookup follows secure startup");
+          assert.equal(f.desktop.active, true, "team lookup retains desktop ownership");
+          assert.equal(verified, true, "native engagement is verified before lookup");
+          return { kind };
+        },
+      },
+    });
+    await f.finalize();
+    assert.equal(lookup, 1);
+    assert.equal(handoffs, 1);
+    assert.deepEqual(f.state.navigation, ["/session/contest?contestId=contest"]);
+    assert.equal(f.desktop.active, true);
+    assert.equal(f.desktop.unlocks, 0);
+    f.attempts.cancel();
+    await flush();
+    assert.equal(f.desktop.unlocks, 0, "handoff transfers secure control ownership");
+  });
+}
