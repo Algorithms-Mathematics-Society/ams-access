@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CameraTimeoutError } from "@/lib/camera-readiness";
+import { CameraTimeoutError, startCameraPreview } from "@/lib/camera-readiness";
 import {
   loadPresenceDetector,
   samplePresence,
@@ -50,14 +50,9 @@ export function Stage9_PresenceVerification({
   const [verdict, setVerdict] = useState<PresenceVerdict | null>(null);
 
   useEffect(() => {
-    if (!stream || !videoRef.current) return;
-    videoRef.current.srcObject = stream;
-    videoRef.current.play().catch(() => {});
-  }, [stream]);
-
-  useEffect(() => {
     let cancelled = false;
     let detector: PresenceDetector | null = null;
+    let inference: ReturnType<PresenceDetector["estimateFaces"]> | null = null;
     let advanceTimer: ReturnType<typeof setTimeout> | null = null;
     // Each effect visit settles once; cleanup discards late photo results.
     let settled = false;
@@ -91,9 +86,22 @@ export function Stage9_PresenceVerification({
       }
 
       try {
-        detector = await loadPresenceDetector();
+        const video = videoRef.current;
+        if (!video) throw new Error("Camera preview unavailable");
+        await startCameraPreview(video, stream, 3000);
+        if (cancelled) return;
+        const loaded = await loadPresenceDetector();
+        // The sample deadline cannot cancel inference. Retain its underlying
+        // promise so cleanup never disposes model tensors while it is running.
+        detector = {
+          estimateFaces: (...args) => {
+            inference = loaded.estimateFaces(...args);
+            return inference;
+          },
+          dispose: () => loaded.dispose?.(),
+        };
       } catch {
-        // Model or backend unavailable. Say so rather than inventing a pass.
+        // Preview, model or backend unavailable. Never invent a pass.
         await settle("unknown");
         return;
       }
@@ -138,8 +146,11 @@ export function Stage9_PresenceVerification({
     }
 
     void run().finally(() => {
-      detector?.dispose?.();
+      const completed = detector;
       detector = null;
+      const dispose = () => completed?.dispose?.();
+      if (inference) void inference.then(dispose, dispose);
+      else dispose();
     });
     return () => {
       cancelled = true;

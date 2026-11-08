@@ -1,7 +1,7 @@
 # Linux camera setup and contest-preview recovery
 
 The reported symptom occurs in development builds and AppImage: camera setup can
-fail, or the contest opens without a camera preview. The fixes address three
+fail, or the contest opens without a camera preview. The fixes address six
 reproduced code failures. They do not establish the cause on the affected hardware.
 
 ## Confirmed failures and repairs
@@ -21,6 +21,16 @@ reproduced code failures. They do not establish the cause on the affected hardwa
 - Face-scan preview failure retries reused a live but non-delivering camera handle.
   Only preview-failure retries now release that exact stream before reopening;
   detector/no-face retries keep a working camera.
+
+- Face-check model loading and review status panels covered an otherwise working
+  camera with opaque full-tile overlays. Status now remains outside the video;
+  detection, retry, manual review and entry authorization requirements are unchanged.
+
+- Presence verification started its three-sample budget before a decoded video
+  frame was available. It now waits for bounded preview readiness before sampling;
+  preview/model failure still records unknown, never a fabricated pass.
+- A timed-out presence inference can continue running. Its detector is now disposed
+  only after the actual inference settles, not when the waiting deadline expires.
 
 Setup stages already use the bounded preview helper; setup retry behavior remains
 covered. Camera-session ownership fixes are shared across setup and the contest.
@@ -83,7 +93,7 @@ for code behavior; neither platform's real camera behavior is certified here.
 
 ## Validation of this patch
 
-- Registered web suite:146 test files passed, zero failures/skips.
+- Registered web suite:147 test files passed, zero failures/skips.
 - Native app library:104 tests passed, including Linux and Windows media policies.
 - Cargo check and formatting checks passed.
 - TypeScript and production build passed; all size gates passed.

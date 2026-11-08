@@ -1156,78 +1156,27 @@ function FaceCalibrationAttempt({
             transition: "border-color var(--transition-standard)",
           }}
         />
-
-        {/* Model loading overlay */}
-        {!detectorReady && !reviewAvailable && (
-          <VStack
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 5,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "var(--color-background-surface)",
-              borderRadius: "var(--radius-sm)",
-              gap: "var(--spacing-3)",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: "var(--font-size-sm)",
-                fontFamily: "var(--font-family-body)",
-                color: "var(--color-text-secondary)",
-              }}
-            >
-              Preparing face check
-            </Text>
-          </VStack>
-        )}
-
-        {/* Hard-block overlay — shown when detection is unavailable and stage cannot auto-proceed */}
-        {stageBlocked && (
-          <VStack
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 10,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "var(--color-background-surface)",
-              borderRadius: "var(--radius-sm)",
-              gap: "var(--spacing-3)",
-              border: "var(--border-width) solid var(--color-border-red)",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: "var(--font-size-sm)",
-                fontFamily: "var(--font-family-body)",
-                color: "var(--color-error)",
-                letterSpacing: "0.08em",
-              }}
-            >
-              Face check needs review
-            </Text>
-            <Text
-              style={{
-                fontSize: "var(--font-size-sm)",
-                fontFamily: "var(--font-family-body)",
-                color: "var(--color-text-secondary)",
-                textAlign: "center",
-                maxWidth: "100%",
-                paddingInline: "var(--spacing-4)",
-                lineHeight: 1.65,
-              }}
-            >
-              Retry the scan or use the option below to request a proctor review.
-            </Text>
-          </VStack>
-        )}
       </VStack>
+
+      {/* Keep face-check status outside the live preview. A model failure
+          must not hide a camera that is already delivering frames. */}
+      {!detectorReady && !reviewAvailable && (
+        <VStack role="status" aria-live="polite">
+          <Text color="secondary" justify="center">
+            Preparing face check
+          </Text>
+        </VStack>
+      )}
+      {stageBlocked && (
+        <VStack gap={2} role="status" aria-live="polite">
+          <Text justify="center" style={{ color: "var(--color-error)" }}>
+            Face check needs review
+          </Text>
+          <Text color="secondary" justify="center">
+            Retry the scan or use the option below to request a proctor review.
+          </Text>
+        </VStack>
+      )}
 
       {/* Two-up tracking/progress grid */}
       <VStack
