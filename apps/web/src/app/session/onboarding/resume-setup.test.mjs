@@ -319,16 +319,28 @@ test("resume requires a person in the final sampled frame before photographing",
   for (const lastStatus of ["presence_ok", "no_face"]) {
     const samples = ["presence_ok", "presence_ok", lastStatus];
     let verdict;
+    let previews = 0;
+    const stream = {};
+    const video = {};
     const run = expressionFrom(
       presenceSource,
       "run"
     )({
-      stream: {},
+      stream,
       cancelled: false,
       detector: null,
-      loadPresenceDetector: async () => ({}),
+      startCameraPreview: async (preview, source, timeoutMs) => {
+        assert.equal(preview, video);
+        assert.equal(source, stream);
+        assert.equal(timeoutMs, 3000);
+        previews++;
+      },
+      loadPresenceDetector: async () => {
+        assert.equal(previews, 1, "resume presence must wait for preview readiness");
+        return {};
+      },
       canvasRef: { current: {} },
-      videoRef: { current: {} },
+      videoRef: { current: video },
       SAMPLE_COUNT: 3,
       SAMPLE_INTERVAL_MS: 1,
       samplePresence: async () => ({ status: samples.shift() }),
@@ -342,6 +354,8 @@ test("resume requires a person in the final sampled frame before photographing",
       },
     });
     await run();
+    assert.equal(previews, 1);
+    assert.equal(samples.length, 0, "all three real presence verdicts remain required");
     assert.equal(verdict, lastStatus === "presence_ok" ? "present" : "unknown");
   }
 });
