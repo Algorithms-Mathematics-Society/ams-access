@@ -384,31 +384,41 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       pendingVideo = null;
       const previous = videoTrack;
       selectionPending = true;
-      const pending = openVideoCandidate(next, opened, openedVideo);
-      try {
-        const replacement = await pending;
-        if (opened !== generation || openedVideo !== videoGeneration) {
-          replacement.stop();
-          throw new Error("Camera selection changed");
-        }
+      // Ensure and device-change recovery share the entire selection transaction,
+      // including preference storage and adoption. Opening another camera here
+      // can overwrite the selected track and orphan its operating-system handle.
+      const pending = (async () => {
         try {
-          // A storage failure must leave the working track and preference intact.
-          deps.preferenceStore?.write(next);
+          const replacement = await openVideoCandidate(next, opened, openedVideo);
+          if (opened !== generation || openedVideo !== videoGeneration) {
+            replacement.stop();
+            throw new Error("Camera selection changed");
+          }
+          try {
+            // A storage failure must leave the working track and preference intact.
+            deps.preferenceStore?.write(next);
+          } catch (error) {
+            replacement.stop();
+            throw error;
+          }
+          preferredDeviceId = next;
+          adopt(replacement, "video");
+          previous?.stop();
         } catch (error) {
-          replacement.stop();
+          // A superseded selection must not overwrite the newer owner's status.
+          if (opened === generation && openedVideo === videoGeneration) {
+            announce(isTrackDelivering(previous ?? undefined) ? "live" : "lost");
+          }
           throw error;
+        } finally {
+          if (openedVideo === videoGeneration) selectionPending = false;
         }
-        preferredDeviceId = next;
-        adopt(replacement, "video");
-        previous?.stop();
-      } catch (error) {
-        // A superseded selection must not overwrite the newer owner's status.
-        if (openedVideo === videoGeneration) {
-          announce(isTrackDelivering(previous ?? undefined) ? "live" : "lost");
-        }
-        throw error;
+      })();
+      pendingVideo = pending;
+      try {
+        await pending;
       } finally {
-        if (openedVideo === videoGeneration) selectionPending = false;
+        if (pendingVideo === pending) pendingVideo = null;
       }
       announce(isTrackDelivering(videoTrack ?? undefined) ? "live" : "lost");
       return assemble(isTrackUsable(audioTrack ?? undefined));
@@ -438,6 +448,7 @@ export function createCameraSession(deps: CameraSessionDeps): CameraSession {
       videoGeneration += 1;
       pendingVideo = null;
       pendingAudio = null;
+      selectionPending = false;
       videoTrack?.stop();
       audioTrack?.stop();
       videoTrack = null;

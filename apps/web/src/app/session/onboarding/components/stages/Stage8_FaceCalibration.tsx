@@ -1345,6 +1345,11 @@ function FaceCalibrationAttempt({
             onClick={() => {
               if (!owns(attemptRef.current.generation)) return;
               invalidateAttempt();
+              // A live handle can still have no decodable preview. Retrying
+              // that same handle repeats the timeout instead of reopening it.
+              if (reviewReasonRef.current === "preview_failed") {
+                cameraSession.releaseVideo(localStreamRef.current ?? stream ?? undefined);
+              }
               onRetry();
             }}
           />

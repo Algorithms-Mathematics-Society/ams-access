@@ -6,6 +6,8 @@ mod event_store;
 mod keyboard_probe;
 #[cfg(any(target_os = "linux", test))]
 mod keyboard_recovery;
+#[cfg(any(target_os = "linux", test))]
+mod linux_media_permission;
 #[cfg(target_os = "linux")]
 mod linux_network;
 mod lockdown_lifecycle;
@@ -4028,10 +4030,35 @@ pub fn run() {
             {
                 use tauri::Manager;
                 if let Some(win) = app.get_webview_window("main") {
-                    win.with_webview(|wv| {
-                        use webkit2gtk::{PermissionRequestExt, WebViewExt};
-                        wv.inner().connect_permission_request(|_, req| {
-                            req.allow();
+                    #[cfg(debug_assertions)]
+                    let dev_url = app.config().build.dev_url.clone();
+                    #[cfg(not(debug_assertions))]
+                    let dev_url: Option<tauri::Url> = None;
+                    win.with_webview(move |wv| {
+                        use gtk::glib::object::{Cast, ObjectExt};
+                        use webkit2gtk::{
+                            PermissionRequestExt, UserMediaPermissionRequestExt, WebViewExt,
+                        };
+                        // This webview hosts only the app. Navigation and CSP provide
+                        // the frame boundary: WebKitGTK 2.22 does not expose a
+                        // permission request's originating frame/security origin.
+                        wv.inner().connect_create(|_, _| None);
+                        wv.inner().connect_permission_request(move |view, req| {
+                            let media_devices = req
+                                .downcast_ref::<webkit2gtk::UserMediaPermissionRequest>()
+                                .map(|media| {
+                                    (media.is_for_audio_device(), media.is_for_video_device())
+                                });
+                            if linux_media_permission::should_allow(
+                                req.type_().name(),
+                                media_devices,
+                                view.uri().as_deref(),
+                                dev_url.as_ref(),
+                            ) {
+                                req.allow();
+                            } else {
+                                req.deny();
+                            }
                             true
                         });
                     })

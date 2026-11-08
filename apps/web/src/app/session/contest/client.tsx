@@ -52,6 +52,7 @@ import {
 import { clearQueryCache, fetchJson, postJsonKeepalive } from "@/lib/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { cameraSession, isTrackDelivering } from "@/lib/camera-session";
+import { startCameraPreview } from "@/lib/camera-readiness";
 import { INTERVAL_MS, captureFrame, jitterOffset } from "@/lib/identity-photo";
 import { drawForObjects, loadObjectDetector, sampleObjects } from "@/lib/object-watch";
 import { isGatingRelaxed } from "@/lib/gating";
@@ -328,26 +329,6 @@ function isVideoRendering(video: HTMLVideoElement): boolean {
   return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0;
 }
 
-function waitForVideoFrame(video: HTMLVideoElement, timeoutMs = 3000): Promise<boolean> {
-  if (isVideoRendering(video)) return Promise.resolve(true);
-
-  return new Promise((resolve) => {
-    const done = (ok: boolean) => {
-      clearTimeout(timer);
-      video.removeEventListener("loadeddata", onReady);
-      video.removeEventListener("canplay", onReady);
-      video.removeEventListener("playing", onReady);
-      resolve(ok);
-    };
-    const onReady = () => done(isVideoRendering(video));
-    const timer = setTimeout(() => done(isVideoRendering(video)), timeoutMs);
-
-    video.addEventListener("loadeddata", onReady, { once: true });
-    video.addEventListener("canplay", onReady, { once: true });
-    video.addEventListener("playing", onReady, { once: true });
-  });
-}
-
 // The camera feed is proctoring, not media. WebKit treats a playing <video>
 // with a microphone track as something to control: it offers play/pause on
 // hover, in Now Playing and on the media keys. Pausing froze the frame the
@@ -368,24 +349,15 @@ function keepPlaying(video: HTMLVideoElement) {
 }
 
 async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): Promise<boolean> {
-  video.muted = true;
-  video.playsInline = true;
   keepPlaying(video);
-  if (video.srcObject !== stream) video.srcObject = stream;
-
   try {
-    await video.play();
+    // WebKit can leave play() pending. The shared preview path starts playback
+    // without awaiting it and proves a decoded frame within this deadline.
+    await startCameraPreview(video, stream, 3000);
+    return isVideoRendering(video);
   } catch {
-    // WebKit can reject play before metadata is ready; wait for a real frame below.
+    return false;
   }
-
-  const ready = await waitForVideoFrame(video);
-  if (!ready) return false;
-
-  try {
-    await video.play();
-  } catch {}
-  return isVideoRendering(video);
 }
 
 const RecoveryBannerRegion = motion.create(VStack);

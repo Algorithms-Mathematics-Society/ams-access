@@ -800,3 +800,87 @@ test("contest preview release retains exact-camera hotplug recovery after exhaus
   await new Promise(setImmediate);
   assert.equal(deps.opens.length, before + 1, "exam exit must still stop recovery");
 });
+
+for (const staleFirst of [true, false]) {
+  test(`selection owns recovery when ${staleFirst ? "old recovery" : "selection"} resolves first`, async () => {
+    const { deps, grants } = controlledDeps();
+    const session = createCameraSession(deps);
+    const recovery = session.ensure();
+    const rejectedRecovery = assert.rejects(recovery, /selection changed/);
+    const selection = session.setPreferredVideoDevice("camera-b");
+    const ensure = session.ensure();
+    assert.equal(deps.opens.length, 2, "ensure shares the pending selection");
+    assert.deepEqual(deps.opens[1].video.deviceId, { exact: "camera-b" });
+    const stale = makeTrack("video");
+    const chosen = makeTrack("video");
+    if (staleFirst) {
+      grants[0].resolve(granted(stale));
+      await rejectedRecovery;
+      grants[1].resolve(granted(chosen));
+    } else {
+      grants[1].resolve(granted(chosen));
+      await selection;
+      grants[0].resolve(granted(stale));
+    }
+    await rejectedRecovery;
+    assert.deepEqual((await selection).tracks, [chosen]);
+    assert.deepEqual((await ensure).tracks, [chosen]);
+    assert.equal(stale.stopped, true);
+    assert.equal(session.preferredVideoDevice(), "camera-b");
+    session.release();
+    assert.equal(chosen.stopped, true, "release owns and stops the selected handle");
+  });
+}
+
+test("ensure shares a first selection without opening the default camera", async () => {
+  const { deps, grants } = controlledDeps();
+  const session = createCameraSession(deps);
+  const selection = session.setPreferredVideoDevice("camera-b");
+  const ensure = session.ensure();
+  assert.equal(deps.opens.length, 1);
+  const chosen = makeTrack("video");
+  grants[0].resolve(granted(chosen));
+  await selection;
+  assert.deepEqual((await ensure).tracks, [chosen]);
+  session.release();
+  assert.equal(chosen.stopped, true);
+});
+
+test("failed selection rejects waiting ensure and permits one explicit retry", async () => {
+  const { deps, grants } = controlledDeps();
+  const session = createCameraSession(deps);
+  const selection = session.setPreferredVideoDevice("camera-b");
+  const ensure = session.ensure();
+  const denied = new Error("NotAllowedError");
+  const rejected = Promise.all([
+    assert.rejects(selection, (error) => error === denied),
+    assert.rejects(ensure, (error) => error === denied),
+  ]);
+  grants[0].reject(denied);
+  await rejected;
+  const retry = session.ensure();
+  assert.equal(deps.opens.length, 2);
+  const fresh = makeTrack("video");
+  grants[1].resolve(granted(fresh));
+  assert.deepEqual((await retry).tracks, [fresh]);
+});
+
+for (const release of ["release", "releaseVideo"]) {
+  test(`${release} cancels selection and its waiting ensure without a late leak`, async () => {
+    const { deps, grants } = controlledDeps();
+    const session = createCameraSession(deps);
+    const selection = session.setPreferredVideoDevice("camera-b");
+    const ensure = session.ensure();
+    const rejected = Promise.all([
+      assert.rejects(selection, /selection changed/),
+      assert.rejects(ensure, /released|selection changed/),
+    ]);
+    session[release]();
+    const late = makeTrack("video");
+    grants[0].resolve(granted(late));
+    await rejected;
+    assert.equal(late.stopped, true);
+    assert.equal(session.current(), null);
+    assert.equal(session.status(), release === "release" ? "idle" : "lost");
+  });
+}
