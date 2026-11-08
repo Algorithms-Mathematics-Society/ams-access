@@ -457,10 +457,10 @@ Support previews and submits the same allowlisted automatic context. User-entere
 
 The Login ID field shows a fixed, selectable @access suffix beside the editable handle. Full-ID paste keeps the existing normalization; typed spaces are blocked without intercepting paste or silently deleting internal characters from pasted IDs.
 
-## Windows team voice (issues #294 / #300)
+## Windows and Linux team voice (issues #294 / #300)
 
 The contest mounts `TeamVoiceControls` only after authorized entry, for an active
-non-dry-run session. The adapter runs only in the Windows desktop WebView; it
+non-dry-run session. The adapter runs in supported Windows and Linux x86_64 desktop WebViews; it
 reads the published team projection and uses `phase.voice_open` as authority.
 A solo-round 404 stops polling; an unpublished-team 404 continues checking.
 Unknown failures close local voice and require a fresh successful team read.
@@ -485,12 +485,13 @@ Authentication changes, page exit, unmount, local session end, and the server
 voice window closing stop the session and abort its requests. Mandatory overlays
 make the controls inert.
 
-The team lobby/selection screen in #293 is not implemented here, so pre-contest
-lobby voice is not delivered. Relay-only transport still requires a functioning
-TURN deployment. No native Windows voice or capacity certification is claimed.
-Installed Windows release checks remain required: two and five member teams,
+The team lobby/selection screen shares one projection and voice owner across
+secured entry and assigned workspace. Relay-only transport still requires a
+functioning TURN deployment and an approved destination allowlist. Missing WebRTC
+shows unavailable voice without blocking the lobby. No native media or capacity
+certification is claimed. Installed Windows and Linux release checks remain required: two and five member teams,
 mute/shortcut and permission-denial recovery, output hotplug/autoplay recovery,
 replaced-login/auth switch, contest expiry/exit during capture, and proof that
 voice teardown leaves proctor audio/video alive. Confirm relay candidates under
 lockdown/firewall and verify bounded reconnect and API load at 400 voice users
-and 3,000 contest participants. This slice does not roll out macOS or Linux.
+and 3,000 contest participants. This slice does not roll out macOS, mobile or browser team rooms.

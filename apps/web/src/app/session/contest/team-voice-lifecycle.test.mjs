@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 const ui = readFileSync(new URL("./components/TeamVoiceControls.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
-test("Windows adapter retains lifecycle boundaries and mandatory overlay priority", () => {
-  assert.match(ui, /!window\.__TAURI__.*!\/\^Win/);
+test("Desktop adapter retains lifecycle boundaries and mandatory overlay priority", () => {
+  assert.match(
+    ui.replace(/\s+/g, " "),
+    /!supportsTeamDesktopWebView\( Boolean\(window\.__TAURI__\), navigator.platform, navigator.userAgent \)/
+  );
   assert.match(ui, /generation === authGeneration\(\).*token === participantToken\(\)/);
   assert.match(ui, /subscribeAuthChanges\(terminate\)/);
   assert.match(ui, /addEventListener\("pagehide", terminate\)/);
@@ -17,4 +20,49 @@ test("Windows adapter retains lifecycle boundaries and mandatory overlay priorit
     client.replace(/\s+/g, " "),
     /enabled=\{ entryReady && Boolean\(sessionId\) && !isDryRun && !bellRung && !sessionEnded && contestPhase !== "ended" \}/
   );
+});
+
+test("missing WebRTC blocks connection before session creation or microphone capture", async () => {
+  // Execute the actual connect body, with the closed capability branch and spies
+  // for resources that must never be acquired on unsupported WebViews.
+  const body = ui
+    .match(/async function connect\(\) \{([\s\S]*?)\n  \}\n\n  connectCurrent/)[1]
+    .replaceAll("lifecycle!", "lifecycle");
+  let sessions = 0;
+  let microphones = 0;
+  const messages = [];
+  const run = new Function(
+    "supportsRtc",
+    "current",
+    "lifecycleAbort",
+    "open",
+    "setMessage",
+    "createTeamVoiceSession",
+    "acquireVoiceMicrophone",
+    `return (async function () { ${body} })();`
+  );
+  await run(
+    false,
+    { current: () => true },
+    { current: {} },
+    { current: true },
+    (message) => messages.push(message),
+    () => {
+      sessions += 1;
+    },
+    () => {
+      microphones += 1;
+    }
+  );
+  assert.equal(sessions, 0);
+  assert.equal(microphones, 0);
+  assert.deepEqual(messages, [
+    "Team voice is unavailable in this installed app because WebRTC support is missing.",
+  ]);
+  assert.match(ui, /const supportsRtc = typeof RTCPeerConnection === "function"/);
+  assert.match(
+    ui,
+    /!supportsRtc\s*\? "Voice unavailable · WebRTC support is missing in this installed app"/
+  );
+  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current\}/);
 });

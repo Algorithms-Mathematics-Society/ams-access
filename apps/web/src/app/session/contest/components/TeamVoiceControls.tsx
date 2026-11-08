@@ -1,5 +1,7 @@
 "use client";
 
+import { supportsTeamDesktopWebView } from "@/lib/team-platform";
+
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -30,6 +32,7 @@ export function TeamVoiceControls({
   projection: { board: VoiceTeam | null; status: string; error: string | null };
 }) {
   const team = projection.board;
+  const supportsRtc = typeof RTCPeerConnection === "function";
   const [snapshot, setSnapshot] = useState<TeamVoiceSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
@@ -45,7 +48,15 @@ export function TeamVoiceControls({
     setSnapshot(null);
     setMessage(null);
     setOutputs([]);
-    if (!enabled || !window.__TAURI__ || !/^Win/i.test(navigator.platform)) return;
+    if (
+      !enabled ||
+      !supportsTeamDesktopWebView(
+        Boolean(window.__TAURI__),
+        navigator.platform,
+        navigator.userAgent
+      )
+    )
+      return;
     const generation = authGeneration();
     const token = participantToken();
     if (!token) return;
@@ -103,6 +114,12 @@ export function TeamVoiceControls({
     const authorized = current.current;
     const lifecycle = lifecycleAbort.current;
     if (!authorized() || !open.current) return;
+    if (!supportsRtc) {
+      setMessage(
+        "Team voice is unavailable in this installed app because WebRTC support is missing."
+      );
+      return;
+    }
     unsubscribeSession.current?.();
     session.current?.stop();
     const active = createTeamVoiceSession({
@@ -145,7 +162,7 @@ export function TeamVoiceControls({
     } catch {
       if (current.current() && session.current === active)
         setMessage(
-          "Voice could not start. Allow microphone access in Windows settings, then retry. The relay service must also be available."
+          "Voice could not start. Allow microphone access in system settings, then retry. The relay service must also be available."
         );
     }
   }
@@ -201,16 +218,18 @@ export function TeamVoiceControls({
       <HStack gap={3} wrap="wrap" align="center">
         <Text weight="semibold">Team voice{team ? ` · ${team.team.name}` : ""}</Text>
         <Text role="status" aria-live="polite">
-          {snapshot
-            ? snapshot.status
-            : team?.phase.voice_open
-              ? "Ready · microphone starts muted"
-              : "Voice closed"}
+          {!supportsRtc
+            ? "Voice unavailable · WebRTC support is missing in this installed app"
+            : snapshot
+              ? snapshot.status
+              : team?.phase.voice_open
+                ? "Ready · microphone starts muted"
+                : "Voice closed"}
         </Text>
         {team?.phase.voice_open && !connected && (
           <Button
             label={busy ? "Connecting…" : "Join voice / retry microphone"}
-            isDisabled={busy || !open.current}
+            isDisabled={!supportsRtc || busy || !open.current}
             onClick={() => void connect()}
           />
         )}
@@ -242,7 +261,7 @@ export function TeamVoiceControls({
               void session.current
                 ?.retryPlayback()
                 .catch(() =>
-                  setMessage("Playback is still blocked. Check Windows audio output and retry.")
+                  setMessage("Playback is still blocked. Check system audio output and retry.")
                 )
             }
           />
@@ -250,7 +269,7 @@ export function TeamVoiceControls({
       </HStack>
       {snapshot?.status === "unavailable" && (
         <Text>
-          Allow microphone access in Windows settings, check your audio devices, then choose Join
+          Allow microphone access in system settings, check your audio devices, then choose Join
           voice to retry. The voice relay must also be available.
         </Text>
       )}

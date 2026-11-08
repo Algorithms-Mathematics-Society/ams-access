@@ -1,5 +1,7 @@
 "use client";
 
+import { supportsTeamDesktopWebView } from "@/lib/team-platform";
+
 import { registerAllowedClipboard, resetAllowedClipboard } from "./clipboard-provenance";
 
 import { formatSource } from "./format-code";
@@ -117,7 +119,7 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { CameraTile } from "./components/CameraTile";
 import dynamic from "next/dynamic";
 
-// Voice is optional, Windows-only media UI. Keep its engine and controls out
+// Voice is optional, Windows/Linux desktop media UI. Keep its engine and controls out
 // of the contest's initial JS; the component still owns auth/media teardown.
 const TeamLobby = dynamic(
   () => import("./components/TeamLobby").then((module) => module.TeamLobby),
@@ -386,12 +388,11 @@ export default function ContestPageClient() {
     setupContextRef.current.token === (participantToken() ?? "") &&
     setupContextRef.current.isCurrent();
 
-  const windowsTeamRoom =
+  const desktopTeamRoom =
     entryReady &&
     !isDryRun &&
     typeof window !== "undefined" &&
-    Boolean(window.__TAURI__) &&
-    /^Win/i.test(navigator.platform);
+    supportsTeamDesktopWebView(Boolean(window.__TAURI__), navigator.platform, navigator.userAgent);
   const [lobbyState, setLobbyState] = useState<LobbyState>({
     board: null,
     status: "loading",
@@ -413,7 +414,7 @@ export default function ContestPageClient() {
   );
   useEffect(() => {
     setEnteredTeamPart(false);
-    if (!windowsTeamRoom) return;
+    if (!desktopTeamRoom) return;
     const generation = authGeneration();
     const token = participantToken();
     const controller = createTeamLobbyController({
@@ -439,10 +440,10 @@ export default function ContestPageClient() {
       controller.stop();
       lobbyController.current = null;
     };
-  }, [windowsTeamRoom, contestId]);
+  }, [desktopTeamRoom, contestId]);
   const teamOwnLabel = assignedWorkspaceLabel(lobbyState);
   const teamWorkspaceReady = teamWorkspaceAllowed(lobbyState, enteredTeamPart);
-  const showTeamLobby = windowsTeamRoom && !teamWorkspaceReady;
+  const showTeamLobby = desktopTeamRoom && !teamWorkspaceReady;
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const activeContestIdRef = useRef<string | null>(null);
@@ -1578,7 +1579,7 @@ export default function ContestPageClient() {
       }
 
       const workspaceIdentity =
-        windowsTeamRoom && lobbyState.status === "team" && teamOwnLabel
+        desktopTeamRoom && lobbyState.status === "team" && teamOwnLabel
           ? { contestId, sessionId: live.uid, generation: authGeneration(), label: teamOwnLabel }
           : null;
       if (
@@ -1593,11 +1594,11 @@ export default function ContestPageClient() {
       }
       const paper = await loadContestPaper(
         contestId,
-        windowsTeamRoom && lobbyState.status === "team" ? (teamOwnLabel ?? undefined) : undefined
+        desktopTeamRoom && lobbyState.status === "team" ? (teamOwnLabel ?? undefined) : undefined
       );
       const index = paper.index;
       const questions =
-        windowsTeamRoom && lobbyState.status === "team"
+        desktopTeamRoom && lobbyState.status === "team"
           ? paper.questions.filter((question) => question.id === teamOwnLabel)
           : paper.questions;
       if (!isCurrentLoad()) {
@@ -2652,7 +2653,7 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!entryReady) return;
-    if (loading && !windowsTeamRoom) return; // The secured lobby also mounts the camera.
+    if (loading && !desktopTeamRoom) return; // The secured lobby also mounts the camera.
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("Camera access is unavailable in this environment.");
       setProctoringOk(false);
@@ -2834,7 +2835,7 @@ export default function ContestPageClient() {
       cameraStreamRef.current = null;
       setCameraVideoReady(false);
     };
-  }, [loading && !windowsTeamRoom, cameraPickKey, entryReady]);
+  }, [loading && !desktopTeamRoom, cameraPickKey, entryReady]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -4634,7 +4635,7 @@ export default function ContestPageClient() {
   );
 
   const renderTeamLobby =
-    showTeamLobby || (windowsTeamRoom && lobbyState.status !== "solo" && loading);
+    showTeamLobby || (desktopTeamRoom && lobbyState.status !== "solo" && loading);
 
   if (loading && !renderTeamLobby) {
     const phase = entryWaitPhase(bootWaitedMs);
@@ -4760,8 +4761,11 @@ export default function ContestPageClient() {
         )}
         {entryReady &&
           typeof window !== "undefined" &&
-          window.__TAURI__ &&
-          /^Win/i.test(navigator.platform) && (
+          supportsTeamDesktopWebView(
+            Boolean(window.__TAURI__),
+            navigator.platform,
+            navigator.userAgent
+          ) && (
             <TeamVoiceControls
               contestUid={contestId}
               projection={lobbyState}
@@ -5018,7 +5022,7 @@ export default function ContestPageClient() {
                   terminalUnread={terminalUnread}
                 />
               </VStack>
-              {!windowsTeamRoom && cameraTile}
+              {!desktopTeamRoom && cameraTile}
               {referenceOpen && (
                 <VStack
                   gap={0}
@@ -5051,7 +5055,7 @@ export default function ContestPageClient() {
             />
           </>
         )}
-        {windowsTeamRoom && cameraTile}
+        {desktopTeamRoom && cameraTile}
       </VStack>
 
       <Dialog
