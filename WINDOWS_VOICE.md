@@ -48,11 +48,38 @@ a microphone or presenting a successful voice connection. The lobby and assigned
 workspace remain usable independently. Unsupported output-device selection remains
 feature-detected; use system audio output settings when the selector is absent.
 
-Local inspection found WebKitGTK2.54.2 with its WebRTC setting default false and no
-webrtcbin GStreamer element. Capture working does not prove WebRTC support. Enabling
-and packaging the supported WebRTC runtime, then testing a real relay call, remain
-release prerequisites. This UI change does not alter native WebKit settings or
-install media plugins.
+Local inspection found WebKitGTK 2.54.2 with its WebRTC setting default false and no
+`webrtcbin` GStreamer element. The native runtime now explicitly enables supported
+WebKit WebRTC settings; capture working alone does not prove WebRTC support.
+
+Debian packages declare `gstreamer1.0-plugins-bad` (WebRTC, DTLS and SRTP) and
+`gstreamer1.0-nice` (ICE) alongside the existing base/good plugins (Opus and RTP).
+Fedora RPMs declare `gstreamer1-plugins-bad-free` and `libnice-gstreamer1` alongside
+base/good. These are runtime plugin packages; installing only libnice or the
+GStreamer bad shared-library package does not supply the required factories.
+Package names/plugin files were checked against the official
+[Debian bad plugin file list](https://packages.debian.org/bookworm/amd64/gstreamer1.0-plugins-bad/filelist),
+[Debian ICE plugin file list](https://packages.debian.org/bookworm/amd64/gstreamer1.0-nice/filelist),
+[Fedora bad-free package](https://packages.fedoraproject.org/pkgs/gstreamer1-plugins-bad-free/gstreamer1-plugins-bad-free/fedora-43.html)
+and [Fedora libnice plugin package](https://packages.fedoraproject.org/pkgs/libnice/libnice-gstreamer1/).
+
+Linux builders install those plugins. `scripts/check-linux-rtc-media.sh` loads the
+WebRTC/ICE/DTLS/SRTP/Opus/RTP factories and executes a finite synthetic Opus/RTP
+encode/decode pipeline without microphone, speaker or network access. Clean Debian
+and Fedora install jobs run the same check with recommended/weak dependencies off;
+the inspection tools are installed separately after the application dependencies.
+This proves plugin loading and the codec path, not a negotiated WebRTC connection.
+
+AppImage retains `bundleMediaFramework: true`, as required by
+[Tauri media packaging](https://tauri.app/distribute/appimage/). Artifact validation
+requires the WebRTC, ICE, DTLS, SRTP, Opus, RTP and RTP-manager plugin files as well
+as camera support. The current [Tauri GStreamer bundler](https://github.com/tauri-apps/linuxdeploy-plugin-gstreamer/blob/master/linuxdeploy-plugin-gstreamer.sh)
+copies all files from the builder plugin directory, so those plugins must be
+installed before bundling. File presence does not establish plugin loadability, host audio
+integration or WebKit support. A clean supported desktop must still run the actual
+AppImage and complete a real relay call under lockdown before release. Builders
+must fail if linuxdeploy omits a required plugin; host-installed plugins must not
+be treated as evidence that the AppImage contains them.
 
 Linux's helper allows approved destination IPs, limits resolvers to DNS ports and
 drops other destinations. Onboarding currently supplies the API host only. A
