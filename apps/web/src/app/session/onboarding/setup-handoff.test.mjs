@@ -313,7 +313,7 @@ test("pending POST cannot apply after account switch, unmount or handoff clear",
 test("paper loading and proctor acquisition effects return before any work when entry is denied", () => {
   for (const fragment of [
     "const paper = await loadContestPaper(",
-    "cameraSession.ensure({ audio: true })",
+    "cameraSession.ensure()",
     '"count_monitors"',
     '"scan_processes"',
     "const reportFocusLoss",

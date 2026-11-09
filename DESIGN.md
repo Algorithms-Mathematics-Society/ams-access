@@ -208,3 +208,9 @@ output selection uses Selector. Mandatory contest overlays make these controls
 inert. The team board owns the voice window; relay unavailability is reported as
 unavailable. This does not establish Windows native certification or delivery of
 the separate team lobby. See the candidate UI guide for lifecycle and load gates.
+
+The contest camera preview stays mounted in the content region above the status
+footer. The expanded question rail always shows the available preview inside it,
+with space reserved below the question list and no preview-toggle button. Only
+the minimized rail shows the camera button, which toggles the pop-out preview
+beside the rail without changing capture or microphone ownership.

@@ -59,6 +59,8 @@ export const QuestionRail = memo(function QuestionRail({
       width={sidebarCollapsed ? "calc(var(--spacing-10) + var(--spacing-4))" : 220}
       style={{
         flexShrink: 0,
+        paddingBottom:
+          !sidebarCollapsed && cameraPreviewAvailable ? "calc(var(--spacing-10) * 4)" : 0,
         minHeight: 0,
         minWidth: 0,
         overflow: "hidden",
@@ -95,11 +97,6 @@ export const QuestionRail = memo(function QuestionRail({
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
       </HStack>
-      {/* Above the question list, not below it: the camera preview is
-          `position: absolute; bottom: 0` over this rail at z-index 50, so
-          anything at the rail's foot renders underneath it and is invisible.
-          Leading the list also reads better -- it is a destination, like a
-          question, not a footer control. */}
       <HStack padding={sidebarCollapsed ? 0 : 2} style={{ flexShrink: 0, paddingTop: 0 }}>
         <Button
           label="C++ reference"
@@ -153,9 +150,6 @@ export const QuestionRail = memo(function QuestionRail({
           minWidth: 0,
           overflowX: "hidden",
           overflowY: "auto",
-          paddingBottom: sidebarCollapsed
-            ? "var(--spacing-2)"
-            : "calc(var(--spacing-10) * 4 + var(--spacing-2) + var(--spacing-0-5))",
         }}
       >
         {questions.length === 0 && !sidebarCollapsed && <Text type="supporting">No questions</Text>}
