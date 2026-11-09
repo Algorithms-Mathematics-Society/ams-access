@@ -4039,6 +4039,16 @@ pub fn run() {
                         use webkit2gtk::{
                             PermissionRequestExt, UserMediaPermissionRequestExt, WebViewExt,
                         };
+                        if let Some(settings) = wv.inner().settings() {
+                            // WebKitGTK 2.38 added this opt-in (default: false).
+                            // Discover the GObject property at runtime instead of
+                            // linking its newer setter, preserving our 2.22 ABI.
+                            // Enabling WebRTC also enables media-stream support;
+                            // device access still goes through the handler below.
+                            if settings.find_property("enable-webrtc").is_some() {
+                                settings.set_property("enable-webrtc", true);
+                            }
+                        }
                         // This webview hosts only the app. Navigation and CSP provide
                         // the frame boundary: WebKitGTK 2.22 does not expose a
                         // permission request's originating frame/security origin.

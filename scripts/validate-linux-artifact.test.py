@@ -182,9 +182,10 @@ class ArtifactValidatorTests(unittest.TestCase):
             root, control, expected = self.make_tree(base)
             packaged_helper = next(root.rglob("ams-access-networkhelper"))
             packaged_helper.write_bytes(packaged_helper.read_bytes() + b"RUNPATH:$ORIGIN")
-            plugin = root / "usr/lib/gstreamer-1.0/libgstvideo4linux2.so"
-            plugin.parent.mkdir(parents=True)
-            plugin.write_bytes(b"fixture")
+            for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+                plugin = root / "usr/lib/gstreamer-1.0" / library
+                plugin.parent.mkdir(parents=True, exist_ok=True)
+                plugin.write_bytes(b"fixture")
             rewriter = base / "trusted-patchelf"
             self.make_rewriter(rewriter, b"RUNPATH:$ORIGIN")
             result = validator.inspect_tree(
@@ -205,9 +206,10 @@ class ArtifactValidatorTests(unittest.TestCase):
             root, control, expected = self.make_tree(base)
             packaged_helper = next(root.rglob("ams-access-networkhelper"))
             packaged_helper.write_bytes(packaged_helper.read_bytes() + b"RUNPATH:$ORIGIN-tampered")
-            plugin = root / "usr/lib/gstreamer-1.0/libgstvideo4linux2.so"
-            plugin.parent.mkdir(parents=True)
-            plugin.write_bytes(b"fixture")
+            for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+                plugin = root / "usr/lib/gstreamer-1.0" / library
+                plugin.parent.mkdir(parents=True, exist_ok=True)
+                plugin.write_bytes(b"fixture")
             rewriter = base / "trusted-patchelf"
             self.make_rewriter(rewriter, b"RUNPATH:$ORIGIN")
             result = validator.inspect_tree(
@@ -222,11 +224,24 @@ class ArtifactValidatorTests(unittest.TestCase):
     def test_appimage_tree_accepts_v4l2_plugin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, control, expected = self.make_tree(Path(tmp))
-            plugin = root / "usr/lib/gstreamer-1.0/libgstvideo4linux2.so"
-            plugin.parent.mkdir(parents=True)
-            plugin.write_bytes(b"fixture")
+            for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+                plugin = root / "usr/lib/gstreamer-1.0" / library
+                plugin.parent.mkdir(parents=True, exist_ok=True)
+                plugin.write_bytes(b"fixture")
             result = self.inspect(root, control, expected, "appimage")
             self.assertTrue(result["valid"], result)
+
+    def test_appimage_missing_ice_plugin_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, control, expected = self.make_tree(Path(tmp))
+            for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+                plugin = root / "usr/lib/gstreamer-1.0" / library
+                plugin.parent.mkdir(parents=True, exist_ok=True)
+                plugin.write_bytes(b"fixture")
+            (root / "usr/lib/gstreamer-1.0/libgstnice.so").unlink()
+            result = self.inspect(root, control, expected, "appimage")
+            failed = {item["name"] for item in result["checks"] if not item["ok"]}
+            self.assertEqual({"appimage:gstreamer-nice"}, failed)
 
     def test_appimage_offset_skips_false_early_magic(self):
         with tempfile.TemporaryDirectory() as tmp:

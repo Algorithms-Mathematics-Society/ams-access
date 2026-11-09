@@ -56,7 +56,9 @@
           "iptables",
           "kmod",
           "gstreamer1.0-plugins-base",
-          "gstreamer1.0-plugins-good"
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-bad",
+          "gstreamer1.0-nice"
         ],
         "postInstallScript": "debian/postinst",
         "preRemoveScript": "debian/prerm"
@@ -76,6 +78,8 @@
           "kmod",
           "gstreamer1-plugins-base",
           "gstreamer1-plugins-good",
+          "gstreamer1-plugins-bad-free",
+          "libnice-gstreamer1",
           "coreutils"
         ],
         "postInstallScript": "debian/postinst",

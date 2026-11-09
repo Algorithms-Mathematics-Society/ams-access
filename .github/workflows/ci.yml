@@ -98,6 +98,8 @@ jobs:
             librsvg2-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-nice \
             gstreamer1.0-tools \
             rpm libarchive-tools squashfs-tools \
             patchelf \
@@ -273,6 +275,8 @@ jobs:
             librsvg2-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-nice \
             gstreamer1.0-tools \
             rpm libarchive-tools squashfs-tools \
             patchelf \
@@ -427,6 +431,7 @@ jobs:
     name: Deb install smoke
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v4
       - name: Download the built package
         uses: actions/download-artifact@v4
         with:
@@ -436,7 +441,7 @@ jobs:
       - name: Install, verify, remove — on a clean image
         run: |
           set -eux
-          docker run --rm -v "$PWD/deb:/deb:ro" ubuntu:22.04 bash -eux -c '
+          docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" ubuntu:22.04 bash -eux -c '
             apt-get update
             # The clean-image install. Recommends off, so the depends array is
             # proven rather than accidentally satisfied.
@@ -455,7 +460,9 @@ jobs:
             done
 
             test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
-            dpkg-query -W gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+            dpkg-query -W gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice
+            apt-get install -y --no-install-recommends gstreamer1.0-tools
+            sh /checks/check-linux-rtc-media.sh
             ldd /usr/bin/ams-access > /tmp/ams-ldd
             cat /tmp/ams-ldd
             ! grep "not found" /tmp/ams-ldd
@@ -471,6 +478,7 @@ jobs:
     timeout-minutes: 20
     name: RPM install smoke (Fedora 43)
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: rpm-for-smoke
@@ -478,15 +486,17 @@ jobs:
       - name: Install, verify, remove on Fedora
         run: |
           set -eux
-          docker run --rm -v "$PWD/rpm:/packages:ro" fedora:43 bash -eux -c '
-            dnf install -y /packages/*.rpm
+          docker run --rm -v "$PWD/rpm:/packages:ro" -v "$PWD/scripts:/checks:ro" fedora:43 bash -eux -c '
+            dnf install -y --setopt=install_weak_deps=False /packages/*.rpm
             test -x /usr/bin/ams-access
             test -f /etc/udev/rules.d/70-ams-access-camera.rules
             for bin in gsettings gdbus pkexec timeout iptables; do
               command -v "$bin" >/dev/null
             done
             test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
-            rpm -q gstreamer1-plugins-base gstreamer1-plugins-good
+            rpm -q gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free libnice-gstreamer1
+            dnf install -y --setopt=install_weak_deps=False gstreamer1-tools
+            sh /checks/check-linux-rtc-media.sh
             ldd /usr/bin/ams-access > /tmp/ams-ldd
             cat /tmp/ams-ldd
             ! grep "not found" /tmp/ams-ldd

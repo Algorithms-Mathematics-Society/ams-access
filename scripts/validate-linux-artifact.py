@@ -33,8 +33,20 @@ REQUIRED_DEPENDENCIES = {
     "deb": (
         "libwebkit2gtk-4.1-0", "libgtk-3-0", "libglib2.0-bin", "pkexec",
         "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good",
+        "gstreamer1.0-plugins-bad", "gstreamer1.0-nice",
     ),
-    "rpm": ("webkit2gtk4.1", "gtk3", "gstreamer1-plugins-base", "gstreamer1-plugins-good"),
+    "rpm": ("webkit2gtk4.1", "gtk3", "gstreamer1-plugins-base", "gstreamer1-plugins-good",
+            "gstreamer1-plugins-bad-free", "libnice-gstreamer1"),
+}
+APPIMAGE_MEDIA_PLUGINS = {
+    "v4l2": "libgstvideo4linux2.so",
+    "webrtc": "libgstwebrtc.so",
+    "nice": "libgstnice.so",
+    "dtls": "libgstdtls.so",
+    "srtp": "libgstsrtp.so",
+    "opus": "libgstopus.so",
+    "rtp": "libgstrtp.so",
+    "rtpmanager": "libgstrtpmanager.so",
 }
 FORBIDDEN_DEPENDENCIES = {
     "rpm": ("xorg-x11-server-utils",),
@@ -245,8 +257,10 @@ def inspect_tree(
             },
         )
     else:
-        plugins = [p for p in root.rglob("libgstvideo4linux2.so") if p.is_file()]
-        check("appimage:gstreamer-v4l2", bool(plugins), [str(p.relative_to(root)) for p in plugins])
+        # Presence is necessary but not proof of loadability or a real relay call.
+        for name, library in APPIMAGE_MEDIA_PLUGINS.items():
+            plugins = [p for p in root.rglob(library) if p.is_file()]
+            check(f"appimage:gstreamer-{name}", bool(plugins), [str(p.relative_to(root)) for p in plugins])
 
     return {"checks": checks, "valid": all(item["ok"] for item in checks)}
 
