@@ -87,6 +87,8 @@ export function CameraTile({
       style={{
         position: "absolute",
         left: sidebarCollapsed ? "calc(var(--spacing-10) + var(--spacing-4))" : 0,
+        // Expanded: dock inside the rail; only the collapsed rail needs a toggle.
+        // Collapsed: preserve the pop-out beside the rail.
         bottom: 0,
         width: "calc(var(--spacing-10) * 5.5)",
         height: "calc(var(--spacing-10) * 4)",

@@ -495,3 +495,9 @@ replaced-login/auth switch, contest expiry/exit during capture, and proof that
 voice teardown leaves proctor audio/video alive. Confirm relay candidates under
 lockdown/firewall and verify bounded reconnect and API load at 400 voice users
 and 3,000 contest participants. This slice does not roll out macOS, mobile or browser team rooms.
+
+The contest camera preview stays mounted in the content region above the status
+footer. The expanded question rail always shows the available preview inside it,
+with space reserved below the question list and no preview-toggle button. Only
+the minimized rail shows the camera button, which toggles the pop-out preview
+beside the rail without changing capture or microphone ownership.
