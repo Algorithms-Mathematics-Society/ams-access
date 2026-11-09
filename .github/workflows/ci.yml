@@ -495,7 +495,8 @@ jobs:
             done
             test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
             rpm -q gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free libnice-gstreamer1
-            dnf install -y --setopt=install_weak_deps=False gstreamer1-tools
+            # Fedora ships these tools in gstreamer1, already pulled by the plugins.
+            rpm -qf /usr/bin/gst-inspect-1.0 /usr/bin/gst-launch-1.0
             sh /checks/check-linux-rtc-media.sh
             ldd /usr/bin/ams-access > /tmp/ams-ldd
             cat /tmp/ams-ldd
