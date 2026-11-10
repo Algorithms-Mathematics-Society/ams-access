@@ -346,6 +346,8 @@ test("same team assignment recovery preserves live unsaved edits and assets with
     getSession: async () => ({ uid: "session", status: "active", phase: "running" }),
     unauthorizedAtRef: { current: null },
     desktopTeamRoom: true,
+    nativeTeamUnsupported: false,
+    teamProbeResult: null,
     lobbyState: { status: "team" },
     teamOwnLabel: "A",
     authGeneration: () => 1,
@@ -383,4 +385,73 @@ test("same team assignment recovery preserves live unsaved edits and assets with
   assert.equal(error, null);
   assert.equal(loading, false);
   assert.equal(retries.current, 0);
+});
+
+test("unsupported native client loads no paper until the probe proves a solo contest", async () => {
+  for (const result of [null, "team", "solo"]) {
+    const reads = [];
+    let error = null,
+      retryable = null,
+      loading = true;
+    const effect = effectContaining("const paper = await loadContestPaper(", {
+      entryReady: true,
+      showTeamLobby: false,
+      contestId: "contest",
+      isDryRun: false,
+      participantToken: () => "token",
+      setupContextRef: { current: { isCurrent: () => true } },
+      leavingWorkspaceRef: { current: false },
+      autoLoadRetriesRef: { current: 0 },
+      readStoredSession: () => {
+        reads.push("stored");
+        return { id: "session", contest_id: "contest" };
+      },
+      getSession: async () => {
+        reads.push("session");
+        return { uid: "session", status: "pending", phase: "running" };
+      },
+      unauthorizedAtRef: { current: null },
+      desktopTeamRoom: false,
+      nativeTeamUnsupported: true,
+      teamProbeResult: result,
+      lobbyState: { status: "loading" },
+      teamOwnLabel: null,
+      authGeneration: () => 1,
+      setLoadError: (value) => {
+        error = value;
+      },
+      setLoadRetryable: (value) => {
+        retryable = value;
+      },
+      setLoading: (value) => {
+        loading = value;
+      },
+      setLoadAttempt: () => {},
+      MAX_AUTO_LOAD_RETRIES: 0,
+      ProctorApiError: class extends Error {},
+      loadContestPaper: async () => {
+        reads.push("paper");
+        return { questions: [] };
+      },
+    });
+    const cleanup = effect();
+    await tick();
+    cleanup?.();
+    if (result === "solo") {
+      assert.deepEqual(reads, ["stored", "session"], "solo proceeds exactly as before");
+      continue;
+    }
+    assert.deepEqual(reads, [], `${result}: nothing is read`);
+    if (result === null) {
+      assert.equal(loading, true, "pending keeps the boot screen");
+      assert.equal(error, null);
+    } else {
+      assert.equal(
+        error,
+        "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
+      );
+      assert.equal(retryable, false);
+      assert.equal(loading, false);
+    }
+  }
 });

@@ -331,3 +331,43 @@ export function createTeamLobbyController(options: {
     },
   };
 }
+/** What a client that cannot run team rooms must know before it loads a paper. */
+export type TeamRoundProbe = "solo" | "team" | "error";
+/** Only the exact "not a team round" 404 proves a solo contest. A 200, an
+ * unpublished-teams 404 and a not-on-a-team 403 all prove a team round. Anything
+ * else is unknown and must be retried, never treated as solo.
+ */
+export function classifyTeamRoundProbe(status: number, body: unknown): TeamRoundProbe {
+  if (status === 200) return "team";
+  const detail = object(body) ? body.detail : undefined;
+  if (status === 404 && detail === "this contest is not a team round") return "solo";
+  if (status === 404 && detail === "teams have not been published yet") return "team";
+  if (status === 403 && detail === "you are not on a team in this round") return "team";
+  return "error";
+}
+/** One GET of the team endpoint, classified. Never throws: a network failure,
+ * abort or timeout is "error". The caller owns the signal and any retry.
+ */
+export async function probeTeamRound(options: {
+  apiBase: string;
+  contestUid: string;
+  headers: Record<string, string>;
+  signal: AbortSignal;
+  request?: typeof fetch;
+}): Promise<TeamRoundProbe> {
+  const request = options.request ?? fetch;
+  const url = `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team`;
+  try {
+    const response = await request(url, {
+      method: "GET",
+      headers: options.headers,
+      signal: options.signal,
+      cache: "no-store",
+    });
+    if (response.status === 200) return "team";
+    const body: unknown = await response.json().catch(() => null);
+    return classifyTeamRoundProbe(response.status, body);
+  } catch {
+    return "error";
+  }
+}

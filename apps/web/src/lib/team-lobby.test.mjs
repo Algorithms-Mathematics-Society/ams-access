@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseTeamLobby, countdownMs, createTeamLobbyController } from "./team-lobby.ts";
+import {
+  parseTeamLobby,
+  countdownMs,
+  createTeamLobbyController,
+  classifyTeamRoundProbe,
+  probeTeamRound,
+} from "./team-lobby.ts";
 const board = () => ({
   team: { uid: "team", number: 1, name: "Team 1" },
   members: [{ display_name: "Me", is_me: true, part_label: null, assigned_by: null }],
@@ -166,4 +172,71 @@ test("visibility refresh overlapping a GET bypasses restored ETag and reanchors 
   assert.equal(state.board.server_time, fresh.server_time);
   assert.equal(countdownMs(state.board, state.sampledAt, state.sampledAt), 30000);
   controller.stop();
+});
+
+test("team round probe classifier: only the exact not-a-team-round 404 is solo", () => {
+  const cases = [
+    [404, { detail: "this contest is not a team round" }, "solo"],
+    [200, board(), "team"],
+    [404, { detail: "teams have not been published yet" }, "team"],
+    [403, { detail: "you are not on a team in this round" }, "team"],
+    [403, { detail: "this token is for another contest" }, "error"],
+    [404, { detail: "contest not found" }, "error"],
+    [404, null, "error"],
+    [404, "this contest is not a team round", "error"],
+    [404, { detail: "This contest is not a team round" }, "error"],
+    [403, null, "error"],
+    [401, { detail: "this contest is not a team round" }, "error"],
+    [500, { detail: "this contest is not a team round" }, "error"],
+    [503, null, "error"],
+    [409, null, "error"],
+  ];
+  for (const [status, body, expected] of cases)
+    assert.equal(
+      classifyTeamRoundProbe(status, body),
+      expected,
+      `${status} ${JSON.stringify(body)}`
+    );
+});
+
+test("team round probe issues one no-store GET with headers and signal, then classifies", async () => {
+  const calls = [];
+  const signal = new AbortController().signal;
+  const reply = (status, body) => async (url, init) => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify(body), { status });
+  };
+  const run = (request) =>
+    probeTeamRound({
+      apiBase: "https://api.example/",
+      contestUid: "c 1",
+      headers: { Authorization: "Bearer t", "X-Device-Id": "d" },
+      signal,
+      request,
+    });
+  assert.equal(await run(reply(404, { detail: "this contest is not a team round" })), "solo");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.example/participant/contests/c%201/team");
+  assert.equal(calls[0].init.method, "GET");
+  assert.deepEqual(calls[0].init.headers, { Authorization: "Bearer t", "X-Device-Id": "d" });
+  assert.equal(calls[0].init.signal, signal);
+  assert.equal(calls[0].init.cache, "no-store");
+  assert.equal("body" in calls[0].init, false);
+  assert.equal(await run(reply(200, board())), "team");
+  assert.equal(await run(reply(404, { detail: "teams have not been published yet" })), "team");
+  assert.equal(await run(reply(502, null)), "error");
+  assert.equal(await run(async () => new Response("not json", { status: 404 })), "error");
+  assert.equal(
+    await run(async () => {
+      throw new TypeError("Load failed");
+    }),
+    "error"
+  );
+  assert.equal(
+    await run(async () => {
+      throw new DOMException("aborted", "AbortError");
+    }),
+    "error"
+  );
+  assert.equal(calls.length, 4);
 });

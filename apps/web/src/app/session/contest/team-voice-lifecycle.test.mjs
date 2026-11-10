@@ -83,3 +83,57 @@ test("team paper load never gates on a team status and fails closed without a la
   );
   assert.match(ui, /Team status is reconnecting\. Your work is safe\./);
 });
+
+test("unsupported native clients probe the round before any paper fetch and block team rounds", () => {
+  const flat = client.replace(/\s+/g, " ");
+  // Same native gate as desktopTeamRoom, inverted: Tauri required, team WebView rejected.
+  assert.match(
+    flat,
+    /const nativeTeamUnsupported = entryReady && !isDryRun && typeof window !== "undefined" && Boolean\(window\.__TAURI__\) && !supportsTeamDesktopWebView\(Boolean\(window\.__TAURI__\), navigator\.platform, navigator\.userAgent\);/
+  );
+  // A result is honoured only for the contest and auth identity that probed.
+  assert.match(
+    flat,
+    /teamProbe && teamProbe\.contestId === contestId && teamProbe\.generation === authGeneration\(\) && teamProbe\.token === participantToken\(\) \? teamProbe\.result : null/
+  );
+  // The probe effect: only for unsupported native clients, aborted on auth change
+  // and unmount, one request in flight, bounded backoff on "error".
+  const probe = flat.match(
+    /useEffect\(\(\) => \{ if \(!nativeTeamUnsupported \|\| !contestId\) return;([\s\S]*?)\}, \[nativeTeamUnsupported, contestId\]\);/
+  );
+  assert.ok(probe, "probe effect present and keyed on the gate and contest");
+  const body = probe[1];
+  assert.match(
+    body,
+    /probeTeamRound\(\{ apiBase: API_URL, contestUid: contestId, headers: authHeaders\(\), signal: controller\.signal, \}\)/
+  );
+  assert.match(body, /subscribeAuthChanges\(stop\)/);
+  assert.match(body, /active\?\.abort\(\)/);
+  assert.match(body, /if \(stopped \|\| !current\(\)\) return;/);
+  assert.match(body, /attempt < 3 \? 2000 \* 2 \*\* attempt : 15_000/);
+  assert.ok(
+    body.indexOf("if (stopped || !current()) return;") < body.indexOf("setTeamProbe("),
+    "stale identity is fenced before the result is stored"
+  );
+  assert.doesNotMatch(body, /setInterval/);
+
+  // The paper load: the probe gate sits after the existing early returns and
+  // before the first network call of the effect.
+  const start = flat.indexOf("useEffect(() => { if (!entryReady || showTeamLobby) return;");
+  assert.ok(start > 0);
+  const end = flat.indexOf(
+    "}, [ contestId, loadAttempt, entryReady, showTeamLobby, teamOwnLabel, nativeTeamUnsupported, teamProbeResult, ]);",
+    start
+  );
+  assert.ok(end > start, "load effect re-runs when the probe resolves");
+  const load = flat.slice(start, end);
+  const gate = load.indexOf('if (nativeTeamUnsupported && teamProbeResult !== "solo") {');
+  assert.ok(gate > load.indexOf("if (teamRoom && !teamOwnLabel) return;"));
+  assert.ok(gate < load.indexOf("getSession("));
+  assert.ok(gate < load.indexOf("loadContestPaper("));
+  assert.ok(gate < load.indexOf("redirectAfterRelease("));
+  assert.match(
+    load,
+    /if \(nativeTeamUnsupported && teamProbeResult !== "solo"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
+  );
+});

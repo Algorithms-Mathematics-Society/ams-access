@@ -44,7 +44,12 @@ import {
 import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import { createTeamLobbyController, type LobbyState } from "@/lib/team-lobby";
+import {
+  createTeamLobbyController,
+  probeTeamRound,
+  type LobbyState,
+  type TeamRoundProbe,
+} from "@/lib/team-lobby";
 import {
   assignedWorkspaceLabel,
   teamWorkspaceAllowed,
@@ -441,6 +446,73 @@ export default function ContestPageClient() {
       lobbyController.current = null;
     };
   }, [desktopTeamRoom, contestId]);
+  // A native client that cannot run team rooms (macOS, Linux ARM) must learn
+  // whether this is a team round before it loads any paper, so a team round
+  // never opens as a solo workspace showing every part (#314).
+  const nativeTeamUnsupported =
+    entryReady &&
+    !isDryRun &&
+    typeof window !== "undefined" &&
+    Boolean(window.__TAURI__) &&
+    !supportsTeamDesktopWebView(Boolean(window.__TAURI__), navigator.platform, navigator.userAgent);
+  const [teamProbe, setTeamProbe] = useState<{
+    contestId: string;
+    generation: number;
+    token: string | null;
+    result: Exclude<TeamRoundProbe, "error">;
+  } | null>(null);
+  // Never apply a result from another contest or another signed-in identity.
+  const teamProbeResult =
+    teamProbe &&
+    teamProbe.contestId === contestId &&
+    teamProbe.generation === authGeneration() &&
+    teamProbe.token === participantToken()
+      ? teamProbe.result
+      : null;
+  useEffect(() => {
+    if (!nativeTeamUnsupported || !contestId) return;
+    const generation = authGeneration();
+    const token = participantToken();
+    const current = () => generation === authGeneration() && token === participantToken();
+    let stopped = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let active: AbortController | undefined;
+    const run = async () => {
+      if (stopped || active) return;
+      const controller = new AbortController();
+      active = controller;
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const result = await probeTeamRound({
+        apiBase: API_URL,
+        contestUid: contestId,
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      active = undefined;
+      if (stopped || !current()) return;
+      if (result === "error") {
+        // Unknown is never solo: keep the boot screen and retry, bounded.
+        const delay = attempt < 3 ? 2000 * 2 ** attempt : 15_000;
+        attempt += 1;
+        timer = setTimeout(() => void run(), delay + Math.floor(Math.random() * 1000));
+        return;
+      }
+      setTeamProbe({ contestId, generation, token, result });
+    };
+    const stop = () => {
+      stopped = true;
+      clearTimeout(timer);
+      active?.abort();
+    };
+    const unsubscribe = subscribeAuthChanges(stop);
+    void run();
+    return () => {
+      unsubscribe();
+      stop();
+    };
+  }, [nativeTeamUnsupported, contestId]);
   const teamOwnLabel = assignedWorkspaceLabel(lobbyState);
   const teamWorkspaceReady = teamWorkspaceAllowed(lobbyState, enteredTeamPart);
   const showTeamLobby = desktopTeamRoom && !teamWorkspaceReady;
@@ -1473,6 +1545,18 @@ export default function ContestPageClient() {
       setLoading(false);
       return;
     }
+    // Until the probe proves a solo contest, an unsupported native client loads
+    // nothing: the boot screen stays up (with Exit) while it is pending.
+    if (nativeTeamUnsupported && teamProbeResult !== "solo") {
+      if (teamProbeResult === "team") {
+        setLoadError(
+          "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
+        );
+        setLoadRetryable(false);
+        setLoading(false);
+      }
+      return;
+    }
 
     if (
       (contestId === "mock-contest-dev" || contestId === "mock-contest-scheduled") &&
@@ -1763,7 +1847,15 @@ export default function ContestPageClient() {
       // Adopted statement assets remain owned by the authorized workspace.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contestId, loadAttempt, entryReady, showTeamLobby, teamOwnLabel]);
+  }, [
+    contestId,
+    loadAttempt,
+    entryReady,
+    showTeamLobby,
+    teamOwnLabel,
+    nativeTeamUnsupported,
+    teamProbeResult,
+  ]);
 
   function loadQuestionWithAnswers(
     q: Question,
