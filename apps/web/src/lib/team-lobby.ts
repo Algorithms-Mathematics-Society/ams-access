@@ -36,7 +36,7 @@ export type TeamLobbyBoard = {
 };
 export type LobbyState = {
   board: TeamLobbyBoard | null;
-  status: "loading" | "team" | "solo" | "unpublished" | "error";
+  status: "loading" | "team" | "solo" | "unpublished" | "error" | "wrong-contest";
   pending: boolean;
   error: string | null;
   sampledAt: number;
@@ -245,6 +245,17 @@ export function createTeamLobbyController(options: {
       const body: unknown = await response.json().catch(() => null);
       if (stopped) return;
       if (!response.ok) {
+        // The token names another contest: terminal, and only signing in
+        // again can help, so no error text is shown here (#326).
+        if (
+          response.status === 403 &&
+          object(body) &&
+          body.detail === "this token is for another contest"
+        ) {
+          terminal = true;
+          emit({ board: null, status: "wrong-contest", error: null });
+          return;
+        }
         if (response.status === 401 || response.status === 403) {
           terminal = true;
           emit({ board: null, status: "error" });

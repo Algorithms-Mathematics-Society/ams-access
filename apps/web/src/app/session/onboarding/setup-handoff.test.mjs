@@ -613,6 +613,120 @@ test("a token for another contest shows the sign-in screen and reads nothing", a
   assert.equal(wrong.ui.attempts, 0);
 });
 
+test("a team lobby wrong-contest status shows the sign-in screen and reads nothing (#326)", async () => {
+  for (const status of ["wrong-contest", "solo"]) {
+    const reads = [];
+    const ui = { error: null, retryable: null, loading: true };
+    const effect = effectContaining("const paper = await loadContestPaper(", {
+      entryReady: true,
+      showTeamLobby: false,
+      contestId: "contest",
+      isDryRun: false,
+      participantToken: () => "token",
+      setupContextRef: { current: { isCurrent: () => true } },
+      leavingWorkspaceRef: { current: false },
+      autoLoadRetriesRef: { current: 0 },
+      readStoredSession: () => {
+        reads.push("stored");
+        return { id: "session", contest_id: "contest" };
+      },
+      getSession: async () => {
+        reads.push("session");
+        return { uid: "session", status: "pending", phase: "running" };
+      },
+      unauthorizedAtRef: { current: null },
+      desktopTeamRoom: true,
+      nativeTeamUnsupported: false,
+      teamProbeResult: null,
+      teamDeferPassesRef: { current: null },
+      TEAM_WRONG_CONTEST_MESSAGE,
+      lobbyState: { status, board: null },
+      teamOwnLabel: null,
+      authGeneration: () => 1,
+      setLoadError: (value) => (ui.error = value),
+      setLoadRetryable: (value) => (ui.retryable = value),
+      setLoading: (value) => (ui.loading = value),
+      setLoadAttempt: () => {},
+      MAX_AUTO_LOAD_RETRIES: 0,
+      ProctorApiError,
+      loadContestPaper: async () => {
+        reads.push("paper");
+        return { questions: [] };
+      },
+    });
+    const cleanup = effect();
+    await tick();
+    await tick();
+    cleanup?.();
+    if (status === "solo") {
+      assert.deepEqual(reads, ["stored", "session"], "a matching solo contest loads as before");
+      assert.notEqual(ui.error, TEAM_WRONG_CONTEST_MESSAGE);
+      continue;
+    }
+    assert.deepEqual(reads, [], "neither the session nor the paper is read");
+    assert.equal(ui.error, TEAM_WRONG_CONTEST_MESSAGE);
+    assert.equal(ui.retryable, false);
+    assert.equal(ui.loading, false);
+  }
+});
+
+// Evaluates a top-level `const name = <expr>` of the contest page with bindings.
+function declarationValue(name, bindings) {
+  let init;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === name)
+      init = node.initializer.getText(ast);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(init, name);
+  return new Function(...Object.keys(bindings), `return (${init});`)(...Object.values(bindings));
+}
+
+test("a wrong-contest lobby status never shows or renders the team lobby (#326)", () => {
+  const statuses = ["loading", "team", "unpublished", "error", "solo", "wrong-contest"];
+  for (const status of statuses)
+    for (const loading of [true, false]) {
+      const lobbyState = { status };
+      const teamWorkspaceReady = status === "solo";
+      const showTeamLobby = declarationValue("showTeamLobby", {
+        desktopTeamRoom: true,
+        teamWorkspaceReady,
+        lobbyState,
+      });
+      const renderTeamLobby = declarationValue("renderTeamLobby", {
+        showTeamLobby,
+        desktopTeamRoom: true,
+        lobbyState,
+        loading,
+      });
+      const lobby = status !== "solo" && status !== "wrong-contest";
+      assert.equal(showTeamLobby, lobby, `showTeamLobby for ${status}`);
+      assert.equal(renderTeamLobby, lobby, `renderTeamLobby for ${status}, loading ${loading}`);
+    }
+  // Off the team-room desktop nothing changes.
+  for (const status of statuses) {
+    const lobbyState = { status };
+    assert.equal(
+      declarationValue("showTeamLobby", {
+        desktopTeamRoom: false,
+        teamWorkspaceReady: false,
+        lobbyState,
+      }),
+      false
+    );
+    assert.equal(
+      declarationValue("renderTeamLobby", {
+        showTeamLobby: false,
+        desktopTeamRoom: false,
+        lobbyState,
+        loading: true,
+      }),
+      false
+    );
+  }
+});
+
 const goodSession = () => ({ uid: "session", status: "active", phase: "running" });
 async function runNativeLoad(options) {
   const fixture = nativeLoadFixture(options);

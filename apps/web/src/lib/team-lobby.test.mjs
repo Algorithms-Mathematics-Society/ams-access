@@ -139,6 +139,132 @@ test("discussion cannot issue a claim and terminal auth clears board", async () 
   controller.stop();
 });
 
+// Runs a controller under a fake clock installed as the global timers, so a
+// scheduled poll can be fired on demand instead of waited for.
+async function withFakeTimers(body) {
+  const clock = fakeClock();
+  const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  globalThis.setTimeout = clock.setTimeout;
+  globalThis.clearTimeout = clock.clearTimeout;
+  try {
+    return await body(clock);
+  } finally {
+    globalThis.setTimeout = real.setTimeout;
+    globalThis.clearTimeout = real.clearTimeout;
+  }
+}
+const wrongContest = () =>
+  Response.json({ detail: "this token is for another contest" }, { status: 403 });
+
+test("a wrong-contest 403 on the first GET is its own terminal status with no error", async () => {
+  await withFakeTimers(async (clock) => {
+    const calls = [];
+    const states = [];
+    const controller = createTeamLobbyController({
+      apiBase: "",
+      contestUid: "c",
+      headers: () => ({}),
+      hidden: () => false,
+      random: () => 0,
+      onState: (s) => states.push(s),
+      request: async (url, init) => {
+        calls.push(init.method);
+        return wrongContest();
+      },
+    });
+    await flush();
+    await flush();
+    const state = states.at(-1);
+    assert.equal(state.status, "wrong-contest");
+    assert.equal(state.board, null);
+    assert.equal(state.error, null);
+    assert.equal(state.pending, false);
+    assert.ok(
+      states.every((s) => s.status !== "error" && s.error === null),
+      "no error status or text is ever emitted"
+    );
+    assert.deepEqual(clock.pending(), [], "no poll is scheduled");
+    clock.advance(60000);
+    controller.refresh();
+    controller.claim("1");
+    controller.release();
+    await flush();
+    await flush();
+    assert.deepEqual(calls, ["GET"], "no further request is ever made");
+    controller.stop();
+  });
+});
+
+test("a wrong-contest 403 on claim is the same terminal status and stops polling", async () => {
+  await withFakeTimers(async (clock) => {
+    const calls = [];
+    let state;
+    const controller = createTeamLobbyController({
+      apiBase: "",
+      contestUid: "c",
+      headers: () => ({}),
+      hidden: () => false,
+      random: () => 0,
+      onState: (s) => (state = s),
+      request: async (url, init) => {
+        calls.push(init.method);
+        return calls.length === 1 ? Response.json(board()) : wrongContest();
+      },
+    });
+    await flush();
+    assert.equal(state.status, "team");
+    controller.claim("1");
+    await flush();
+    await flush();
+    assert.equal(state.status, "wrong-contest");
+    assert.equal(state.board, null);
+    assert.equal(state.error, null);
+    assert.equal(state.pending, false);
+    assert.deepEqual(clock.pending(), [], "no poll is scheduled");
+    clock.advance(60000);
+    controller.refresh();
+    await flush();
+    assert.deepEqual(calls, ["GET", "POST"], "no further request is ever made");
+    controller.stop();
+  });
+});
+
+test("another 403 detail and a 401 on the first GET stay terminal errors with their detail", async () => {
+  for (const [status, detail] of [
+    [403, "you are not on a team in this round"],
+    [403, "Forbidden"],
+    [401, "Unauthorized"],
+  ]) {
+    await withFakeTimers(async (clock) => {
+      let calls = 0;
+      let state;
+      const controller = createTeamLobbyController({
+        apiBase: "",
+        contestUid: "c",
+        headers: () => ({}),
+        hidden: () => false,
+        random: () => 0,
+        onState: (s) => (state = s),
+        request: async () => {
+          calls++;
+          return Response.json({ detail }, { status });
+        },
+      });
+      await flush();
+      await flush();
+      assert.equal(state.status, "error", `${status} ${detail}`);
+      assert.equal(state.board, null);
+      assert.equal(state.error, detail);
+      assert.deepEqual(clock.pending(), [], "terminal: no poll is scheduled");
+      clock.advance(60000);
+      controller.refresh();
+      await flush();
+      assert.equal(calls, 1);
+      controller.stop();
+    });
+  }
+});
+
 test("visibility refresh overlapping a GET bypasses restored ETag and reanchors server time", async () => {
   let release;
   let count = 0;
