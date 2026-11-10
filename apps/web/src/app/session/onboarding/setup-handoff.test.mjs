@@ -455,3 +455,89 @@ test("unsupported native client loads no paper until the probe proves a solo con
     }
   }
 });
+
+function nativeLoadFixture({ result, session }) {
+  const reads = [];
+  const ui = { error: null, retryable: null, loading: true, probe: "kept", round: 0, attempts: 0 };
+  const unauthorizedAtRef = { current: null };
+  const effect = effectContaining("const paper = await loadContestPaper(", {
+    entryReady: true,
+    showTeamLobby: false,
+    contestId: "contest",
+    isDryRun: false,
+    participantToken: () => "token",
+    setupContextRef: { current: { isCurrent: () => true } },
+    leavingWorkspaceRef: { current: false },
+    autoLoadRetriesRef: { current: 0 },
+    readStoredSession: () => ({ id: "session", contest_id: "contest" }),
+    getSession: async () => {
+      reads.push("session");
+      return session();
+    },
+    unauthorizedAtRef,
+    onUnauthorized: (firstAt, now) => ({ firstAt: firstAt ?? now, signedOut: false }),
+    AUTH_RECHECK_MS: 0,
+    redirectAfterRelease: async (route) => reads.push(route),
+    desktopTeamRoom: false,
+    nativeTeamUnsupported: true,
+    teamProbeResult: result,
+    lobbyState: { status: "loading" },
+    teamOwnLabel: null,
+    authGeneration: () => 1,
+    setLoadError: (value) => (ui.error = value),
+    setLoadRetryable: (value) => (ui.retryable = value),
+    setLoading: (value) => (ui.loading = value),
+    setLoadAttempt: () => ui.attempts++,
+    setTeamProbe: (value) => (ui.probe = value),
+    setTeamProbeRound: (update) => (ui.round = update(ui.round)),
+    MAX_AUTO_LOAD_RETRIES: 0,
+    ProctorApiError,
+    loadContestPaper: async () => {
+      reads.push("paper");
+      return { questions: [] };
+    },
+  });
+  return { effect, reads, ui };
+}
+class ProctorApiError extends Error {
+  constructor(status) {
+    super(String(status));
+    this.status = status;
+  }
+}
+
+test("a 401 probe lets the existing sign-in handling run but never fetches the paper", async () => {
+  const unauthorized = nativeLoadFixture({
+    result: "unauthorized",
+    session: () => {
+      throw new ProctorApiError(401);
+    },
+  });
+  const cleanup = unauthorized.effect();
+  await tick();
+  await tick();
+  cleanup?.();
+  assert.deepEqual(unauthorized.reads, ["session"], "getSession runs, the paper does not");
+  assert.equal(
+    unauthorized.ui.error,
+    "Checking your sign-in. This page will retry in a few seconds."
+  );
+  assert.equal(unauthorized.ui.retryable, true);
+  assert.equal(unauthorized.ui.probe, "kept");
+});
+
+test("a later attempt with a good session and no solo result re-probes instead of fetching", async () => {
+  const later = nativeLoadFixture({
+    result: "unauthorized",
+    session: () => ({ uid: "session", status: "active", phase: "running" }),
+  });
+  const cleanup = later.effect();
+  await tick();
+  await tick();
+  cleanup?.();
+  assert.deepEqual(later.reads, ["session"], "the paper is never fetched without a solo result");
+  assert.equal(later.ui.probe, null, "the stale probe result is cleared");
+  assert.equal(later.ui.round, 1, "a fresh probe is requested");
+  assert.equal(later.ui.loading, true, "the boot screen stays");
+  assert.equal(later.ui.error, null);
+});

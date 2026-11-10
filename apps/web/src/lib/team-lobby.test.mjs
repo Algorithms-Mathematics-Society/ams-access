@@ -186,7 +186,8 @@ test("team round probe classifier: only the exact not-a-team-round 404 is solo",
     [404, "this contest is not a team round", "error"],
     [404, { detail: "This contest is not a team round" }, "error"],
     [403, null, "error"],
-    [401, { detail: "this contest is not a team round" }, "error"],
+    [401, { detail: "this contest is not a team round" }, "unauthorized"],
+    [401, null, "unauthorized"],
     [500, { detail: "this contest is not a team round" }, "error"],
     [503, null, "error"],
     [409, null, "error"],
@@ -224,6 +225,7 @@ test("team round probe issues one no-store GET with headers and signal, then cla
   assert.equal("body" in calls[0].init, false);
   assert.equal(await run(reply(200, board())), "team");
   assert.equal(await run(reply(404, { detail: "teams have not been published yet" })), "team");
+  assert.equal(await run(reply(401, { detail: "Unauthorized" })), "unauthorized");
   assert.equal(await run(reply(502, null)), "error");
   assert.equal(await run(async () => new Response("not json", { status: 404 })), "error");
   assert.equal(
@@ -238,5 +240,5 @@ test("team round probe issues one no-store GET with headers and signal, then cla
     }),
     "error"
   );
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });

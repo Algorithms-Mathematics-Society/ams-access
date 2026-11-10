@@ -461,6 +461,8 @@ export default function ContestPageClient() {
     token: string | null;
     result: Exclude<TeamRoundProbe, "error">;
   } | null>(null);
+  // Bumped to discard a non-solo pass and probe again before any paper fetch.
+  const [teamProbeRound, setTeamProbeRound] = useState(0);
   // Never apply a result from another contest or another signed-in identity.
   const teamProbeResult =
     teamProbe &&
@@ -471,6 +473,7 @@ export default function ContestPageClient() {
       : null;
   useEffect(() => {
     if (!nativeTeamUnsupported || !contestId) return;
+    const round = teamProbeRound;
     const generation = authGeneration();
     const token = participantToken();
     const current = () => generation === authGeneration() && token === participantToken();
@@ -507,12 +510,20 @@ export default function ContestPageClient() {
       active?.abort();
     };
     const unsubscribe = subscribeAuthChanges(stop);
-    void run();
+    // A re-probe after a 401 pass waits first, so a server that keeps refusing
+    // the probe while serving the session cannot drive a tight request loop.
+    if (round > 0)
+      timer = setTimeout(
+        () => void run(),
+        Math.min(2000 * 2 ** (round - 1), 15_000) + Math.floor(Math.random() * 1000)
+      );
+    else void run();
     return () => {
       unsubscribe();
       stop();
     };
-  }, [nativeTeamUnsupported, contestId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeTeamUnsupported, contestId, teamProbeRound]);
   const teamOwnLabel = assignedWorkspaceLabel(lobbyState);
   const teamWorkspaceReady = teamWorkspaceAllowed(lobbyState, enteredTeamPart);
   const showTeamLobby = desktopTeamRoom && !teamWorkspaceReady;
@@ -1546,8 +1557,10 @@ export default function ContestPageClient() {
       return;
     }
     // Until the probe proves a solo contest, an unsupported native client loads
-    // nothing: the boot screen stays up (with Exit) while it is pending.
-    if (nativeTeamUnsupported && teamProbeResult !== "solo") {
+    // nothing: the boot screen stays up (with Exit) while it is pending. A 401
+    // passes only so the session read and its sign-in handling run as before;
+    // the paper fetch below still requires "solo".
+    if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "unauthorized") {
       if (teamProbeResult === "team") {
         setLoadError(
           "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
@@ -1678,6 +1691,16 @@ export default function ContestPageClient() {
         setLoadRetryable(false);
         autoLoadRetriesRef.current = 0;
         setLoading(false);
+        return;
+      }
+      if (nativeTeamUnsupported && teamProbeResult !== "solo") {
+        // The session is good but the round is unproven (a 401 pass): discard
+        // that pass and probe again, behind the boot screen, before any paper.
+        setTeamProbe(null);
+        setTeamProbeRound((n) => n + 1);
+        setLoadError(null);
+        setLoadRetryable(false);
+        setLoading(true);
         return;
       }
       const paper = await loadContestPaper(

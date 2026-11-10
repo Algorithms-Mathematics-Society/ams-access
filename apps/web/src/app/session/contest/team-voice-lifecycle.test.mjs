@@ -99,7 +99,7 @@ test("unsupported native clients probe the round before any paper fetch and bloc
   // The probe effect: only for unsupported native clients, aborted on auth change
   // and unmount, one request in flight, bounded backoff on "error".
   const probe = flat.match(
-    /useEffect\(\(\) => \{ if \(!nativeTeamUnsupported \|\| !contestId\) return;([\s\S]*?)\}, \[nativeTeamUnsupported, contestId\]\);/
+    /useEffect\(\(\) => \{ if \(!nativeTeamUnsupported \|\| !contestId\) return;([\s\S]*?)\}, \[nativeTeamUnsupported, contestId, teamProbeRound\]\);/
   );
   assert.ok(probe, "probe effect present and keyed on the gate and contest");
   const body = probe[1];
@@ -127,13 +127,27 @@ test("unsupported native clients probe the round before any paper fetch and bloc
   );
   assert.ok(end > start, "load effect re-runs when the probe resolves");
   const load = flat.slice(start, end);
-  const gate = load.indexOf('if (nativeTeamUnsupported && teamProbeResult !== "solo") {');
+  const gate = load.indexOf(
+    'if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "unauthorized") {'
+  );
   assert.ok(gate > load.indexOf("if (teamRoom && !teamOwnLabel) return;"));
   assert.ok(gate < load.indexOf("getSession("));
   assert.ok(gate < load.indexOf("loadContestPaper("));
   assert.ok(gate < load.indexOf("redirectAfterRelease("));
+  // A 401 pass reaches the session read, but the paper fetch itself still
+  // requires "solo": the in-flight gate sits after getSession, before the fetch.
+  const paperGate = load.indexOf(
+    'if (nativeTeamUnsupported && teamProbeResult !== "solo") { // The session is good'
+  );
+  assert.ok(paperGate > load.indexOf("const live = await getSession("));
+  assert.ok(paperGate < load.indexOf("const paper = await loadContestPaper("));
+  assert.match(
+    load.slice(paperGate, load.indexOf("const paper = await loadContestPaper(")),
+    /setTeamProbe\(null\); setTeamProbeRound\(\(n\) => n \+ 1\);[\s\S]*?setLoading\(true\); return; \}/
+  );
+  assert.match(probe[1], /if \(round > 0\) timer = setTimeout\(/);
   assert.match(
     load,
-    /if \(nativeTeamUnsupported && teamProbeResult !== "solo"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
+    /if \(nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "unauthorized"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
   );
 });
