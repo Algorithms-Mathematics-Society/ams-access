@@ -205,7 +205,9 @@ export function TeamVoiceControls({
 
   const projectionMessage =
     projection.status === "error"
-      ? "Team status is reconnecting. Your work is safe."
+      ? team
+        ? "Team status is reconnecting. Your work is safe."
+        : "Team status is unavailable."
       : projection.status === "unpublished"
         ? "Teams have not been published yet. Voice will be available when your team is published and its voice window opens."
         : null;

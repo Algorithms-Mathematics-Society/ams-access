@@ -160,3 +160,20 @@ test("unsupported native clients probe the round before any paper fetch and bloc
     /if \(nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
   );
 });
+
+test("reconnecting line only shows with a last good board (#312)", () => {
+  // Evaluate the real projectionMessage expression from the component source.
+  const expr = ui.match(/const projectionMessage =([\s\S]*?);\n/)[1];
+  const run = (projection, team) =>
+    new Function("projection", "team", `return (${expr});`)(projection, team);
+  assert.equal(
+    run({ status: "error", board: { id: "t" } }, { id: "t" }),
+    "Team status is reconnecting. Your work is safe."
+  );
+  assert.equal(run({ status: "error", board: null }, null), "Team status is unavailable.");
+  assert.equal(run({ status: "ok", board: null }, null), null);
+  assert.match(
+    run({ status: "unpublished", board: null }, null),
+    /^Teams have not been published yet\./
+  );
+});
