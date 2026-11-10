@@ -14,7 +14,8 @@ test("Desktop adapter retains lifecycle boundaries and mandatory overlay priorit
   assert.match(ui, /addEventListener\("beforeunload", terminate\)/);
   assert.match(ui, /if \(!available\) \{[\s\S]*?session.current\?\.stop\(\)/);
   assert.doesNotMatch(ui, /pollVoiceTeam/);
-  assert.match(ui, /projection.status === "team"/);
+  assert.match(ui, /voiceProjectionDecision\(\{[\s\S]*?status: projection.status/);
+  assert.match(ui, /decision === "keep"\) return;/);
   assert.match(ui, /inert=\{suspended/);
   assert.match(
     client.replace(/\s+/g, " "),

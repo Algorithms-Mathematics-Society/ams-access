@@ -12,7 +12,12 @@ import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { authGeneration, subscribeAuthChanges } from "@/lib/proctor-api";
 import { cameraSession } from "@/lib/camera-session";
 import { resolveApiBase } from "@/lib/api-base";
-import { acquireVoiceMicrophone, readVoiceCredentials, type VoiceTeam } from "@/lib/team-voice-api";
+import {
+  acquireVoiceMicrophone,
+  readVoiceCredentials,
+  voiceProjectionDecision,
+  type VoiceTeam,
+} from "@/lib/team-voice-api";
 import {
   createTeamVoiceSession,
   type TeamVoiceSession,
@@ -92,7 +97,14 @@ export function TeamVoiceControls({
   }, [contestUid, enabled]);
 
   useEffect(() => {
-    const available = enabled && projection.status === "team" && Boolean(team?.phase.voice_open);
+    const decision = voiceProjectionDecision({
+      enabled,
+      status: projection.status,
+      hasBoard: team !== null,
+      voiceOpen: Boolean(team?.phase.voice_open),
+    });
+    if (decision === "keep") return;
+    const available = decision === "open";
     open.current = available;
     if (!available) {
       const status = session.current?.getSnapshot().status;
