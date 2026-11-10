@@ -182,7 +182,13 @@ test("team round probe classifier: only the exact not-a-team-round 404 is solo",
     [404, { detail: "teams have not been published yet" }, "team"],
     [403, { detail: "you are not on a team in this round" }, "team"],
     // A definite refusal that proves nothing defers to the normal load.
-    [403, { detail: "this token is for another contest" }, "defer"],
+    // A token issued for another contest: only signing in again can help.
+    [403, { detail: "this token is for another contest" }, "wrong-contest"],
+    [403, { detail: "this token is for a different contest" }, "defer"],
+    [403, { detail: "This token is for another contest" }, "defer"],
+    [403, "this token is for another contest", "defer"],
+    [401, { detail: "this token is for another contest" }, "defer"],
+    [404, { detail: "this token is for another contest" }, "defer"],
     [404, { detail: "contest not found" }, "defer"],
     [404, null, "defer"],
     [404, "this contest is not a team round", "defer"],
@@ -241,7 +247,11 @@ test("team round probe issues one no-store GET with headers and signal, then cla
   assert.equal(await run(reply(200, board())), "team");
   assert.equal(await run(reply(404, { detail: "teams have not been published yet" })), "team");
   assert.equal(await run(reply(401, { detail: "Unauthorized" })), "defer");
-  assert.equal(await run(reply(403, { detail: "this token is for another contest" })), "defer");
+  assert.equal(
+    await run(reply(403, { detail: "this token is for another contest" })),
+    "wrong-contest"
+  );
+  assert.equal(await run(reply(403, { detail: "forbidden" })), "defer");
   assert.equal(await run(reply(404, { detail: "contest not found" })), "defer");
   assert.equal(await run(reply(400, null)), "defer");
   assert.equal(await run(reply(408, null)), "error");
@@ -261,7 +271,7 @@ test("team round probe issues one no-store GET with headers and signal, then cla
     }),
     "error"
   );
-  assert.equal(calls.length, 10);
+  assert.equal(calls.length, 11);
 });
 
 // Deterministic timers for the probe loop: nothing fires until advanced.
@@ -350,7 +360,7 @@ test("probe loop: round 0 probes immediately and delivers a definite result once
   assert.equal(fake.calls[0].signal.aborted, false);
   clock.advance(60_000);
   assert.equal(fake.calls.length, 1, "a definite result ends the loop");
-  for (const result of ["team", "defer"]) {
+  for (const result of ["team", "defer", "wrong-contest"]) {
     const loop = startLoop();
     loop.fake.calls[0].resolve(result);
     await settle();

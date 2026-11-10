@@ -48,6 +48,7 @@ import {
   createTeamLobbyController,
   probeTeamRound,
   startTeamRoundProbeLoop,
+  TEAM_WRONG_CONTEST_MESSAGE,
   type LobbyState,
   type TeamRoundProbe,
 } from "@/lib/team-lobby";
@@ -464,6 +465,10 @@ export default function ContestPageClient() {
   } | null>(null);
   // Bumped to discard a non-solo pass and probe again before any paper fetch.
   const [teamProbeRound, setTeamProbeRound] = useState(0);
+  // Consecutive defer passes that re-probed after a good session, per contest
+  // and identity. Capped so a refusal the session read ignores cannot keep the
+  // boot screen up forever.
+  const teamDeferPassesRef = useRef<{ identity: string; count: number } | null>(null);
   // Never apply a result from another contest or another signed-in identity.
   const teamProbeResult =
     teamProbe &&
@@ -1537,7 +1542,16 @@ export default function ContestPageClient() {
     // nothing: the boot screen stays up (with Exit) while it is pending. A
     // "defer" (a 401 or another definite refusal) passes only so the session
     // read and its own error handling run as before; the paper fetch below
-    // still requires "solo".
+    // still requires "solo". A token for another contest stops here: only
+    // signing in again can help, so nothing is read.
+    if (nativeTeamUnsupported && (teamProbeResult === "solo" || teamProbeResult === "team"))
+      teamDeferPassesRef.current = null;
+    if (nativeTeamUnsupported && teamProbeResult === "wrong-contest") {
+      setLoadError(TEAM_WRONG_CONTEST_MESSAGE);
+      setLoadRetryable(false);
+      setLoading(false);
+      return;
+    }
     if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer") {
       if (teamProbeResult === "team") {
         setLoadError(
@@ -1674,6 +1688,19 @@ export default function ContestPageClient() {
       if (nativeTeamUnsupported && teamProbeResult !== "solo") {
         // The session is good but the round is unproven (a defer pass): discard
         // that pass and probe again, behind the boot screen, before any paper.
+        // After 3 such passes in a row for this contest and identity, stop.
+        const identity = `${contestId}\n${authGeneration()}\n${participantToken()}`;
+        const passes =
+          teamDeferPassesRef.current?.identity === identity ? teamDeferPassesRef.current.count : 0;
+        if (passes >= 3) {
+          setLoadError(
+            "This contest could not be opened. Return to your contest list and try again."
+          );
+          setLoadRetryable(false);
+          setLoading(false);
+          return;
+        }
+        teamDeferPassesRef.current = { identity, count: passes + 1 };
         setTeamProbe(null);
         setTeamProbeRound((n) => n + 1);
         setLoadError(null);
@@ -4761,6 +4788,7 @@ export default function ContestPageClient() {
       <ContestLoadErrorScreen
         loadError={loadError}
         router={router}
+        exitTo={loadError === TEAM_WRONG_CONTEST_MESSAGE ? "/login" : undefined}
         onRetry={
           loadRetryable
             ? () => {

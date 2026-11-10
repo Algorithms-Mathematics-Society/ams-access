@@ -332,9 +332,14 @@ export function createTeamLobbyController(options: {
   };
 }
 /** What a client that cannot run team rooms must know before it loads a paper. */
-export type TeamRoundProbe = "solo" | "team" | "defer" | "error";
+export type TeamRoundProbe = "solo" | "team" | "defer" | "wrong-contest" | "error";
+/** Shown when the probe proves the sign-in was issued for another contest. */
+export const TEAM_WRONG_CONTEST_MESSAGE =
+  "This sign-in is for a different contest. Sign in again with the details for this contest.";
 /** Only the exact "not a team round" 404 proves a solo contest. A 200, an
- * unpublished-teams 404 and a not-on-a-team 403 all prove a team round. Any
+ * unpublished-teams 404 and a not-on-a-team 403 all prove a team round. A 403
+ * "this token is for another contest" is "wrong-contest": the token names a
+ * different contest, so only signing in again can help. Any
  * other 4xx (a 401, another 403 or 404, a 400) is "defer": the probe proves
  * nothing, but the server gave a definite answer, so the caller lets its normal
  * load and its own error handling run; it never proves a solo contest. A
@@ -347,6 +352,7 @@ export function classifyTeamRoundProbe(status: number, body: unknown): TeamRound
   if (status === 404 && detail === "this contest is not a team round") return "solo";
   if (status === 404 && detail === "teams have not been published yet") return "team";
   if (status === 403 && detail === "you are not on a team in this round") return "team";
+  if (status === 403 && detail === "this token is for another contest") return "wrong-contest";
   if (status === 408 || status === 429) return "error";
   if (status >= 400 && status < 500) return "defer";
   return "error";
