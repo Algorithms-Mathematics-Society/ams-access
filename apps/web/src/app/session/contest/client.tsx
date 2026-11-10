@@ -1464,6 +1464,10 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!entryReady || showTeamLobby) return;
+    // A team room never loads the full paper: without the server-confirmed own
+    // label the lobby is on screen and nothing is fetched.
+    const teamRoom = desktopTeamRoom && lobbyState.status !== "solo";
+    if (teamRoom && !teamOwnLabel) return;
     if (!contestId) {
       setLoadError("Missing contest ID. Please relaunch from your contest list.");
       setLoading(false);
@@ -1579,7 +1583,7 @@ export default function ContestPageClient() {
       }
 
       const workspaceIdentity =
-        desktopTeamRoom && lobbyState.status === "team" && teamOwnLabel
+        teamRoom && teamOwnLabel
           ? { contestId, sessionId: live.uid, generation: authGeneration(), label: teamOwnLabel }
           : null;
       if (
@@ -1594,13 +1598,12 @@ export default function ContestPageClient() {
       }
       const paper = await loadContestPaper(
         contestId,
-        desktopTeamRoom && lobbyState.status === "team" ? (teamOwnLabel ?? undefined) : undefined
+        teamRoom ? (teamOwnLabel ?? undefined) : undefined
       );
       const index = paper.index;
-      const questions =
-        desktopTeamRoom && lobbyState.status === "team"
-          ? paper.questions.filter((question) => question.id === teamOwnLabel)
-          : paper.questions;
+      const questions = teamRoom
+        ? paper.questions.filter((question) => question.id === teamOwnLabel)
+        : paper.questions;
       if (!isCurrentLoad()) {
         releaseCandidateQuestionAssets(
           questions.flatMap((question) =>

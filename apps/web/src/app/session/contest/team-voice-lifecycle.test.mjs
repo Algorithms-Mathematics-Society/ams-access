@@ -66,3 +66,19 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   );
   assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current\}/);
 });
+
+test("team paper load never gates on a team status and fails closed without a label", () => {
+  const flat = client.replace(/\s+/g, " ");
+  assert.doesNotMatch(flat, /desktopTeamRoom && lobbyState\.status === "team"/);
+  assert.match(flat, /const teamRoom = desktopTeamRoom && lobbyState\.status !== "solo";/);
+  assert.match(flat, /if \(teamRoom && !teamOwnLabel\) return;/);
+  assert.match(
+    flat,
+    /loadContestPaper\( contestId, teamRoom \? \(teamOwnLabel \?\? undefined\) : undefined \)/
+  );
+  assert.match(
+    flat,
+    /teamRoom \? paper\.questions\.filter\(\(question\) => question\.id === teamOwnLabel\)/
+  );
+  assert.match(ui, /Team status is reconnecting\. Your work is safe\./);
+});
