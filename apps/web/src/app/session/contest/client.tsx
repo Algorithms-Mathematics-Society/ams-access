@@ -47,6 +47,7 @@ import { resolveApiBase } from "@/lib/api-base";
 import {
   createTeamLobbyController,
   probeTeamRound,
+  startTeamRoundProbeLoop,
   type LobbyState,
   type TeamRoundProbe,
 } from "@/lib/team-lobby";
@@ -473,51 +474,27 @@ export default function ContestPageClient() {
       : null;
   useEffect(() => {
     if (!nativeTeamUnsupported || !contestId) return;
-    const round = teamProbeRound;
     const generation = authGeneration();
     const token = participantToken();
-    const current = () => generation === authGeneration() && token === participantToken();
-    let stopped = false;
-    let attempt = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let active: AbortController | undefined;
-    const run = async () => {
-      if (stopped || active) return;
-      const controller = new AbortController();
-      active = controller;
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const result = await probeTeamRound({
-        apiBase: API_URL,
-        contestUid: contestId,
-        headers: authHeaders(),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      active = undefined;
-      if (stopped || !current()) return;
-      if (result === "error") {
-        // Unknown is never solo: keep the boot screen and retry, bounded.
-        const delay = attempt < 3 ? 2000 * 2 ** attempt : 15_000;
-        attempt += 1;
-        timer = setTimeout(() => void run(), delay + Math.floor(Math.random() * 1000));
-        return;
-      }
-      setTeamProbe({ contestId, generation, token, result });
-    };
-    const stop = () => {
-      stopped = true;
-      clearTimeout(timer);
-      active?.abort();
-    };
+    // Unknown is never solo: the loop keeps the boot screen and retries, and a
+    // re-probe after a non-solo pass waits first (see startTeamRoundProbeLoop).
+    const stop = startTeamRoundProbeLoop({
+      round: teamProbeRound,
+      probe: (signal) =>
+        probeTeamRound({
+          apiBase: API_URL,
+          contestUid: contestId,
+          headers: authHeaders(),
+          signal,
+        }),
+      // Never apply a result fetched for another signed-in identity.
+      isCurrent: () => generation === authGeneration() && token === participantToken(),
+      onResult: (result) => setTeamProbe({ contestId, generation, token, result }),
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (handle) => clearTimeout(handle),
+      random: Math.random,
+    });
     const unsubscribe = subscribeAuthChanges(stop);
-    // A re-probe after a 401 pass waits first, so a server that keeps refusing
-    // the probe while serving the session cannot drive a tight request loop.
-    if (round > 0)
-      timer = setTimeout(
-        () => void run(),
-        Math.min(2000 * 2 ** (round - 1), 15_000) + Math.floor(Math.random() * 1000)
-      );
-    else void run();
     return () => {
       unsubscribe();
       stop();
@@ -1557,10 +1534,11 @@ export default function ContestPageClient() {
       return;
     }
     // Until the probe proves a solo contest, an unsupported native client loads
-    // nothing: the boot screen stays up (with Exit) while it is pending. A 401
-    // passes only so the session read and its sign-in handling run as before;
-    // the paper fetch below still requires "solo".
-    if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "unauthorized") {
+    // nothing: the boot screen stays up (with Exit) while it is pending. A
+    // "defer" (a 401 or another definite refusal) passes only so the session
+    // read and its own error handling run as before; the paper fetch below
+    // still requires "solo".
+    if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer") {
       if (teamProbeResult === "team") {
         setLoadError(
           "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
@@ -1694,7 +1672,7 @@ export default function ContestPageClient() {
         return;
       }
       if (nativeTeamUnsupported && teamProbeResult !== "solo") {
-        // The session is good but the round is unproven (a 401 pass): discard
+        // The session is good but the round is unproven (a defer pass): discard
         // that pass and probe again, behind the boot screen, before any paper.
         setTeamProbe(null);
         setTeamProbeRound((n) => n + 1);

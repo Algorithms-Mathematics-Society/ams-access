@@ -508,7 +508,7 @@ class ProctorApiError extends Error {
 
 test("a 401 probe lets the existing sign-in handling run but never fetches the paper", async () => {
   const unauthorized = nativeLoadFixture({
-    result: "unauthorized",
+    result: "defer",
     session: () => {
       throw new ProctorApiError(401);
     },
@@ -526,9 +526,48 @@ test("a 401 probe lets the existing sign-in handling run but never fetches the p
   assert.equal(unauthorized.ui.probe, "kept");
 });
 
+test("a deterministic probe refusal reaches the loader's own error handling, never the paper", async () => {
+  const gone = nativeLoadFixture({
+    result: "defer",
+    session: () => {
+      throw new ProctorApiError(404);
+    },
+  });
+  let cleanup = gone.effect();
+  await tick();
+  await tick();
+  cleanup?.();
+  assert.deepEqual(
+    gone.reads,
+    ["session", "/session/onboarding?contestId=contest"],
+    "a missing session goes to onboarding as before; the paper is not read"
+  );
+  assert.equal(gone.ui.probe, "kept");
+
+  const refused = nativeLoadFixture({
+    result: "defer",
+    session: () => {
+      const error = new ProctorApiError(403);
+      error.isPermanent = true;
+      throw error;
+    },
+  });
+  cleanup = refused.effect();
+  await tick();
+  await tick();
+  cleanup?.();
+  assert.deepEqual(refused.reads, ["session"], "getSession runs, the paper does not");
+  assert.equal(
+    refused.ui.error,
+    "Unable to load contest. Return to your contest list and try again."
+  );
+  assert.equal(refused.ui.retryable, false);
+  assert.equal(refused.ui.loading, false, "the boot screen does not spin forever");
+});
+
 test("a later attempt with a good session and no solo result re-probes instead of fetching", async () => {
   const later = nativeLoadFixture({
-    result: "unauthorized",
+    result: "defer",
     session: () => ({ uid: "session", status: "active", phase: "running" }),
   });
   const cleanup = later.effect();

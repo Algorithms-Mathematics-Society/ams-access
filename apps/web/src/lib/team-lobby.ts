@@ -332,20 +332,23 @@ export function createTeamLobbyController(options: {
   };
 }
 /** What a client that cannot run team rooms must know before it loads a paper. */
-export type TeamRoundProbe = "solo" | "team" | "unauthorized" | "error";
+export type TeamRoundProbe = "solo" | "team" | "defer" | "error";
 /** Only the exact "not a team round" 404 proves a solo contest. A 200, an
- * unpublished-teams 404 and a not-on-a-team 403 all prove a team round. Anything
- * else is unknown and must be retried, never treated as solo. A 401 is reported
- * separately so the caller can let its own sign-in handling run; it never
- * proves a solo contest.
+ * unpublished-teams 404 and a not-on-a-team 403 all prove a team round. Any
+ * other 4xx (a 401, another 403 or 404, a 400) is "defer": the probe proves
+ * nothing, but the server gave a definite answer, so the caller lets its normal
+ * load and its own error handling run; it never proves a solo contest. A
+ * network failure, 408, 429, any 5xx or anything else is "error" and must be
+ * retried, never treated as solo.
  */
 export function classifyTeamRoundProbe(status: number, body: unknown): TeamRoundProbe {
   if (status === 200) return "team";
-  if (status === 401) return "unauthorized";
   const detail = object(body) ? body.detail : undefined;
   if (status === 404 && detail === "this contest is not a team round") return "solo";
   if (status === 404 && detail === "teams have not been published yet") return "team";
   if (status === 403 && detail === "you are not on a team in this round") return "team";
+  if (status === 408 || status === 429) return "error";
+  if (status >= 400 && status < 500) return "defer";
   return "error";
 }
 /** One GET of the team endpoint, classified. Never throws: a network failure,
@@ -373,4 +376,58 @@ export async function probeTeamRound(options: {
   } catch {
     return "error";
   }
+}
+/** Probes until the round is known, then reports it once. One request is in
+ * flight at a time and each is aborted after 8 s. An "error" is retried after
+ * 2 s, 4 s, 8 s, then every 15 s, each plus up to 1 s of jitter. A later round
+ * (a re-probe after a non-solo pass) waits min(2000 * 2^(round-1), 15000) plus
+ * jitter first, so a server that keeps refusing cannot drive a tight loop. A
+ * result that arrives after stop() or once isCurrent() is false is dropped.
+ * Returns stop(), which cancels any pending timer and aborts any request.
+ */
+export function startTeamRoundProbeLoop<Handle>(options: {
+  probe: (signal: AbortSignal) => Promise<TeamRoundProbe>;
+  round: number;
+  isCurrent: () => boolean;
+  onResult: (result: Exclude<TeamRoundProbe, "error">) => void;
+  setTimeout: (fn: () => void, ms: number) => Handle;
+  clearTimeout: (handle: Handle | undefined) => void;
+  random: () => number;
+}): () => void {
+  const { probe, round, isCurrent, onResult, random } = options;
+  const schedule = options.setTimeout;
+  const cancel = options.clearTimeout;
+  let stopped = false;
+  let attempt = 0;
+  let timer: Handle | undefined;
+  let active: AbortController | undefined;
+  const run = async () => {
+    if (stopped || active) return;
+    const controller = new AbortController();
+    active = controller;
+    const timeout = schedule(() => controller.abort(), 8000);
+    const result = await probe(controller.signal);
+    cancel(timeout);
+    active = undefined;
+    if (stopped || !isCurrent()) return;
+    if (result === "error") {
+      // Unknown is never solo: keep waiting and retry, bounded.
+      const delay = attempt < 3 ? 2000 * 2 ** attempt : 15_000;
+      attempt += 1;
+      timer = schedule(() => void run(), delay + Math.floor(random() * 1000));
+      return;
+    }
+    onResult(result);
+  };
+  if (round > 0)
+    timer = schedule(
+      () => void run(),
+      Math.min(2000 * 2 ** (round - 1), 15_000) + Math.floor(random() * 1000)
+    );
+  else void run();
+  return () => {
+    stopped = true;
+    cancel(timer);
+    active?.abort();
+  };
 }

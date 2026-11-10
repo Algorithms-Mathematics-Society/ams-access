@@ -6,6 +6,7 @@ import {
   createTeamLobbyController,
   classifyTeamRoundProbe,
   probeTeamRound,
+  startTeamRoundProbeLoop,
 } from "./team-lobby.ts";
 const board = () => ({
   team: { uid: "team", number: 1, name: "Team 1" },
@@ -180,17 +181,31 @@ test("team round probe classifier: only the exact not-a-team-round 404 is solo",
     [200, board(), "team"],
     [404, { detail: "teams have not been published yet" }, "team"],
     [403, { detail: "you are not on a team in this round" }, "team"],
-    [403, { detail: "this token is for another contest" }, "error"],
-    [404, { detail: "contest not found" }, "error"],
-    [404, null, "error"],
-    [404, "this contest is not a team round", "error"],
-    [404, { detail: "This contest is not a team round" }, "error"],
-    [403, null, "error"],
-    [401, { detail: "this contest is not a team round" }, "unauthorized"],
-    [401, null, "unauthorized"],
+    // A definite refusal that proves nothing defers to the normal load.
+    [403, { detail: "this token is for another contest" }, "defer"],
+    [404, { detail: "contest not found" }, "defer"],
+    [404, null, "defer"],
+    [404, "this contest is not a team round", "defer"],
+    [404, { detail: "This contest is not a team round" }, "defer"],
+    [403, null, "defer"],
+    [401, { detail: "this contest is not a team round" }, "defer"],
+    [401, null, "defer"],
+    [400, { detail: "bad request" }, "defer"],
+    [409, null, "defer"],
+    [410, null, "defer"],
+    [422, null, "defer"],
+    [499, null, "defer"],
+    // Transient or unknown answers are retried, never treated as solo.
+    [408, null, "error"],
+    [408, { detail: "this contest is not a team round" }, "error"],
+    [429, null, "error"],
     [500, { detail: "this contest is not a team round" }, "error"],
+    [500, null, "error"],
+    [502, null, "error"],
     [503, null, "error"],
-    [409, null, "error"],
+    [504, null, "error"],
+    [204, null, "error"],
+    [302, null, "error"],
   ];
   for (const [status, body, expected] of cases)
     assert.equal(
@@ -225,9 +240,15 @@ test("team round probe issues one no-store GET with headers and signal, then cla
   assert.equal("body" in calls[0].init, false);
   assert.equal(await run(reply(200, board())), "team");
   assert.equal(await run(reply(404, { detail: "teams have not been published yet" })), "team");
-  assert.equal(await run(reply(401, { detail: "Unauthorized" })), "unauthorized");
+  assert.equal(await run(reply(401, { detail: "Unauthorized" })), "defer");
+  assert.equal(await run(reply(403, { detail: "this token is for another contest" })), "defer");
+  assert.equal(await run(reply(404, { detail: "contest not found" })), "defer");
+  assert.equal(await run(reply(400, null)), "defer");
+  assert.equal(await run(reply(408, null)), "error");
+  assert.equal(await run(reply(429, null)), "error");
   assert.equal(await run(reply(502, null)), "error");
-  assert.equal(await run(async () => new Response("not json", { status: 404 })), "error");
+  assert.equal(await run(async () => new Response("not json", { status: 404 })), "defer");
+  assert.equal(await run(async () => new Response("not json", { status: 503 })), "error");
   assert.equal(
     await run(async () => {
       throw new TypeError("Load failed");
@@ -240,5 +261,245 @@ test("team round probe issues one no-store GET with headers and signal, then cla
     }),
     "error"
   );
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 10);
+});
+
+// Deterministic timers for the probe loop: nothing fires until advanced.
+function fakeClock() {
+  let now = 0;
+  let nextId = 1;
+  const timers = new Map();
+  const scheduled = [];
+  return {
+    setTimeout: (fn, ms) => {
+      const id = nextId++;
+      timers.set(id, { at: now + ms, fn, ms });
+      scheduled.push(ms);
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
+    pending: () => [...timers.values()].map((t) => t.ms).sort((a, b) => a - b),
+    scheduled,
+    advance(ms) {
+      const until = now + ms;
+      for (;;) {
+        const due = [...timers.entries()]
+          .filter(([, t]) => t.at <= until)
+          .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        now = due[1].at;
+        due[1].fn();
+      }
+      now = until;
+    },
+  };
+}
+// A probe whose replies the test controls. Like probeTeamRound, an abort
+// resolves "error" instead of throwing.
+function fakeProbe() {
+  const calls = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const probe = (signal) =>
+    new Promise((resolve) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      const call = {
+        signal,
+        settled: false,
+        resolve: (value) => {
+          if (call.settled) return;
+          call.settled = true;
+          inFlight -= 1;
+          resolve(value);
+        },
+      };
+      signal.addEventListener("abort", () => call.resolve("error"));
+      calls.push(call);
+    });
+  return { probe, calls, maxInFlight: () => maxInFlight, inFlight: () => inFlight };
+}
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+function startLoop({ round = 0, random = () => 0, isCurrent = () => true } = {}) {
+  const clock = fakeClock();
+  const fake = fakeProbe();
+  const results = [];
+  const stop = startTeamRoundProbeLoop({
+    probe: fake.probe,
+    round,
+    isCurrent,
+    onResult: (result) => results.push(result),
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    random,
+  });
+  return { clock, fake, results, stop };
+}
+
+test("probe loop: round 0 probes immediately and delivers a definite result once", async () => {
+  const { clock, fake, results } = startLoop();
+  assert.equal(fake.calls.length, 1, "first probe is synchronous on round 0");
+  assert.deepEqual(clock.pending(), [8000], "only the per-request abort timer is armed");
+  fake.calls[0].resolve("solo");
+  await settle();
+  assert.deepEqual(results, ["solo"]);
+  assert.deepEqual(clock.pending(), [], "the abort timer is cleared when the request settles");
+  assert.equal(fake.calls[0].signal.aborted, false);
+  clock.advance(60_000);
+  assert.equal(fake.calls.length, 1, "a definite result ends the loop");
+  for (const result of ["team", "defer"]) {
+    const loop = startLoop();
+    loop.fake.calls[0].resolve(result);
+    await settle();
+    assert.deepEqual(loop.results, [result]);
+    assert.deepEqual(loop.clock.pending(), []);
+  }
+});
+
+test("probe loop: a later round waits min(2000 * 2^(round-1), 15000) plus jitter first", async () => {
+  const expected = [
+    [1, 2000],
+    [2, 4000],
+    [3, 8000],
+    [4, 15_000],
+    [5, 15_000],
+    [9, 15_000],
+  ];
+  for (const [round, base] of expected) {
+    const { clock, fake } = startLoop({ round, random: () => 0.4567 });
+    const delay = base + 456;
+    assert.equal(fake.calls.length, 0, `round ${round}: nothing is sent before the delay`);
+    assert.deepEqual(clock.pending(), [delay], `round ${round}: delay`);
+    clock.advance(delay - 1);
+    assert.equal(fake.calls.length, 0);
+    clock.advance(1);
+    assert.equal(fake.calls.length, 1, `round ${round}: probes once the delay elapses`);
+    assert.deepEqual(clock.pending(), [8000]);
+  }
+});
+
+test("probe loop: an error retries at 2 s, 4 s, 8 s, then 15 s, each plus jitter", async () => {
+  const { clock, fake, results } = startLoop({ random: () => 0.999 });
+  const retries = [2000, 4000, 8000, 15_000, 15_000, 15_000];
+  for (let i = 0; i < retries.length; i++) {
+    fake.calls[i].resolve("error");
+    await settle();
+    const delay = retries[i] + 999;
+    assert.deepEqual(clock.pending(), [delay], `retry ${i + 1} is scheduled alone`);
+    clock.advance(delay - 1);
+    assert.equal(fake.calls.length, i + 1, `retry ${i + 1} waits its full delay`);
+    clock.advance(1);
+    assert.equal(fake.calls.length, i + 2);
+  }
+  fake.calls.at(-1).resolve("solo");
+  await settle();
+  assert.deepEqual(results, ["solo"], "errors are never delivered");
+  assert.equal(fake.maxInFlight(), 1, "never two probes in flight");
+});
+
+test("probe loop: jitter is floor(random() * 1000)", async () => {
+  for (const [random, jitter] of [
+    [0, 0],
+    [0.0009, 0],
+    [0.5, 500],
+    [0.9999, 999],
+  ]) {
+    const { clock, fake } = startLoop({ random: () => random });
+    fake.calls[0].resolve("error");
+    await settle();
+    assert.deepEqual(clock.pending(), [2000 + jitter]);
+  }
+});
+
+test("probe loop: the 8 s abort fires on a hung request, then the loop retries", async () => {
+  const { clock, fake, results } = startLoop();
+  clock.advance(7999);
+  assert.equal(fake.calls[0].signal.aborted, false);
+  clock.advance(1);
+  assert.equal(fake.calls[0].signal.aborted, true, "the request is aborted at 8 s");
+  await settle();
+  assert.deepEqual(results, []);
+  assert.deepEqual(clock.pending(), [2000], "the abort is an error and is retried");
+  clock.advance(2000);
+  assert.equal(fake.calls.length, 2);
+  assert.equal(fake.calls[1].signal.aborted, false, "each request has its own controller");
+  assert.equal(fake.maxInFlight(), 1);
+});
+
+test("probe loop: never starts a second request while one is in flight", async () => {
+  const { clock, fake } = startLoop({ random: () => 0.5 });
+  // Time passes with the request hung just short of its abort: nothing new is sent.
+  clock.advance(7000);
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.inFlight(), 1);
+  fake.calls[0].resolve("error");
+  await settle();
+  clock.advance(2500);
+  assert.equal(fake.calls.length, 2);
+  clock.advance(7999);
+  assert.equal(fake.calls.length, 2);
+  assert.equal(fake.maxInFlight(), 1);
+});
+
+test("probe loop: stop() cancels a pending delay and aborts an in-flight request", async () => {
+  const delayed = startLoop({ round: 2 });
+  delayed.stop();
+  assert.deepEqual(delayed.clock.pending(), [], "the pending delay is cancelled");
+  delayed.clock.advance(60_000);
+  assert.equal(delayed.fake.calls.length, 0, "no probe is sent after stop()");
+
+  const retrying = startLoop();
+  retrying.fake.calls[0].resolve("error");
+  await settle();
+  retrying.stop();
+  assert.deepEqual(retrying.clock.pending(), [], "a pending retry is cancelled");
+  retrying.clock.advance(60_000);
+  assert.equal(retrying.fake.calls.length, 1);
+
+  const inFlight = startLoop();
+  inFlight.stop();
+  assert.equal(inFlight.fake.calls[0].signal.aborted, true, "stop() aborts the request");
+  await settle();
+  assert.deepEqual(inFlight.results, []);
+  assert.deepEqual(inFlight.clock.pending(), [], "no retry follows an abort by stop()");
+  inFlight.clock.advance(60_000);
+  assert.equal(inFlight.fake.calls.length, 1);
+});
+
+test("probe loop: a result arriving after stop() is dropped", async () => {
+  const clock = fakeClock();
+  const results = [];
+  let release;
+  // A probe that ignores the abort and answers late.
+  const stop = startTeamRoundProbeLoop({
+    probe: () => new Promise((resolve) => (release = resolve)),
+    round: 0,
+    isCurrent: () => true,
+    onResult: (result) => results.push(result),
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    random: () => 0,
+  });
+  stop();
+  release("solo");
+  await settle();
+  assert.deepEqual(results, []);
+  assert.deepEqual(clock.pending(), []);
+});
+
+test("probe loop: a result for a changed identity is dropped and not retried", async () => {
+  for (const result of ["solo", "team", "defer", "error"]) {
+    let current = true;
+    const { clock, fake, results } = startLoop({ isCurrent: () => current });
+    current = false;
+    fake.calls[0].resolve(result);
+    await settle();
+    assert.deepEqual(results, [], `${result}: not delivered`);
+    assert.deepEqual(clock.pending(), [], `${result}: nothing is scheduled`);
+    clock.advance(60_000);
+    assert.equal(fake.calls.length, 1);
+  }
 });
