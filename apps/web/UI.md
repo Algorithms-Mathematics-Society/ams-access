@@ -520,3 +520,15 @@ peer volume on that same row and the candidate's own mute state. Older servers
 without IDs and interrupted signaling show remote status unavailable rather than
 misidentifying duplicate names. This adds no requests or polling. Deploy the API
 member-ID addition first; real two/five-member native acceptance remains required.
+
+Team voice attempts to join once when the authorized voice window first opens,
+starting muted. Failed joins, intentional leaves, and replaced sessions require
+an explicit action; polling never repeatedly requests microphone access. The
+mic control reads Muted/Live. A local-only analysis clone provides input level
+and a muted-speech hint at four samples per second; it is never attached to a
+peer connection or audio output and is stopped with the voice session. If the
+WebView suspends Web Audio until a gesture, Enable microphone meter resumes it
+without unmuting. Native permission/autoplay and five-member load checks remain
+required before event acceptance.
+
+Lobby phase boundaries show only the pending phase status at zero, and part claim/release requests announce their action while pending. Unpublished-team guidance appears once in the lobby. Hidden audio output names explain microphone permission and the System default fallback. An open voice window ending announces its end for five seconds in the toolbar, including when local contest expiry disables voice. These notices add no requests or retries; installed-device timing and screen-reader acceptance remain required.

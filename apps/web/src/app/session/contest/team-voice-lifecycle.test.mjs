@@ -172,8 +172,5 @@ test("reconnecting line only shows with a last good board (#312)", () => {
   );
   assert.equal(run({ status: "error", board: null }, null), "Team status is unavailable.");
   assert.equal(run({ status: "ok", board: null }, null), null);
-  assert.match(
-    run({ status: "unpublished", board: null }, null),
-    /^Teams have not been published yet\./
-  );
+  assert.equal(run({ status: "unpublished", board: null }, null), null);
 });

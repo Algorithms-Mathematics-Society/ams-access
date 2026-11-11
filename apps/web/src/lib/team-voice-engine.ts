@@ -1,3 +1,4 @@
+import { createVoiceInputMeter } from "./team-voice-input.ts";
 /** Bounded, relay-only team audio. This module owns only microphone clones. */
 export type TeamVoiceCredentials = {
   ice_servers: RTCIceServer[];
@@ -16,6 +17,7 @@ export type TeamVoiceSnapshot = {
   status:
     "idle" | "connecting" | "connected" | "reconnecting" | "unavailable" | "closed" | "replaced";
   muted: boolean;
+  inputLevel?: number | null;
   volume: number;
   outputDevice: string;
   error: string | null;
@@ -32,6 +34,7 @@ export type TeamVoiceOptions = {
   deps?: Partial<TeamVoiceDeps>;
 };
 export type TeamVoiceDeps = {
+  inputMeter: typeof createVoiceInputMeter;
   socket: (url: string) => WebSocket;
   rtc: (configuration: RTCConfiguration) => RTCPeerConnection;
   audio: () => HTMLAudioElement;
@@ -73,6 +76,7 @@ const MAX_PEERS = 4,
   MAX_RETRIES = 6;
 export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSession {
   const d: TeamVoiceDeps = {
+    inputMeter: createVoiceInputMeter,
     socket: (url) => new WebSocket(url),
     rtc: (config) => new RTCPeerConnection(config),
     audio: () => new Audio(),
@@ -98,6 +102,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   let generation = 0,
     socket: WebSocket | null = null,
     microphone: MediaStream | null = null;
+  let inputMeter: ReturnType<typeof createVoiceInputMeter> | null = null;
   let me = "",
     credentials: TeamVoiceCredentials | null = null,
     retries = 0,
@@ -178,6 +183,9 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       old.onopen = old.onmessage = old.onclose = old.onerror = null;
       old.close();
     }
+    inputMeter?.stop();
+    inputMeter = null;
+    snapshot = { ...snapshot, inputLevel: null };
     microphone?.getTracks().forEach((t) => {
       t.onended = null;
       t.stop();
@@ -473,11 +481,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         owned = await options.acquireMicrophone();
       } catch (error) {
         const name = error instanceof Error ? error.name : "";
-        if (valid(g)) finish("unavailable", name === "NotAllowedError" || name === "PermissionDeniedError"
-          ? "Microphone access was denied."
-          : name === "NotFoundError" || name === "DevicesNotFoundError"
-            ? "No microphone was found."
-            : "Microphone could not be opened.");
+        if (valid(g))
+          finish(
+            "unavailable",
+            name === "NotAllowedError" || name === "PermissionDeniedError"
+              ? "Microphone access was denied."
+              : name === "NotFoundError" || name === "DevicesNotFoundError"
+                ? "No microphone was found."
+                : "Microphone could not be opened."
+          );
         return;
       }
       if (!valid(g)) {
@@ -498,6 +510,18 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
           };
         }
       });
+      try {
+        inputMeter = d.inputMeter(owned);
+      } catch {
+        inputMeter = null;
+      }
+      function sampleInput() {
+        if (!valid(g)) return;
+        const inputLevel = inputMeter?.read() ?? null;
+        if (snapshot.inputLevel !== inputLevel) emit({ inputLevel });
+        later(sampleInput, 250);
+      }
+      if (inputMeter) sampleInput();
       const url = new URL(
         `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team/voice`
       );
@@ -578,6 +602,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       emit({ status: "idle", error: null });
     },
     setMuted(muted) {
+      inputMeter?.resume();
       microphone?.getAudioTracks().forEach((t) => {
         t.enabled = !muted;
       });
@@ -606,6 +631,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       this.setVolume(volume, uid);
     },
     async retryPlayback() {
+      inputMeter?.resume();
       const g = generation;
       await Promise.all([...peers.values()].map((p) => p.audio.play()));
       if (valid(g)) emit({ error: null });

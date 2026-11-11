@@ -54,6 +54,9 @@ export function TeamVoicePresentation({
           isDisabled={suspended}
         />
       )}
+      {snapshot?.muted && (snapshot.inputLevel ?? 0) > 0.02 && (
+        <Text role="status">You are muted</Text>
+      )}
       {snapshot?.peers.map((peer) => (
         <Text
           key={peer.memberUid}

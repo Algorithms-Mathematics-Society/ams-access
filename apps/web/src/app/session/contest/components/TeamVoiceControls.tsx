@@ -1,5 +1,8 @@
 "use client";
 
+import { Mic, MicOff } from "lucide-react";
+import { createVoiceAutoJoinGate } from "@/lib/team-voice-input";
+import { useVoiceEndedNotice } from "./VoiceEndedNotice";
 import { LeaveTeamVoice } from "./LeaveTeamVoice";
 import { TeamVoicePresentation } from "./TeamVoicePresentation";
 import { voiceStatusText, voiceErrorAdvice } from "@/lib/team-voice-presentation";
@@ -46,10 +49,19 @@ export function TeamVoiceControls({
   projection: { board: VoiceTeam | null; status: string; error: string | null };
 }) {
   const team = projection.board;
+  const endedNotice = useVoiceEndedNotice({
+    contestUid,
+    enabled,
+    status: projection.status,
+    voiceOpen: Boolean(team?.phase.voice_open),
+    compact,
+    toolbarTarget,
+  });
   const supportsRtc = typeof RTCPeerConnection === "function";
   const [snapshot, setSnapshot] = useState<TeamVoiceSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
+  const autoJoin = useRef(createVoiceAutoJoinGate());
   const session = useRef<TeamVoiceSession | null>(null);
   const current = useRef<() => boolean>(() => false);
   const unsubscribeSession = useRef<(() => void) | null>(null);
@@ -59,6 +71,7 @@ export function TeamVoiceControls({
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
+    autoJoin.current.reset();
     setSnapshot(null);
     setMessage(null);
     setOutputs([]);
@@ -125,7 +138,7 @@ export function TeamVoiceControls({
       session.current?.stop();
       session.current = null;
       setSnapshot(null);
-    } else if (resumeAfterPoll.current) {
+    } else if (resumeAfterPoll.current || autoJoin.current.take(current.current())) {
       resumeAfterPoll.current = false;
       void connectCurrent.current();
     }
@@ -141,6 +154,8 @@ export function TeamVoiceControls({
       );
       return;
     }
+    autoJoin.current.take(true);
+    if (session.current?.getSnapshot().status === "connecting") return;
     setMessage(null);
     unsubscribeSession.current?.();
     session.current?.stop();
@@ -216,154 +231,189 @@ export function TeamVoiceControls({
       ? team
         ? "Team status is reconnecting. Your work is safe."
         : "Team status is unavailable."
-      : projection.status === "unpublished"
-        ? "Teams have not been published yet. Voice will be available when your team is published and its voice window opens."
-        : null;
-  if (!enabled || (!team && !message && !projectionMessage)) return null;
+      : null;
+  if (!enabled || (!team && !message && !projectionMessage)) return endedNotice;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   const busy = snapshot?.status === "connecting";
   return (
-    <TeamVoicePresentation
-      compact={compact}
-      toolbarTarget={toolbarTarget}
-      suspended={suspended}
-      snapshot={snapshot}
-      onToggleMute={() => session.current?.setMuted(!snapshot?.muted)}
-    >
-      <VStack
-        gap={2}
-        paddingInline={4}
-        paddingBlock={2}
-        as="section"
-        aria-label="Team voice"
-        inert={suspended || undefined}
-        style={{
-          background: "var(--color-background-surface)",
-          maxHeight: compact ? "60vh" : "30vh",
-          overflow: "auto",
-          flexShrink: 0,
-        }}
+    <>
+      {endedNotice}
+      <TeamVoicePresentation
+        compact={compact}
+        toolbarTarget={toolbarTarget}
+        suspended={suspended}
+        snapshot={snapshot}
+        onToggleMute={() => session.current?.setMuted(!snapshot?.muted)}
       >
-        <HStack gap={3} wrap="wrap" align="center">
-          <Text weight="semibold">Team voice{team ? ` · ${team.team.name}` : ""}</Text>
-          <Text role="status" aria-live="polite">
-            {!supportsRtc
-              ? "Voice unavailable · WebRTC support is missing in this installed app"
-              : snapshot
-                ? voiceStatusText(snapshot.status)
-                : team?.phase.voice_open
-                  ? "Ready · microphone starts muted"
-                  : "Voice has ended for this round"}
-          </Text>
-          {team?.phase.voice_open && !connected && snapshot?.status !== "closed" && (
-            <Button
-              label={
-                busy
-                  ? "Connecting…"
-                  : snapshot?.status === "replaced"
-                    ? "Move voice back to this window"
-                    : snapshot?.status === "unavailable"
-                      ? "Retry voice"
-                      : "Join voice"
-              }
-              isDisabled={!supportsRtc || busy || !open.current}
-              onClick={() => void connect()}
-            />
-          )}
-          {connected && (
-            <Button
-              label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}
-              onClick={() => session.current?.setMuted(!snapshot?.muted)}
-            />
-          )}
-          {(connected || busy || resumeAfterPoll.current) && (
-            <LeaveTeamVoice
-              onLeave={() => {
-                resumeAfterPoll.current = false;
-                unsubscribeSession.current?.();
-                unsubscribeSession.current = null;
-                session.current?.stop();
-                session.current = null;
-                setSnapshot(null);
-                setMessage("You left team voice. Choose Join voice to reconnect.");
-              }}
-            />
-          )}
-          {connected && <Text>Mute shortcut: Ctrl+Shift+M</Text>}
-          {connected && snapshot?.error && (
-            <Button
-              label="Retry audio playback"
-              onClick={() =>
-                void session.current
-                  ?.retryPlayback()
-                  .catch(() =>
-                    setMessage("Playback is still blocked. Check system audio output and retry.")
-                  )
-              }
-            />
-          )}
-        </HStack>
-        {(message || projectionMessage || snapshot?.error) && (
-          <Text role="status">
-            {message ?? projectionMessage ?? voiceErrorAdvice(snapshot?.error ?? null)}
-          </Text>
-        )}
-        {team && (
-          <List header="Team members" density="compact" hasDividers>
-            {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
-              <ListItem
-                key={key}
-                label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
-                description={
-                  <VStack gap={1}>
-                    <Text>{status}</Text>
-                    {peer && (
-                      <Slider
-                        label={`${member.display_name} volume`}
-                        value={peer.volume * 100}
-                        min={0}
-                        max={100}
-                        formatValue={(value) => `${value}%`}
-                        onChange={(value: number) =>
-                          session.current?.setMemberVolume(peer.memberUid, value / 100)
-                        }
-                      />
-                    )}
-                  </VStack>
+        <VStack
+          gap={2}
+          paddingInline={4}
+          paddingBlock={2}
+          as="section"
+          aria-label="Team voice"
+          inert={suspended || undefined}
+          style={{
+            background: "var(--color-background-surface)",
+            maxHeight: compact ? "60vh" : "30vh",
+            overflow: "auto",
+            flexShrink: 0,
+          }}
+        >
+          <HStack gap={3} wrap="wrap" align="center">
+            <Text weight="semibold">Team voice{team ? ` · ${team.team.name}` : ""}</Text>
+            <Text role="status" aria-live="polite">
+              {!supportsRtc
+                ? "Voice unavailable · WebRTC support is missing in this installed app"
+                : snapshot
+                  ? voiceStatusText(snapshot.status)
+                  : team?.phase.voice_open
+                    ? "Ready · microphone starts muted"
+                    : "Voice has ended for this round"}
+            </Text>
+            {team?.phase.voice_open && !connected && snapshot?.status !== "closed" && (
+              <Button
+                label={
+                  busy
+                    ? "Connecting…"
+                    : snapshot?.status === "replaced"
+                      ? "Move voice back to this window"
+                      : snapshot?.status === "unavailable"
+                        ? "Retry voice"
+                        : "Join voice"
                 }
+                isDisabled={!supportsRtc || busy || !open.current}
+                onClick={() => void connect()}
               />
-            ))}
-          </List>
-        )}
-        {connected && (
-          <HStack gap={4} wrap="wrap" align="start">
-            {outputs.length > 0 && (
-              <Selector
-                label="Team voice output"
-                value={snapshot?.outputDevice || "default"}
-                options={[
-                  { value: "default", label: "System default" },
-                  ...outputs
-                    .filter((device) => device.deviceId !== "default")
-                    .map((device, index) => ({
-                      value: device.deviceId,
-                      label: device.label || `Audio output ${index + 1}`,
-                    })),
-                ]}
-                onChange={(value) =>
+            )}
+            {connected && (
+              <Button
+                label={snapshot?.muted ? "Muted" : "Live"}
+                aria-label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}
+                aria-pressed={!snapshot?.muted}
+                icon={snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+                style={{
+                  color: snapshot?.muted
+                    ? "var(--color-text-secondary)"
+                    : "var(--color-text-green)",
+                }}
+                onClick={() => session.current?.setMuted(!snapshot?.muted)}
+              />
+            )}
+            {(connected || busy || resumeAfterPoll.current) && (
+              <LeaveTeamVoice
+                onLeave={() => {
+                  resumeAfterPoll.current = false;
+                  unsubscribeSession.current?.();
+                  unsubscribeSession.current = null;
+                  session.current?.stop();
+                  session.current = null;
+                  setSnapshot(null);
+                  setMessage("You left team voice. Choose Join voice to reconnect.");
+                }}
+              />
+            )}
+            {connected && <Text>Mute shortcut: Ctrl+Shift+M</Text>}
+            {connected && snapshot?.error && (
+              <Button
+                label="Retry audio playback"
+                onClick={() =>
                   void session.current
-                    ?.setOutputDevice(value === "default" ? "" : value)
+                    ?.retryPlayback()
                     .catch(() =>
-                      setMessage(
-                        "Audio output could not be changed. Choose another output or retry."
-                      )
+                      setMessage("Playback is still blocked. Check system audio output and retry.")
                     )
                 }
               />
             )}
           </HStack>
-        )}
-      </VStack>
-    </TeamVoicePresentation>
+          {(message || projectionMessage || snapshot?.error) && (
+            <Text role="status">
+              {message ?? projectionMessage ?? voiceErrorAdvice(snapshot?.error ?? null)}
+            </Text>
+          )}
+          {connected && (
+            <VStack gap={1}>
+              <Text>Microphone starts muted. Only unmuting sends your voice to the team.</Text>
+              <Text aria-label="Microphone input level">
+                {snapshot?.inputLevel == null
+                  ? "Input level unavailable. Enable the local meter to check your microphone."
+                  : `Microphone input: ${Math.round(snapshot.inputLevel * 100)}%`}
+              </Text>
+              {snapshot?.inputLevel == null && (
+                <Button
+                  label="Enable microphone meter"
+                  variant="ghost"
+                  onClick={() => void session.current?.retryPlayback().catch(() => {})}
+                />
+              )}
+              {snapshot?.muted && (snapshot.inputLevel ?? 0) > 0.02 && (
+                <Text role="status">You are muted</Text>
+              )}
+            </VStack>
+          )}
+          {team && (
+            <List header="Team members" density="compact" hasDividers>
+              {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
+                <ListItem
+                  key={key}
+                  label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
+                  description={
+                    <VStack gap={1}>
+                      <Text>{status}</Text>
+                      {peer && (
+                        <Slider
+                          label={`${member.display_name} volume`}
+                          value={peer.volume * 100}
+                          min={0}
+                          max={100}
+                          formatValue={(value) => `${value}%`}
+                          onChange={(value: number) =>
+                            session.current?.setMemberVolume(peer.memberUid, value / 100)
+                          }
+                        />
+                      )}
+                    </VStack>
+                  }
+                />
+              ))}
+            </List>
+          )}
+          {connected && (
+            <HStack gap={4} wrap="wrap" align="start">
+              {outputs.some((device) => !device.label) && (
+                <Text>
+                  Output names may appear after microphone access is granted. If names remain
+                  hidden, use System default.
+                </Text>
+              )}
+              {outputs.length > 0 && (
+                <Selector
+                  label="Team voice output"
+                  value={snapshot?.outputDevice || "default"}
+                  options={[
+                    { value: "default", label: "System default" },
+                    ...outputs
+                      .filter((device) => device.deviceId !== "default")
+                      .map((device, index) => ({
+                        value: device.deviceId,
+                        label: device.label || `Audio output ${index + 1}`,
+                      })),
+                  ]}
+                  onChange={(value) =>
+                    void session.current
+                      ?.setOutputDevice(value === "default" ? "" : value)
+                      .catch(() =>
+                        setMessage(
+                          "Audio output could not be changed. Choose another output or retry."
+                        )
+                      )
+                  }
+                />
+              )}
+            </HStack>
+          )}
+        </VStack>
+      </TeamVoicePresentation>
+    </>
   );
 }

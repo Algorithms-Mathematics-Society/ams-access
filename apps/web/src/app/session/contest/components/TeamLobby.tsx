@@ -30,6 +30,7 @@ export function TeamLobby({
   onEnter: () => void;
   canEnter?: boolean;
 }) {
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [now, setNow] = useState(() => performance.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(performance.now()), 250);
@@ -92,20 +93,25 @@ export function TeamLobby({
       <VStack gap={2} aria-label="Team selection phase">
         <Heading level={2}>
           {phase === "waiting"
-            ? `Your team lobby opens in ${clock ?? "—"}`
+            ? remaining === 0
+              ? "Team lobby"
+              : `Your team lobby opens in ${clock ?? "—"}`
             : phase === "discussion"
               ? board.phase.prompt
               : phase === "choosing"
                 ? "Choose your part"
                 : "Parts are locked"}
         </Heading>
-        {phase === "discussion" && <Text>Claims open in {clock}</Text>}
-        {phase === "choosing" && clock !== null && <Text>Parts lock in {clock}</Text>}
+        {phase === "discussion" && remaining !== 0 && <Text>Claims open in {clock}</Text>}
+        {phase === "choosing" && clock !== null && remaining !== 0 && (
+          <Text>Parts lock in {clock}</Text>
+        )}
         {remaining === 0 && phase !== "locked" && (
           <Text role="status">Checking the next phase…</Text>
         )}
       </VStack>
       {state.error && <Text role="alert">{state.error}</Text>}
+      {state.pending && <Text role="status">{pendingAction ?? "Updating your part…"}</Text>}
       <List hasDividers header={<Heading level={2}>Members</Heading>}>
         {board.members.map((member, index) => (
           <ListItem
@@ -133,7 +139,10 @@ export function TeamLobby({
                 <Button
                   variant="secondary"
                   isDisabled={!choosing || state.pending}
-                  onClick={onRelease}
+                  onClick={() => {
+                    setPendingAction(`Releasing part ${part.label}…`);
+                    onRelease();
+                  }}
                   aria-label={`Release part ${part.label}`}
                   label="Release"
                 />
@@ -141,9 +150,12 @@ export function TeamLobby({
                 <Button
                   variant="secondary"
                   isDisabled={!choosing || state.pending || part.holder !== null}
-                  onClick={() => onClaim(part.label)}
+                  onClick={() => {
+                    setPendingAction(`Claiming part ${part.label}…`);
+                    onClaim(part.label);
+                  }}
                   aria-label={`Claim part ${part.label}`}
-                  label={phase === "discussion" ? `Opens in ${clock}` : "Claim"}
+                  label={phase === "discussion" && remaining !== 0 ? `Opens in ${clock}` : "Claim"}
                 />
               )
             }
