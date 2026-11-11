@@ -483,7 +483,12 @@ outputs; playback/permission failures expose retry actions. Peer identity comes
 from signaling member IDs; roster display names never establish presence.
 Authentication changes, page exit, unmount, local session end, and the server
 voice window closing stop the session and abort its requests. Mandatory overlays
-make the controls inert.
+make the controls inert and dismiss the voice popover. The workspace shows a
+compact mic toggle and peer speaking indicators inside the existing TopBar.
+Voice opens member volume, output selection and Leave in a popover; leaving
+requires confirmation. The expanded lobby presentation and compact workspace
+share a mounted session owner, so changing presentation does not reacquire media
+or add polling or signaling requests.
 
 The team lobby/selection screen shares one projection and voice owner across
 secured entry and assigned workspace. Relay-only transport still requires a
@@ -501,3 +506,37 @@ footer. The expanded question rail always shows the available preview inside it,
 with space reserved below the question list and no preview-toggle button. Only
 the minimized rail shows the camera button, which toggles the pop-out preview
 beside the rail without changing capture or microphone ownership.
+
+Voice status uses candidate-facing sentences. Microphone denial, missing devices,
+relay failures and lost connections have distinct recovery advice. A replaced
+voice session requires an explicit “Move voice back to this window” action;
+closed rounds do not offer Join. These presentation changes add no polling or
+automatic retries. Installed-device and staging load gates above still apply.
+
+The voice roster shows one row per published member. The API's additive
+`members[].member_uid` matches signaling identity; display names never establish
+presence. Connected rows show muted, speaking, in voice, or not in voice, with
+peer volume on that same row and the candidate's own mute state. Older servers
+without IDs and interrupted signaling show remote status unavailable rather than
+misidentifying duplicate names. This adds no requests or polling. Deploy the API
+member-ID addition first; real two/five-member native acceptance remains required.
+
+Team voice attempts to join once when the authorized voice window first opens,
+starting muted. Failed joins, intentional leaves, and replaced sessions require
+an explicit action; polling never repeatedly requests microphone access. The
+mic control reads Muted/Live. A local-only analysis clone provides input level
+and a muted-speech hint at four samples per second; it is never attached to a
+peer connection or audio output and is stopped with the voice session. If the
+WebView suspends Web Audio until a gesture, Enable microphone meter resumes it
+without unmuting. Native permission/autoplay and five-member load checks remain
+required before event acceptance.
+
+Lobby phase boundaries show only the pending phase status at zero, and part claim/release requests announce their action while pending. Unpublished-team guidance appears once in the lobby. Hidden audio output names explain microphone permission and the System default fallback. An open voice window ending announces its end for five seconds in the toolbar, including when local contest expiry disables voice. These notices add no requests or retries; installed-device timing and screen-reader acceptance remain required.
+
+Lobby part rows retain their Part/label and holder, with an authored title heading
+and plain-text summary when supplied by the API. Descriptions wrap within the row;
+missing or invalid optional metadata keeps the legacy label/holder presentation.
+Summaries are organizer-authored metadata, never inferred from hidden statements.
+This uses the existing board projection and adds no requests or polling.
+
+Unsupported native platforms show the team-round restriction on Home and in device readiness. Selecting a contest makes one abortable, eight-second team probe before setup state or navigation; only an authoritative solo result proceeds. Other results remain on Home with explicit retry advice. There is no per-card polling, automatic retry, or extra request on supported platforms/browser.

@@ -41,6 +41,7 @@ export interface TopBarProps {
   onReviewQuestion: (index: number) => void;
   markedQuestionIds: string[];
   workspaceControls?: ReactNode;
+  voiceToolbarRef?: (node: HTMLDivElement | null) => void;
   /** Connectivity state used by the Finish review. */
   online?: boolean;
 }
@@ -66,6 +67,7 @@ export function TopBar({
   markedQuestionIds,
   online = true,
   workspaceControls,
+  voiceToolbarRef,
 }: TopBarProps) {
   const reviewRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -185,6 +187,7 @@ export function TopBar({
         className="contest-topbar-actions"
         style={{ flex: 1, minWidth: 0 }}
       >
+        <HStack ref={voiceToolbarRef} gap={0} align="center" />
         <ThemeToggle />
         <ContestInformation
           contest={contest}

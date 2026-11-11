@@ -1,7 +1,7 @@
 /** Minimal published-team projection: GET /team owns the voice window. */
 export type VoiceTeam = {
   team: { uid: string; name: string };
-  members: { display_name: string; is_me: boolean }[];
+  members: { member_uid?: string; display_name: string; is_me: boolean }[];
   phase: { voice_open: boolean; name: string };
 };
 export type TeamVoiceRead =

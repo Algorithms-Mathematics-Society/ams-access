@@ -491,6 +491,7 @@ test("Enter owns one navigation and cannot reuse an old attempt when fresh persi
     const calls = [];
     const context = {
       useCallback: (fn) => fn,
+      hasNativeBridge: () => false,
       entryNavigationRef: { current: false },
       clearSetupHandoff() {},
       setupAttemptId: (_storage, contestId, uuid, fresh) => {

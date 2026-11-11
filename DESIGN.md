@@ -201,8 +201,10 @@ browser contact handoff. Keep the URL/address selectable, diagnostics explicitly
 reviewable, and copy/open feedback distinct from message delivery. It must remain
 usable without participant authentication or network-dependent initialization.
 
-Windows team voice uses a compact, scroll-bounded Astryx control region below
-the contest top bar. Join and permission retry are explicit; connection and mute
+Windows and Linux team voice stays expanded in the lobby. In the workspace a
+compact mic toggle and speaking indicators occupy the existing contest top bar;
+Voice opens a keyboard-accessible popover for member volume and output settings.
+Leaving voice requires a separate confirmation. Join and permission retry are explicit; connection and mute
 states have readable text, peer volume has accessible labels, and supported
 output selection uses Selector. Mandatory contest overlays make these controls
 inert. The team board owns the voice window; relay unavailability is reported as

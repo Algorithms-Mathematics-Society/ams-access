@@ -408,6 +408,7 @@ export default function ContestPageClient() {
     sampledAt: 0,
   });
   const lobbyController = useRef<ReturnType<typeof createTeamLobbyController> | null>(null);
+  const [voiceToolbarTarget, setVoiceToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [enteredTeamPart, setEnteredTeamPart] = useState(false);
   const loadedTeamWorkspace = useRef<WorkspaceIdentity | null>(null);
   const paperAssets = useRef<string[]>([]);
@@ -508,7 +509,10 @@ export default function ContestPageClient() {
   }, [nativeTeamUnsupported, contestId, teamProbeRound]);
   const teamOwnLabel = assignedWorkspaceLabel(lobbyState);
   const teamWorkspaceReady = teamWorkspaceAllowed(lobbyState, enteredTeamPart);
-  const showTeamLobby = desktopTeamRoom && !teamWorkspaceReady;
+  // A token for another contest never shows the lobby: the paper-load effect
+  // shows the sign-in-again screen instead (#326).
+  const showTeamLobby =
+    desktopTeamRoom && !teamWorkspaceReady && lobbyState.status !== "wrong-contest";
 
   const [contest, setContest] = useState<ContestMeta | null>(null);
   const activeContestIdRef = useRef<string | null>(null);
@@ -1529,6 +1533,14 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!entryReady || showTeamLobby) return;
+    // The team lobby proved the sign-in is for another contest: only signing
+    // in again can help, so nothing is read (#326).
+    if (desktopTeamRoom && lobbyState.status === "wrong-contest") {
+      setLoadError(TEAM_WRONG_CONTEST_MESSAGE);
+      setLoadRetryable(false);
+      setLoading(false);
+      return;
+    }
     // A team room never loads the full paper: without the server-confirmed own
     // label the lobby is on screen and nothing is fetched.
     const teamRoom = desktopTeamRoom && lobbyState.status !== "solo";
@@ -4770,7 +4782,11 @@ export default function ContestPageClient() {
   );
 
   const renderTeamLobby =
-    showTeamLobby || (desktopTeamRoom && lobbyState.status !== "solo" && loading);
+    showTeamLobby ||
+    (desktopTeamRoom &&
+      lobbyState.status !== "solo" &&
+      lobbyState.status !== "wrong-contest" &&
+      loading);
 
   if (loading && !renderTeamLobby) {
     const phase = entryWaitPhase(bootWaitedMs);
@@ -4831,6 +4847,7 @@ export default function ContestPageClient() {
         )}
         {!renderTeamLobby && (
           <TopBar
+            voiceToolbarRef={setVoiceToolbarTarget}
             online={!networkDisconnected}
             markedQuestionIds={markedQuestionIds}
             workspaceControls={
@@ -4903,6 +4920,8 @@ export default function ContestPageClient() {
             navigator.userAgent
           ) && (
             <TeamVoiceControls
+              compact={!renderTeamLobby}
+              toolbarTarget={voiceToolbarTarget}
               contestUid={contestId}
               projection={lobbyState}
               enabled={
@@ -4948,6 +4967,8 @@ export default function ContestPageClient() {
                 }
               >
                 <TeamLobby
+                  key={contestId}
+                  contestUid={contestId}
                   state={lobbyState}
                   onClaim={(label) => {
                     void lobbyController.current?.claim(label);

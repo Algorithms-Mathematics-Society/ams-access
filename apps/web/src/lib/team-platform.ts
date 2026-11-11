@@ -24,3 +24,6 @@ export function supportsTeamDesktopWebView(
         : null
   );
 }
+
+export const TEAM_PLATFORM_MESSAGE =
+  "Team rounds need the AMS Access app on Windows or Linux. Contact your organizer.";

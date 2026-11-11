@@ -32,6 +32,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   onResolve,
   context,
   onPracticeRun,
+  platformNotice,
 }: {
   readiness: ReadinessState;
   report?: ReadinessReport | null;
@@ -40,6 +41,7 @@ export const ReadinessWidget = memo(function ReadinessWidget({
   onResolve?: (key: string) => void;
   context?: ContestantReadinessContext;
   onPracticeRun?: () => void;
+  platformNotice?: string;
 }) {
   const failedChecks = checks.filter(([key]) => readiness[key] === "fail");
   // Advisory: real results that do not stop the candidate entering. Without a
@@ -85,6 +87,8 @@ export const ReadinessWidget = memo(function ReadinessWidget({
             </Text>
           </VStack>
         </VStack>
+
+        {platformNotice && <Text role="status">{platformNotice}</Text>}
 
         {failedChecks.length > 0 && (
           <VStack as="section" gap={2} aria-label="Checks needing attention">
