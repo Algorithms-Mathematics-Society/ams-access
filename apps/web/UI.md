@@ -540,3 +540,27 @@ Summaries are organizer-authored metadata, never inferred from hidden statements
 This uses the existing board projection and adds no requests or polling.
 
 Unsupported native platforms show the team-round restriction on Home and in device readiness. Selecting a contest makes one abortable, eight-second team probe before setup state or navigation; only an authoritative solo result proceeds. Other results remain on Home with explicit retry advice. There is no per-card polling, automatic retry, or extra request on supported platforms/browser.
+
+Team submission approval uses the shared lobby controller and the exact displayed
+revision. The Team dialog shows the aggregate approval count and only the
+candidate's own vote state; the API does not publish individual teammate votes.
+Changing revision invalidates previous approvals visibly. Conflicts refresh once
+without replaying a vote; pending, expired, unavailable and submitted revisions
+cannot mutate. Deadline submission stays server-owned, with no client submission
+request at zero. Results show a bounded current integration summary in place;
+full benchmark/flamegraph results remain a separate feature. No new polling is
+introduced; staging must still verify the existing lobby rate and five-member
+consensus under concurrency.
+
+
+Team workspaces load only the locked board's published part labels, with the
+candidate's part first. Teammate statements/samples and starter code are visible
+read-only; Run remains available, while scored Submit and editor mutation are
+blocked. The click-time scoring guard uses the shared server clock and deadline;
+the API remains authoritative if allocation changes. A previous submitted team
+revision does not block a new part submission before the deadline. The own-part
+Submit warning explains that a new revision resets votes. Team progress and voting
+open from the compact TopBar Team control, reusing the existing board without new
+polling. Loading a team workspace fetches at most the board's five part projections
+and existing statement assets once per authorized workspace load; staging must
+measure this entry burst for 3,000 participants. Native layout remains unverified.

@@ -208,7 +208,6 @@ export function TeamVoiceControls({
     function muteShortcut(event: KeyboardEvent) {
       const active = session.current;
       if (
-        !event.repeat &&
         !suspended &&
         current.current() &&
         active &&
@@ -219,11 +218,13 @@ export function TeamVoiceControls({
         event.code === "KeyM"
       ) {
         event.preventDefault();
-        active.setMuted(!active.getSnapshot().muted);
+        event.stopPropagation();
+        if (!event.repeat) active.setMuted(!active.getSnapshot().muted);
       }
     }
-    window.addEventListener("keydown", muteShortcut);
-    return () => window.removeEventListener("keydown", muteShortcut);
+    // Capture before the focused editor; one chord must never run both actions.
+    window.addEventListener("keydown", muteShortcut, true);
+    return () => window.removeEventListener("keydown", muteShortcut, true);
   }, [suspended]);
 
   const projectionMessage =

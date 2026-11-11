@@ -1,3 +1,4 @@
+import { parseTeamVote, voteRemainingMs, type TeamVote } from "./team-vote.ts";
 /** Published participant projection only. Never infer allocation from local actions. */
 export type TeamLobbyBoard = {
   team: {
@@ -22,6 +23,7 @@ export type TeamLobbyBoard = {
     revision: number | null;
     submission_status: string | null;
     verdict: string | null;
+    integration_verdict?: string;
   }[];
   phase: {
     name: "waiting" | "discussion" | "choosing" | "locked";
@@ -36,6 +38,7 @@ export type TeamLobbyBoard = {
     locked: boolean;
     locks_at: string | null;
   };
+  submission?: TeamVote;
   server_time: string;
 };
 export type LobbyState = {
@@ -108,6 +111,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
     throw new Error("Team status unavailable.");
   // Retain only the small lobby projection, never integration/history payloads.
   const source = v as TeamLobbyBoard;
+  const submission = parseTeamVote(v);
   return {
     team: { uid: source.team.uid, name: source.team.name, number: source.team.number },
     members: source.members.map(({ member_uid, display_name, is_me, part_label, assigned_by }) => ({
@@ -128,6 +132,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
         revision,
         submission_status,
         verdict,
+        integration_verdict,
       }) => ({
         label,
         problem_label,
@@ -138,6 +143,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
         revision,
         submission_status,
         verdict,
+        ...(string(integration_verdict, 64) ? { integration_verdict } : {}),
       })
     ),
     phase: {
@@ -150,6 +156,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
       discussion_seconds: source.phase.discussion_seconds,
     },
     allocation: { locked: source.allocation.locked, locks_at: source.allocation.locks_at },
+    ...(submission ? { submission } : {}),
     server_time: source.server_time,
   };
 }
@@ -231,7 +238,11 @@ export function createTeamLobbyController(options: {
     }
     timer = setTimeout(() => void run(), delay);
   };
-  async function run(action?: "claim" | "release", label?: string) {
+  async function run(
+    action?: "claim" | "release" | "approve" | "withdraw",
+    label?: string,
+    revision?: number
+  ) {
     if (stopped || terminal) return;
     if (busy) {
       if (!action) queued = true;
@@ -248,8 +259,14 @@ export function createTeamLobbyController(options: {
     const timeout = setTimeout(() => controller.abort(), 8000);
     if (action) emit({ pending: true, error: null });
     try {
-      const response = await request(url + (action ? `/${action}` : ""), {
-        method: action ? "POST" : "GET",
+      const voteAction = action === "approve" || action === "withdraw";
+      const suffix = voteAction
+        ? `/vote${action === "withdraw" ? `?revision=${revision}` : ""}`
+        : action
+          ? `/${action}`
+          : "";
+      const response = await request(url + suffix, {
+        method: action === "withdraw" ? "DELETE" : action ? "POST" : "GET",
         headers: {
           ...options.headers(),
           ...(action
@@ -259,6 +276,7 @@ export function createTeamLobbyController(options: {
               : {}),
         },
         ...(action === "claim" ? { body: JSON.stringify({ part_label: label }) } : {}),
+        ...(action === "approve" ? { body: JSON.stringify({ revision }) } : {}),
         signal: controller.signal,
         cache: "no-store",
       });
@@ -306,7 +324,13 @@ export function createTeamLobbyController(options: {
             ? body.detail
             : "Team status unavailable. Please try again.";
         if (action && response.status === 409) queued = true;
-        throw new Error(detail);
+        throw new Error(
+          voteAction
+            ? response.status === 409
+              ? "The team revision or approval changed. Review the updated count before approving again."
+              : "Could not update your approval. Check the current revision and try again."
+            : detail
+        );
       }
       const board = parseTeamLobby(body);
       etag = action ? null : response.headers.get("ETag");
@@ -332,6 +356,31 @@ export function createTeamLobbyController(options: {
         if (message) emit({ error: message });
       } else schedule();
     }
+  }
+  function vote(action: "approve" | "withdraw", revision: number) {
+    const board = state.board,
+      submission = board?.submission;
+    if (busy && !state.pending && !stopped && !terminal) {
+      emit({ error: "Team status is updating. Review it and try your approval again." });
+      return;
+    }
+    if (
+      stopped ||
+      terminal ||
+      busy ||
+      state.pending ||
+      state.status !== "team" ||
+      !board ||
+      !submission ||
+      !board.allocation.locked ||
+      revision !== submission.revision ||
+      revision === 0 ||
+      submission.submitted_revision === revision ||
+      voteRemainingMs(submission, board.server_time, state.sampledAt, now()) <= 0 ||
+      (action === "approve" ? submission.mine : !submission.mine)
+    )
+      return;
+    void run(action, undefined, revision);
   }
   emit({});
   void run();
@@ -365,6 +414,8 @@ export function createTeamLobbyController(options: {
         return;
       void run("release");
     },
+    approve: (revision: number) => vote("approve", revision),
+    withdraw: (revision: number) => vote("withdraw", revision),
     stop: () => {
       stopped = true;
       clearTimeout(timer);

@@ -70,6 +70,9 @@ export interface EditorPanelProps {
   triggerRun: () => Promise<void>;
   judgingUnavailableReason: string | null;
   readOnly: boolean;
+  allowReadOnlyRun?: boolean;
+  teamSubmissionBlock?: string | null;
+  teamRevisionWarning?: boolean;
   submitButton: SubmitButtonView;
   isSubmitting: boolean;
   isEditorEmpty: boolean;
@@ -99,6 +102,9 @@ export function EditorPanel({
   triggerRun,
   judgingUnavailableReason,
   readOnly,
+  allowReadOnlyRun = false,
+  teamSubmissionBlock,
+  teamRevisionWarning = false,
   submitButton,
   isSubmitting,
   isEditorEmpty,
@@ -187,8 +193,13 @@ export function EditorPanel({
       : 0;
   const settingsTop = `clamp(var(--spacing-4), calc(${settingsTriggerBottom}px + var(--spacing-2)), calc(100dvh - var(--spacing-10) * 8))`;
 
-  const runDisabled = readOnly || isRunning || !sessionId || Boolean(judgingUnavailableReason);
-  const submitDisabled = readOnly || submitButton.disabled || Boolean(judgingUnavailableReason);
+  const runDisabled =
+    (readOnly && !allowReadOnlyRun) || isRunning || !sessionId || Boolean(judgingUnavailableReason);
+  const submitDisabled =
+    Boolean(teamSubmissionBlock) ||
+    readOnly ||
+    submitButton.disabled ||
+    Boolean(judgingUnavailableReason);
 
   const activeFileName = activeFile?.name ?? "main.cpp";
 
@@ -432,8 +443,10 @@ export function EditorPanel({
             }}
           />
           <Button
-            label={submitButton.label}
-            aria-label={`${submitButton.label} ${activeFileName} for scoring`}
+            label={teamSubmissionBlock ?? submitButton.label}
+            aria-label={
+              teamSubmissionBlock ?? `${submitButton.label} ${activeFileName} for scoring`
+            }
             variant="primary"
             icon={
               submitButton.icon === "spinner" ? (
@@ -459,6 +472,11 @@ export function EditorPanel({
         </HStack>
       </HStack>
 
+      {teamRevisionWarning && (
+        <Text type="supporting" style={{ padding: "var(--spacing-2)" }}>
+          Submitting creates a new team revision — the team’s votes reset.
+        </Text>
+      )}
       {judgingUnavailableReason && (
         <Banner
           status="warning"

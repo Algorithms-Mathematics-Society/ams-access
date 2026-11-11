@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { teamSubmissionBlock } from "./team-workspace-entry.ts";
 import { attemptLimitError } from "./attempt-limits.ts";
 import { defaultStarterFor } from "./components/language.ts";
 
@@ -80,6 +81,9 @@ function fixture(overrides = {}) {
     activeFileId: "A:main",
     selectedLanguage: "C++23",
     editorLocked: false,
+    teamPartReadOnly: false,
+    desktopTeamRoom: false,
+    teamSubmissionBlock,
     formatSource: (source) => source,
     resolveLanguageBundle: (language) => language,
     latestActiveDraftRef: {
@@ -277,4 +281,60 @@ test("a snapshot from another session cannot be written under this session", () 
   state.latestActiveDraftRef.current.files = [{ id: "A:main", name: "main.cpp", content: "other" }];
   api.writeLocalAnswerBuffer();
   assert.equal(entries.get("session-1:A").files[0].content, "old");
+});
+
+test("teammate views keep Run but reject editing, reset, language mutation and scored Submit", async () => {
+  let error = null;
+  const h = fixture({
+    teamPartReadOnly: true,
+    desktopTeamRoom: true,
+    lobbyState: {
+      status: "team",
+      board: {
+        phase: { name: "locked" },
+        allocation: { locked: true },
+        parts: [
+          { problem_label: "A", holder: "Teammate", holder_is_me: false },
+          { problem_label: "B", holder: "Me", holder_is_me: true },
+        ],
+      },
+    },
+    setSubmissionError: (value) => {
+      error = value;
+    },
+  });
+  h.api.handleCodeChange("unauthorized edit");
+  h.api.handleLanguageChange("Python 3");
+  h.api.handleResetCode();
+  h.flush();
+  assert.equal(h.state.questionFiles.A[0].content, "old");
+  await h.api.triggerRun();
+  assert.equal(h.state.runPayload.problemLabel, "A");
+  await h.api.handleSubmitSolution();
+  assert.equal(h.state.submitPayload, undefined);
+  assert.equal(error, "Held by Teammate");
+});
+
+test("scored Submit rechecks the server deadline at click time", async () => {
+  let error = null;
+  const h = fixture({
+    desktopTeamRoom: true,
+    lobbyState: {
+      status: "team",
+      sampledAt: 0,
+      board: {
+        phase: { name: "locked" },
+        allocation: { locked: true },
+        server_time: "2026-11-11T10:00:00Z",
+        submission: { deadline: "2026-11-11T10:00:00Z", submitted_revision: null },
+        parts: [{ problem_label: "A", holder: "Me", holder_is_me: true }],
+      },
+    },
+    setSubmissionError: (value) => {
+      error = value;
+    },
+  });
+  await h.api.handleSubmitSolution();
+  assert.equal(h.state.submitPayload, undefined);
+  assert.equal(error, "The team submission deadline has passed.");
 });

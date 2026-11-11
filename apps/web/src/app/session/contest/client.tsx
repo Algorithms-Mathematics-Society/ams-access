@@ -55,6 +55,10 @@ import {
 import {
   assignedWorkspaceLabel,
   teamWorkspaceAllowed,
+  teamWorkspaceLabels,
+  teamPartAccess,
+  teamSubmissionBlock,
+  finishReviewQuestions,
   workspaceAlreadyLoaded,
   type WorkspaceIdentity,
 } from "./team-workspace-entry";
@@ -132,6 +136,7 @@ const TeamLobby = dynamic(
   () => import("./components/TeamLobby").then((module) => module.TeamLobby),
   { ssr: false }
 );
+const TeamWorkspacePanel = dynamic(() => import("./components/TeamWorkspacePanel"), { ssr: false });
 const TeamVoiceControls = dynamic(
   () => import("./components/TeamVoiceControls").then((module) => module.TeamVoiceControls),
   { ssr: false }
@@ -1722,11 +1727,12 @@ export default function ContestPageClient() {
       }
       const paper = await loadContestPaper(
         contestId,
-        teamRoom ? (teamOwnLabel ?? undefined) : undefined
+        teamRoom ? teamWorkspaceLabels(lobbyState) : undefined
       );
       const index = paper.index;
-      const questions = teamRoom
-        ? paper.questions.filter((question) => question.id === teamOwnLabel)
+      const labels = teamRoom ? teamWorkspaceLabels(lobbyState) : null;
+      const questions = labels
+        ? labels.flatMap((label) => paper.questions.filter((question) => question.id === label))
         : paper.questions;
       if (!isCurrentLoad()) {
         releaseCandidateQuestionAssets(
@@ -1974,6 +1980,7 @@ export default function ContestPageClient() {
   const onSwitchQuestion = useCallback((idx: number) => switchQuestionRef.current(idx), []);
 
   function handleLanguageChange(newLanguage: string) {
+    if (teamPartReadOnly) return;
     const normalizedLanguage = normalizeLanguageLabel(newLanguage);
     if (questions[activeQ]?.judge_engine === "cxxprobe" && normalizedLanguage !== "C++23") {
       return;
@@ -2009,7 +2016,7 @@ export default function ContestPageClient() {
 
   function handleResetCode() {
     const question = questions[activeQ];
-    if (editorLocked || !question || !activeFileId.endsWith(":main")) return;
+    if (editorLocked || teamPartReadOnly || !question || !activeFileId.endsWith(":main")) return;
     handleCodeChange(
       formatSource(
         (selectedLanguage.startsWith("C++") ? question.starter_code : null) ??
@@ -2020,6 +2027,7 @@ export default function ContestPageClient() {
   }
 
   function handleCodeChange(value: string) {
+    if (teamPartReadOnly) return;
     setHasUnsavedChanges(true);
     // An edit must NOT clear a real save failure — see save-edit-state.ts. A
     // stale "Not saved" only clears when the next real save attempt runs
@@ -2332,6 +2340,13 @@ export default function ContestPageClient() {
     if (!questions[activeQ] || !sessionId) {
       setSubmissionError("No active session is available.");
       return;
+    }
+    if (desktopTeamRoom && lobbyState.status !== "solo") {
+      const blocked = teamSubmissionBlock(lobbyState, questions[activeQ].id);
+      if (blocked) {
+        setSubmissionError(blocked);
+        return;
+      }
     }
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
@@ -4139,6 +4154,14 @@ export default function ContestPageClient() {
 
   const currentQuestion = questions[activeQ];
   const currentQId = currentQuestion?.id ?? "";
+  const inTeamWorkspace = desktopTeamRoom && lobbyState.status !== "solo";
+  const teamPartReadOnly = inTeamWorkspace && !teamPartAccess(lobbyState, currentQId).editable;
+  const teamSubmitBlock = inTeamWorkspace ? teamSubmissionBlock(lobbyState, currentQId) : null;
+  const teamPartLabels = inTeamWorkspace
+    ? Object.fromEntries(
+        questions.map((question) => [question.id, teamPartAccess(lobbyState, question.id).label])
+      )
+    : undefined;
   const showRecoveryBanner =
     restoredFromDevice.includes(currentQId) && !dismissedRecoveryQuestions.includes(currentQId);
 
@@ -4851,22 +4874,41 @@ export default function ContestPageClient() {
             online={!networkDisconnected}
             markedQuestionIds={markedQuestionIds}
             workspaceControls={
-              <WorkspaceControls
-                suspended={
-                  leaveConfirm ||
-                  criticalOverlayActive ||
-                  networkOverlayActive ||
-                  submitConfirm ||
-                  showSupportModal ||
-                  showSupportChat ||
-                  showMediaToggleWarning ||
-                  timeUpState !== "idle"
-                }
-                focused={editorFocused}
-                onFocus={toggleEditorFocus}
-                onReset={resetWorkspaceLayout}
-                onNavigate={navigateWorkspace}
-              />
+              <>
+                {inTeamWorkspace && teamWorkspaceReady && (
+                  <TeamWorkspacePanel
+                    state={lobbyState}
+                    onApprove={(revision) => lobbyController.current?.approve(revision)}
+                    onWithdraw={(revision) => lobbyController.current?.withdraw(revision)}
+                    suspended={
+                      leaveConfirm ||
+                      criticalOverlayActive ||
+                      networkOverlayActive ||
+                      submitConfirm ||
+                      showSupportModal ||
+                      showSupportChat ||
+                      showMediaToggleWarning ||
+                      timeUpState !== "idle"
+                    }
+                  />
+                )}
+                <WorkspaceControls
+                  suspended={
+                    leaveConfirm ||
+                    criticalOverlayActive ||
+                    networkOverlayActive ||
+                    submitConfirm ||
+                    showSupportModal ||
+                    showSupportChat ||
+                    showMediaToggleWarning ||
+                    timeUpState !== "idle"
+                  }
+                  focused={editorFocused}
+                  onFocus={toggleEditorFocus}
+                  onReset={resetWorkspaceLayout}
+                  onNavigate={navigateWorkspace}
+                />
+              </>
             }
             contest={contest}
             clock={clock}
@@ -4880,7 +4922,10 @@ export default function ContestPageClient() {
             submissionPending={isSubmitting}
             timeUpState={timeUpState}
             finishHistoryStatus={submissionHistoryStatus}
-            finishQuestions={questions.map((q) => ({
+            finishQuestions={finishReviewQuestions(
+              questions,
+              inTeamWorkspace ? lobbyState : null
+            ).map((q) => ({
               id: q.id,
               title: q.title,
               submissionCount: (submissionsByQuestion[q.id] ?? []).length,
@@ -4999,6 +5044,7 @@ export default function ContestPageClient() {
                 }}
               >
                 <QuestionRail
+                  teamPartLabels={teamPartLabels}
                   markedQuestionIds={markedQuestionIds}
                   questions={questions}
                   activeQ={activeQ}
@@ -5105,7 +5151,10 @@ export default function ContestPageClient() {
                     sessionId={sessionId}
                     triggerRun={triggerRun}
                     judgingUnavailableReason={judgingUnavailableReason}
-                    readOnly={editorLocked}
+                    readOnly={editorLocked || teamPartReadOnly}
+                    allowReadOnlyRun={teamPartReadOnly && !editorLocked}
+                    teamSubmissionBlock={teamSubmitBlock}
+                    teamRevisionWarning={inTeamWorkspace && !teamPartReadOnly}
                     submitButton={submitButton}
                     isSubmitting={isSubmitting}
                     isEditorEmpty={isEditorEmpty}

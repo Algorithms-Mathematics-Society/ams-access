@@ -130,12 +130,18 @@ export function toCandidateQuestion(
  */
 export async function loadContestPaper(
   contestUid: string,
-  problemLabel?: string
+  problemLabel?: string | readonly string[]
 ): Promise<{ index: ContestIndex; questions: CandidateQuestion[] }> {
   let index = await getContest(contestUid);
   let projections = await Promise.all(
     index.problems
-      .filter((problem) => !problemLabel || problem.label === problemLabel)
+      .filter(
+        (problem) =>
+          !problemLabel ||
+          (typeof problemLabel === "string"
+            ? problem.label === problemLabel
+            : problemLabel.includes(problem.label))
+      )
       .map((problem) => getProblem(contestUid, problem.label))
   );
   // Statements are available only once the contest starts. If the index was
@@ -146,7 +152,13 @@ export async function loadContestPaper(
     // Keep the paper aligned if the organizer also finalized its problem list.
     projections = await Promise.all(
       index.problems
-        .filter((problem) => !problemLabel || problem.label === problemLabel)
+        .filter(
+          (problem) =>
+            !problemLabel ||
+            (typeof problemLabel === "string"
+              ? problem.label === problemLabel
+              : problemLabel.includes(problem.label))
+        )
         .map((problem) => getProblem(contestUid, problem.label))
     );
   }
