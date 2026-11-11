@@ -918,6 +918,7 @@ test("vote projection retains only bounded authoritative fields and remains opti
     revision: 1,
     status: "completed",
     verdict: "AC",
+    details: null,
   });
   for (const change of [
     (b) => (b.vote.needed = 6),
@@ -954,4 +955,79 @@ test("approval during ordinary poll gives feedback without queuing a mutation", 
   await flush();
   assert.equal(calls.length, 2);
   controller.stop();
+});
+
+test("integration metadata preserves substitutions and separates suite verdict", async () => {
+  const { parseTeamVote } = await import("./team-vote.ts");
+  const input = {
+    revision: 4,
+    submitted_revision: 4,
+    submitted_by: "vote",
+    vote: { votes: 5, needed: 5, mine: true, deadline: "2030-01-01T00:00:00Z" },
+    integration: null,
+    last_result: {
+      revision: 4,
+      status: "completed",
+      verdict: "AC",
+      integration_verdict: "WA",
+      passed_count: 4,
+      total_count: 5,
+      project_failure: false,
+      failing_parts: ["2"],
+      substitutions: [{ label: "3", origin: "reference", reason: "not supplied" }],
+      parts: {
+        1: { verdict: "AC", passed_count: 2, total_count: 2, origin: "submission" },
+        3: { verdict: "AC", origin: "reference", substituted: "reference" },
+      },
+    },
+  };
+  const details = parseTeamVote(input).last_result.details;
+  assert.equal(details.integration_verdict, "WA");
+  assert.equal(details.parts.find((p) => p.label === "3").substituted, true);
+  assert.equal(details.parts.find((p) => p.label === "1").substituted, false);
+  assert.deepEqual(details.failing_parts, ["2"]);
+  input.last_result.substitutions = [];
+  assert.equal(parseTeamVote(input).last_result.details.substitutions[0].label, "3");
+  input.last_result.parts["3"].origin = "submission";
+  assert.equal(parseTeamVote(input).last_result.details.parts[1].substituted, true);
+  input.last_result.substitutions = "invalid";
+  assert.equal(parseTeamVote(input).last_result.details, null);
+  input.last_result.substitutions = [];
+  input.last_result.parts = Object.fromEntries(
+    Array.from({ length: 6 }, (_, i) => [String(i), {}])
+  );
+  assert.equal(parseTeamVote(input).last_result.details, null);
+});
+
+test("progress strip cannot advertise raw AC without confirmed non-substituted detail", async () => {
+  const { integrationPartStatus } = await import("./team-vote.ts");
+  assert.equal(
+    integrationPartStatus({ details: null, verdict: "AC" }, "3"),
+    "Result details unavailable"
+  );
+  assert.equal(
+    integrationPartStatus({ details: { substitutions: [], parts: [] } }, "3"),
+    "Result details unavailable"
+  );
+  assert.equal(
+    integrationPartStatus(
+      {
+        details: {
+          substitutions: [{ label: "3" }],
+          parts: [{ label: "3", verdict: "AC", substituted: false }],
+        },
+      },
+      "3"
+    ),
+    "Substituted · no score"
+  );
+  assert.equal(
+    integrationPartStatus(
+      {
+        details: { substitutions: [], parts: [{ label: "3", verdict: "AC", substituted: false }] },
+      },
+      "3"
+    ),
+    "AC"
+  );
 });

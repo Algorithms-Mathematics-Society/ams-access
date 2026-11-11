@@ -4,7 +4,7 @@ import { VStack, HStack } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
-import { Collapsible } from "@astryxdesign/core/Collapsible";
+
 import type { LobbyState } from "@/lib/team-lobby";
 import { voteRemainingMs, integrationStatus } from "@/lib/team-vote";
 const duration = (ms: number) =>
@@ -17,11 +17,13 @@ export function TeamVotePanel({
   onApprove,
   onWithdraw,
   suspended = false,
+  onResults,
 }: {
   state: LobbyState;
   onApprove: (revision: number) => void;
   onWithdraw: (revision: number) => void;
   suspended?: boolean;
+  onResults?: () => void;
 }) {
   const board = state.board,
     vote = board?.submission;
@@ -104,15 +106,12 @@ export function TeamVotePanel({
       )}
       {state.error && <Text role="alert">{state.error}</Text>}
       {result && (
-        <Collapsible
-          trigger={`Results for revision ${result.revision} · ${integrationStatus(result)}`}
-          defaultIsOpen={false}
-        >
-          <VStack gap={2}>
-            <Text>{integrationStatus(result)}</Text>
-            <Text>{result.verdict ?? "Verdict pending."}</Text>
-          </VStack>
-        </Collapsible>
+        <Button
+          variant="secondary"
+          label={`Results for revision ${result.revision} · ${integrationStatus(result)}`}
+          onClick={onResults}
+          isDisabled={!onResults}
+        />
       )}
     </VStack>
   );
