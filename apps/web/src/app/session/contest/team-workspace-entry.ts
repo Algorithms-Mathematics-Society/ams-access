@@ -1,9 +1,12 @@
 import type { LobbyState } from "@/lib/team-lobby";
 
-/** Allocation is authoritative only after the server locks it. Names are never identity. */
+/**
+ * Allocation is authoritative only after the server locks it. Names are never identity.
+ * A transient poll failure ("error") keeps the last good board, so the label survives it.
+ */
 export function assignedWorkspaceLabel(state: LobbyState): string | null {
   if (
-    state.status !== "team" ||
+    (state.status !== "team" && state.status !== "error") ||
     state.board?.phase.name !== "locked" ||
     !state.board.allocation.locked
   )

@@ -8,6 +8,7 @@ import {
   acquireVoiceMicrophone,
   TeamVoiceApiError,
   resumeVoiceAfterPollFailure,
+  voiceProjectionDecision,
 } from "./team-voice-api.ts";
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -250,4 +251,20 @@ test("poll failures preserve only a previously active connection intent and auth
   assert.equal(calls, 1);
   assert.equal(errors, 1);
   stop();
+});
+
+test("voice projection decision keeps a running session on a stale error and closes on every real signal", () => {
+  const d = (enabled, status, hasBoard, voiceOpen) =>
+    voiceProjectionDecision({ enabled, status, hasBoard, voiceOpen });
+  assert.equal(d(true, "error", true, true), "keep");
+  assert.equal(d(true, "error", true, false), "keep");
+  assert.equal(d(true, "error", false, false), "close");
+  assert.equal(d(true, "error", false, true), "close");
+  for (const status of ["team", "error", "unpublished", "loading", "solo"])
+    assert.equal(d(false, status, true, true), "close");
+  assert.equal(d(true, "team", true, true), "open");
+  assert.equal(d(true, "team", true, false), "close");
+  for (const status of ["unpublished", "loading", "solo"])
+    assert.equal(d(true, status, false, false), "close");
+  assert.equal(d(true, "solo", true, true), "close");
 });

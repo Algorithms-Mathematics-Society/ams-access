@@ -44,7 +44,14 @@ import {
 import { invoke, listen, type RestoreStatus } from "@ams/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBase } from "@/lib/api-base";
-import { createTeamLobbyController, type LobbyState } from "@/lib/team-lobby";
+import {
+  createTeamLobbyController,
+  probeTeamRound,
+  startTeamRoundProbeLoop,
+  TEAM_WRONG_CONTEST_MESSAGE,
+  type LobbyState,
+  type TeamRoundProbe,
+} from "@/lib/team-lobby";
 import {
   assignedWorkspaceLabel,
   teamWorkspaceAllowed,
@@ -441,6 +448,64 @@ export default function ContestPageClient() {
       lobbyController.current = null;
     };
   }, [desktopTeamRoom, contestId]);
+  // A native client that cannot run team rooms (macOS, Linux ARM) must learn
+  // whether this is a team round before it loads any paper, so a team round
+  // never opens as a solo workspace showing every part (#314).
+  const nativeTeamUnsupported =
+    entryReady &&
+    !isDryRun &&
+    typeof window !== "undefined" &&
+    Boolean(window.__TAURI__) &&
+    !supportsTeamDesktopWebView(Boolean(window.__TAURI__), navigator.platform, navigator.userAgent);
+  const [teamProbe, setTeamProbe] = useState<{
+    contestId: string;
+    generation: number;
+    token: string | null;
+    result: Exclude<TeamRoundProbe, "error">;
+  } | null>(null);
+  // Bumped to discard a non-solo pass and probe again before any paper fetch.
+  const [teamProbeRound, setTeamProbeRound] = useState(0);
+  // Consecutive defer passes that re-probed after a good session, per contest
+  // and identity. Capped so a refusal the session read ignores cannot keep the
+  // boot screen up forever.
+  const teamDeferPassesRef = useRef<{ identity: string; count: number } | null>(null);
+  // Never apply a result from another contest or another signed-in identity.
+  const teamProbeResult =
+    teamProbe &&
+    teamProbe.contestId === contestId &&
+    teamProbe.generation === authGeneration() &&
+    teamProbe.token === participantToken()
+      ? teamProbe.result
+      : null;
+  useEffect(() => {
+    if (!nativeTeamUnsupported || !contestId) return;
+    const generation = authGeneration();
+    const token = participantToken();
+    // Unknown is never solo: the loop keeps the boot screen and retries, and a
+    // re-probe after a non-solo pass waits first (see startTeamRoundProbeLoop).
+    const stop = startTeamRoundProbeLoop({
+      round: teamProbeRound,
+      probe: (signal) =>
+        probeTeamRound({
+          apiBase: API_URL,
+          contestUid: contestId,
+          headers: authHeaders(),
+          signal,
+        }),
+      // Never apply a result fetched for another signed-in identity.
+      isCurrent: () => generation === authGeneration() && token === participantToken(),
+      onResult: (result) => setTeamProbe({ contestId, generation, token, result }),
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (handle) => clearTimeout(handle),
+      random: Math.random,
+    });
+    const unsubscribe = subscribeAuthChanges(stop);
+    return () => {
+      unsubscribe();
+      stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeTeamUnsupported, contestId, teamProbeRound]);
   const teamOwnLabel = assignedWorkspaceLabel(lobbyState);
   const teamWorkspaceReady = teamWorkspaceAllowed(lobbyState, enteredTeamPart);
   const showTeamLobby = desktopTeamRoom && !teamWorkspaceReady;
@@ -1464,9 +1529,37 @@ export default function ContestPageClient() {
 
   useEffect(() => {
     if (!entryReady || showTeamLobby) return;
+    // A team room never loads the full paper: without the server-confirmed own
+    // label the lobby is on screen and nothing is fetched.
+    const teamRoom = desktopTeamRoom && lobbyState.status !== "solo";
+    if (teamRoom && !teamOwnLabel) return;
     if (!contestId) {
       setLoadError("Missing contest ID. Please relaunch from your contest list.");
       setLoading(false);
+      return;
+    }
+    // Until the probe proves a solo contest, an unsupported native client loads
+    // nothing: the boot screen stays up (with Exit) while it is pending. A
+    // "defer" (a 401 or another definite refusal) passes only so the session
+    // read and its own error handling run as before; the paper fetch below
+    // still requires "solo". A token for another contest stops here: only
+    // signing in again can help, so nothing is read.
+    if (nativeTeamUnsupported && (teamProbeResult === "solo" || teamProbeResult === "team"))
+      teamDeferPassesRef.current = null;
+    if (nativeTeamUnsupported && teamProbeResult === "wrong-contest") {
+      setLoadError(TEAM_WRONG_CONTEST_MESSAGE);
+      setLoadRetryable(false);
+      setLoading(false);
+      return;
+    }
+    if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer") {
+      if (teamProbeResult === "team") {
+        setLoadError(
+          "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
+        );
+        setLoadRetryable(false);
+        setLoading(false);
+      }
       return;
     }
 
@@ -1579,7 +1672,7 @@ export default function ContestPageClient() {
       }
 
       const workspaceIdentity =
-        desktopTeamRoom && lobbyState.status === "team" && teamOwnLabel
+        teamRoom && teamOwnLabel
           ? { contestId, sessionId: live.uid, generation: authGeneration(), label: teamOwnLabel }
           : null;
       if (
@@ -1592,15 +1685,37 @@ export default function ContestPageClient() {
         setLoading(false);
         return;
       }
+      if (nativeTeamUnsupported && teamProbeResult !== "solo") {
+        // The session is good but the round is unproven (a defer pass): discard
+        // that pass and probe again, behind the boot screen, before any paper.
+        // After 3 such passes in a row for this contest and identity, stop.
+        const identity = `${contestId}\n${authGeneration()}\n${participantToken()}`;
+        const passes =
+          teamDeferPassesRef.current?.identity === identity ? teamDeferPassesRef.current.count : 0;
+        if (passes >= 3) {
+          setLoadError(
+            "This contest could not be opened. Return to your contest list and try again."
+          );
+          setLoadRetryable(false);
+          setLoading(false);
+          return;
+        }
+        teamDeferPassesRef.current = { identity, count: passes + 1 };
+        setTeamProbe(null);
+        setTeamProbeRound((n) => n + 1);
+        setLoadError(null);
+        setLoadRetryable(false);
+        setLoading(true);
+        return;
+      }
       const paper = await loadContestPaper(
         contestId,
-        desktopTeamRoom && lobbyState.status === "team" ? (teamOwnLabel ?? undefined) : undefined
+        teamRoom ? (teamOwnLabel ?? undefined) : undefined
       );
       const index = paper.index;
-      const questions =
-        desktopTeamRoom && lobbyState.status === "team"
-          ? paper.questions.filter((question) => question.id === teamOwnLabel)
-          : paper.questions;
+      const questions = teamRoom
+        ? paper.questions.filter((question) => question.id === teamOwnLabel)
+        : paper.questions;
       if (!isCurrentLoad()) {
         releaseCandidateQuestionAssets(
           questions.flatMap((question) =>
@@ -1760,7 +1875,15 @@ export default function ContestPageClient() {
       // Adopted statement assets remain owned by the authorized workspace.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contestId, loadAttempt, entryReady, showTeamLobby, teamOwnLabel]);
+  }, [
+    contestId,
+    loadAttempt,
+    entryReady,
+    showTeamLobby,
+    teamOwnLabel,
+    nativeTeamUnsupported,
+    teamProbeResult,
+  ]);
 
   function loadQuestionWithAnswers(
     q: Question,
@@ -4665,6 +4788,7 @@ export default function ContestPageClient() {
       <ContestLoadErrorScreen
         loadError={loadError}
         router={router}
+        exitTo={loadError === TEAM_WRONG_CONTEST_MESSAGE ? "/login" : undefined}
         onRetry={
           loadRetryable
             ? () => {

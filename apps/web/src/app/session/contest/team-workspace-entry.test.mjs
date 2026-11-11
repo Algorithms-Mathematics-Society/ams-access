@@ -31,8 +31,16 @@ test("missing, ambiguous, unavailable and unpublished allocations stay outside e
   const duplicate = state();
   duplicate.board.parts[0].holder_is_me = true;
   assert.equal(assignedWorkspaceLabel(duplicate), null);
-  for (const status of ["loading", "error", "unpublished"])
+  for (const status of ["loading", "unpublished"])
     assert.equal(teamWorkspaceAllowed({ ...state(), status }, true), false);
+  // A transient poll failure keeps the last good board: an entered member keeps the workspace.
+  assert.equal(assignedWorkspaceLabel({ ...state(), status: "error" }), "A");
+  assert.equal(teamWorkspaceAllowed({ ...state(), status: "error" }, true), true);
+  assert.equal(teamWorkspaceAllowed({ ...state(), status: "error" }, false), false);
+  assert.equal(teamWorkspaceAllowed({ status: "error", board: null }, true), false);
+  assert.equal(assignedWorkspaceLabel({ status: "error", board: null }), null);
+  assert.equal(teamWorkspaceAllowed({ ...state("waiting"), status: "error" }, true), false);
+  assert.equal(teamWorkspaceAllowed({ ...state("locked", false), status: "error" }, true), false);
   assert.equal(teamWorkspaceAllowed({ status: "solo", board: null }, false), true);
 });
 

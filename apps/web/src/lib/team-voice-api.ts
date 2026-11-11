@@ -132,3 +132,21 @@ export function resumeVoiceAfterPollFailure(
     return false;
   return previous || status === "connected" || status === "connecting" || status === "reconnecting";
 }
+
+export type VoiceProjectionDecision = "keep" | "open" | "close";
+
+/**
+ * Decides what the voice effect does for a team projection. A transient poll
+ * error that still has the last good board must not touch a running session;
+ * a terminal 401/403 clears the board and therefore closes.
+ */
+export function voiceProjectionDecision(input: {
+  enabled: boolean;
+  status: string;
+  hasBoard: boolean;
+  voiceOpen: boolean;
+}): VoiceProjectionDecision {
+  if (!input.enabled) return "close";
+  if (input.status === "error" && input.hasBoard) return "keep";
+  return input.status === "team" && input.voiceOpen ? "open" : "close";
+}
