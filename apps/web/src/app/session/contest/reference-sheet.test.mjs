@@ -400,3 +400,33 @@ for (const phase of ["running", "verification", "before_window"]) {
     );
   });
 }
+
+test("team paper loads only explicit board labels; empty authorization loads none", async () => {
+  for (const labels of [["B", "A"], []]) {
+    const reads = [];
+    const context = {
+      exports: {},
+      require: () => ({
+        getContest: async () => ({
+          phase: "running",
+          problems: [{ label: "A" }, { label: "B" }, { label: "C" }],
+        }),
+        getProblem: async (_uid, label) => {
+          reads.push(label);
+          return {
+            label,
+            title: label,
+            statement: { markdown: "Shared part statement" },
+            limits: {},
+            samples: [],
+            assets: [],
+            families: {},
+          };
+        },
+      }),
+    };
+    vm.runInNewContext(loaderCode, context);
+    await context.exports.loadContestPaper("contest", labels);
+    assert.deepEqual(reads, labels.length ? ["A", "B"] : []);
+  }
+});

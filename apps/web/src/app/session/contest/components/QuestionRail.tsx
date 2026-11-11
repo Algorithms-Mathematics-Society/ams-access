@@ -18,6 +18,7 @@ export interface QuestionStatus {
 
 export interface QuestionRailProps {
   questions: Question[];
+  teamPartLabels?: Record<string, string>;
   activeQ: number;
   switchQuestion: (idx: number) => void;
   sidebarCollapsed: boolean;
@@ -35,6 +36,7 @@ export interface QuestionRailProps {
 
 export const QuestionRail = memo(function QuestionRail({
   questions,
+  teamPartLabels,
   activeQ,
   switchQuestion,
   sidebarCollapsed,
@@ -155,7 +157,7 @@ export const QuestionRail = memo(function QuestionRail({
         {questions.length === 0 && !sidebarCollapsed && <Text type="supporting">No questions</Text>}
         {questions.map((q, i) => {
           const qStatus = questionStatusMap[q.id];
-          const letter = String.fromCharCode(65 + i);
+          const letter = teamPartLabels ? q.id : String.fromCharCode(65 + i);
           const displayTitle = q.title.startsWith(letter)
             ? q.title.replace(QUESTION_PREFIX, "")
             : q.title;
@@ -167,7 +169,7 @@ export const QuestionRail = memo(function QuestionRail({
               ? "var(--verdict-wa)"
               : "var(--color-text-secondary)";
           const marked = markedQuestionIds.includes(q.id);
-          const accessibleLabel = `${q.title} · ${qStatus.label}${marked ? " · Marked for later" : ""}`;
+          const accessibleLabel = `${q.title}${teamPartLabels?.[q.id] ? ` · ${teamPartLabels[q.id]}` : ""} · ${qStatus.label}${marked ? " · Marked for later" : ""}`;
           return (
             <Button
               key={q.id}
@@ -256,6 +258,11 @@ export const QuestionRail = memo(function QuestionRail({
                     <Text type="label" maxLines={1} hasTruncateTooltip={false}>
                       {displayTitle}
                     </Text>
+                    {teamPartLabels?.[q.id] && (
+                      <Text type="supporting" style={{ overflowWrap: "anywhere" }}>
+                        {teamPartLabels[q.id]}
+                      </Text>
+                    )}
                   </VStack>
                 </HStack>
               )}

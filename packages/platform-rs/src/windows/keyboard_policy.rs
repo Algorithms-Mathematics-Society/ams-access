@@ -64,6 +64,13 @@ mod tests {
     }
 
     #[test]
+    fn team_mute_chord_is_forwarded_on_press_and_release() {
+        for key_up in [false, true] {
+            assert!(!should_block(0x4D, key_up, false, true, true, false, true));
+        }
+    }
+
+    #[test]
     fn a_win_chord_cannot_leave_the_shell_believing_win_is_held() {
         // The sequence a candidate reported on 21 Oct, in order.
         //

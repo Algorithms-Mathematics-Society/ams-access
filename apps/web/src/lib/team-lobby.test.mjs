@@ -805,3 +805,153 @@ test("part descriptions preserve bounded authored metadata and legacy fallback",
   assert.equal(parseTeamLobby(b).parts[0].title, b.parts[0].title);
   assert.equal(parseTeamLobby(b).parts[0].summary, b.parts[0].summary);
 });
+
+const votingBoard = (revision = 1, mine = false) => ({
+  ...board(),
+  allocation: { locked: true, locks_at: null },
+  revision,
+  vote: { votes: mine ? 1 : 0, needed: 1, mine, deadline: "2026-01-01T01:00:00Z" },
+  submitted_revision: null,
+  submitted_by: null,
+  integration: null,
+  last_result: null,
+});
+test("vote binds displayed revision, serializes double click and trusts authoritative submission", async () => {
+  let state, finish;
+  const calls = [];
+  const controller = createTeamLobbyController({
+    apiBase: "https://example.test",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    now: () => 0,
+    onState: (s) => (state = s),
+    request: async (url, init) => {
+      calls.push({ url, init });
+      if (calls.length === 1) return Response.json(votingBoard());
+      await new Promise((r) => (finish = r));
+      return Response.json({
+        ...votingBoard(1, true),
+        submitted_revision: 1,
+        submitted_by: "vote",
+      });
+    },
+  });
+  await flush();
+  controller.approve(0);
+  assert.equal(calls.length, 1);
+  controller.approve(1);
+  controller.approve(1);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].init.body, '{"revision":1}');
+  assert.equal(calls[1].url, "https://example.test/participant/contests/contest/team/vote");
+  finish();
+  await flush();
+  controller.approve(1);
+  controller.withdraw(1);
+  assert.equal(calls.length, 2);
+  assert.equal(state.board.submission.submitted_revision, 1);
+  controller.stop();
+});
+test("stale vote refreshes once without retrying approval or exposing error detail", async () => {
+  let state;
+  const calls = [];
+  const controller = createTeamLobbyController({
+    apiBase: "https://example.test",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    onState: (s) => (state = s),
+    request: async (url, init) => {
+      calls.push({ url, init });
+      return calls.length === 1
+        ? Response.json(votingBoard())
+        : calls.length === 2
+          ? Response.json({ detail: "revision 1 is stale; internal detail" }, { status: 409 })
+          : Response.json(votingBoard(2));
+    },
+  });
+  await flush();
+  controller.approve(1);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].init.method, "GET");
+  assert.equal(state.board.submission.revision, 2);
+  assert.match(state.error, /Review the updated count/);
+  assert.doesNotMatch(state.error, /internal detail/);
+  controller.stop();
+});
+test("withdraw sends shown revision in query; deadline and stale projections forbid mutations", async () => {
+  let state;
+  const calls = [];
+  let elapsed = 0;
+  const controller = createTeamLobbyController({
+    apiBase: "https://example.test",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    now: () => elapsed,
+    onState: (s) => (state = s),
+    request: async (url, init) => {
+      calls.push({ url, init });
+      return Response.json(votingBoard(3, calls.length === 1));
+    },
+  });
+  await flush();
+  controller.withdraw(2);
+  assert.equal(calls.length, 1);
+  controller.withdraw(3);
+  await flush();
+  assert.equal(calls[1].init.method, "DELETE");
+  assert.match(calls[1].url, /vote\?revision=3$/);
+  elapsed = 3600000;
+  controller.approve(3);
+  assert.equal(calls.length, 2);
+  controller.stop();
+});
+test("vote projection retains only bounded authoritative fields and remains optional", () => {
+  const b = votingBoard();
+  b.integration = { revision: 1, status: "completed", verdict: "AC", parts: { secret: "large" } };
+  const parsed = parseTeamLobby(b);
+  assert.deepEqual(parsed.submission.integration, {
+    revision: 1,
+    status: "completed",
+    verdict: "AC",
+  });
+  for (const change of [
+    (b) => (b.vote.needed = 6),
+    (b) => (b.vote.votes = 2),
+    (b) => (b.vote.deadline = "bad"),
+    (b) => (b.revision = -1),
+  ]) {
+    const b = votingBoard();
+    change(b);
+    assert.equal(parseTeamLobby(b).submission, undefined);
+  }
+});
+test("approval during ordinary poll gives feedback without queuing a mutation", async () => {
+  let state, release;
+  const calls = [];
+  const controller = createTeamLobbyController({
+    apiBase: "https://example.test",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    onState: (s) => (state = s),
+    request: async (url, init) => {
+      calls.push({ url, init });
+      if (calls.length > 1) await new Promise((r) => (release = r));
+      return Response.json(votingBoard());
+    },
+  });
+  await flush();
+  controller.refresh();
+  controller.approve(1);
+  assert.equal(calls.length, 2);
+  assert.match(state.error, /status is updating/);
+  release();
+  await flush();
+  assert.equal(calls.length, 2);
+  controller.stop();
+});

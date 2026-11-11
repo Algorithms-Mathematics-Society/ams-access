@@ -19,6 +19,7 @@ const handler = ts.transpileModule(client.slice(draftStart, draftEnd) + client.s
 function fixture(shared = { accepted: new Map(), posts: [], store: new Map(), nextKey: 0 }) {
   const { accepted, posts } = shared;
   const state = {
+    desktopTeamRoom: false,
     questions: [{ id: "A" }, { id: "B" }],
     activeQ: 0,
     sessionId: "session-1",

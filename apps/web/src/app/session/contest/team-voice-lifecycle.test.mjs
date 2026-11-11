@@ -75,11 +75,11 @@ test("team paper load never gates on a team status and fails closed without a la
   assert.match(flat, /if \(teamRoom && !teamOwnLabel\) return;/);
   assert.match(
     flat,
-    /loadContestPaper\( contestId, teamRoom \? \(teamOwnLabel \?\? undefined\) : undefined \)/
+    /loadContestPaper\( contestId, teamRoom \? teamWorkspaceLabels\(lobbyState\) : undefined \)/
   );
   assert.match(
     flat,
-    /teamRoom \? paper\.questions\.filter\(\(question\) => question\.id === teamOwnLabel\)/
+    /labels\.flatMap\(\(label\) => paper\.questions\.filter\(\(question\) => question\.id === label\)\)/
   );
   assert.match(ui, /Team status is reconnecting\. Your work is safe\./);
 });
@@ -173,4 +173,73 @@ test("reconnecting line only shows with a last good board (#312)", () => {
   assert.equal(run({ status: "error", board: null }, null), "Team status is unavailable.");
   assert.equal(run({ status: "ok", board: null }, null), null);
   assert.equal(run({ status: "unpublished", board: null }, null), null);
+});
+
+test("mute shortcut captures before editor, consumes repeats and respects lifecycle guards", () => {
+  const source = ui.match(/function muteShortcut\(event: KeyboardEvent\) \{([\s\S]*?)\n    \}/)[1];
+  const handler = new Function(
+    "session",
+    "suspended",
+    "current",
+    `return function(event) { ${source} };`
+  );
+  assert.match(ui, /addEventListener\("keydown", muteShortcut, true\)/);
+  assert.match(ui, /removeEventListener\("keydown", muteShortcut, true\)/);
+  let muted = true;
+  let toggles = 0;
+  const session = {
+    current: {
+      getSnapshot: () => ({ muted }),
+      setMuted: (value) => {
+        muted = value;
+        toggles++;
+      },
+    },
+  };
+  function dispatch(overrides = {}, suspended = false, valid = true, active = session) {
+    let prevented = false,
+      stopped = false,
+      editorCommands = 0;
+    const event = {
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      metaKey: false,
+      code: "KeyM",
+      repeat: false,
+      preventDefault() {
+        prevented = true;
+      },
+      stopPropagation() {
+        stopped = true;
+      },
+      ...overrides,
+    };
+    handler(active, suspended, { current: () => valid })(event);
+    // A target editor receives only events not stopped by the window capture handler.
+    if (!stopped) editorCommands++;
+    return { prevented, stopped, editorCommands };
+  }
+  assert.deepEqual(dispatch(), { prevented: true, stopped: true, editorCommands: 0 });
+  assert.equal(muted, false);
+  assert.equal(toggles, 1);
+  assert.deepEqual(dispatch({ repeat: true }), {
+    prevented: true,
+    stopped: true,
+    editorCommands: 0,
+  });
+  assert.equal(toggles, 1);
+  for (const args of [
+    [{ altKey: true }],
+    [{ metaKey: true }],
+    [{ ctrlKey: false }],
+    [{ shiftKey: false }],
+    [{ code: "KeyN" }],
+    [{}, true],
+    [{}, false, false],
+    [{}, false, true, { current: null }],
+  ]) {
+    assert.deepEqual(dispatch(...args), { prevented: false, stopped: false, editorCommands: 1 });
+  }
+  assert.equal(toggles, 1);
 });
