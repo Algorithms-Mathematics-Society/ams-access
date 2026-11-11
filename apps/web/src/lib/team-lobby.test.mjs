@@ -782,3 +782,26 @@ test("stable roster member IDs survive parsing and duplicates are rejected", () 
   value.members.push({ ...value.members[0], is_me: false });
   assert.throws(() => parseTeamLobby(value));
 });
+
+test("part descriptions preserve bounded authored metadata and legacy fallback", () => {
+  const b = board();
+  b.parts[0].title = "Shared name <script> stays plain text";
+  b.parts[0].summary = "Organize the queue.";
+  const part = parseTeamLobby(b).parts[0];
+  assert.equal(part.title, b.parts[0].title);
+  assert.equal(part.summary, b.parts[0].summary);
+  assert.equal("title" in parseTeamLobby(board()).parts[0], false);
+  assert.equal("summary" in parseTeamLobby(board()).parts[0], false);
+  for (const bad of [null, 7, {}, "", "   ", "x".repeat(401)]) {
+    b.parts[0].title = bad;
+    b.parts[0].summary = bad;
+    const parsed = parseTeamLobby(b).parts[0];
+    assert.equal("title" in parsed, false);
+    assert.equal("summary" in parsed, false);
+    assert.equal(parsed.problem_label, "P1");
+  }
+  b.parts[0].title = "😀".repeat(300);
+  b.parts[0].summary = "😀".repeat(400);
+  assert.equal(parseTeamLobby(b).parts[0].title, b.parts[0].title);
+  assert.equal(parseTeamLobby(b).parts[0].summary, b.parts[0].summary);
+});

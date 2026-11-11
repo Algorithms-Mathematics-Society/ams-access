@@ -532,3 +532,11 @@ without unmuting. Native permission/autoplay and five-member load checks remain
 required before event acceptance.
 
 Lobby phase boundaries show only the pending phase status at zero, and part claim/release requests announce their action while pending. Unpublished-team guidance appears once in the lobby. Hidden audio output names explain microphone permission and the System default fallback. An open voice window ending announces its end for five seconds in the toolbar, including when local contest expiry disables voice. These notices add no requests or retries; installed-device timing and screen-reader acceptance remain required.
+
+Lobby part rows retain their Part/label and holder, with an authored title heading
+and plain-text summary when supplied by the API. Descriptions wrap within the row;
+missing or invalid optional metadata keeps the legacy label/holder presentation.
+Summaries are organizer-authored metadata, never inferred from hidden statements.
+This uses the existing board projection and adds no requests or polling.
+
+Unsupported native platforms show the team-round restriction on Home and in device readiness. Selecting a contest makes one abortable, eight-second team probe before setup state or navigation; only an authoritative solo result proceeds. Other results remain on Home with explicit retry advice. There is no per-card polling, automatic retry, or extra request on supported platforms/browser.

@@ -15,8 +15,12 @@ import {
 import { clearQueryCache, useApiQuery } from "@/lib/api-client";
 import { useTheme } from "@/lib/theme";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
+import { supportsTeamDesktopWebView, TEAM_PLATFORM_MESSAGE } from "@/lib/team-platform";
+import { probeTeamRound, TEAM_WRONG_CONTEST_MESSAGE } from "@/lib/team-lobby";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
 import {
+  authGeneration,
+  subscribeAuthChanges,
   type ContestSummary,
   ProctorApiError,
   getContest,
@@ -424,10 +428,66 @@ export default function HomePage() {
   const refreshContests = useCallback(() => {
     void loadContests();
   }, [loadContests]);
+  const [teamEntryMessage, setTeamEntryMessage] = useState<string | null>(null);
+  const [unsupportedTeamDevice, setUnsupportedTeamDevice] = useState(false);
+  const teamEntryProbe = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setUnsupportedTeamDevice(
+      hasNativeBridge() &&
+        !supportsTeamDesktopWebView(true, navigator.platform, navigator.userAgent)
+    );
+    const stop = () => {
+      teamEntryProbe.current?.abort();
+      teamEntryProbe.current = null;
+      entryNavigationRef.current = false;
+    };
+    const unsubscribe = subscribeAuthChanges(stop);
+    return () => {
+      unsubscribe();
+      stop();
+    };
+  }, []);
   const openPreflight = useCallback(
-    (contestId: string) => {
+    async (contestId: string) => {
       if (entryNavigationRef.current) return;
       entryNavigationRef.current = true;
+      if (
+        hasNativeBridge() &&
+        !supportsTeamDesktopWebView(true, navigator.platform, navigator.userAgent)
+      ) {
+        const controller = new AbortController();
+        teamEntryProbe.current = controller;
+        const generation = authGeneration();
+        const token = participantToken();
+        setTeamEntryMessage("Checking whether this contest supports your device…");
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const result = await probeTeamRound({
+          apiBase: API_URL,
+          contestUid: contestId,
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (
+          teamEntryProbe.current !== controller ||
+          generation !== authGeneration() ||
+          token !== participantToken()
+        )
+          return;
+        teamEntryProbe.current = null;
+        if (result !== "solo") {
+          entryNavigationRef.current = false;
+          setTeamEntryMessage(
+            result === "team"
+              ? TEAM_PLATFORM_MESSAGE
+              : result === "wrong-contest"
+                ? TEAM_WRONG_CONTEST_MESSAGE
+                : "Could not verify this contest for your device. Check your connection, then select the contest again to retry."
+          );
+          return;
+        }
+        setTeamEntryMessage(null);
+      }
       // Persist a fresh attempt before navigation; old recovery cannot authorize a new entry.
       try {
         clearSetupHandoff(sessionStorage);
@@ -1141,6 +1201,7 @@ export default function HomePage() {
           <DashboardColumns
             readiness={
               <ReadinessWidget
+                platformNotice={unsupportedTeamDevice ? TEAM_PLATFORM_MESSAGE : undefined}
                 report={readinessReport}
                 readiness={readiness}
                 onSettingsRedirect={() => setActiveNav("settings")}
@@ -1151,6 +1212,13 @@ export default function HomePage() {
               />
             }
           >
+            {(unsupportedTeamDevice || teamEntryMessage) && (
+              <Banner
+                status="warning"
+                title="Team round compatibility"
+                description={teamEntryMessage ?? TEAM_PLATFORM_MESSAGE}
+              />
+            )}
             {prioritizeRecovery ? [recoveryPanel, contestsPanel] : [contestsPanel, recoveryPanel]}
           </DashboardColumns>
         )}

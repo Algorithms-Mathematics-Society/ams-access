@@ -130,9 +130,21 @@ export function TeamLobby({
             key={part.label}
             label={`Part ${part.label} · ${part.problem_label}`}
             description={
-              <Text>
-                {part.holder ? `${part.holder}${part.holder_is_me ? " (you)" : ""}` : "Available"}
-              </Text>
+              part.title || part.summary ? (
+                <VStack gap={1} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                  {part.title && <Heading level={3}>{part.title}</Heading>}
+                  {part.summary && <Text>{part.summary}</Text>}
+                  <Text>
+                    {part.holder
+                      ? `${part.holder}${part.holder_is_me ? " (you)" : ""}`
+                      : "Available"}
+                  </Text>
+                </VStack>
+              ) : (
+                <Text>
+                  {part.holder ? `${part.holder}${part.holder_is_me ? " (you)" : ""}` : "Available"}
+                </Text>
+              )
             }
             endContent={
               part.holder_is_me ? (

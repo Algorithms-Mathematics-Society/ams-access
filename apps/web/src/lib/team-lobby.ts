@@ -15,6 +15,8 @@ export type TeamLobbyBoard = {
   parts: {
     label: string;
     problem_label: string;
+    title?: string;
+    summary?: string;
     holder: string | null;
     holder_is_me: boolean;
     revision: number | null;
@@ -116,9 +118,21 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
       assigned_by,
     })),
     parts: source.parts.map(
-      ({ label, problem_label, holder, holder_is_me, revision, submission_status, verdict }) => ({
+      ({
         label,
         problem_label,
+        title,
+        summary,
+        holder,
+        holder_is_me,
+        revision,
+        submission_status,
+        verdict,
+      }) => ({
+        label,
+        problem_label,
+        ...(string(title, 300) && title.trim() ? { title } : {}),
+        ...(string(summary, 400) && summary.trim() ? { summary } : {}),
         holder,
         holder_is_me,
         revision,
