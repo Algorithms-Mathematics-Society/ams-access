@@ -552,7 +552,6 @@ full benchmark/flamegraph results remain a separate feature. No new polling is
 introduced; staging must still verify the existing lobby rate and five-member
 consensus under concurrency.
 
-
 Team workspaces load only the locked board's published part labels, with the
 candidate's part first. Teammate statements/samples and starter code are visible
 read-only; Run remains available, while scored Submit and editor mutation are
@@ -564,3 +563,13 @@ open from the compact TopBar Team control, reusing the existing board without ne
 polling. Loading a team workspace fetches at most the board's five part projections
 and existing statement assets once per authorized workspace load; staging must
 measure this entry burst for 3,000 participants. Native layout remains unverified.
+
+Team results are reached from the existing Team dialog and lazy-load per section.
+Integration detail reuses the lobby projection, separates individual verdicts from
+the integration suite, and never presents substituted/reference parts as a team
+pass. Missing or malformed details fail closed rather than displaying a raw AC.
+The live board polls conditionally only while its section and document are visible;
+benchmark history refresh is manual and generated SVG profiles render as isolated
+images, never inline markup. Closing the dialog or changing sections tears down
+requests and profile object URLs. Native visual acceptance and 3,000-participant
+staging verification of visible-board polling and result artifact costs remain.

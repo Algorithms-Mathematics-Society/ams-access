@@ -4877,6 +4877,7 @@ export default function ContestPageClient() {
               <>
                 {inTeamWorkspace && teamWorkspaceReady && (
                   <TeamWorkspacePanel
+                    contestUid={contestId}
                     state={lobbyState}
                     onApprove={(revision) => lobbyController.current?.approve(revision)}
                     onWithdraw={(revision) => lobbyController.current?.withdraw(revision)}
