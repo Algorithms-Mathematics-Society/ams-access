@@ -7,6 +7,8 @@ import {
   classifyTeamRoundProbe,
   probeTeamRound,
   startTeamRoundProbeLoop,
+  contestStartRemaining,
+  watchContestStart,
 } from "./team-lobby.ts";
 const board = () => ({
   team: { uid: "team", number: 1, name: "Team 1" },
@@ -133,7 +135,7 @@ test("discussion cannot issue a claim and terminal auth clears board", async () 
   controller.refresh();
   await flush();
   assert.equal(state.board, null);
-  assert.equal(state.status, "error");
+  assert.equal(state.status, "denied");
   controller.refresh();
   assert.equal(calls, 2);
   controller.stop();
@@ -229,7 +231,7 @@ test("a wrong-contest 403 on claim is the same terminal status and stops polling
   });
 });
 
-test("another 403 detail and a 401 on the first GET stay terminal errors with their detail", async () => {
+test("other 403 responses and 401 use terminal candidate advice", async () => {
   for (const [status, detail] of [
     [403, "you are not on a team in this round"],
     [403, "Forbidden"],
@@ -252,9 +254,9 @@ test("another 403 detail and a 401 on the first GET stay terminal errors with th
       });
       await flush();
       await flush();
-      assert.equal(state.status, "error", `${status} ${detail}`);
+      assert.equal(state.status, "denied", `${status} ${detail}`);
       assert.equal(state.board, null);
-      assert.equal(state.error, detail);
+      assert.match(state.error, status === 401 ? /sign in again/ : /Help/);
       assert.deepEqual(clock.pending(), [], "terminal: no poll is scheduled");
       clock.advance(60000);
       controller.refresh();
@@ -638,4 +640,145 @@ test("probe loop: a result for a changed identity is dropped and not retried", a
     clock.advance(60_000);
     assert.equal(fake.calls.length, 1);
   }
+});
+
+test("locked lobby counts down to start using server time and unlocks at zero", () => {
+  const locked = board();
+  locked.phase.name = "locked";
+  locked.allocation.locked = true;
+  const start = "2026-01-01T00:04:00Z";
+  assert.equal(contestStartRemaining(start, locked, 1000, 1000), 120000);
+  assert.equal(contestStartRemaining(start, locked, 1000, 120000), 1000);
+  assert.equal(contestStartRemaining(start, locked, 1000, 121000), 0);
+  assert.equal(contestStartRemaining(start, locked, 1000, 130000), 0);
+  assert.equal(contestStartRemaining(null, locked, 1000, 130000), null);
+  assert.equal(contestStartRemaining("bad", locked, 1000, 130000), null);
+});
+
+test("terminal 401/403 gives a truthful next step and never retries", async () => {
+  for (const status of [401, 403]) {
+    let calls = 0;
+    let current;
+    const controller = createTeamLobbyController({
+      apiBase: "",
+      contestUid: "contest",
+      headers: () => ({}),
+      hidden: () => false,
+      onState: (s) => {
+        current = s;
+      },
+      request: async () => {
+        calls++;
+        return Response.json({ detail: "internal error" }, { status });
+      },
+    });
+    await flush();
+    assert.equal(current.status, "denied");
+    assert.equal(current.board, null);
+    assert.match(current.error, status === 401 ? /sign in again/ : /Help/);
+    assert.doesNotMatch(current.error, /internal error|Reconnecting/);
+    controller.refresh();
+    controller.claim("1");
+    controller.release();
+    await flush();
+    assert.equal(calls, 1);
+    controller.stop();
+  }
+});
+
+test("waiting schedule refresh observes postponement and stops after confirmed start", async () => {
+  let scheduled;
+  let calls = 0;
+  const values = [];
+  const times = ["00:04:00", "00:10:00", "00:01:00"];
+  const stop = watchContestStart({
+    request: async () => ({
+      starts_at: `2026-01-01T${times[calls++]}Z`,
+      server_time: "2026-01-01T00:02:00Z",
+    }),
+    onValue: (...value) => values.push(value),
+    onError: () => assert.fail("unexpected error"),
+    random: () => 0,
+    schedule: (callback, delay) => {
+      scheduled = callback;
+      assert.equal(delay, 30000);
+      return 1;
+    },
+    cancel: () => {},
+  });
+  await flush();
+  assert.equal(values[0][1], false);
+  scheduled();
+  await flush();
+  assert.equal(values[1][0], "2026-01-01T00:10:00Z");
+  const next = scheduled;
+  scheduled = null;
+  next();
+  await flush();
+  assert.equal(values[2][1], true);
+  assert.equal(scheduled, null);
+  assert.equal(calls, 3);
+  stop();
+});
+
+test("schedule watcher cancels timers and ignores in-flight completion after cleanup", async () => {
+  let resolve;
+  let values = 0;
+  const stop = watchContestStart({
+    request: () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+    onValue: () => values++,
+    onError: () => assert.fail("unexpected error"),
+    schedule: () => assert.fail("scheduled after stop"),
+  });
+  stop();
+  resolve({ starts_at: "2026-01-01T00:04:00Z", server_time: "2026-01-01T00:02:00Z" });
+  await flush();
+  assert.equal(values, 0);
+  let cancelled;
+  const stopTimer = watchContestStart({
+    request: async () => ({
+      starts_at: "2026-01-01T00:02:01Z",
+      server_time: "2026-01-01T00:02:00Z",
+    }),
+    onValue: () => {},
+    onError: () => assert.fail("unexpected error"),
+    random: () => 0,
+    schedule: (_, delay) => {
+      assert.equal(delay, 1250);
+      return 42;
+    },
+    cancel: (timer) => {
+      cancelled = timer;
+    },
+  });
+  await flush();
+  stopTimer();
+  assert.equal(cancelled, 42);
+});
+
+test("projected start follows schedule changes and supersedes fallback metadata", () => {
+  const original = board();
+  original.phase.starts_at = "2026-01-01T00:04:00Z";
+  const parsed = parseTeamLobby(original);
+  assert.equal(parsed.phase.starts_at, original.phase.starts_at);
+  assert.equal(contestStartRemaining(null, parsed, 1000, 1000), 120000);
+  original.phase.starts_at = "2026-01-01T00:10:00Z";
+  const postponed = parseTeamLobby(original);
+  assert.equal(contestStartRemaining(parsed.phase.starts_at, postponed, 1000, 121000), 360000);
+  assert.equal(contestStartRemaining(null, postponed, 1000, 481000), 0);
+  original.phase.starts_at = "invalid";
+  assert.throws(() => parseTeamLobby(original));
+  delete original.phase.starts_at;
+  assert.equal(parseTeamLobby(original).phase.starts_at, undefined);
+});
+
+test("stable roster member IDs survive parsing and duplicates are rejected", () => {
+  const value = board();
+  value.members[0].member_uid = "member-1";
+  assert.equal(parseTeamLobby(value).members[0].member_uid, "member-1");
+  value.members.push({ ...value.members[0], is_me: false });
+  assert.throws(() => parseTeamLobby(value));
 });

@@ -408,6 +408,7 @@ export default function ContestPageClient() {
     sampledAt: 0,
   });
   const lobbyController = useRef<ReturnType<typeof createTeamLobbyController> | null>(null);
+  const [voiceToolbarTarget, setVoiceToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [enteredTeamPart, setEnteredTeamPart] = useState(false);
   const loadedTeamWorkspace = useRef<WorkspaceIdentity | null>(null);
   const paperAssets = useRef<string[]>([]);
@@ -4846,6 +4847,7 @@ export default function ContestPageClient() {
         )}
         {!renderTeamLobby && (
           <TopBar
+            voiceToolbarRef={setVoiceToolbarTarget}
             online={!networkDisconnected}
             markedQuestionIds={markedQuestionIds}
             workspaceControls={
@@ -4918,6 +4920,8 @@ export default function ContestPageClient() {
             navigator.userAgent
           ) && (
             <TeamVoiceControls
+              compact={!renderTeamLobby}
+              toolbarTarget={voiceToolbarTarget}
               contestUid={contestId}
               projection={lobbyState}
               enabled={
@@ -4963,6 +4967,8 @@ export default function ContestPageClient() {
                 }
               >
                 <TeamLobby
+                  key={contestId}
+                  contestUid={contestId}
                   state={lobbyState}
                   onClaim={(label) => {
                     void lobbyController.current?.claim(label);

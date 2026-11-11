@@ -6,6 +6,7 @@ export type TeamLobbyBoard = {
     number: number;
   };
   members: {
+    member_uid?: string;
     display_name: string;
     is_me: boolean;
     part_label: string | null;
@@ -22,6 +23,7 @@ export type TeamLobbyBoard = {
   }[];
   phase: {
     name: "waiting" | "discussion" | "choosing" | "locked";
+    starts_at?: string;
     voice_open: boolean;
     selection_opens_at: string;
     claims_open_at: string;
@@ -36,7 +38,7 @@ export type TeamLobbyBoard = {
 };
 export type LobbyState = {
   board: TeamLobbyBoard | null;
-  status: "loading" | "team" | "solo" | "unpublished" | "error" | "wrong-contest";
+  status: "loading" | "team" | "solo" | "unpublished" | "error" | "wrong-contest" | "denied";
   pending: boolean;
   error: string | null;
   sampledAt: number;
@@ -64,6 +66,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
     typeof v.phase.voice_open !== "boolean" ||
     !date(v.phase.selection_opens_at) ||
     !date(v.phase.claims_open_at) ||
+    !(v.phase.starts_at === undefined || date(v.phase.starts_at)) ||
     !string(v.phase.prompt, 1000) ||
     !Number.isFinite(v.phase.discussion_seconds) ||
     !object(v.allocation) ||
@@ -78,6 +81,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
       (m) =>
         object(m) &&
         string(m.display_name, 200) &&
+        (m.member_uid === undefined || string(m.member_uid, 64)) &&
         typeof m.is_me === "boolean" &&
         nullable(m.part_label, 64) &&
         nullable(m.assigned_by, 64)
@@ -95,6 +99,8 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
         nullable(p.submission_status, 64) &&
         nullable(p.verdict, 64)
     ) ||
+    new Set(v.members.filter((m) => m.member_uid !== undefined).map((m) => m.member_uid)).size !==
+      v.members.filter((m) => m.member_uid !== undefined).length ||
     new Set(v.parts.map((p) => p.label)).size !== v.parts.length
   )
     throw new Error("Team status unavailable.");
@@ -102,7 +108,8 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
   const source = v as TeamLobbyBoard;
   return {
     team: { uid: source.team.uid, name: source.team.name, number: source.team.number },
-    members: source.members.map(({ display_name, is_me, part_label, assigned_by }) => ({
+    members: source.members.map(({ member_uid, display_name, is_me, part_label, assigned_by }) => ({
+      ...(member_uid ? { member_uid } : {}),
       display_name,
       is_me,
       part_label,
@@ -124,6 +131,7 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
       voice_open: source.phase.voice_open,
       selection_opens_at: source.phase.selection_opens_at,
       claims_open_at: source.phase.claims_open_at,
+      ...(source.phase.starts_at ? { starts_at: source.phase.starts_at } : {}),
       prompt: source.phase.prompt,
       discussion_seconds: source.phase.discussion_seconds,
     },
@@ -258,7 +266,15 @@ export function createTeamLobbyController(options: {
         }
         if (response.status === 401 || response.status === 403) {
           terminal = true;
-          emit({ board: null, status: "error" });
+          emit({
+            board: null,
+            status: "denied",
+            error:
+              response.status === 401
+                ? "Your sign-in has expired. Exit and sign in again."
+                : "You do not have access to this team in this contest. Use Help to contact your organizer, or exit.",
+          });
+          return;
         }
         if (!action && response.status === 404 && object(body)) {
           if (body.detail === "this contest is not a team round") {
@@ -446,5 +462,61 @@ export function startTeamRoundProbeLoop<Handle>(options: {
     stopped = true;
     cancel(timer);
     active?.abort();
+  };
+}
+
+/** Start countdown uses the shared server sample and monotonic elapsed time. */
+export function contestStartRemaining(
+  startsAt: string | null,
+  board: TeamLobbyBoard,
+  sampledAt: number,
+  now = performance.now()
+): number | null {
+  startsAt = board.phase.starts_at ?? startsAt;
+  if (!startsAt || !Number.isFinite(Date.parse(startsAt))) return null;
+  return Math.max(
+    0,
+    Date.parse(startsAt) - Date.parse(board.server_time) - Math.max(0, now - sampledAt)
+  );
+}
+
+/** Single-flight schedule refresh while waiting. At most one request per 30–45s,
+ * plus one jittered check at the start boundary; stops once the server confirms start.
+ * 3,000 waiting clients add at most 100 requests/s averaged over 30 seconds.
+ */
+export function watchContestStart(options: {
+  request: () => Promise<{ starts_at: string; server_time: string }>;
+  onValue: (startsAt: string, started: boolean) => void;
+  onError: () => void;
+  random?: () => number;
+  schedule?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
+  cancel?: (timer: ReturnType<typeof setTimeout>) => void;
+}) {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = options.schedule ?? setTimeout;
+  const cancel = options.cancel ?? clearTimeout;
+  async function refresh() {
+    try {
+      const metadata = await options.request();
+      if (stopped) return;
+      const remaining = Date.parse(metadata.starts_at) - Date.parse(metadata.server_time);
+      if (!Number.isFinite(remaining)) throw new Error("Invalid contest clock");
+      options.onValue(metadata.starts_at, remaining <= 0);
+      if (remaining > 0) {
+        const jitter = Math.max(0, Math.min(1, (options.random ?? Math.random)()));
+        timer = schedule(
+          () => void refresh(),
+          Math.min(30000 + jitter * 15000, remaining + 250 + jitter * 1000)
+        );
+      }
+    } catch {
+      if (!stopped) options.onError();
+    }
+  }
+  void refresh();
+  return () => {
+    stopped = true;
+    if (timer !== undefined) cancel(timer);
   };
 }

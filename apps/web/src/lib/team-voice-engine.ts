@@ -468,13 +468,27 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       later(() => {
         if (!microphone) finish("unavailable", "Microphone request timed out.");
       }, 10_000);
-      const owned = await options.acquireMicrophone();
+      let owned: MediaStream;
+      try {
+        owned = await options.acquireMicrophone();
+      } catch (error) {
+        const name = error instanceof Error ? error.name : "";
+        if (valid(g)) finish("unavailable", name === "NotAllowedError" || name === "PermissionDeniedError"
+          ? "Microphone access was denied."
+          : name === "NotFoundError" || name === "DevicesNotFoundError"
+            ? "No microphone was found."
+            : "Microphone could not be opened.");
+        return;
+      }
       if (!valid(g)) {
         owned.getTracks().forEach((t) => t.stop());
         return;
       }
       microphone = owned;
-      if (!owned.getAudioTracks().length) throw new Error("Microphone unavailable.");
+      if (!owned.getAudioTracks().length) {
+        finish("unavailable", "No microphone was found.");
+        return;
+      }
       owned.getTracks().forEach((t) => {
         if (t.kind !== "audio") t.stop();
         else {
@@ -544,7 +558,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         }
       };
     } catch {
-      if (valid(g)) finish("unavailable", "Microphone or team voice is unavailable.");
+      if (valid(g)) finish("unavailable", "Voice connection could not be started.");
     }
   }
   return {

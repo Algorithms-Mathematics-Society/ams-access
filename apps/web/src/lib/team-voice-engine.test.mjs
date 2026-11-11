@@ -412,3 +412,18 @@ test("queued SDP and ICE cannot reach a replacement with the same member uid", a
   assert.equal(h.pcs[1].closed, false);
   h.session.stop();
 });
+
+test("microphone failures retain their cause without opening a voice socket", async () => {
+  for (const [name, expected] of [
+    ["NotAllowedError", "Microphone access was denied."],
+    ["NotFoundError", "No microphone was found."],
+    ["NotReadableError", "Microphone could not be opened."],
+  ]) {
+    const h = harness({ acquireMicrophone: async () => { throw new DOMException("private detail", name); } });
+    await h.session.start();
+    assert.equal(h.session.getSnapshot().status, "unavailable");
+    assert.equal(h.session.getSnapshot().error, expected);
+    assert.equal(h.sockets.length, 0);
+    h.session.stop();
+  }
+});

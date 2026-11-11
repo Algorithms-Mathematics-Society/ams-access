@@ -7,6 +7,8 @@ import { Text } from "@astryxdesign/core/Text";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Button } from "@astryxdesign/core/Button";
 import { countdownMs, type LobbyState } from "@/lib/team-lobby";
+import { getContest } from "@/lib/proctor-api";
+import { contestStartRemaining, watchContestStart } from "@/lib/team-lobby";
 const duration = (ms: number) =>
   `${Math.floor(Math.ceil(ms / 1000) / 60)
     .toString()
@@ -15,12 +17,14 @@ const duration = (ms: number) =>
  * Single column at all widths; rows wrap names and keep native keyboard buttons reachable. */
 export function TeamLobby({
   state,
+  contestUid,
   onClaim,
   onRelease,
   onEnter,
   canEnter = true,
 }: {
   state: LobbyState;
+  contestUid: string;
   onClaim: (label: string) => void;
   onRelease: () => void;
   onEnter: () => void;
@@ -31,17 +35,45 @@ export function TeamLobby({
     const timer = setInterval(() => setNow(performance.now()), 250);
     return () => clearInterval(timer);
   }, []);
+  const [startsAt, setStartsAt] = useState<string | null>(null);
+  const [startConfirmed, setStartConfirmed] = useState(false);
+  const [scheduleError, setScheduleError] = useState(false);
+  const [scheduleAttempt, setScheduleAttempt] = useState(0);
+  const hasBoard = Boolean(state.board);
+  const hasProjectedStart = Boolean(state.board?.phase.starts_at);
+  // Current APIs carry the schedule on existing board polls. Older APIs use
+  // bounded metadata refresh while waiting, independent of the faster board polls.
+  useEffect(() => {
+    if (!hasBoard || hasProjectedStart) return;
+    setStartsAt(null);
+    setStartConfirmed(false);
+    setScheduleError(false);
+    return watchContestStart({
+      request: () => getContest(contestUid, { includeReference: false }),
+      onValue: (start, started) => {
+        setStartsAt(start);
+        setStartConfirmed(started);
+      },
+      onError: () => {
+        setStartsAt(null);
+        setStartConfirmed(false);
+        setScheduleError(true);
+      },
+    });
+  }, [contestUid, scheduleAttempt, hasBoard, hasProjectedStart]);
   const board = state.board;
   if (!board)
     return (
       <VStack gap={4} style={{ padding: "var(--spacing-6)" }}>
         <Heading level={1}>Team lobby</Heading>
         <Text role="status">
-          {state.status === "unpublished"
-            ? "Your team will appear here soon."
-            : state.status === "error"
-              ? "Team status unavailable. Reconnecting…"
-              : "Loading your team…"}
+          {state.status === "denied"
+            ? "Team access unavailable"
+            : state.status === "unpublished"
+              ? "Your team will appear here soon."
+              : state.status === "error"
+                ? "Team status unavailable. Reconnecting…"
+                : "Loading your team…"}
         </Text>
         {state.error && <Text role="alert">{state.error}</Text>}
       </VStack>
@@ -49,6 +81,8 @@ export function TeamLobby({
   const remaining = countdownMs(board, state.sampledAt, now);
   const clock = remaining === null ? null : duration(remaining);
   const phase = board.phase.name;
+  const startRemaining = contestStartRemaining(startsAt, board, state.sampledAt, now);
+  const scheduleReady = hasProjectedStart || startConfirmed;
   const choosing =
     state.status === "team" && phase === "choosing" && !board.allocation.locked && remaining !== 0;
   const own = board.parts.find((p) => p.holder_is_me);
@@ -125,11 +159,34 @@ export function TeamLobby({
           </Text>
           <Button
             variant="primary"
-            isDisabled={!canEnter || !own || !board.allocation.locked || state.status !== "team"}
+            isDisabled={
+              !scheduleReady ||
+              startRemaining !== 0 ||
+              !canEnter ||
+              !own ||
+              !board.allocation.locked ||
+              state.status !== "team"
+            }
             onClick={onEnter}
             label="Go to your part"
           />
-          {!canEnter && <Text>The workspace opens when the contest starts.</Text>}
+          {startRemaining !== null && startRemaining > 0 && (
+            <Text>Contest starts in {duration(startRemaining)}</Text>
+          )}
+          {(startRemaining === null || (startRemaining === 0 && !scheduleReady)) && (
+            <Text role="status">
+              {scheduleError
+                ? "Contest start time unavailable. Retry or use Help."
+                : "Checking the contest start time…"}
+            </Text>
+          )}
+          {scheduleError && !hasProjectedStart && (
+            <Button
+              label="Retry start time"
+              variant="secondary"
+              onClick={() => setScheduleAttempt((attempt) => attempt + 1)}
+            />
+          )}
         </VStack>
       )}
     </VStack>
