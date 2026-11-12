@@ -138,15 +138,30 @@ export function parseTeamVote(v: unknown): TeamVote | null {
     last_result: summary(v.last_result),
   };
 }
+/** Time since the server sample. performance.now() stops while a Mac sleeps,
+ * so wall-clock elapsed also counts; taking the larger means a clock set
+ * backwards still cannot add time. */
+function elapsedSinceSample(
+  sampledAt: number,
+  now: number,
+  sampledWallAt?: number,
+  wallNow = Date.now()
+): number {
+  return Math.max(0, now - sampledAt, sampledWallAt === undefined ? 0 : wallNow - sampledWallAt);
+}
 export function voteRemainingMs(
   vote: TeamVote,
   serverTime: string,
   sampledAt: number,
-  now: number
+  now: number,
+  sampledWallAt?: number,
+  wallNow?: number
 ): number {
   return Math.max(
     0,
-    Date.parse(vote.deadline) - Date.parse(serverTime) - Math.max(0, now - sampledAt)
+    Date.parse(vote.deadline) -
+      Date.parse(serverTime) -
+      elapsedSinceSample(sampledAt, now, sampledWallAt, wallNow)
   );
 }
 /** The result the vote panel names and the results dialog shows: latest finished, else in flight. */

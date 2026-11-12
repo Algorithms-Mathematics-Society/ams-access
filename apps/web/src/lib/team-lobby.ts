@@ -47,6 +47,8 @@ export type LobbyState = {
   pending: boolean;
   error: string | null;
   sampledAt: number;
+  /** Date.now() at the same sample, so time a Mac spent asleep is counted. */
+  sampledWallAt?: number;
 };
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
@@ -195,10 +197,12 @@ export function createTeamLobbyController(options: {
   onState: (state: LobbyState) => void;
   request?: typeof fetch;
   now?: () => number;
+  wallNow?: () => number;
   random?: () => number;
 }) {
   const request = options.request ?? fetch,
-    now = options.now ?? (() => performance.now());
+    now = options.now ?? (() => performance.now()),
+    wallNow = options.wallNow ?? (() => Date.now());
   const url = `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team`;
   let state: LobbyState = {
     board: null,
@@ -206,6 +210,7 @@ export function createTeamLobbyController(options: {
     pending: false,
     error: null,
     sampledAt: now(),
+    sampledWallAt: wallNow(),
   };
   let stopped = false,
     busy = false,
@@ -330,15 +335,23 @@ export function createTeamLobbyController(options: {
         if (action && response.status === 409) queued = true;
         throw new Error(
           voteAction
-            ? response.status === 409
-              ? "The team revision or approval changed. Review the updated count before approving again."
-              : "Could not update your approval. Check the current revision and try again."
+            ? response.status === 409 && /deadline has passed/.test(detail)
+              ? "The team submission deadline has passed. Your team's current revision is submitted at the deadline."
+              : response.status === 409
+                ? "The team revision or approval changed. Review the updated count before approving again."
+                : "Could not update your approval. Check the current revision and try again."
             : detail
         );
       }
       const board = parseTeamLobby(body);
       etag = action ? null : response.headers.get("ETag");
-      emit({ board, status: "team", error: null, sampledAt: now() });
+      emit({
+        board,
+        status: "team",
+        error: null,
+        sampledAt: now(),
+        sampledWallAt: wallNow(),
+      });
     } catch (error) {
       etag = null;
       if (sentEtag && error instanceof TypeError) {
@@ -386,7 +399,14 @@ export function createTeamLobbyController(options: {
       revision !== submission.revision ||
       revision === 0 ||
       submission.submitted_revision === revision ||
-      voteRemainingMs(submission, board.server_time, state.sampledAt, now()) <= 0 ||
+      voteRemainingMs(
+        submission,
+        board.server_time,
+        state.sampledAt,
+        now(),
+        state.sampledWallAt,
+        wallNow()
+      ) <= 0 ||
       (action === "approve" ? submission.mine : !submission.mine)
     )
       return;

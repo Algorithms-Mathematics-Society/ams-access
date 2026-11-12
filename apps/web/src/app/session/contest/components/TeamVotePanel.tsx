@@ -52,7 +52,14 @@ export function TeamVotePanel({
     return () => clearInterval(timer);
   }, [vote?.deadline]);
   if (!board || !vote) return <Text>Team approval status is unavailable.</Text>;
-  const remaining = voteRemainingMs(vote, board.server_time, state.sampledAt, now);
+  const remaining = voteRemainingMs(
+    vote,
+    board.server_time,
+    state.sampledAt,
+    now,
+    state.sampledWallAt,
+    Date.now()
+  );
   const submitted = vote.submitted_revision === vote.revision;
   const disabled =
     suspended ||
