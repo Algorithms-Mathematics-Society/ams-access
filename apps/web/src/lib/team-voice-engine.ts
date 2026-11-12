@@ -406,6 +406,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     for (const p of peers.values())
       p.pc.setConfiguration({ iceServers: value.ice_servers, iceTransportPolicy: "relay" });
     const g = generation;
+    let capped = false;
     // One refresh per credential lifetime, no polling; failure closes rather than using expired credentials.
     later(
       () => {
@@ -417,6 +418,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             if (!valid(g)) return;
             if (next.expires_at < value.expires_at) throw new Error("Voice credentials expired.");
             if (next.expires_at > value.expires_at) useCredentials(next);
+            // Same expiry: the server capped it at the end of the round.
+            else capped = true;
           } catch {
             if (valid(g)) finish("unavailable", "Voice relay credentials could not be renewed.");
           }
@@ -426,7 +429,12 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     );
     later(
       () => {
-        if (credentials === value) finish("unavailable", "Voice relay credentials expired.");
+        if (credentials !== value) return;
+        if (!capped) return finish("unavailable", "Voice relay credentials expired.");
+        // The round is ending: give the server's closed/4410 a moment, then end as closed.
+        later(() => {
+          if (credentials === value) finish("closed");
+        }, 5_000);
       },
       value.expires_at * 1000 - d.now()
     );

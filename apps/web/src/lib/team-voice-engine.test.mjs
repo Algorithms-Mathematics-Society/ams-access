@@ -310,7 +310,9 @@ test("contest capped credentials remain usable until expiry without refresh poll
   assert.equal(calls, 1);
   assert.equal(h.session.getSnapshot().status, "connected");
   await h.tick(60000);
-  assert.equal(h.session.getSnapshot().status, "unavailable");
+  assert.equal(h.session.getSnapshot().status, "connected");
+  await h.tick(5000);
+  assert.equal(h.session.getSnapshot().status, "closed");
   assert.equal(h.timers.size, 0);
 });
 test("heartbeat every25 seconds and missing pong causes finite reconnect", async () => {
