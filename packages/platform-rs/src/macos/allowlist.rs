@@ -186,6 +186,16 @@ mod tests {
     }
 
     #[test]
+    fn api_dns_refresh_retains_initial_dedicated_voice_relay() {
+        let live = vec!["192.0.2.10".to_string(), "43.204.79.244".to_string()];
+        assert_eq!(merged(&live, &[]), live);
+        assert_eq!(
+            merged(&live, &["192.0.2.11".to_string()]),
+            ["192.0.2.10", "43.204.79.244", "192.0.2.11"]
+        );
+    }
+
+    #[test]
     fn resolvers_are_not_added_when_the_api_did_not_resolve() {
         assert!(resolve_allowlist(&["nonexistent.invalid".to_string()]).is_empty());
     }

@@ -2152,6 +2152,43 @@ mod bounded_firewall_tests {
 
     #[test]
     #[cfg(target_os = "linux")]
+    fn dedicated_relay_exception_keeps_dns_scoped_and_other_egress_dropped() {
+        let ips = vec![
+            "192.0.2.10".into(),
+            "43.204.79.244".into(),
+            "9.9.9.9".into(),
+        ];
+        let resolvers = vec!["9.9.9.9".into()];
+        let full = unrestricted_ips(&ips, &resolvers).unwrap();
+        let allowed: Vec<&str> = full.iter().map(String::as_str).collect();
+        let mut calls = Vec::new();
+        build_chain_with(&allowed, &["9.9.9.9"], |args| {
+            calls.push(args.join(" "));
+            Ok(output(true, ""))
+        })
+        .unwrap();
+
+        let destination_rules: Vec<&str> = calls
+            .iter()
+            .map(String::as_str)
+            .filter(|call| call.starts_with("-A AMS_PROCTOR -d "))
+            .collect();
+        assert_eq!(
+            destination_rules,
+            [
+                "-A AMS_PROCTOR -d 192.0.2.10 -j ACCEPT",
+                "-A AMS_PROCTOR -d 43.204.79.244 -j ACCEPT",
+                "-A AMS_PROCTOR -d 9.9.9.9 -p udp --dport 53 -j ACCEPT",
+                "-A AMS_PROCTOR -d 9.9.9.9 -p tcp --dport 53 -j ACCEPT",
+                "-A AMS_PROCTOR -d 9.9.9.9 -p tcp --dport 853 -j ACCEPT",
+            ]
+        );
+        assert_eq!(calls[calls.len() - 2], "-A AMS_PROCTOR -j DROP");
+        assert!(!calls.iter().any(|call| call.contains("ESTABLISHED")));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
     fn teardown_checks_every_step_and_proves_absence() {
         let mut calls = Vec::new();
         let mut initial = true;

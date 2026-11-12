@@ -33,6 +33,11 @@ mod macos_lockdown_recovery_tests;
 #[path = "windows/firewall_recovery.rs"]
 mod windows_firewall_recovery_tests;
 
+// Verify destination complements without installing real Windows rules.
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/firewall_policy.rs"]
+mod windows_firewall_policy_tests;
+
 // Test callback-delivery classification without installing a native hook.
 #[cfg(all(test, not(target_os = "windows")))]
 #[path = "windows/hook_delivery.rs"]

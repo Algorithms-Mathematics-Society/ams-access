@@ -173,6 +173,21 @@ mod tests {
         })
     }
 
+    #[test]
+    fn dedicated_voice_relay_is_reachable_without_opening_adjacent_or_ipv6_destinations() {
+        let planned = make(&["192.0.2.10", "43.204.79.244"]);
+        assert_eq!(planned.allowed, ["43.204.79.244", "192.0.2.10"]);
+        for endpoint in ["192.0.2.10", "43.204.79.244"] {
+            assert!(!contains(&planned.blocked_ipv4, endpoint.parse().unwrap()));
+        }
+        for blocked in ["43.204.79.243", "43.204.79.245", "192.0.2.11", "8.8.8.8"] {
+            assert!(contains(&planned.blocked_ipv4, blocked.parse().unwrap()));
+        }
+        for blocked in ["::1", "2001:db8::10", "::ffff:43.204.79.244"] {
+            assert!(contains(&planned.blocked_ipv6, blocked.parse().unwrap()));
+        }
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn detached_windows_com_rule_accepts_planned_remote_addresses() {
