@@ -149,6 +149,10 @@ export function voteRemainingMs(
     Date.parse(vote.deadline) - Date.parse(serverTime) - Math.max(0, now - sampledAt)
   );
 }
+/** The result the vote panel names and the results dialog shows: latest finished, else in flight. */
+export function shownIntegration(vote: TeamVote | null | undefined): TeamIntegrationSummary | null {
+  return vote?.last_result ?? vote?.integration ?? null;
+}
 export function integrationStatus(summary: TeamIntegrationSummary): string {
   if (summary.status === "queued" || summary.status === "pending") return "Queued";
   if (summary.status === "running" || summary.status === "judging") return "Running";

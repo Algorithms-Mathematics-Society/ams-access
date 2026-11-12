@@ -6,7 +6,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 
 import type { LobbyState } from "@/lib/team-lobby";
-import { voteRemainingMs, integrationStatus } from "@/lib/team-vote";
+import { voteRemainingMs, integrationStatus, shownIntegration } from "@/lib/team-vote";
 const duration = (ms: number) =>
   `${Math.floor(Math.ceil(ms / 1000) / 60)}:${(Math.ceil(ms / 1000) % 60)
     .toString()
@@ -62,7 +62,9 @@ export function TeamVotePanel({
     vote.revision === 0 ||
     submitted ||
     remaining <= 0;
-  const result = vote.integration ?? vote.last_result;
+  const result = shownIntegration(vote),
+    inFlight =
+      vote.integration && vote.integration.revision !== result?.revision ? vote.integration : null;
   return (
     <VStack gap={3}>
       <Heading level={3}>Team submission · revision {vote.revision}</Heading>
@@ -105,6 +107,11 @@ export function TeamVotePanel({
         <Text role="status">Team status is reconnecting. Approval actions are paused.</Text>
       )}
       {state.error && <Text role="alert">{state.error}</Text>}
+      {inFlight && (
+        <Text role="status">
+          Revision {inFlight.revision} integration · {integrationStatus(inFlight)}
+        </Text>
+      )}
       {result && (
         <Button
           variant="secondary"
