@@ -22,6 +22,8 @@ struct Live {
     ips: Vec<String>,
     /// DNS servers: port 53/853 only.
     resolvers: Vec<String>,
+    /// Voice relays: TURN ports only.
+    relays: Vec<String>,
 }
 
 /// What the live lockdown was built from; `None` once it is released.
@@ -54,20 +56,29 @@ fn resolve_domains(domains: &[String]) -> Vec<String> {
 }
 
 /// Apply the lockdown for `domains` and keep it current until it is released.
-pub fn enable_and_follow(domains: &[String], ips: &[String]) -> Result<(), String> {
+/// `relays` (also listed in `ips`) are held to the TURN ports by the helper.
+pub fn enable_and_follow(
+    domains: &[String],
+    ips: &[String],
+    relays: &[String],
+) -> Result<(), String> {
     let mut live = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // `ips` comes from resolve_allowlist: split the resolvers back out so the
-    // helper can hold them to the DNS ports.
+    // `ips` comes from resolve_allowlist: split the resolvers and relays back
+    // out so the helper can hold them to their ports.
     let current = dns_resolvers();
-    let (resolvers, ips): (Vec<String>, Vec<String>) =
-        ips.iter().cloned().partition(|ip| current.contains(ip));
-    super::enable_network_lockdown(&ips, &resolvers)?;
+    let (resolvers, ips): (Vec<String>, Vec<String>) = ips
+        .iter()
+        .filter(|ip| !relays.contains(ip))
+        .cloned()
+        .partition(|ip| current.contains(ip));
+    super::enable_network_lockdown(&ips, &resolvers, relays)?;
     *live = Some(Live {
         domains: domains.to_vec(),
         ips,
         resolvers,
+        relays: relays.to_vec(),
     });
     drop(live);
     if !REFRESHER.swap(true, Ordering::SeqCst) {
@@ -116,7 +127,7 @@ fn refresh() {
     let next = merged(&live.ips, &fresh);
     let next_resolvers = merged(&live.resolvers, &fresh_resolvers);
     let changed = next.len() != live.ips.len() || next_resolvers.len() != live.resolvers.len();
-    if changed && super::enable_network_lockdown(&next, &next_resolvers).is_ok() {
+    if changed && super::enable_network_lockdown(&next, &next_resolvers, &live.relays).is_ok() {
         live.ips = next;
         live.resolvers = next_resolvers;
     }

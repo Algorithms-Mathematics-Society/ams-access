@@ -1641,7 +1641,7 @@ pub fn network_helper_running() -> bool {
 }
 
 /// Helper protocol this app needs; matches MACOS_PROTOCOL in network-helper.
-const HELPER_PROTOCOL: u32 = 2;
+const HELPER_PROTOCOL: u32 = 3;
 
 /// An installed helper older than this app needs, so setup reinstalls it: one
 /// from before on-demand start (launchd keeps it running all the time), or one
@@ -1772,9 +1772,14 @@ fn helper_send(json: &str) -> Result<(), String> {
 ///
 /// The helper runs pfctl as root — this function needs no elevated privileges.
 /// If the helper is not installed, returns `Err("helper_not_installed")`.
-/// `resolvers` are allowed on the DNS ports only. They are listed in `ips` as
-/// well, so an older installed helper that ignores `resolvers` keeps DNS.
-pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> Result<(), String> {
+/// `resolvers` are allowed on the DNS ports only and `relays` on the TURN ports
+/// only. Both are listed in `ips` as well, so an older installed helper that
+/// ignores those fields keeps DNS and voice.
+pub fn enable_network_lockdown(
+    allowed_ips: &[String],
+    resolvers: &[String],
+    relays: &[String],
+) -> Result<(), String> {
     if !network_helper_running() {
         return Err("helper_not_installed".to_string());
     }
@@ -1787,16 +1792,16 @@ pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> 
     write_lockdown_marker(&token).map_err(|e| format!("write lockdown marker: {e}"))?;
 
     let mut ips = allowed_ips.to_vec();
-    ips.extend(
-        resolvers
-            .iter()
-            .filter(|r| !allowed_ips.contains(r))
-            .cloned(),
-    );
+    for ip in resolvers.iter().chain(relays) {
+        if !ips.contains(ip) {
+            ips.push(ip.clone());
+        }
+    }
     let request = serde_json::json!({
         "cmd": "enable",
         "ips": ips,
         "resolvers": resolvers,
+        "relays": relays,
         "token": token,
     })
     .to_string();

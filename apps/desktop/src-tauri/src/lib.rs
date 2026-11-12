@@ -3018,7 +3018,9 @@ async fn enable_network_lockdown(
             let ips = network_allowlist::with_reviewed_voice_relay(
                 platform_rs::macos::resolve_allowlist(&allowed_domains),
             )?;
-            platform_rs::macos::enable_and_follow(&allowed_domains, &ips).map(|_| true)
+            // The helper holds the relay to its TURN ports.
+            let relays = [network_allowlist::REVIEWED_VOICE_RELAY_IP.to_string()];
+            platform_rs::macos::enable_and_follow(&allowed_domains, &ips, &relays).map(|_| true)
         })
         .await
         .map_err(|error| error.to_string())?
