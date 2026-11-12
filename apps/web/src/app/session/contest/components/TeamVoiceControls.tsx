@@ -169,14 +169,25 @@ export function TeamVoiceControls({
       acquireMicrophone: () => acquireVoiceMicrophone(cameraSession.current()),
       refreshCredentials: async () => {
         if (!authorized()) throw new Error("Voice session ended");
-        const credentials = await readVoiceCredentials(
-          resolveApiBase(),
-          contestUid,
-          authHeaders(),
-          AbortSignal.any([lifecycle!.signal, AbortSignal.timeout(8_000)])
-        );
-        if (!authorized()) throw new Error("Voice session ended");
-        return credentials;
+        // No AbortSignal.any/timeout: macOS 12 WebKit can predate both.
+        const request = new AbortController();
+        const abort = () => request.abort();
+        const deadline = setTimeout(abort, 8_000);
+        lifecycle!.signal.addEventListener("abort", abort);
+        if (lifecycle!.signal.aborted) abort();
+        try {
+          const credentials = await readVoiceCredentials(
+            resolveApiBase(),
+            contestUid,
+            authHeaders(),
+            request.signal
+          );
+          if (!authorized()) throw new Error("Voice session ended");
+          return credentials;
+        } finally {
+          clearTimeout(deadline);
+          lifecycle!.signal.removeEventListener("abort", abort);
+        }
       },
     });
     session.current = active;
