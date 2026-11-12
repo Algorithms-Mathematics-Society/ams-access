@@ -25,7 +25,8 @@ export function createDeviceRelease(getBridge: () => NativeBridge | undefined, s
       async function attempt<T>(
         id: string,
         label: string,
-        work: () => Promise<T>
+        work: () => Promise<T>,
+        budgetMs = stepMs
       ): Promise<T | undefined> {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const native = Promise.resolve().then(work);
@@ -37,7 +38,7 @@ export function createDeviceRelease(getBridge: () => NativeBridge | undefined, s
             () => ({ state: "failed" as const })
           ),
           new Promise<{ state: "unknown" }>((resolve) => {
-            timer = setTimeout(() => resolve({ state: "unknown" }), stepMs);
+            timer = setTimeout(() => resolve({ state: "unknown" }), budgetMs);
           }),
         ]);
         clearTimeout(timer);
@@ -65,7 +66,15 @@ export function createDeviceRelease(getBridge: () => NativeBridge | undefined, s
       }
       await attempt("topmost", "Window priority", () => win().setAlwaysOnTop(false));
       await attempt("decorations", "Window controls", () => win().setDecorations(true));
-      await attempt("desktop", "Desktop settings", () => bridge.core.invoke("unlock_desktop"));
+      // unlock_desktop does real work (macOS: menu restore plus the lifecycle
+      // stop, measured at about 1.3 s), so one second reported a clean exit as
+      // "cleanup could not be confirmed".
+      await attempt(
+        "desktop",
+        "Desktop settings",
+        () => bridge.core.invoke("unlock_desktop"),
+        stepMs * 5
+      );
       await attempt("keyboard", "Keyboard controls", () =>
         bridge.core.invoke("disable_keyboard_intercept")
       );
