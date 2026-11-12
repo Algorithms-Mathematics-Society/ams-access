@@ -443,10 +443,25 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     for (const p of peers.values())
       p.pc.setConfiguration({ iceServers: value.ice_servers, iceTransportPolicy: "relay" });
     const g = generation;
-    let capped = false;
-    // One refresh per credential lifetime, no polling; failure closes rather than using expired credentials.
-    later(
-      () => {
+    const deadline = value.expires_at * 1000;
+    let capped = false,
+      renewing = false;
+    // Judged against the wall clock on a short local check, not one long timer:
+    // timers stop while a Mac sleeps, so a 4 h timer fired after the credentials
+    // had expired and later teammates could not reach the relay.
+    function check() {
+      if (credentials !== value) return;
+      const now = d.now();
+      if (now >= deadline) {
+        if (!capped) return finish("unavailable", "Voice relay credentials expired.");
+        // The round is ending: give the server's closed/4410 a moment, then end as closed.
+        later(() => {
+          if (credentials === value) finish("closed");
+        }, 5_000);
+        return;
+      }
+      if (!renewing && !capped && now >= deadline - 60_000) {
+        renewing = true;
         void (async () => {
           try {
             const next = options.refreshCredentials
@@ -459,22 +474,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             else capped = true;
           } catch {
             if (valid(g)) finish("unavailable", "Voice relay credentials could not be renewed.");
+          } finally {
+            renewing = false;
           }
         })();
-      },
-      Math.max(1000, value.expires_at * 1000 - d.now() - 60_000)
-    );
-    later(
-      () => {
-        if (credentials !== value) return;
-        if (!capped) return finish("unavailable", "Voice relay credentials expired.");
-        // The round is ending: give the server's closed/4410 a moment, then end as closed.
-        later(() => {
-          if (credentials === value) finish("closed");
-        }, 5_000);
-      },
-      value.expires_at * 1000 - d.now()
-    );
+      }
+      const next = now < deadline - 60_000 ? deadline - 60_000 : deadline;
+      later(check, Math.max(1000, Math.min(15_000, next - now)));
+    }
+    check();
   }
   async function credentialsResponse() {
     const token = (await options.getToken?.()) ?? options.token ?? "";
