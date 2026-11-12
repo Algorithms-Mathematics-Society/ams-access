@@ -8,7 +8,7 @@
 //! re-resolved every minute while the lockdown is live.
 
 use crate::process_runner::CommandDeadlineExt;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -22,6 +22,8 @@ struct Live {
     ips: Vec<String>,
     /// DNS servers: port 53/853 only.
     resolvers: Vec<String>,
+    /// Voice relays: TURN ports only.
+    relays: Vec<String>,
 }
 
 /// What the live lockdown was built from; `None` once it is released.
@@ -31,10 +33,11 @@ static REFRESHER: AtomicBool = AtomicBool::new(false);
 /// Every allowed domain resolved to IPs, plus the system's DNS resolvers.
 pub fn resolve_allowlist(domains: &[String]) -> Vec<String> {
     let ips = resolve_domains(domains);
-    // Resolvers only when the API itself resolved: a list of nothing but DNS
-    // servers must not pass for a working lockdown.
-    if ips.is_empty() {
-        return ips;
+    // Resolvers only when the API itself resolved to IPv4: the pf rules drop
+    // IPv6, so a list of nothing but DNS servers (or IPv6-only API addresses on
+    // a NAT64 network) must not pass for a working lockdown.
+    if !ips.iter().any(|ip| ip.parse::<Ipv4Addr>().is_ok()) {
+        return Vec::new();
     }
     merged(&ips, &dns_resolvers())
 }
@@ -53,20 +56,29 @@ fn resolve_domains(domains: &[String]) -> Vec<String> {
 }
 
 /// Apply the lockdown for `domains` and keep it current until it is released.
-pub fn enable_and_follow(domains: &[String], ips: &[String]) -> Result<(), String> {
+/// `relays` (also listed in `ips`) are held to the TURN ports by the helper.
+pub fn enable_and_follow(
+    domains: &[String],
+    ips: &[String],
+    relays: &[String],
+) -> Result<(), String> {
     let mut live = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // `ips` comes from resolve_allowlist: split the resolvers back out so the
-    // helper can hold them to the DNS ports.
+    // `ips` comes from resolve_allowlist: split the resolvers and relays back
+    // out so the helper can hold them to their ports.
     let current = dns_resolvers();
-    let (resolvers, ips): (Vec<String>, Vec<String>) =
-        ips.iter().cloned().partition(|ip| current.contains(ip));
-    super::enable_network_lockdown(&ips, &resolvers)?;
+    let (resolvers, ips): (Vec<String>, Vec<String>) = ips
+        .iter()
+        .filter(|ip| !relays.contains(ip))
+        .cloned()
+        .partition(|ip| current.contains(ip));
+    super::enable_network_lockdown(&ips, &resolvers, relays)?;
     *live = Some(Live {
         domains: domains.to_vec(),
         ips,
         resolvers,
+        relays: relays.to_vec(),
     });
     drop(live);
     if !REFRESHER.swap(true, Ordering::SeqCst) {
@@ -115,7 +127,7 @@ fn refresh() {
     let next = merged(&live.ips, &fresh);
     let next_resolvers = merged(&live.resolvers, &fresh_resolvers);
     let changed = next.len() != live.ips.len() || next_resolvers.len() != live.resolvers.len();
-    if changed && super::enable_network_lockdown(&next, &next_resolvers).is_ok() {
+    if changed && super::enable_network_lockdown(&next, &next_resolvers, &live.relays).is_ok() {
         live.ips = next;
         live.resolvers = next_resolvers;
     }
@@ -140,8 +152,9 @@ fn dns_resolvers() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `nameserver[0] : 192.168.1.1` lines; scoped IPv6 (`fe80::1%en0`) is skipped
-/// because the pf rules are IPv4-only.
+/// `nameserver[0] : 192.168.1.1` lines. Scoped IPv6 (`fe80::1%en0`) does not
+/// parse as an IP and is skipped; other IPv6 resolvers are kept, and the helper
+/// drops them because the pf rules are IPv4-only.
 fn parse_scutil_resolvers(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines().map(str::trim) {
@@ -198,5 +211,7 @@ mod tests {
     #[test]
     fn resolvers_are_not_added_when_the_api_did_not_resolve() {
         assert!(resolve_allowlist(&["nonexistent.invalid".to_string()]).is_empty());
+        // IPv6-only API (NAT64): pf would allow only DNS and the relay.
+        assert!(resolve_allowlist(&["2001:db8::10".to_string()]).is_empty());
     }
 }

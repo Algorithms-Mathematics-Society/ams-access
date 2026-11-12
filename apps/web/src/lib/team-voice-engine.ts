@@ -15,7 +15,13 @@ export type TeamVoicePeer = {
 };
 export type TeamVoiceSnapshot = {
   status:
-    "idle" | "connecting" | "connected" | "reconnecting" | "unavailable" | "closed" | "replaced";
+    | "idle"
+    | "connecting"
+    | "connected"
+    | "reconnecting"
+    | "unavailable"
+    | "closed"
+    | "replaced";
   muted: boolean;
   inputLevel?: number | null;
   volume: number;
@@ -81,7 +87,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     inputMeter: createVoiceInputMeter,
     socket: (url) => new WebSocket(url),
     rtc: (config) => new RTCPeerConnection(config),
-    audio: () => new Audio(),
+    // WebKit (macOS WKWebView) decodes a remote track played by a detached
+    // <audio> but never outputs it; the element must be in the document.
+    audio: () => {
+      const element = new Audio();
+      element.setAttribute("playsinline", "");
+      element.hidden = true;
+      document.body.append(element);
+      return element;
+    },
     stream: (tracks) => new MediaStream(tracks),
     now: Date.now,
     random: Math.random,
@@ -109,9 +123,10 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   let me = "",
     credentials: TeamVoiceCredentials | null = null,
     retries = 0,
+    unwelcomed = 0,
     active = false,
     welcomed = false;
-  let lastPong = 0,
+  let pongs = 0,
     muteSent = true,
     muteTimer = false;
   const outgoing: { raw: string; peer?: Peer }[] = [];
@@ -171,9 +186,20 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     p.pc.close();
     p.audio.pause();
     p.audio.srcObject = null;
+    p.audio.remove?.();
     p.view.stream?.getTracks().forEach((t) => t.stop());
   }
-  function cleanup() {
+  function releaseMicrophone() {
+    inputMeter?.stop();
+    inputMeter = null;
+    microphone?.getTracks().forEach((t) => {
+      t.onended = null;
+      t.stop();
+    });
+    microphone = null;
+  }
+  /** A reconnect keeps the owned clone, so a retry never reopens the microphone. */
+  function cleanup(keepMicrophone = false) {
     for (const timer of timers) d.clearTimeout(timer);
     timers.clear();
     outgoing.length = 0;
@@ -186,14 +212,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       old.onopen = old.onmessage = old.onclose = old.onerror = null;
       old.close();
     }
-    inputMeter?.stop();
-    inputMeter = null;
+    if (!keepMicrophone) releaseMicrophone();
     snapshot = { ...snapshot, inputLevel: null };
-    microphone?.getTracks().forEach((t) => {
-      t.onended = null;
-      t.stop();
-    });
-    microphone = null;
     welcomed = false;
   }
   function finish(status: TeamVoiceSnapshot["status"], error: string | null = null) {
@@ -202,14 +222,18 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     cleanup();
     emit({ status, error });
   }
-  function disconnected() {
+  /** `atLeast` honours a server back-off, e.g. the admission limiter's 10 s refill. */
+  function disconnected(atLeast = 0) {
     if (!active) return;
     generation++;
-    cleanup();
+    cleanup(true);
     if (retries >= MAX_RETRIES)
       return finish("unavailable", "Voice connection could not be restored.");
     emit({ status: "reconnecting" });
-    const delay = Math.min(30_000, 1000 * 2 ** retries++) * (0.8 + d.random() * 0.2);
+    const delay = Math.max(
+      atLeast,
+      Math.min(30_000, 1000 * 2 ** retries++) * (0.8 + d.random() * 0.2)
+    );
     later(() => {
       void connect();
     }, delay);
@@ -273,10 +297,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     for (const track of microphone.getAudioTracks()) {
       const sender = pc.addTrack(track, microphone);
       work(p, async () => {
-        const params = sender.getParameters();
-        params.encodings = params.encodings?.length ? params.encodings : [{}];
-        for (const encoding of params.encodings) encoding.maxBitrate = 32_000;
-        await sender.setParameters(params);
+        // Best effort: WebKit rejects adding encodings, and a refused cap must not drop the peer.
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings?.length) return;
+          for (const encoding of params.encodings) encoding.maxBitrate = 32_000;
+          await sender.setParameters(params);
+        } catch {
+          /* keep the default bitrate */
+        }
       });
     }
     pc.onicecandidate = (event) => {
@@ -419,9 +448,25 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     for (const p of peers.values())
       p.pc.setConfiguration({ iceServers: value.ice_servers, iceTransportPolicy: "relay" });
     const g = generation;
-    // One refresh per credential lifetime, no polling; failure closes rather than using expired credentials.
-    later(
-      () => {
+    const deadline = value.expires_at * 1000;
+    let capped = false,
+      renewing = false;
+    // Judged against the wall clock on a short local check, not one long timer:
+    // timers stop while a Mac sleeps, so a 4 h timer fired after the credentials
+    // had expired and later teammates could not reach the relay.
+    function check() {
+      if (credentials !== value) return;
+      const now = d.now();
+      if (now >= deadline) {
+        if (!capped) return finish("unavailable", "Voice relay credentials expired.");
+        // The round is ending: give the server's closed/4410 a moment, then end as closed.
+        later(() => {
+          if (credentials === value) finish("closed");
+        }, 5_000);
+        return;
+      }
+      if (!renewing && !capped && now >= deadline - 60_000) {
+        renewing = true;
         void (async () => {
           try {
             const next = options.refreshCredentials
@@ -430,33 +475,58 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             if (!valid(g)) return;
             if (next.expires_at < value.expires_at) throw new Error("Voice credentials expired.");
             if (next.expires_at > value.expires_at) useCredentials(next);
+            // Same expiry: the server capped it at the end of the round.
+            else capped = true;
           } catch {
             if (valid(g)) finish("unavailable", "Voice relay credentials could not be renewed.");
+          } finally {
+            renewing = false;
           }
         })();
-      },
-      Math.max(1000, value.expires_at * 1000 - d.now() - 60_000)
-    );
-    later(
-      () => {
-        if (credentials === value) finish("unavailable", "Voice relay credentials expired.");
-      },
-      value.expires_at * 1000 - d.now()
-    );
+      }
+      const next = now < deadline - 60_000 ? deadline - 60_000 : deadline;
+      later(check, Math.max(1000, Math.min(15_000, next - now)));
+    }
+    check();
   }
-  async function fetchCredentials() {
+  async function credentialsResponse() {
     const token = (await options.getToken?.()) ?? options.token ?? "";
-    const response = await d.fetch(
+    return d.fetch(
       `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team/voice/credentials`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
+  }
+  async function fetchCredentials() {
+    const response = await credentialsResponse();
     if (!response.ok) throw new Error("Voice credentials unavailable.");
     return (await response.json()) as TeamVoiceCredentials;
   }
+  /**
+   * The server refuses a join before the WebSocket handshake, so the browser
+   * sees 1006, the same as a network drop. The credentials endpoint runs the
+   * same checks over HTTP: an HTTP refusal means a denial, while a network
+   * failure, 429 or 5xx stays an ordinary drop.
+   */
+  async function refusal(): Promise<string | null> {
+    try {
+      const { status } = await credentialsResponse();
+      if (status === 401) return "Your sign-in has expired.";
+      if (status === 403 || status === 404 || status === 409 || status === 410)
+        return "Team voice is not available to you.";
+    } catch {
+      /* unreachable: retry as usual */
+    }
+    return null;
+  }
   function heartbeat() {
+    // Ping first, then judge that ping on its own deadline: a throttled (App Nap,
+    // hidden window) timer only delays a ping and is never read as a missed pong.
     later(() => {
-      if (d.now() - lastPong > 55_000) return disconnected();
+      const seen = pongs;
       send({ type: "ping" });
+      later(() => {
+        if (pongs === seen) disconnected();
+      }, 20_000);
       heartbeat();
     }, 25_000);
   }
@@ -497,47 +567,51 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     try {
       const token = (await options.getToken?.()) ?? options.token ?? "";
       if (!valid(g)) return;
-      later(() => {
-        if (!microphone) finish("unavailable", "Microphone request timed out.");
-      }, 10_000);
-      let owned: MediaStream;
-      try {
-        owned = await options.acquireMicrophone();
-      } catch (error) {
-        const name = error instanceof Error ? error.name : "";
-        if (valid(g))
-          finish(
-            "unavailable",
-            name === "NotAllowedError" || name === "PermissionDeniedError"
-              ? "Microphone access was denied."
-              : name === "NotFoundError" || name === "DevicesNotFoundError"
-                ? "No microphone was found."
-                : "Microphone could not be opened."
-          );
-        return;
-      }
-      if (!valid(g)) {
-        owned.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      microphone = owned;
-      if (!owned.getAudioTracks().length) {
-        finish("unavailable", "No microphone was found.");
-        return;
-      }
-      owned.getTracks().forEach((t) => {
-        if (t.kind !== "audio") t.stop();
-        else {
-          t.enabled = !snapshot.muted;
-          t.onended = () => {
-            if (valid(g)) finish("unavailable", "Microphone disconnected.");
-          };
+      if (microphone?.getAudioTracks().some((t) => t.readyState === "ended")) releaseMicrophone();
+      if (!microphone) {
+        // Long enough for a first-run macOS microphone prompt to be read and answered.
+        later(() => {
+          if (!microphone) finish("unavailable", "Microphone request timed out.");
+        }, 60_000);
+        let owned: MediaStream;
+        try {
+          owned = await options.acquireMicrophone();
+        } catch (error) {
+          const name = error instanceof Error ? error.name : "";
+          if (valid(g))
+            finish(
+              "unavailable",
+              name === "NotAllowedError" || name === "PermissionDeniedError"
+                ? "Microphone access was denied."
+                : name === "NotFoundError" || name === "DevicesNotFoundError"
+                  ? "No microphone was found."
+                  : "Microphone could not be opened."
+            );
+          return;
         }
-      });
-      try {
-        inputMeter = d.inputMeter(owned);
-      } catch {
-        inputMeter = null;
+        if (!valid(g)) {
+          owned.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        microphone = owned;
+        if (!owned.getAudioTracks().length) {
+          finish("unavailable", "No microphone was found.");
+          return;
+        }
+        owned.getTracks().forEach((t) => {
+          if (t.kind !== "audio") t.stop();
+        });
+        try {
+          inputMeter = d.inputMeter(owned);
+        } catch {
+          inputMeter = null;
+        }
+      }
+      for (const t of microphone.getAudioTracks()) {
+        t.enabled = !snapshot.muted;
+        t.onended = () => {
+          if (valid(g)) finish("unavailable", "Microphone disconnected.");
+        };
       }
       function sampleInput() {
         if (!valid(g)) return;
@@ -553,18 +627,34 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       url.searchParams.set("token", token);
       const ws = d.socket(url.toString());
       socket = ws;
-      later(() => {
-        if (!welcomed) disconnected();
-      }, 15_000);
-      ws.onclose = (event) => {
+      // The server sends {type:"error"} before closing a rate violation with 1000.
+      let serverError = false;
+      const closed = (code: number) => {
         if (!valid(g)) return;
-        if (event.code >= 4400 && event.code < 4500)
-          finish(event.code === 4411 ? "replaced" : "closed");
+        // Only 4410 means the round is over; the other application codes stay retryable.
+        if (code === 4411) finish("replaced");
+        else if (code === 4410) finish("closed");
+        else if (code === 4401) finish("unavailable", "Your sign-in has expired.");
+        else if (code === 4403) finish("unavailable", "Team voice is not available to you.");
+        else if (code === 4429) disconnected(10_000);
+        else if (code >= 4400 && code < 4500)
+          finish("unavailable", "Team voice relay is unavailable.");
+        else if (!welcomed && ++unwelcomed >= 2)
+          void refusal().then((reason) => {
+            if (!valid(g)) return;
+            if (reason) finish("unavailable", reason);
+            else disconnected();
+          });
+        else disconnected(serverError ? 10_000 : 0);
+      };
+      // No onerror handler: browsers follow error with close, and only close carries the code.
+      ws.onclose = (event) => closed(event.code);
+      later(() => {
+        // A runtime that reports a refused handshake only as an error still lands here.
+        if (welcomed) return;
+        if (ws.readyState === 3) closed(1006);
         else disconnected();
-      };
-      ws.onerror = () => {
-        if (valid(g)) disconnected();
-      };
+      }, 15_000);
       ws.onmessage = (event) => {
         if (!valid(g) || typeof event.data !== "string" || event.data.length > 65_536) return;
         try {
@@ -578,7 +668,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             useCredentials(raw);
             me = raw.me;
             welcomed = true;
-            lastPong = d.now();
+            unwelcomed = 0;
             muteSent = snapshot.muted;
             send({ type: snapshot.muted ? "mute" : "unmute" });
             for (const p of raw.peers.slice(0, MAX_PEERS)) add(p);
@@ -586,7 +676,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             heartbeat();
             levels();
           } else if (welcomed) {
-            if (raw.type === "pong") lastPong = d.now();
+            if (raw.type === "pong") pongs++;
+            else if (raw.type === "error") serverError = true;
             else if (raw.type === "peer-joined") {
               remove(raw.member_uid);
               add(raw);
@@ -614,7 +705,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       if (active || snapshot.status === "replaced" || snapshot.status === "closed") return;
       active = true;
       generation++;
-      retries = 0;
+      retries = unwelcomed = 0;
       emit({ status: "connecting", error: null });
       await connect();
     },

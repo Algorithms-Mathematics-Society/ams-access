@@ -59,6 +59,11 @@ pub(super) fn is_quit_close_hide_minimize_key(kc: i64) -> bool {
     matches!(kc, VK_Q | VK_W | VK_H | VK_M)
 }
 
+/// The physical QWERTY C, V and X keys: Copy, Paste and Cut on QWERTY.
+pub(super) fn is_clipboard_key(kc: i64) -> bool {
+    matches!(kc, VK_C | VK_V | VK_X)
+}
+
 /// The shortcut policy, free of FFI so it reads as one table.
 pub(super) fn should_block_key(kc: i64, flags: u64, policy: Policy) -> bool {
     let cmd = (flags & FLAG_CMD) != 0;
@@ -92,6 +97,11 @@ pub(super) fn should_block_key(kc: i64, flags: u64, policy: Policy) -> bool {
         VK_M if cmd => true,
         // Cmd+Space with any modifier: Spotlight, Finder search, Character Viewer
         VK_SPACE if cmd => true,
+        // Option+Space and Fn+Space: the other Siri triggers. Siri sees the
+        // hold from the first key-down, so the press itself is dropped (it
+        // only types a non-breaking space). Not with Control: Control+Option+
+        // Space switches input source.
+        VK_SPACE if (opt && !ctrl) || fn_only => true,
         // Cmd+Option+Esc (Force Quit dialog)
         VK_ESCAPE if cmd && opt => true,
         // Bare Escape — skipped when Monaco is focused so editor can dismiss suggestions

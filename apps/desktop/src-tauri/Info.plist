@@ -6,6 +6,6 @@
   <key>NSCameraUsageDescription</key>
   <string>AMS Access requires camera access for identity verification and proctoring during exam sessions.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>AMS Access requires microphone access for proctoring during exam sessions.</string>
+  <string>AMS Access requires microphone access for proctoring during exam sessions and, in team rounds, to carry your live audio to your teammates.</string>
 </dict>
 </plist>

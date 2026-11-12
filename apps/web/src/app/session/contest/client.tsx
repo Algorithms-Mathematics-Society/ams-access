@@ -459,7 +459,7 @@ export default function ContestPageClient() {
       lobbyController.current = null;
     };
   }, [desktopTeamRoom, contestId]);
-  // A native client that cannot run team rooms (macOS, Linux ARM) must learn
+  // A native client that cannot run team rooms (e.g. Linux ARM) must learn
   // whether this is a team round before it loads any paper, so a team round
   // never opens as a solo workspace showing every part (#314).
   const nativeTeamUnsupported =
@@ -1577,7 +1577,7 @@ export default function ContestPageClient() {
     if (nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer") {
       if (teamProbeResult === "team") {
         setLoadError(
-          "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
+          "This is a team round. Team rounds need the AMS Access app on Windows, macOS or Linux. Contact your organizer."
         );
         setLoadRetryable(false);
         setLoading(false);

@@ -2567,9 +2567,7 @@ async fn engage_desktop(
     entry_generation: u64,
 ) -> Result<(), String> {
     KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
-    #[cfg(target_os = "macos")]
-    let menu_app = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2582,6 +2580,10 @@ async fn engage_desktop(
                     LOCKDOWN_REQUIRES_KEYBOARD.store(require_keyboard, Ordering::SeqCst);
                 }
                 LOCKDOWN_ENGAGED.store(true, Ordering::SeqCst);
+                // Under the lifecycle lock, so an unlock cannot restore the
+                // default menu first and then be overwritten by this one.
+                #[cfg(target_os = "macos")]
+                set_contest_menu(&app, true);
                 #[cfg(target_os = "windows")]
                 if started {
                     start_windows_monitors(&app, state.generation);
@@ -2604,12 +2606,7 @@ async fn engage_desktop(
         }
     })
     .await
-    .map_err(|error| error.to_string())?;
-    #[cfg(target_os = "macos")]
-    if result.is_ok() {
-        set_contest_menu(&menu_app, true);
-    }
-    result
+    .map_err(|error| error.to_string())?
 }
 
 /// macOS: the default menu's Quit ⌘Q, Close ⌘W, Hide ⌘H and Minimize ⌘M
@@ -2774,14 +2771,15 @@ fn start_windows_monitors(app: &tauri::AppHandle, generation: u64) {
 #[tauri::command]
 async fn unlock_desktop(app: tauri::AppHandle) -> Result<(), String> {
     KEYBOARD_PROBE_EPOCH.fetch_add(1, Ordering::SeqCst);
-    #[cfg(target_os = "macos")]
-    set_contest_menu(&app, false);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = lockdown_lifecycle()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         LOCKDOWN_ENGAGED.store(false, Ordering::SeqCst);
         LOCKDOWN_GENERATION.fetch_add(1, Ordering::SeqCst);
+        // Under the lock, like engage_desktop, so the last one to run wins.
+        #[cfg(target_os = "macos")]
+        set_contest_menu(&app, false);
         let result = state.stop(&mut DesktopOperations::new(app.clone(), false));
         if let Err(error) = &result {
             record_proctoring_event(
@@ -3012,12 +3010,15 @@ async fn enable_network_lockdown(
         // Resolvers are included and the API host is re-resolved while the
         // lockdown is live; see platform_rs::macos::allowlist.
         tauri::async_runtime::spawn_blocking(move || {
-            // resolve_allowlist adds DNS only after the API resolves. The live
+            // resolve_allowlist is empty (so the relay is refused) unless the
+            // API resolves to IPv4, which pf needs; it then adds DNS. The live
             // follower retains these initial IPs when it refreshes API DNS.
             let ips = network_allowlist::with_reviewed_voice_relay(
                 platform_rs::macos::resolve_allowlist(&allowed_domains),
             )?;
-            platform_rs::macos::enable_and_follow(&allowed_domains, &ips).map(|_| true)
+            // The helper holds the relay to its TURN ports.
+            let relays = [network_allowlist::REVIEWED_VOICE_RELAY_IP.to_string()];
+            platform_rs::macos::enable_and_follow(&allowed_domains, &ips, &relays).map(|_| true)
         })
         .await
         .map_err(|error| error.to_string())?

@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import { VStack, HStack } from "@astryxdesign/core/Stack";
 import { Button } from "@astryxdesign/core/Button";
 import type { TeamLobbyBoard } from "@/lib/team-lobby";
+import { shownIntegration } from "@/lib/team-vote";
 import { TeamIntegrationResult } from "./TeamIntegrationResult";
 const TeamLiveBoard = dynamic(() => import("./TeamLiveBoard"), { ssr: false });
 const TeamBenchmarks = dynamic(() => import("./TeamBenchmarks").then((m) => m.TeamBenchmarks), {
@@ -32,9 +33,7 @@ export default function TeamResultsView({
         ))}
       </HStack>
       {section === "integration" && (
-        <TeamIntegrationResult
-          result={board.submission?.last_result ?? board.submission?.integration ?? null}
-        />
+        <TeamIntegrationResult result={shownIntegration(board.submission)} />
       )}
       {section === "board" && (
         <TeamLiveBoard contestUid={contestUid} ownTeamUid={board.team.uid} visible />

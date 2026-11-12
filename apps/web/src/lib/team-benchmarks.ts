@@ -17,10 +17,12 @@ const record = (v: unknown): v is Record<string, unknown> =>
 const number = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+/** The server returns every run, newest first; only the newest are kept. */
+export const BENCHMARK_HISTORY_LIMIT = 1000;
 export function parseBenchmarks(value: unknown): BenchmarkRun[] {
-  if (!Array.isArray(value) || value.length > 1000) throw new Error("Invalid benchmark history");
+  if (!Array.isArray(value)) throw new Error("Invalid benchmark history");
   const ids = new Set<string>();
-  return value.map((v) => {
+  const runs = value.slice(0, BENCHMARK_HISTORY_LIMIT).map((v): BenchmarkRun => {
     if (
       !record(v) ||
       typeof v.uid !== "string" ||
@@ -66,7 +68,18 @@ export function parseBenchmarks(value: unknown): BenchmarkRun[] {
       parts,
     };
   });
+  // The server flags every waiting/queued run as pending, even a team's first.
+  // Newest first: only call it a re-measurement when an older run settled.
+  let settled = false;
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const run = runs[i];
+    if (run.pending && OPEN.has(run.status) && !settled) run.pending = false;
+    if (SETTLED.has(run.status)) settled = true;
+  }
+  return runs;
 }
+const OPEN = new Set(["waiting", "queued"]);
+const SETTLED = new Set(["ok", "noisy", "rejected_host", "lost", "failed_verify"]);
 export function benchmarkStatus(run: BenchmarkRun): string {
   if (run.pending) return "Re-measuring — not a regression";
   if (run.superseded) return "Superseded measurement";
@@ -76,7 +89,6 @@ export function benchmarkStatus(run: BenchmarkRun): string {
         ok: "Measured",
         waiting: "Waiting",
         queued: "Queued",
-        running: "Measuring",
         noisy: "Noisy measurement",
         rejected_host: "Measurement host rejected",
         lost: "Measurement interrupted",

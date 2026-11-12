@@ -37,6 +37,9 @@ const integer = (v: unknown): v is number => Number.isSafeInteger(v) && (v as nu
 const bounded = (v: unknown, max = 64): v is string =>
   typeof v === "string" && v.length > 0 && v.length <= max;
 const count = (v: unknown): number | null => (integer(v) ? v : null);
+/** Python truthiness, to match the server's bool() checks in team_board.substituted. */
+const truthy = (v: unknown) =>
+  Array.isArray(v) ? v.length > 0 : object(v) ? Object.keys(v).length > 0 : !!v;
 /** Fail closed on incomplete substitution metadata, never reinterpret a reference as a pass. */
 function details(v: Record<string, unknown>): TeamIntegrationDetails | null {
   if (
@@ -47,9 +50,13 @@ function details(v: Record<string, unknown>): TeamIntegrationDetails | null {
     !Array.isArray(v.failing_parts) ||
     v.failing_parts.length > 5 ||
     !v.failing_parts.every((label) => bounded(label)) ||
-    typeof v.project_failure !== "boolean"
+    typeof v.project_failure !== "boolean" ||
+    !(v.fallbacks === undefined || v.fallbacks === null || object(v.fallbacks)) ||
+    Object.keys(v.fallbacks ?? {}).length > 5
   )
     return null;
+  // Labels sent with no source; the server links a stand-in and denies credit.
+  const fallbacks = (v.fallbacks ?? {}) as Record<string, unknown>;
   const substitutions: TeamIntegrationDetails["substitutions"] = [];
   for (const sub of v.substitutions) {
     if (!object(sub) || !bounded(sub.label) || !bounded(sub.reason, 400)) return null;
@@ -59,13 +66,22 @@ function details(v: Record<string, unknown>): TeamIntegrationDetails | null {
       reference: sub.origin === "reference",
     });
   }
+  for (const [label, kind] of Object.entries(fallbacks)) {
+    if (!bounded(label)) return null;
+    if (!substitutions.some((sub) => sub.label === label))
+      substitutions.push({
+        label,
+        reason: "no source was submitted for this part",
+        reference: kind === "reference",
+      });
+  }
   const parts: TeamIntegrationDetails["parts"] = [];
   for (const [label, part] of Object.entries(v.parts)) {
     if (!bounded(label) || !object(part)) return null;
     const substituted =
       substitutions.some((sub) => sub.label === label) ||
-      (part.substituted !== undefined && part.substituted !== null && part.substituted !== false) ||
-      (part.origin !== undefined && part.origin !== "submission");
+      truthy(part.substituted) ||
+      (truthy(part.origin) && part.origin !== "submission");
     if (substituted && !substitutions.some((sub) => sub.label === label))
       substitutions.push({
         label,
@@ -138,16 +154,35 @@ export function parseTeamVote(v: unknown): TeamVote | null {
     last_result: summary(v.last_result),
   };
 }
+/** Time since the server sample. performance.now() stops while a Mac sleeps,
+ * so wall-clock elapsed also counts; taking the larger means a clock set
+ * backwards still cannot add time. */
+function elapsedSinceSample(
+  sampledAt: number,
+  now: number,
+  sampledWallAt?: number,
+  wallNow = Date.now()
+): number {
+  return Math.max(0, now - sampledAt, sampledWallAt === undefined ? 0 : wallNow - sampledWallAt);
+}
 export function voteRemainingMs(
   vote: TeamVote,
   serverTime: string,
   sampledAt: number,
-  now: number
+  now: number,
+  sampledWallAt?: number,
+  wallNow?: number
 ): number {
   return Math.max(
     0,
-    Date.parse(vote.deadline) - Date.parse(serverTime) - Math.max(0, now - sampledAt)
+    Date.parse(vote.deadline) -
+      Date.parse(serverTime) -
+      elapsedSinceSample(sampledAt, now, sampledWallAt, wallNow)
   );
+}
+/** The result the vote panel names and the results dialog shows: latest finished, else in flight. */
+export function shownIntegration(vote: TeamVote | null | undefined): TeamIntegrationSummary | null {
+  return vote?.last_result ?? vote?.integration ?? null;
 }
 export function integrationStatus(summary: TeamIntegrationSummary): string {
   if (summary.status === "queued" || summary.status === "pending") return "Queued";

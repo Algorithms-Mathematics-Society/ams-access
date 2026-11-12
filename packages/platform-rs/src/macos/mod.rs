@@ -197,9 +197,12 @@ fn owns_desktop(generation: u64) -> bool {
 // Per-contest key policy, read by the tap callback without locking.
 static CLIPBOARD_BLOCKED: AtomicBool = AtomicBool::new(false);
 static FUNCTION_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
-/// Event time (ns) of the last bare Command press; 0 after any key-down, so
-/// only Command, Command in quick succession counts as a double-press.
+/// Time (ns since TAP_CLOCK, plus 1) of the last bare Command press; 0 after
+/// any key-down, so only Command, Command in quick succession counts as a
+/// double-press. Not CGEventGetTimestamp: on Apple Silicon that is in mach
+/// ticks (125/3 ns), which stretched the window to about 25 s.
 static LAST_COMMAND_PRESS: AtomicU64 = AtomicU64::new(0);
+static TAP_CLOCK: OnceLock<std::time::Instant> = OnceLock::new();
 /// Double-press Command opens Type to Siri (or Dictation, if chosen).
 const DOUBLE_COMMAND_NS: u64 = 600_000_000;
 const VK_COMMAND: i64 = 55;
@@ -397,7 +400,8 @@ extern "C" {
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
-    fn CGEventGetTimestamp(event: *mut c_void) -> u64;
+    fn CGEventCreateKeyboardEvent(source: *mut c_void, keycode: u16, key_down: bool)
+        -> *mut c_void;
     fn CGEventKeyboardGetUnicodeString(
         event: *mut c_void,
         max_len: usize,
@@ -434,6 +438,9 @@ extern "C" {
     ) -> *mut c_void;
     fn CFDictionaryGetValue(dict: *mut c_void, key: *const c_void) -> *const c_void;
     fn CFBooleanGetValue(boolean: *const c_void) -> bool;
+    fn CFArrayGetCount(array: *const c_void) -> isize;
+    fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
+    fn CFNumberGetValue(number: *const c_void, number_type: i64, value: *mut c_void) -> bool;
 }
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
@@ -445,6 +452,9 @@ extern "C" {
     fn CGSessionCopyCurrentDictionary() -> *mut c_void;
     // Input Monitoring (kTCCServiceListenEvent), macOS 10.15+.
     fn CGPreflightListenEventAccess() -> bool;
+    // Retained CFArrayRef of window info dictionaries.
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> *mut c_void;
+    static kCGWindowOwnerPID: *const c_void;
 }
 
 #[allow(non_upper_case_globals)]
@@ -539,7 +549,10 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
             // Siri watch still closes Siri however else it was opened.
             let modifiers = CGEventGetFlags(event) & (FLAG_CMD | FLAG_SHIFT | FLAG_CTRL | FLAG_OPT);
             if modifiers == FLAG_CMD {
-                let now = CGEventGetTimestamp(event);
+                let clock = *TAP_CLOCK.get_or_init(std::time::Instant::now);
+                let now = u64::try_from(clock.elapsed().as_nanos())
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1);
                 let last = LAST_COMMAND_PRESS.swap(now, Ordering::Relaxed);
                 return last != 0 && now.saturating_sub(last) < DOUBLE_COMMAND_NS;
             }
@@ -556,21 +569,35 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
     let flags = CGEventGetFlags(event);
-    // Quit, Close, Hide and Minimize go by the letter typed: the menu matches
-    // by character, and on AZERTY or Dvorak "q" is not keycode 12.
+    // Quit, Close, Hide, Minimize and the clipboard go by the letter typed:
+    // the menu matches by character, and on AZERTY or Dvorak "q" is not
+    // keycode 12, nor "v" keycode 9.
+    let clipboard_blocked = CLIPBOARD_BLOCKED.load(Ordering::Relaxed);
     if flags & FLAG_CMD != 0 {
-        let mut buf = [0u16; 4];
-        let mut len = 0usize;
-        CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
-        let letter = u8::try_from(buf[0])
-            .ok()
-            .filter(|c| len == 1 && c.is_ascii_alphabetic())
-            .map(|c| c.to_ascii_lowercase());
+        let mut letter = typed_letter(event);
+        // With Control held the key types a control code, so Ctrl+Cmd+Q
+        // (Lock Screen) would fall back to keycode 12. A fresh event for the
+        // same key, without modifiers, gives the letter in the current layout.
+        if letter.is_none() && flags & FLAG_CTRL != 0 {
+            if let Ok(code) = u16::try_from(kc) {
+                let bare = CGEventCreateKeyboardEvent(std::ptr::null_mut(), code, true);
+                if !bare.is_null() {
+                    letter = typed_letter(bare);
+                    CFRelease(bare);
+                }
+            }
+        }
         match letter {
             Some(b'q' | b'w' | b'h' | b'm') => return true,
+            Some(b'c' | b'v' | b'x') if clipboard_blocked => return true,
             // On AZERTY the physical Q and W keys type "a" and "z": Cmd+A and
             // Cmd+Z must reach the editor though their keycodes are Q's and W's.
-            Some(_) if keyboard_policy::is_quit_close_hide_minimize_key(kc) => return false,
+            Some(_)
+                if keyboard_policy::is_quit_close_hide_minimize_key(kc)
+                    || keyboard_policy::is_clipboard_key(kc) =>
+            {
+                return false
+            }
             _ => {}
         }
     }
@@ -580,9 +607,20 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
         keyboard_policy::Policy {
             function_keys_blocked: FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed),
             escape_blocked: ESCAPE_BLOCKED.load(Ordering::Relaxed),
-            clipboard_blocked: CLIPBOARD_BLOCKED.load(Ordering::Relaxed),
+            clipboard_blocked,
         },
     )
+}
+
+/// The lower-case ASCII letter a key event types, if it types exactly one.
+unsafe fn typed_letter(event: *mut c_void) -> Option<u8> {
+    let mut buf = [0u16; 4];
+    let mut len = 0usize;
+    CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
+    u8::try_from(buf[0])
+        .ok()
+        .filter(|c| len == 1 && c.is_ascii_alphabetic())
+        .map(|c| c.to_ascii_lowercase())
 }
 
 // ── CGEventTap watchdog ───────────────────────────────────────────────────────
@@ -1323,7 +1361,9 @@ const SIRI_UI: [&str; 2] = [
 /// Siri is kept closed for the test instead of switched off in its saved
 /// settings, which would outlive a power cut. The tap already drops its
 /// keyboard triggers; this ends a voice-invoked Siri within the 2 s poll,
-/// and the focus observers record that it came up.
+/// and the focus observers record that it came up. Only a Siri that is
+/// showing a window is ended: macOS 27 keeps "Siri AI" running all the time,
+/// and killing it every 2 s only made launchd respawn it.
 fn quit_siri() {
     let Ok(output) = Command::new("/bin/ps")
         .args(["-axo", "pid=,comm="])
@@ -1335,11 +1375,41 @@ fn quit_siri() {
         let Some((pid, comm)) = line.trim_start().split_once(char::is_whitespace) else {
             continue;
         };
-        if SIRI_UI.contains(&comm.trim()) {
+        if SIRI_UI.contains(&comm.trim())
+            && pid.parse().is_ok_and(|pid: i32| owns_on_screen_window(pid))
+        {
             let _ = Command::new("/bin/kill")
                 .args(["-TERM", pid])
                 .bounded_output();
         }
+    }
+}
+
+/// Whether `pid` owns a window that is on screen. The owner pid is readable
+/// without Screen Recording access.
+fn owns_on_screen_window(pid: i32) -> bool {
+    // kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements
+    const ON_SCREEN: u32 = 1 | 16;
+    const K_CF_NUMBER_SINT32_TYPE: i64 = 3;
+    unsafe {
+        let windows = CGWindowListCopyWindowInfo(ON_SCREEN, 0);
+        if windows.is_null() {
+            return false;
+        }
+        let found = (0..CFArrayGetCount(windows)).any(|i| {
+            let info = CFArrayGetValueAtIndex(windows, i);
+            let owner = CFDictionaryGetValue(info.cast_mut(), kCGWindowOwnerPID);
+            let mut owner_pid = 0i32;
+            !owner.is_null()
+                && CFNumberGetValue(
+                    owner,
+                    K_CF_NUMBER_SINT32_TYPE,
+                    (&mut owner_pid as *mut i32).cast(),
+                )
+                && owner_pid == pid
+        });
+        CFRelease(windows);
+        found
     }
 }
 
@@ -1640,11 +1710,22 @@ pub fn network_helper_running() -> bool {
     helper_send(r#"{"cmd":"ping"}"#).is_ok()
 }
 
-/// An installed helper from before on-demand start: launchd keeps it running
-/// all the time. Setup reinstalls it once so it runs only while needed.
+/// Helper protocol this app needs; matches MACOS_PROTOCOL in network-helper.
+const HELPER_PROTOCOL: u32 = 3;
+
+/// An installed helper older than this app needs, so setup reinstalls it: one
+/// from before on-demand start (launchd keeps it running all the time), or one
+/// that rejects this app's protocol probe. Only a definite rejection counts; a
+/// busy or unreachable helper is not reported as outdated.
 pub fn network_helper_outdated() -> bool {
-    std::fs::read_to_string(HELPER_PLIST_DEST)
+    if std::fs::read_to_string(HELPER_PLIST_DEST)
         .is_ok_and(|plist| !plist.contains("<key>Sockets</key>"))
+    {
+        return true;
+    }
+    let probe = serde_json::json!({ "cmd": "ping_protocol", "protocol": HELPER_PROTOCOL });
+    helper_send(&probe.to_string())
+        .is_err_and(|error| error.starts_with("invalid request") || error == "unsupported protocol")
 }
 
 /// Install the helper binary and LaunchDaemon plist, then bootstrap the daemon.
@@ -1761,9 +1842,14 @@ fn helper_send(json: &str) -> Result<(), String> {
 ///
 /// The helper runs pfctl as root — this function needs no elevated privileges.
 /// If the helper is not installed, returns `Err("helper_not_installed")`.
-/// `resolvers` are allowed on the DNS ports only. They are listed in `ips` as
-/// well, so an older installed helper that ignores `resolvers` keeps DNS.
-pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> Result<(), String> {
+/// `resolvers` are allowed on the DNS ports only and `relays` on the TURN ports
+/// only. Both are listed in `ips` as well, so an older installed helper that
+/// ignores those fields keeps DNS and voice.
+pub fn enable_network_lockdown(
+    allowed_ips: &[String],
+    resolvers: &[String],
+    relays: &[String],
+) -> Result<(), String> {
     if !network_helper_running() {
         return Err("helper_not_installed".to_string());
     }
@@ -1771,21 +1857,28 @@ pub fn enable_network_lockdown(allowed_ips: &[String], resolvers: &[String]) -> 
     // Marker-first: if the app or helper dies after the rules land, the
     // marker is what lets a later restore know the firewall may be active.
     // Reused while this boot's lockdown is recorded: the 60 s refresh and a
-    // re-arm must present the token the helper already holds.
-    let token = lockdown_token().unwrap_or_else(mint_token);
+    // re-arm must present the token the helper already holds. This process
+    // keeps its own copy, so a deleted marker cannot change it.
+    let mut armed = armed_token();
+    let token = armed
+        .clone()
+        .or_else(lockdown_token)
+        .unwrap_or_else(mint_token);
     write_lockdown_marker(&token).map_err(|e| format!("write lockdown marker: {e}"))?;
+    *armed = Some(token.clone());
+    drop(armed);
 
     let mut ips = allowed_ips.to_vec();
-    ips.extend(
-        resolvers
-            .iter()
-            .filter(|r| !allowed_ips.contains(r))
-            .cloned(),
-    );
+    for ip in resolvers.iter().chain(relays) {
+        if !ips.contains(ip) {
+            ips.push(ip.clone());
+        }
+    }
     let request = serde_json::json!({
         "cmd": "enable",
         "ips": ips,
         "resolvers": resolvers,
+        "relays": relays,
         "token": token,
     })
     .to_string();
@@ -1799,7 +1892,7 @@ pub fn disable_network_lockdown() -> Result<(), String> {
     if !network_helper_running() {
         // pf rules outlive the helper, so an unreachable helper only means
         // "nothing to flush" when no lockdown was recorded this boot.
-        return if lockdown_marker_may_exist() {
+        return if armed_token().is_some() || lockdown_marker_may_exist() {
             Err(format!(
                 "{HELPER_RULES_MAY_PERSIST}: network helper is not reachable"
             ))
@@ -1808,9 +1901,22 @@ pub fn disable_network_lockdown() -> Result<(), String> {
         };
     }
     // The helper lifts the rules only for the token that armed them.
-    let token = lockdown_token().unwrap_or_default();
+    let token = armed_token()
+        .clone()
+        .or_else(lockdown_token)
+        .unwrap_or_default();
     helper_send(&serde_json::json!({ "cmd": "disable", "token": token }).to_string())?;
+    *armed_token() = None;
     clear_lockdown_marker().map_err(|e| format!("network restored but marker cleanup failed: {e}"))
+}
+
+/// The token this process armed the helper with, if its lockdown is live.
+static ARMED_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+fn armed_token() -> std::sync::MutexGuard<'static, Option<String>> {
+    ARMED_TOKEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Error prefix when the helper is down but a lockdown was recorded.
@@ -1831,6 +1937,23 @@ fn boot_time() -> Option<String> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// `kern.boottime` is derived from the wall clock, so a clock adjustment
+/// moves it slightly ("{ sec = 1793933311, usec = 358001 } ..."). Within a
+/// minute counts as the same boot; a reboot moves it by its whole uptime.
+fn same_boot(recorded: &str, now: &str) -> bool {
+    fn secs(boot: &str) -> Option<i64> {
+        boot.split("sec = ")
+            .nth(1)?
+            .split(',')
+            .next()?
+            .trim()
+            .parse()
+            .ok()
+    }
+    recorded == now
+        || matches!((secs(recorded), secs(now)), (Some(a), Some(b)) if (a - b).abs() <= 60)
 }
 
 /// Line 1: the boot time. Line 2: the per-lockdown token the helper requires
@@ -1859,7 +1982,7 @@ fn lockdown_token() -> Option<String> {
     let (boot, token) = recorded.split_once('\n')?;
     let token = token.trim();
     let this_boot = match boot_time() {
-        Some(now) => boot.is_empty() || boot == now,
+        Some(now) => boot.is_empty() || same_boot(boot, &now),
         None => true,
     };
     (this_boot && !token.is_empty()).then(|| token.to_string())
@@ -1901,7 +2024,7 @@ fn lockdown_marker_may_exist() -> bool {
         Err(_) => true,
         Ok(recorded) => {
             let recorded = recorded.lines().next().unwrap_or_default();
-            let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && recorded != now);
+            let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && !same_boot(recorded, &now));
             if stale {
                 let _ = clear_lockdown_marker();
             }

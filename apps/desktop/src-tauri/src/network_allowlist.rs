@@ -3,7 +3,7 @@
 // Dedicated TURN EIP behind turn.amsaccess.com. A relay migration must update
 // this reviewed literal and ship a new desktop release. Never derive firewall
 // exceptions from credentials, ICE candidates, SDP, or user configuration.
-const REVIEWED_VOICE_RELAY_IP: &str = "43.204.79.244";
+pub const REVIEWED_VOICE_RELAY_IP: &str = "43.204.79.244";
 
 /// Call only after confirming API resolution. DNS-only resolvers and this
 /// fixed relay must not make an unresolved API look like a working lockdown.

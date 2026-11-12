@@ -62,7 +62,8 @@ export function teamPartAccess(state: LobbyState, label: string) {
 export function teamSubmissionBlock(
   state: LobbyState,
   label: string,
-  now = performance.now()
+  now = performance.now(),
+  wallNow = Date.now()
 ): string | null {
   const access = teamPartAccess(state, label);
   if (!access.editable) return access.label;
@@ -71,7 +72,12 @@ export function teamSubmissionBlock(
   const remaining =
     Date.parse(submission.deadline) -
     Date.parse(state.board!.server_time) -
-    Math.max(0, now - state.sampledAt);
+    // Same rule as elapsedSinceSample in team-vote.ts: count time a Mac slept.
+    Math.max(
+      0,
+      now - state.sampledAt,
+      state.sampledWallAt === undefined ? 0 : wallNow - state.sampledWallAt
+    );
   if (!Number.isFinite(remaining) || remaining <= 0)
     return "The team submission deadline has passed.";
   return null;

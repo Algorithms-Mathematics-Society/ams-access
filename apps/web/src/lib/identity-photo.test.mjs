@@ -100,7 +100,10 @@ test("an empty frame is dropped even though encoding succeeded", () => {
     // A black 640x480 JPEG really is this small.
     toDataURL: () => "data:image/jpeg;base64,AAECAw==",
   };
-  assert.equal(captureFrame(video, () => blank), null);
+  assert.equal(
+    captureFrame(video, () => blank),
+    null
+  );
 });
 
 test("the capture interval is short enough to catch a swap", () => {
@@ -121,7 +124,16 @@ test("an interval frame is cheaper than the portraits either side of it", () => 
 });
 
 test("jitter is bounded and centred on zero", () => {
-  assert.equal(jitterOffset(() => 0), -JITTER_MS);
-  assert.equal(jitterOffset(() => 1), JITTER_MS);
-  assert.equal(jitterOffset(() => 0.5), 0);
+  assert.equal(
+    jitterOffset(() => 0),
+    -JITTER_MS
+  );
+  assert.equal(
+    jitterOffset(() => 1),
+    JITTER_MS
+  );
+  assert.equal(
+    jitterOffset(() => 0.5),
+    0
+  );
 });

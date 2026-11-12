@@ -451,7 +451,7 @@ test("unsupported native client loads no paper until the probe proves a solo con
     } else {
       assert.equal(
         error,
-        "This is a team round. Team rounds need the AMS Access app on Windows or Linux. Contact your organizer."
+        "This is a team round. Team rounds need the AMS Access app on Windows, macOS or Linux. Contact your organizer."
       );
       assert.equal(retryable, false);
       assert.equal(loading, false);

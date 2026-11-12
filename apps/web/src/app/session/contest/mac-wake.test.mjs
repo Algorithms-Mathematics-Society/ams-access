@@ -10,14 +10,31 @@ const code = ts.transpileModule(source.slice(start, end), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 test("Mac wake refreshes server time and stops doing work after navigation", async () => {
-  let callback, cleanup, beats = 0, incidents = 0;
+  let callback,
+    cleanup,
+    beats = 0,
+    incidents = 0;
   vm.runInNewContext(code, {
-    sessionId: "s1", contestId: "c1", API_URL: "https://test.invalid",
-    useEffect: (f) => { cleanup = f(); },
-    listen: async (_, fn) => { callback = fn; return () => {}; },
-    retryBeatRef: { current: () => { beats++; } },
+    sessionId: "s1",
+    contestId: "c1",
+    API_URL: "https://test.invalid",
+    useEffect: (f) => {
+      cleanup = f();
+    },
+    listen: async (_, fn) => {
+      callback = fn;
+      return () => {};
+    },
+    retryBeatRef: {
+      current: () => {
+        beats++;
+      },
+    },
     authHeaders: () => ({}),
-    postJsonKeepalive: async () => { incidents++; return { ok: true }; },
+    postJsonKeepalive: async () => {
+      incidents++;
+      return { ok: true };
+    },
   });
   callback({ kind: "other" });
   assert.equal(beats, 0);

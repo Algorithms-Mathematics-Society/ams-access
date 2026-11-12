@@ -20,6 +20,10 @@ function harness(os, permission = async () => {}) {
       calls.push(cmd);
       return cmd === "get_platform" ? { os } : permission();
     },
+    invokeStrict: async (cmd) => {
+      calls.push(cmd);
+      return permission();
+    },
     navigator: {
       mediaDevices: {
         getUserMedia: async () => {
@@ -49,6 +53,7 @@ function harness(os, permission = async () => {}) {
     setTimeout: () => 1,
     setPhase: (p) => calls.push(p),
     setMissing() {},
+    setUnanswered: (value) => calls.push(`unanswered:${value}`),
     setLevel() {},
     onPass() {},
   };

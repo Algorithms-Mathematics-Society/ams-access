@@ -47,13 +47,25 @@ export type LobbyState = {
   pending: boolean;
   error: string | null;
   sampledAt: number;
+  /** Date.now() at the same sample, so time a Mac spent asleep is counted. */
+  sampledWallAt?: number;
 };
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const string = (v: unknown, max: number): v is string =>
   typeof v === "string" && v.length > 0 && [...v].length <= max;
 const date = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
+/** The server allows larger teams; this client (and voice, 4 peers) supports 5. */
+const MAX_TEAM_SIZE = 5;
 export function parseTeamLobby(v: unknown): TeamLobbyBoard {
+  if (
+    object(v) &&
+    ((Array.isArray(v.members) && v.members.length > MAX_TEAM_SIZE) ||
+      (Array.isArray(v.parts) && v.parts.length > MAX_TEAM_SIZE))
+  )
+    throw new Error(
+      `This team has more than ${MAX_TEAM_SIZE} members or parts, which this app does not support. Contact your organizer.`
+    );
   if (
     !object(v) ||
     !object(v.team) ||
@@ -62,10 +74,10 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
     !Number.isInteger(v.team.number) ||
     !Array.isArray(v.members) ||
     v.members.length < 1 ||
-    v.members.length > 5 ||
+    v.members.length > MAX_TEAM_SIZE ||
     !Array.isArray(v.parts) ||
     v.parts.length < 1 ||
-    v.parts.length > 5 ||
+    v.parts.length > MAX_TEAM_SIZE ||
     !object(v.phase) ||
     !["waiting", "discussion", "choosing", "locked"].includes(String(v.phase.name)) ||
     typeof v.phase.voice_open !== "boolean" ||
@@ -195,10 +207,12 @@ export function createTeamLobbyController(options: {
   onState: (state: LobbyState) => void;
   request?: typeof fetch;
   now?: () => number;
+  wallNow?: () => number;
   random?: () => number;
 }) {
   const request = options.request ?? fetch,
-    now = options.now ?? (() => performance.now());
+    now = options.now ?? (() => performance.now()),
+    wallNow = options.wallNow ?? (() => Date.now());
   const url = `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team`;
   let state: LobbyState = {
     board: null,
@@ -206,11 +220,15 @@ export function createTeamLobbyController(options: {
     pending: false,
     error: null,
     sampledAt: now(),
+    sampledWallAt: wallNow(),
   };
   let stopped = false,
     busy = false,
     terminal = false,
     etag: string | null = null,
+    // Cleared once a conditional GET fails at the network layer: a CORS
+    // preflight that refuses If-None-Match must not fail every other poll.
+    conditional = true,
     timer: ReturnType<typeof setTimeout> | undefined,
     active: AbortController | undefined,
     queued = false,
@@ -257,6 +275,7 @@ export function createTeamLobbyController(options: {
     active = new AbortController();
     const controller = active;
     const timeout = setTimeout(() => controller.abort(), 8000);
+    const sentEtag = !action && conditional && etag !== null;
     if (action) emit({ pending: true, error: null });
     try {
       const voteAction = action === "approve" || action === "withdraw";
@@ -271,8 +290,8 @@ export function createTeamLobbyController(options: {
           ...options.headers(),
           ...(action
             ? { "Content-Type": "application/json" }
-            : etag
-              ? { "If-None-Match": etag }
+            : sentEtag
+              ? { "If-None-Match": etag! }
               : {}),
         },
         ...(action === "claim" ? { body: JSON.stringify({ part_label: label }) } : {}),
@@ -326,17 +345,31 @@ export function createTeamLobbyController(options: {
         if (action && response.status === 409) queued = true;
         throw new Error(
           voteAction
-            ? response.status === 409
-              ? "The team revision or approval changed. Review the updated count before approving again."
-              : "Could not update your approval. Check the current revision and try again."
+            ? response.status === 409 && /deadline has passed/.test(detail)
+              ? "The team submission deadline has passed. Your team's current revision is submitted at the deadline."
+              : response.status === 409
+                ? "The team revision or approval changed. Review the updated count before approving again."
+                : "Could not update your approval. Check the current revision and try again."
             : detail
         );
       }
       const board = parseTeamLobby(body);
       etag = action ? null : response.headers.get("ETag");
-      emit({ board, status: "team", error: null, sampledAt: now() });
+      emit({
+        board,
+        status: "team",
+        error: null,
+        sampledAt: now(),
+        sampledWallAt: wallNow(),
+      });
     } catch (error) {
       etag = null;
+      if (sentEtag && error instanceof TypeError) {
+        // Retry at once without the conditional header instead of failing.
+        conditional = false;
+        queued = true;
+        return;
+      }
       emit({
         error:
           error instanceof Error && error.name !== "AbortError"
@@ -376,7 +409,14 @@ export function createTeamLobbyController(options: {
       revision !== submission.revision ||
       revision === 0 ||
       submission.submitted_revision === revision ||
-      voteRemainingMs(submission, board.server_time, state.sampledAt, now()) <= 0 ||
+      voteRemainingMs(
+        submission,
+        board.server_time,
+        state.sampledAt,
+        now(),
+        state.sampledWallAt,
+        wallNow()
+      ) <= 0 ||
       (action === "approve" ? submission.mine : !submission.mine)
     )
       return;

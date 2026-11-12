@@ -61,7 +61,8 @@ export function assertSetupAuthorization(
 }
 
 export type SetupAccess<S, R> =
-  { kind: "ready"; session: S } | { kind: "approval"; sessionId: string; request: R | null };
+  | { kind: "ready"; session: S }
+  | { kind: "approval"; sessionId: string; request: R | null };
 
 /** The POST response is authority. Neither a local nonce nor a GET approval grants setup. */
 export async function authorizeSetupEntry<S extends AuthorizedSession, R>(

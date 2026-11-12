@@ -12,7 +12,7 @@ const callback = source
   )
   .trim()
   .replace(/,$/, "");
-function harness(result, platform = "MacIntel", native = true) {
+function harness(result, platform = "Linux aarch64", native = true) {
   const calls = [],
     messages = [];
   let generation = 1;
@@ -21,7 +21,7 @@ function harness(result, platform = "MacIntel", native = true) {
     ...state,
     navigator: { platform, userAgent: "" },
     hasNativeBridge: () => native,
-    supportsTeamDesktopWebView: (_, p) => p === "Win32" || p === "Linux x86_64",
+    supportsTeamDesktopWebView: (_, p) => p === "Win32" || p === "MacIntel" || p === "Linux x86_64",
     authGeneration: () => generation,
     participantToken: () => String(generation),
     authHeaders: () => ({}),
@@ -65,6 +65,7 @@ test("solo proceeds after probe; supported native and browser entry unchanged", 
   assert.deepEqual(solo.calls, ["probe", "clear", "attempt", "navigate"]);
   for (const [platform, native] of [
     ["Win32", true],
+    ["MacIntel", true],
     ["Linux x86_64", true],
     ["MacIntel", false],
   ]) {

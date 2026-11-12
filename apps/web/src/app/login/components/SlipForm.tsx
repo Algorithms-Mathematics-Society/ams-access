@@ -45,11 +45,7 @@ export function SlipForm({
   return (
     <form onSubmit={onSubmit} data-login-form noValidate>
       <VStack gap={5}>
-        <Field
-          label="Login ID"
-          inputID="login-id"
-          width="100%"
-        >
+        <Field label="Login ID" inputID="login-id" width="100%">
           <HStack
             className={styles.fieldControl}
             align="center"

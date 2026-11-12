@@ -9,7 +9,8 @@
 //! Protocol (shared verbatim with the macOS/Linux clients): newline-delimited
 //! JSON, one request -> one response.
 //!   Request:  {"cmd":"ping"}
-//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"],"token":"<hex>"}
+//!             {"cmd":"ping_protocol","protocol":N}   (macOS: ok when N <= MACOS_PROTOCOL)
+//!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"],"relays":["5.6.7.8"],"token":"<hex>"}
 //!             {"cmd":"disable","token":"<token from enable>"}
 //!   Response: {"ok":true}
 //!             {"ok":false,"error":"<message>"}
@@ -281,10 +282,23 @@ fn remove_marker() -> Result<(), String> {
         .map_err(|error| format!("firewall restored but recovery marker cleanup failed: {error}"))
 }
 
+/// Bumped whenever the macOS helper gains behaviour the app relies on. The app
+/// treats a helper that rejects its `ping_protocol` as outdated and reinstalls it.
+/// 2: lockdown token ownership, team-signature client check, DNS-port-only
+///    resolvers, token-less restore once the arming app has exited.
+/// 3: `relays` held to the TURN ports.
+#[cfg(target_os = "macos")]
+const MACOS_PROTOCOL: u32 = 3;
+
 #[derive(Deserialize)]
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
     Ping,
+    #[cfg(target_os = "macos")]
+    #[serde(rename = "ping_protocol")]
+    PingProtocol {
+        protocol: u32,
+    },
     #[cfg(target_os = "linux")]
     #[serde(rename = "ping_v2")]
     PingV2,
@@ -297,6 +311,11 @@ enum Request {
         /// than losing DNS entirely.
         #[serde(default)]
         resolvers: Vec<String>,
+        /// macOS: the voice relay, allowed on its TURN ports (UDP 3478, TCP 443)
+        /// ONLY. Optional like `resolvers`; clients also list it in `ips`.
+        #[cfg(target_os = "macos")]
+        #[serde(default)]
+        relays: Vec<String>,
         #[serde(default)]
         token: String,
     },
@@ -973,11 +992,20 @@ fn dispatch(json: &str) -> String {
         Ok(Request::Ping) => json_ok(),
         #[cfg(target_os = "linux")]
         Ok(Request::PingV2) => json_ok(),
+        #[cfg(target_os = "macos")]
+        Ok(Request::PingProtocol { protocol }) if protocol <= MACOS_PROTOCOL => json_ok(),
+        #[cfg(target_os = "macos")]
+        Ok(Request::PingProtocol { .. }) => json_err("unsupported protocol"),
         Ok(Request::Enable {
             ips,
             resolvers,
+            #[cfg(target_os = "macos")]
+            relays,
             token,
         }) => {
+            #[cfg(target_os = "macos")]
+            let result = firewall_enable(&ips, &resolvers, &relays, &token);
+            #[cfg(not(target_os = "macos"))]
             let result = firewall_enable(&ips, &resolvers, &token);
             match result {
                 Ok(()) => json_ok(),
@@ -1031,7 +1059,26 @@ fn pf_owner() -> Option<(String, libc::pid_t)> {
         .next()
         .and_then(|p| p.trim().parse().ok())
         .unwrap_or(0);
-    (boot == pf_boot_time() && !token.is_empty()).then(|| (token.to_string(), pid))
+    (same_boot(boot, &pf_boot_time()) && !token.is_empty()).then(|| (token.to_string(), pid))
+}
+
+/// `kern.boottime` follows the wall clock, so a clock adjustment moves it
+/// slightly. Within a minute is the same boot; a reboot moves it by the whole
+/// uptime. Without this, a clock step left the rules unclaimed, so any token
+/// could lift them.
+#[cfg(target_os = "macos")]
+fn same_boot(recorded: &str, now: &str) -> bool {
+    fn secs(boot: &str) -> Option<i64> {
+        boot.split("sec = ")
+            .nth(1)?
+            .split(',')
+            .next()?
+            .trim()
+            .parse()
+            .ok()
+    }
+    recorded == now
+        || matches!((secs(recorded), secs(now)), (Some(a), Some(b)) if (a - b).abs() <= 60)
 }
 
 /// Root may signal any live process, so only ESRCH means it is gone.
@@ -1073,21 +1120,20 @@ fn check_pf_owner(token: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<(), String> {
+fn firewall_enable(
+    ips: &[String],
+    resolvers: &[String],
+    relays: &[String],
+    token: &str,
+) -> Result<(), String> {
     let _guard = acquire_firewall(&FIREWALL_LOCK)?;
     check_pf_owner(token)?;
-    // Resolvers are DNS-only. The client also lists them in `ips` so an older
-    // helper keeps DNS; here they are taken out of the all-ports table.
-    let mut dns: Vec<Ipv4Addr> = Vec::new();
-    for raw in resolvers {
-        match raw.parse::<IpAddr>() {
-            Ok(IpAddr::V4(ip)) if !dns.contains(&ip) => dns.push(ip),
-            Ok(_) => {}
-            Err(_) => return Err(format!("invalid resolver IP: {raw}")),
-        }
-    }
+    // Resolvers are DNS-only and relays TURN-only. The client also lists them
+    // in `ips` so an older helper keeps them; here they leave the all-ports table.
+    let dns = scoped_ipv4(resolvers, "resolver")?;
+    let relays = scoped_ipv4(relays, "relay")?;
     let mut ips = validate_ipv4_allowlist(ips)?;
-    ips.retain(|ip| !dns.contains(ip));
+    ips.retain(|ip| !dns.contains(ip) && !relays.contains(ip));
     if ips.is_empty() {
         return Err("no IPv4 addresses available for lockdown allowlist".to_string());
     }
@@ -1096,7 +1142,21 @@ fn firewall_enable(ips: &[String], resolvers: &[String], token: &str) -> Result<
     if !token.is_empty() {
         write_pf_owner(token)?;
     }
-    pfctl_enable(&ips, &dns)
+    pfctl_enable(&ips, &dns, &relays)
+}
+
+/// IPv4 literals for a port-scoped table; IPv6 is dropped like the rest of pf.
+#[cfg(target_os = "macos")]
+fn scoped_ipv4(raw_ips: &[String], kind: &str) -> Result<Vec<Ipv4Addr>, String> {
+    let mut out: Vec<Ipv4Addr> = Vec::new();
+    for raw in raw_ips {
+        match raw.parse::<IpAddr>() {
+            Ok(IpAddr::V4(ip)) if !out.contains(&ip) => out.push(ip),
+            Ok(_) => {}
+            Err(_) => return Err(format!("invalid {kind} IP: {raw}")),
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(target_os = "macos")]
@@ -1246,7 +1306,7 @@ fn pfctl_load_anchor(anchor: &str, rules: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn pfctl_enable(ips: &[Ipv4Addr], dns: &[Ipv4Addr]) -> Result<(), String> {
+fn pfctl_enable(ips: &[Ipv4Addr], dns: &[Ipv4Addr], relays: &[Ipv4Addr]) -> Result<(), String> {
     let enabled = command_output(Command::new(PFCTL).arg("-e"), None)
         .map_err(|error| format!("pfctl enable: {error}"))?;
     if !enabled.status.success()
@@ -1260,29 +1320,33 @@ fn pfctl_enable(ips: &[Ipv4Addr], dns: &[Ipv4Addr]) -> Result<(), String> {
         ));
     }
 
-    let ip_list = ips
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let dns_table = if dns.is_empty() {
-        "table <ams_dns> persist".to_string()
-    } else {
-        let dns_list = dns
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("table <ams_dns> persist {{ {dns_list} }}")
+    let table = |name: &str, ips: &[Ipv4Addr]| {
+        if ips.is_empty() {
+            format!("table <{name}> persist")
+        } else {
+            let list = ips
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("table <{name}> persist {{ {list} }}")
+        }
     };
+    let allowed_table = table("ams_allowed", ips);
+    let dns_table = table("ams_dns", dns);
+    let relay_table = table("ams_relay", relays);
 
+    // The relay ports match the server's TURN URLs: turn:…:3478?transport=udp
+    // and turns:…:443?transport=tcp.
     let rules = format!(
-        "table <ams_allowed> persist {{ {ip_list} }}\n\
+        "{allowed_table}\n\
          {dns_table}\n\
+         {relay_table}\n\
          pass out quick on lo0 all\n\
          pass out quick inet proto {{ udp tcp }} to <ams_dns> port 53\n\
          pass out quick inet proto tcp to <ams_dns> port 853\n\
+         pass out quick inet proto udp to <ams_relay> port 3478\n\
+         pass out quick inet proto tcp to <ams_relay> port 443\n\
          pass out quick inet to <ams_allowed>\n\
          block out quick inet all\n\
          block out quick inet6 all\n"

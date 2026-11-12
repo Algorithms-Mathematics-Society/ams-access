@@ -66,6 +66,9 @@ export function pollVoiceTeam(options: {
 }) {
   let stopped = false;
   let etag: string | null = null;
+  // A CORS preflight that rejects If-None-Match fails as a TypeError. Retry
+  // once unconditionally and stop sending it for this poller's life.
+  let conditional = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: AbortController | undefined;
   async function tick() {
@@ -73,7 +76,15 @@ export function pollVoiceTeam(options: {
     const deadline = setTimeout(() => pending?.abort(), 8_000);
     let terminal = false;
     try {
-      const result = await options.read(pending.signal, etag);
+      const signal = pending.signal;
+      let result: TeamVoiceRead;
+      try {
+        result = await options.read(signal, conditional ? etag : null);
+      } catch (error) {
+        if (!(error instanceof TypeError) || !conditional || !etag || signal.aborted) throw error;
+        conditional = false;
+        result = await options.read(signal, null);
+      }
       if (stopped) return;
       if (result.kind === "team") etag = result.etag;
       terminal = result.kind === "solo";
@@ -98,10 +109,31 @@ export function pollVoiceTeam(options: {
   };
 }
 
+/**
+ * macOS app only: wait for the native TCC answer before WKWebView opens audio,
+ * as setup does; capture while the system prompt is open fails. Denied or
+ * unanswered becomes NotAllowedError so voice shows the permission advice.
+ */
+async function requestMacMicrophonePermission(): Promise<void> {
+  const native = typeof window === "undefined" ? undefined : window.__TAURI__;
+  if (!native || navigator.platform !== "MacIntel") return;
+  try {
+    await native.core.invoke("request_macos_microphone_permission");
+  } catch {
+    throw Object.assign(new Error("Microphone access was not granted."), {
+      name: "NotAllowedError",
+    });
+  }
+}
+
 /** Clone shared proctoring audio; release of the returned stream cannot stop it. */
-export async function acquireVoiceMicrophone(shared: MediaStream | null): Promise<MediaStream> {
+export async function acquireVoiceMicrophone(
+  shared: MediaStream | null,
+  requestPermission: () => Promise<void> = requestMacMicrophonePermission
+): Promise<MediaStream> {
   const track = shared?.getAudioTracks().find((item) => item.readyState === "live");
   if (track) return new MediaStream([track.clone()]);
+  await requestPermission();
   return navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     video: false,

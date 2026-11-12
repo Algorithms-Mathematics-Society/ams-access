@@ -13,15 +13,22 @@ export function voiceMemberRows(team: VoiceTeam, snapshot: TeamVoiceSnapshot | n
           ? "muted"
           : "in voice"
         : "not in voice"
-      : !connected || !member.member_uid
+      : !member.member_uid
         ? "voice status unavailable"
-        : !peer
-          ? "not in voice"
-          : peer.muted
-            ? "muted"
-            : peer.speaking
-              ? "speaking"
-              : "in voice";
+        : !connected
+          ? // Out of voice this client cannot see teammates; say why, not "unavailable".
+            snapshot?.status === "connecting" || snapshot?.status === "reconnecting"
+            ? "connecting…"
+            : snapshot?.status === "closed"
+              ? "voice ended"
+              : "join voice to see"
+          : !peer
+            ? "not in voice"
+            : peer.muted
+              ? "muted"
+              : peer.speaking
+                ? "speaking"
+                : "in voice";
     return { key: member.member_uid ?? `legacy-${index}`, member, peer, status };
   });
 }

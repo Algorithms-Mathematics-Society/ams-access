@@ -897,7 +897,6 @@ test("failed release while finish is pending remains retryable without restartin
   assert.equal(fixture.context.exitInFlightRef.current, true);
 });
 
-
 test("v5 rejects pre-upgrade tokens, preserves drafts and does not contact the API", () => {
   localStorage.setItem("ams_participant_token", "pre-v5-secret");
   localStorage.setItem("ams_candidate_token", "older-secret");
@@ -916,7 +915,9 @@ test("v5 rejects pre-upgrade tokens, preserves drafts and does not contact the A
 
 test("v5 ignores legacy credentials even when storage refuses their removal", () => {
   localStorage.setItem("ams_participant_token", "stuck-old-token");
-  localStorage.removeItem = () => { throw new Error("blocked"); };
+  localStorage.removeItem = () => {
+    throw new Error("blocked");
+  };
   assert.equal(participantToken(), null);
   setToken("fresh-v5-login");
   assert.equal(participantToken(), "fresh-v5-login");
@@ -925,7 +926,10 @@ test("v5 ignores legacy credentials even when storage refuses their removal", ()
 test("3,000 upgrade checks never send cached authorization or automatically log in", () => {
   const previousFetch = globalThis.fetch;
   let requests = 0;
-  globalThis.fetch = () => { requests++; throw new Error("upgrade must stay local"); };
+  globalThis.fetch = () => {
+    requests++;
+    throw new Error("upgrade must stay local");
+  };
   try {
     for (let i = 0; i < 3000; i++) {
       localStorage.setItem("ams_participant_token", `old-${i}`);
