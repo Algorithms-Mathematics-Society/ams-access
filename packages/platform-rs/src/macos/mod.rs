@@ -436,6 +436,9 @@ extern "C" {
     ) -> *mut c_void;
     fn CFDictionaryGetValue(dict: *mut c_void, key: *const c_void) -> *const c_void;
     fn CFBooleanGetValue(boolean: *const c_void) -> bool;
+    fn CFArrayGetCount(array: *const c_void) -> isize;
+    fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
+    fn CFNumberGetValue(number: *const c_void, number_type: i64, value: *mut c_void) -> bool;
 }
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
@@ -447,6 +450,9 @@ extern "C" {
     fn CGSessionCopyCurrentDictionary() -> *mut c_void;
     // Input Monitoring (kTCCServiceListenEvent), macOS 10.15+.
     fn CGPreflightListenEventAccess() -> bool;
+    // Retained CFArrayRef of window info dictionaries.
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> *mut c_void;
+    static kCGWindowOwnerPID: *const c_void;
 }
 
 #[allow(non_upper_case_globals)]
@@ -1350,7 +1356,9 @@ const SIRI_UI: [&str; 2] = [
 /// Siri is kept closed for the test instead of switched off in its saved
 /// settings, which would outlive a power cut. The tap already drops its
 /// keyboard triggers; this ends a voice-invoked Siri within the 2 s poll,
-/// and the focus observers record that it came up.
+/// and the focus observers record that it came up. Only a Siri that is
+/// showing a window is ended: macOS 27 keeps "Siri AI" running all the time,
+/// and killing it every 2 s only made launchd respawn it.
 fn quit_siri() {
     let Ok(output) = Command::new("/bin/ps")
         .args(["-axo", "pid=,comm="])
@@ -1362,11 +1370,41 @@ fn quit_siri() {
         let Some((pid, comm)) = line.trim_start().split_once(char::is_whitespace) else {
             continue;
         };
-        if SIRI_UI.contains(&comm.trim()) {
+        if SIRI_UI.contains(&comm.trim())
+            && pid.parse().is_ok_and(|pid: i32| owns_on_screen_window(pid))
+        {
             let _ = Command::new("/bin/kill")
                 .args(["-TERM", pid])
                 .bounded_output();
         }
+    }
+}
+
+/// Whether `pid` owns a window that is on screen. The owner pid is readable
+/// without Screen Recording access.
+fn owns_on_screen_window(pid: i32) -> bool {
+    // kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements
+    const ON_SCREEN: u32 = 1 | 16;
+    const K_CF_NUMBER_SINT32_TYPE: i64 = 3;
+    unsafe {
+        let windows = CGWindowListCopyWindowInfo(ON_SCREEN, 0);
+        if windows.is_null() {
+            return false;
+        }
+        let found = (0..CFArrayGetCount(windows)).any(|i| {
+            let info = CFArrayGetValueAtIndex(windows, i);
+            let owner = CFDictionaryGetValue(info.cast_mut(), kCGWindowOwnerPID);
+            let mut owner_pid = 0i32;
+            !owner.is_null()
+                && CFNumberGetValue(
+                    owner,
+                    K_CF_NUMBER_SINT32_TYPE,
+                    (&mut owner_pid as *mut i32).cast(),
+                )
+                && owner_pid == pid
+        });
+        CFRelease(windows);
+        found
     }
 }
 
