@@ -218,6 +218,11 @@ export function TeamVoiceControls({
   useEffect(() => {
     function muteShortcut(event: KeyboardEvent) {
       const active = session.current;
+      // The typed letter, so AZERTY and Dvorak use their M key; the physical
+      // key only when the layout types no ASCII character there.
+      const key = typeof event.key === "string" ? event.key : "";
+      const letterM =
+        key.toLowerCase() === "m" || (!/^[\x20-\x7e]$/.test(key) && event.code === "KeyM");
       if (
         !suspended &&
         current.current() &&
@@ -226,7 +231,7 @@ export function TeamVoiceControls({
         event.shiftKey &&
         !event.altKey &&
         !event.metaKey &&
-        event.code === "KeyM"
+        letterM
       ) {
         event.preventDefault();
         event.stopPropagation();

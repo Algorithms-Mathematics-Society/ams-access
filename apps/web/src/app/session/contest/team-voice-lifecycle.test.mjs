@@ -229,17 +229,22 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
     editorCommands: 0,
   });
   assert.equal(toggles, 1);
+  // Layout-aware: AZERTY types M on the Semicolon key; non-Latin layouts fall back to KeyM.
+  assert.equal(dispatch({ key: "M", code: "Semicolon" }).prevented, true);
+  assert.equal(dispatch({ key: "Ь", code: "KeyM" }).prevented, true);
+  assert.equal(toggles, 3);
   for (const args of [
     [{ altKey: true }],
     [{ metaKey: true }],
     [{ ctrlKey: false }],
     [{ shiftKey: false }],
     [{ code: "KeyN" }],
+    [{ key: "?", code: "KeyM" }],
     [{}, true],
     [{}, false, false],
     [{}, false, true, { current: null }],
   ]) {
     assert.deepEqual(dispatch(...args), { prevented: false, stopped: false, editorCommands: 1 });
   }
-  assert.equal(toggles, 1);
+  assert.equal(toggles, 3);
 });
