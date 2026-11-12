@@ -90,8 +90,9 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     stream: (tracks) => new MediaStream(tracks),
     now: Date.now,
     random: Math.random,
-    timeout: setTimeout,
-    clearTimeout,
+    // Called as d.timeout(): unbound browser timers throw "Illegal invocation".
+    timeout: (callback, ms) => setTimeout(callback, ms),
+    clearTimeout: (timer) => clearTimeout(timer),
     fetch: (...args) => fetch(...args),
     ...options.deps,
   };
