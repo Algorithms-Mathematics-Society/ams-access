@@ -55,7 +55,17 @@ const object = (v: unknown): v is Record<string, unknown> =>
 const string = (v: unknown, max: number): v is string =>
   typeof v === "string" && v.length > 0 && [...v].length <= max;
 const date = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
+/** The server allows larger teams; this client (and voice, 4 peers) supports 5. */
+const MAX_TEAM_SIZE = 5;
 export function parseTeamLobby(v: unknown): TeamLobbyBoard {
+  if (
+    object(v) &&
+    ((Array.isArray(v.members) && v.members.length > MAX_TEAM_SIZE) ||
+      (Array.isArray(v.parts) && v.parts.length > MAX_TEAM_SIZE))
+  )
+    throw new Error(
+      `This team has more than ${MAX_TEAM_SIZE} members or parts, which this app does not support. Contact your organizer.`
+    );
   if (
     !object(v) ||
     !object(v.team) ||
@@ -64,10 +74,10 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
     !Number.isInteger(v.team.number) ||
     !Array.isArray(v.members) ||
     v.members.length < 1 ||
-    v.members.length > 5 ||
+    v.members.length > MAX_TEAM_SIZE ||
     !Array.isArray(v.parts) ||
     v.parts.length < 1 ||
-    v.parts.length > 5 ||
+    v.parts.length > MAX_TEAM_SIZE ||
     !object(v.phase) ||
     !["waiting", "discussion", "choosing", "locked"].includes(String(v.phase.name)) ||
     typeof v.phase.voice_open !== "boolean" ||
