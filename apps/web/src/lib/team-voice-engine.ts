@@ -86,7 +86,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     inputMeter: createVoiceInputMeter,
     socket: (url) => new WebSocket(url),
     rtc: (config) => new RTCPeerConnection(config),
-    audio: () => new Audio(),
+    // WebKit (macOS WKWebView) decodes a remote track played by a detached
+    // <audio> but never outputs it; the element must be in the document.
+    audio: () => {
+      const element = new Audio();
+      element.setAttribute("playsinline", "");
+      element.hidden = true;
+      document.body.append(element);
+      return element;
+    },
     stream: (tracks) => new MediaStream(tracks),
     now: Date.now,
     random: Math.random,
@@ -177,6 +185,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     p.pc.close();
     p.audio.pause();
     p.audio.srcObject = null;
+    p.audio.remove?.();
     p.view.stream?.getTracks().forEach((t) => t.stop());
   }
   function releaseMicrophone() {
