@@ -171,7 +171,11 @@ export function TeamBenchmarks({
       setStacks(null);
       clearDownloads();
     };
-    const unsubscribe = subscribeAuthChanges(stop);
+    const unsubscribe = subscribeAuthChanges(() => {
+      stop();
+      // A new sign-in reloads once; request() does nothing when signed out.
+      if (visible) void request();
+    });
     return () => {
       unsubscribe();
       epoch.current++;
