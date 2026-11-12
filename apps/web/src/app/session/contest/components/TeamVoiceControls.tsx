@@ -68,6 +68,9 @@ export function TeamVoiceControls({
   const open = useRef(false);
   const lifecycleAbort = useRef<AbortController | null>(null);
   const resumeAfterPoll = useRef(false);
+  // Render-visible mirrors: ref writes alone never re-render Join/Leave.
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [resumePending, setResumePending] = useState(false);
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
@@ -102,8 +105,10 @@ export function TeamVoiceControls({
     const terminate = () => {
       alive = false;
       resumeAfterPoll.current = false;
+      setResumePending(false);
       lifecycle.abort();
       open.current = false;
+      setVoiceOpen(false);
       stopSession();
       setMessage(null);
     };
@@ -128,11 +133,13 @@ export function TeamVoiceControls({
     if (decision === "keep") return;
     const available = decision === "open";
     open.current = available;
+    setVoiceOpen(available);
     if (!available) {
       const status = session.current?.getSnapshot().status;
       if (projection.status === "error" && (status === "connected" || status === "reconnecting"))
         resumeAfterPoll.current = true;
       else if (projection.status !== "error") resumeAfterPoll.current = false;
+      setResumePending(resumeAfterPoll.current);
       unsubscribeSession.current?.();
       unsubscribeSession.current = null;
       session.current?.stop();
@@ -140,6 +147,7 @@ export function TeamVoiceControls({
       setSnapshot(null);
     } else if (resumeAfterPoll.current || autoJoin.current.take(current.current())) {
       resumeAfterPoll.current = false;
+      setResumePending(false);
       void connectCurrent.current();
     }
   }, [projection.status, team, enabled]);
@@ -309,7 +317,7 @@ export function TeamVoiceControls({
                         ? "Retry voice"
                         : "Join voice"
                 }
-                isDisabled={!supportsRtc || busy || !open.current || suspended}
+                isDisabled={!supportsRtc || busy || !voiceOpen || suspended}
                 onClick={() => void connect()}
               />
             )}
@@ -329,11 +337,12 @@ export function TeamVoiceControls({
                 onClick={toggleMute}
               />
             )}
-            {(connected || busy || resumeAfterPoll.current) && (
+            {(connected || busy || resumePending) && (
               <LeaveTeamVoice
                 isDisabled={suspended}
                 onLeave={() => {
                   resumeAfterPoll.current = false;
+                  setResumePending(false);
                   unsubscribeSession.current?.();
                   unsubscribeSession.current = null;
                   session.current?.stop();
