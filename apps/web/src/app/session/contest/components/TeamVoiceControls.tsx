@@ -317,6 +317,7 @@ export function TeamVoiceControls({
                 label={snapshot?.muted ? "Muted" : "Live"}
                 aria-label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}
                 aria-pressed={!snapshot?.muted}
+                aria-keyshortcuts="Control+Shift+M"
                 icon={snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
                 style={{
                   color: snapshot?.muted
@@ -339,7 +340,14 @@ export function TeamVoiceControls({
                 }}
               />
             )}
-            {connected && <Text>Mute shortcut: Ctrl+Shift+M</Text>}
+            {connected && (
+              <Text>
+                Mute shortcut:{" "}
+                {typeof navigator !== "undefined" && navigator.platform === "MacIntel"
+                  ? "⌃⇧M (Control-Shift-M)"
+                  : "Ctrl+Shift+M"}
+              </Text>
+            )}
             {connected && snapshot?.error && (
               <Button
                 label="Retry audio playback"

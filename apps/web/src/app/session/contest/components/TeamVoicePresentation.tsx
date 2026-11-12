@@ -49,6 +49,7 @@ export function TeamVoicePresentation({
           label={snapshot.muted ? "Muted" : "Live"}
           aria-label={snapshot.muted ? "Unmute team microphone" : "Mute team microphone"}
           aria-pressed={!snapshot.muted}
+          aria-keyshortcuts="Control+Shift+M"
           icon={snapshot.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
           onClick={onToggleMute}
           isDisabled={suspended}
