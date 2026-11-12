@@ -65,7 +65,7 @@ test("missing WebRTC blocks connection before session creation or microphone cap
     ui,
     /!supportsRtc\s*\? "Voice unavailable · WebRTC support is missing in this installed app"/
   );
-  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current\}/);
+  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current \|\| suspended\}/);
 });
 
 test("team paper load never gates on a team status and fails closed without a label", () => {

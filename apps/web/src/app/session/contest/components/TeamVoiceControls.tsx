@@ -278,6 +278,7 @@ export function TeamVoiceControls({
           paddingBlock={2}
           as="section"
           aria-label="Team voice"
+          // inert alone is ignored before WebKit 15.5 (macOS 12); disable controls too.
           inert={suspended || undefined}
           style={{
             background: "var(--color-background-surface)",
@@ -308,7 +309,7 @@ export function TeamVoiceControls({
                         ? "Retry voice"
                         : "Join voice"
                 }
-                isDisabled={!supportsRtc || busy || !open.current}
+                isDisabled={!supportsRtc || busy || !open.current || suspended}
                 onClick={() => void connect()}
               />
             )}
@@ -324,11 +325,13 @@ export function TeamVoiceControls({
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-green)",
                 }}
+                isDisabled={suspended}
                 onClick={toggleMute}
               />
             )}
             {(connected || busy || resumeAfterPoll.current) && (
               <LeaveTeamVoice
+                isDisabled={suspended}
                 onLeave={() => {
                   resumeAfterPoll.current = false;
                   unsubscribeSession.current?.();
@@ -351,6 +354,7 @@ export function TeamVoiceControls({
             {connected && snapshot?.error && (
               <Button
                 label="Retry audio playback"
+                isDisabled={suspended}
                 onClick={() =>
                   void session.current
                     ?.retryPlayback()
@@ -378,6 +382,7 @@ export function TeamVoiceControls({
                 <Button
                   label="Enable microphone meter"
                   variant="ghost"
+                  isDisabled={suspended}
                   onClick={() => void session.current?.retryPlayback().catch(() => {})}
                 />
               )}
@@ -402,6 +407,7 @@ export function TeamVoiceControls({
                           min={0}
                           max={100}
                           formatValue={(value) => `${value}%`}
+                          isDisabled={suspended}
                           onChange={(value: number) =>
                             session.current?.setMemberVolume(peer.memberUid, value / 100)
                           }
@@ -424,6 +430,7 @@ export function TeamVoiceControls({
               {outputs.length > 0 && (
                 <Selector
                   label="Team voice output"
+                  isDisabled={suspended}
                   value={snapshot?.outputDevice || "default"}
                   options={[
                     { value: "default", label: "System default" },
