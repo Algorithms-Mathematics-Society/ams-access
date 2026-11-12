@@ -413,3 +413,87 @@ test("recovery actions remain reachable when editing is locked, and locked entry
   ])
     assert.ok(inert.includes(blocker));
 });
+
+test("assignment roster renders once in its own rail with authoritative member assignments", () => {
+  const source = readFileSync(new URL("./components/TeamLobby.tsx", import.meta.url), "utf8");
+  const exports = {};
+  const jsx = (type, props) => ({ type, props });
+  new Function(
+    "require",
+    "exports",
+    ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText
+  )((name) => {
+    if (name === "react")
+      return { useEffect() {}, useState: (v) => [typeof v === "function" ? v() : v, () => {}] };
+    if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (name === "@/lib/team-lobby")
+      return { countdownMs: () => 60000, contestStartRemaining: () => 0 };
+    return Object.fromEntries(
+      ["VStack", "HStack", "Heading", "Token", "Text", "List", "ListItem", "Button"].map((n) => [
+        n,
+        n,
+      ])
+    );
+  }, exports);
+  assert.equal(exports.TeamLobbyMembers({ state: { board: null } }), null);
+  const members = [
+    {
+      member_uid: "me",
+      display_name: "Same name",
+      is_me: true,
+      part_label: "A",
+      assigned_by: null,
+    },
+    {
+      member_uid: "peer",
+      display_name: "Same name",
+      is_me: false,
+      part_label: "B",
+      assigned_by: "auto",
+    },
+    {
+      member_uid: "waiting",
+      display_name: "Waiting member",
+      is_me: false,
+      part_label: null,
+      assigned_by: null,
+    },
+  ];
+  const state = {
+    status: "team",
+    sampledAt: 0,
+    pending: false,
+    board: {
+      team: { name: "Team" },
+      phase: { name: "choosing", starts_at: "2026-01-01T00:00:00Z" },
+      allocation: { locked: false },
+      parts: [],
+      members,
+    },
+  };
+  const rail = exports.TeamLobbyMembers({ state });
+  assert.equal(rail.props.as, "aside");
+  assert.equal(rail.props.className, "team-lobby-members");
+  assert.equal(rail.props.style.overflow, undefined, "members share page scrolling");
+  const rows = rail.props.children.props.children;
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].props.label, "Same name (you)");
+  assert.equal(rows[0].props.description.props.children, "Part A");
+  assert.equal(rows[1].props.description.props.children, "Part B");
+  assert.equal(rows[1].props.endContent.props.label, "Auto-assigned");
+  assert.equal(rows[2].props.description.props.children, "No part selected");
+  const main = exports.TeamLobby({
+    state,
+    contestUid: "contest",
+    onClaim() {},
+    onRelease() {},
+    onEnter() {},
+  });
+  assert.equal(
+    main.props.children.filter((node) => node?.type === "List").length,
+    1,
+    "main content contains only the parts list"
+  );
+});

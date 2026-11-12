@@ -154,6 +154,14 @@ test("camera keeps a stable workspace anchor above the independently sized foote
     region,
     "tile is an unconditional direct child of the stable region"
   );
+  const regions = region.children.filter(ts.isJsxExpression);
+  const members = regions.find((node) => node.getText(ast).includes("<TeamLobbyMembers"));
+  assert.ok(members, "the assignment roster is a separate region child");
+  assert.ok(
+    regions.indexOf(members) > regions.indexOf(tileUses[0]),
+    "camera precedes Members in DOM and narrow flow"
+  );
+  assert.match(members.getText(ast), /renderTeamLobby &&/);
   assert.match(region.getText(ast), /renderTeamLobby \?/);
   assert.doesNotMatch(region.getText(ast), /<FooterTrustStrip/);
   assert.match(region.parent.getText(ast), /<FooterTrustStrip/);

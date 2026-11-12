@@ -13,8 +13,8 @@ const duration = (ms: number) =>
   `${Math.floor(Math.ceil(ms / 1000) / 60)
     .toString()
     .padStart(2, "0")}:${(Math.ceil(ms / 1000) % 60).toString().padStart(2, "0")}`;
-/** The contest shell owns security and media. This bounded main column prioritizes
- * phase guidance, voice and part selection; the camera uses the adjacent region. */
+/** The contest shell owns security and media. The flexible main column prioritizes
+ * phase guidance, voice and part selection; camera and members share the right rail. */
 export function TeamLobby({
   state,
   contestUid,
@@ -221,10 +221,25 @@ export function TeamLobby({
           />
         ))}
       </List>
+    </VStack>
+  );
+}
+
+/** One assignment roster in the shell's right column, below its stable camera. */
+export function TeamLobbyMembers({ state }: { state: LobbyState }) {
+  if (!state.board) return null;
+  return (
+    <VStack
+      as="aside"
+      aria-label="Team members and assignments"
+      className="team-lobby-members"
+      gap={0}
+      style={{ minWidth: 0, overflowWrap: "anywhere" }}
+    >
       <List density="compact" hasDividers header={<Heading level={2}>Members</Heading>}>
-        {board.members.map((member, index) => (
+        {state.board.members.map((member, index) => (
           <ListItem
-            key={index}
+            key={member.member_uid ?? index}
             label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
             description={
               <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>

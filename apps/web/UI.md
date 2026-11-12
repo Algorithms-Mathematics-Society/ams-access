@@ -576,14 +576,17 @@ staging verification of visible-board polling and result artifact costs remain.
 
 ## Team lobby layout and Linux runtime verification
 
-The lobby keeps phase guidance and voice controls above part selection in a bounded
-content column. The locked assignment action appears before the parts and members
-lists. Member audio settings are disclosed after joining; the assignment roster
-remains visible without a second idle voice roster. Help and Exit remain usable
-when editor actions are locked, while mandatory overlays still suspend interaction.
+The lobby fills the available window width. Phase guidance and voice controls stay
+above part selection in the flexible main column; a 320px right column places the
+camera at the top and Members directly below it. The shared page scroll region
+reaches the right window edge, without a centered maximum width or separate member
+scrollbar. The locked assignment action appears before the parts list. Member
+audio settings are disclosed after joining; the assignment roster remains visible
+without a second idle voice roster. Help and Exit remain usable when editor
+actions are locked, while mandatory overlays still suspend interaction.
 
-The camera occupies a separate layout region in the lobby and flows below the
-content in narrow windows. The existing mounted camera and voice owners continue
+Narrow windows stack main content, camera, then Members. The camera occupies a
+reserved layout region and never covers an action. The existing mounted camera and voice owners continue
 across entry into the coding workspace; moving presentation must not reacquire
 media or add requests. Render checks cover desktop, narrow windows, phase states
 and long content. They do not establish a native cross-network audio call.

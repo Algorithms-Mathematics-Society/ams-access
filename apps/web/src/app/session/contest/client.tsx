@@ -136,6 +136,10 @@ const TeamLobby = dynamic(
   () => import("./components/TeamLobby").then((module) => module.TeamLobby),
   { ssr: false }
 );
+const TeamLobbyMembers = dynamic(
+  () => import("./components/TeamLobby").then((module) => module.TeamLobbyMembers),
+  { ssr: false }
+);
 const TeamWorkspacePanel = dynamic(() => import("./components/TeamWorkspacePanel"), { ssr: false });
 const TeamVoiceControls = dynamic(
   () => import("./components/TeamVoiceControls").then((module) => module.TeamVoiceControls),
@@ -5263,6 +5267,7 @@ export default function ContestPageClient() {
             </>
           )}
           {cameraTile}
+          {renderTeamLobby && <TeamLobbyMembers state={lobbyState} />}
         </VStack>
         {!renderTeamLobby && (
           <FooterTrustStrip

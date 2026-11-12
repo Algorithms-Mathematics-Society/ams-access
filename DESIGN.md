@@ -219,11 +219,14 @@ beside the rail without changing capture or microphone ownership.
 
 ### Team lobby layout
 
-The team lobby uses a bounded phase, voice, and part-selection column beside a
-reserved camera region. Narrow windows stack the preview below the content; it
+The team lobby fills the window with a flexible phase, voice, and part-selection
+column beside a 320px right rail. The camera sits at the top right with Members
+immediately below it. One page scroll region reaches the window's right edge;
+there is no centered maximum-width frame or independently scrolling member rail.
+Narrow windows stack main content, camera, and Members in that order. The camera
 does not float over lobby actions. The locked assignment action appears directly
-after voice guidance, before the part and member lists. The assignment roster
-stays visible; member audio settings use a disclosure after joining to avoid a
+after voice guidance, before the parts list. The assignment roster stays visible;
+member audio settings use a disclosure after joining to avoid a
 duplicate idle roster. Help and Exit remain reachable when editor actions lock.
 The mounted media owners stay unchanged across lobby/workspace transitions.
 Missing native WebRTC remains an explicit unavailable state with recovery advice,
