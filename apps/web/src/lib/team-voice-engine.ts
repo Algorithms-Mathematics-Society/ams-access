@@ -112,6 +112,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   let me = "",
     credentials: TeamVoiceCredentials | null = null,
     retries = 0,
+    unwelcomed = 0,
     active = false,
     welcomed = false;
   let pongs = 0,
@@ -176,7 +177,17 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     p.audio.srcObject = null;
     p.view.stream?.getTracks().forEach((t) => t.stop());
   }
-  function cleanup() {
+  function releaseMicrophone() {
+    inputMeter?.stop();
+    inputMeter = null;
+    microphone?.getTracks().forEach((t) => {
+      t.onended = null;
+      t.stop();
+    });
+    microphone = null;
+  }
+  /** A reconnect keeps the owned clone, so a retry never reopens the microphone. */
+  function cleanup(keepMicrophone = false) {
     for (const timer of timers) d.clearTimeout(timer);
     timers.clear();
     outgoing.length = 0;
@@ -189,14 +200,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       old.onopen = old.onmessage = old.onclose = old.onerror = null;
       old.close();
     }
-    inputMeter?.stop();
-    inputMeter = null;
+    if (!keepMicrophone) releaseMicrophone();
     snapshot = { ...snapshot, inputLevel: null };
-    microphone?.getTracks().forEach((t) => {
-      t.onended = null;
-      t.stop();
-    });
-    microphone = null;
     welcomed = false;
   }
   function finish(status: TeamVoiceSnapshot["status"], error: string | null = null) {
@@ -209,7 +214,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   function disconnected(atLeast = 0) {
     if (!active) return;
     generation++;
-    cleanup();
+    cleanup(true);
     if (retries >= MAX_RETRIES)
       return finish("unavailable", "Voice connection could not be restored.");
     emit({ status: "reconnecting" });
@@ -443,14 +448,34 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       value.expires_at * 1000 - d.now()
     );
   }
-  async function fetchCredentials() {
+  async function credentialsResponse() {
     const token = (await options.getToken?.()) ?? options.token ?? "";
-    const response = await d.fetch(
+    return d.fetch(
       `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team/voice/credentials`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
+  }
+  async function fetchCredentials() {
+    const response = await credentialsResponse();
     if (!response.ok) throw new Error("Voice credentials unavailable.");
     return (await response.json()) as TeamVoiceCredentials;
+  }
+  /**
+   * The server refuses a join before the WebSocket handshake, so the browser
+   * sees 1006, the same as a network drop. The credentials endpoint runs the
+   * same checks over HTTP: an HTTP refusal means a denial, while a network
+   * failure, 429 or 5xx stays an ordinary drop.
+   */
+  async function refusal(): Promise<string | null> {
+    try {
+      const { status } = await credentialsResponse();
+      if (status === 401) return "Your sign-in has expired.";
+      if (status === 403 || status === 404 || status === 409 || status === 410)
+        return "Team voice is not available to you.";
+    } catch {
+      /* unreachable: retry as usual */
+    }
+    return null;
   }
   function heartbeat() {
     // Ping first, then judge that ping on its own deadline: a throttled (App Nap,
@@ -501,48 +526,51 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     try {
       const token = (await options.getToken?.()) ?? options.token ?? "";
       if (!valid(g)) return;
-      // Long enough for a first-run macOS microphone prompt to be read and answered.
-      later(() => {
-        if (!microphone) finish("unavailable", "Microphone request timed out.");
-      }, 60_000);
-      let owned: MediaStream;
-      try {
-        owned = await options.acquireMicrophone();
-      } catch (error) {
-        const name = error instanceof Error ? error.name : "";
-        if (valid(g))
-          finish(
-            "unavailable",
-            name === "NotAllowedError" || name === "PermissionDeniedError"
-              ? "Microphone access was denied."
-              : name === "NotFoundError" || name === "DevicesNotFoundError"
-                ? "No microphone was found."
-                : "Microphone could not be opened."
-          );
-        return;
-      }
-      if (!valid(g)) {
-        owned.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      microphone = owned;
-      if (!owned.getAudioTracks().length) {
-        finish("unavailable", "No microphone was found.");
-        return;
-      }
-      owned.getTracks().forEach((t) => {
-        if (t.kind !== "audio") t.stop();
-        else {
-          t.enabled = !snapshot.muted;
-          t.onended = () => {
-            if (valid(g)) finish("unavailable", "Microphone disconnected.");
-          };
+      if (microphone?.getAudioTracks().some((t) => t.readyState === "ended")) releaseMicrophone();
+      if (!microphone) {
+        // Long enough for a first-run macOS microphone prompt to be read and answered.
+        later(() => {
+          if (!microphone) finish("unavailable", "Microphone request timed out.");
+        }, 60_000);
+        let owned: MediaStream;
+        try {
+          owned = await options.acquireMicrophone();
+        } catch (error) {
+          const name = error instanceof Error ? error.name : "";
+          if (valid(g))
+            finish(
+              "unavailable",
+              name === "NotAllowedError" || name === "PermissionDeniedError"
+                ? "Microphone access was denied."
+                : name === "NotFoundError" || name === "DevicesNotFoundError"
+                  ? "No microphone was found."
+                  : "Microphone could not be opened."
+            );
+          return;
         }
-      });
-      try {
-        inputMeter = d.inputMeter(owned);
-      } catch {
-        inputMeter = null;
+        if (!valid(g)) {
+          owned.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        microphone = owned;
+        if (!owned.getAudioTracks().length) {
+          finish("unavailable", "No microphone was found.");
+          return;
+        }
+        owned.getTracks().forEach((t) => {
+          if (t.kind !== "audio") t.stop();
+        });
+        try {
+          inputMeter = d.inputMeter(owned);
+        } catch {
+          inputMeter = null;
+        }
+      }
+      for (const t of microphone.getAudioTracks()) {
+        t.enabled = !snapshot.muted;
+        t.onended = () => {
+          if (valid(g)) finish("unavailable", "Microphone disconnected.");
+        };
       }
       function sampleInput() {
         if (!valid(g)) return;
@@ -560,12 +588,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       socket = ws;
       // The server sends {type:"error"} before closing a rate violation with 1000.
       let serverError = false;
-      later(() => {
-        if (!welcomed) disconnected();
-      }, 15_000);
-      ws.onclose = (event) => {
+      const closed = (code: number) => {
         if (!valid(g)) return;
-        const code = event.code;
         // Only 4410 means the round is over; the other application codes stay retryable.
         if (code === 4411) finish("replaced");
         else if (code === 4410) finish("closed");
@@ -574,11 +598,22 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         else if (code === 4429) disconnected(10_000);
         else if (code >= 4400 && code < 4500)
           finish("unavailable", "Team voice relay is unavailable.");
+        else if (!welcomed && ++unwelcomed >= 2)
+          void refusal().then((reason) => {
+            if (!valid(g)) return;
+            if (reason) finish("unavailable", reason);
+            else disconnected();
+          });
         else disconnected(serverError ? 10_000 : 0);
       };
-      ws.onerror = () => {
-        if (valid(g)) disconnected();
-      };
+      // No onerror handler: browsers follow error with close, and only close carries the code.
+      ws.onclose = (event) => closed(event.code);
+      later(() => {
+        // A runtime that reports a refused handshake only as an error still lands here.
+        if (welcomed) return;
+        if (ws.readyState === 3) closed(1006);
+        else disconnected();
+      }, 15_000);
       ws.onmessage = (event) => {
         if (!valid(g) || typeof event.data !== "string" || event.data.length > 65_536) return;
         try {
@@ -592,6 +627,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             useCredentials(raw);
             me = raw.me;
             welcomed = true;
+            unwelcomed = 0;
             muteSent = snapshot.muted;
             send({ type: snapshot.muted ? "mute" : "unmute" });
             for (const p of raw.peers.slice(0, MAX_PEERS)) add(p);
@@ -628,7 +664,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       if (active || snapshot.status === "replaced" || snapshot.status === "closed") return;
       active = true;
       generation++;
-      retries = 0;
+      retries = unwelcomed = 0;
       emit({ status: "connecting", error: null });
       await connect();
     },
