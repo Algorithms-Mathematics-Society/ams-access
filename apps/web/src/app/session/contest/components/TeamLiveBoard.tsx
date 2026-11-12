@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -18,7 +18,9 @@ export default function TeamLiveBoard({
   visible: boolean;
 }) {
   const [state, setState] = useState<LiveBoardState>({ board: null, status: "loading" });
+  const last = useRef<LiveBoardState["board"]>(null);
   useEffect(() => {
+    last.current = null;
     setState({ board: null, status: "loading" });
     if (!visible) return;
     const generation = authGeneration();
@@ -31,13 +33,18 @@ export default function TeamLiveBoard({
       stop = startLiveBoardPolling({
         url: `${resolveApiBase().replace(/\/$/, "")}/participant/contests/${encodeURIComponent(contestUid)}/team/board`,
         headers: authHeaders,
-        onState: setState,
+        initial: last.current,
+        onState: (next) => {
+          last.current = next.board;
+          setState(next);
+        },
         isCurrent: () => !invalid && generation === authGeneration(),
       });
     };
     const unsubscribe = subscribeAuthChanges(() => {
       invalid = true;
       stop?.();
+      last.current = null;
       setState({ board: null, status: "denied" });
     });
     document.addEventListener("visibilitychange", syncVisibility);

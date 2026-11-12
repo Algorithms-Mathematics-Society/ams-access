@@ -82,6 +82,8 @@ export function startLiveBoardPolling(options: {
   url: string;
   headers: () => Record<string, string>;
   onState: (state: LiveBoardState) => void;
+  /** Last confirmed board, kept on screen while a restarted poller reloads. */
+  initial?: LiveBoard | null;
   request?: typeof fetch;
   isCurrent: () => boolean;
   random?: () => number;
@@ -99,7 +101,7 @@ export function startLiveBoardPolling(options: {
     // Cleared once a conditional GET fails at the network layer, so a CORS
     // preflight that refuses If-None-Match cannot fail every other poll.
     conditional = true;
-  let board: LiveBoard | null = null,
+  let board: LiveBoard | null = options.initial ?? null,
     timer: ReturnType<typeof setTimeout> | undefined;
   let active: AbortController | null = null;
   const emit = (status: LiveBoardState["status"]) => {
@@ -189,7 +191,7 @@ export function startLiveBoardPolling(options: {
         timer = schedule(() => void poll(), delay + jitter());
     }
   }
-  emit("loading");
+  emit(board ? "ready" : "loading");
   timer = schedule(() => void poll(), jitter());
   return () => {
     stopped = true;
