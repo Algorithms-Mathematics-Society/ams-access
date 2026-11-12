@@ -197,9 +197,12 @@ fn owns_desktop(generation: u64) -> bool {
 // Per-contest key policy, read by the tap callback without locking.
 static CLIPBOARD_BLOCKED: AtomicBool = AtomicBool::new(false);
 static FUNCTION_KEYS_BLOCKED: AtomicBool = AtomicBool::new(true);
-/// Event time (ns) of the last bare Command press; 0 after any key-down, so
-/// only Command, Command in quick succession counts as a double-press.
+/// Time (ns since TAP_CLOCK, plus 1) of the last bare Command press; 0 after
+/// any key-down, so only Command, Command in quick succession counts as a
+/// double-press. Not CGEventGetTimestamp: on Apple Silicon that is in mach
+/// ticks (125/3 ns), which stretched the window to about 25 s.
 static LAST_COMMAND_PRESS: AtomicU64 = AtomicU64::new(0);
+static TAP_CLOCK: OnceLock<std::time::Instant> = OnceLock::new();
 /// Double-press Command opens Type to Siri (or Dictation, if chosen).
 const DOUBLE_COMMAND_NS: u64 = 600_000_000;
 const VK_COMMAND: i64 = 55;
@@ -397,7 +400,6 @@ extern "C" {
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
-    fn CGEventGetTimestamp(event: *mut c_void) -> u64;
     fn CGEventCreateKeyboardEvent(source: *mut c_void, keycode: u16, key_down: bool)
         -> *mut c_void;
     fn CGEventKeyboardGetUnicodeString(
@@ -547,7 +549,10 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
             // Siri watch still closes Siri however else it was opened.
             let modifiers = CGEventGetFlags(event) & (FLAG_CMD | FLAG_SHIFT | FLAG_CTRL | FLAG_OPT);
             if modifiers == FLAG_CMD {
-                let now = CGEventGetTimestamp(event);
+                let clock = *TAP_CLOCK.get_or_init(std::time::Instant::now);
+                let now = u64::try_from(clock.elapsed().as_nanos())
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1);
                 let last = LAST_COMMAND_PRESS.swap(now, Ordering::Relaxed);
                 return last != 0 && now.saturating_sub(last) < DOUBLE_COMMAND_NS;
             }
