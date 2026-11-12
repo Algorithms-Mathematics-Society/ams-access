@@ -70,6 +70,8 @@ export function TeamVoiceControls({
   const open = useRef(false);
   const lifecycleAbort = useRef<AbortController | null>(null);
   const resumeAfterPoll = useRef(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [resumePending, setResumePending] = useState(false);
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
@@ -104,8 +106,10 @@ export function TeamVoiceControls({
     const terminate = () => {
       alive = false;
       resumeAfterPoll.current = false;
+      setResumePending(false);
       lifecycle.abort();
       open.current = false;
+      setVoiceOpen(false);
       stopSession();
       setMessage(null);
     };
@@ -130,11 +134,13 @@ export function TeamVoiceControls({
     if (decision === "keep") return;
     const available = decision === "open";
     open.current = available;
+    setVoiceOpen(available);
     if (!available) {
       const status = session.current?.getSnapshot().status;
       if (projection.status === "error" && (status === "connected" || status === "reconnecting"))
         resumeAfterPoll.current = true;
       else if (projection.status !== "error") resumeAfterPoll.current = false;
+      setResumePending(resumeAfterPoll.current);
       unsubscribeSession.current?.();
       unsubscribeSession.current = null;
       session.current?.stop();
@@ -142,6 +148,7 @@ export function TeamVoiceControls({
       setSnapshot(null);
     } else if (resumeAfterPoll.current || autoJoin.current.take(current.current())) {
       resumeAfterPoll.current = false;
+      setResumePending(false);
       void connectCurrent.current();
     }
   }, [projection.status, team, enabled]);
@@ -206,9 +213,21 @@ export function TeamVoiceControls({
 
   connectCurrent.current = connect;
 
+  function toggleMute() {
+    const active = session.current;
+    const live = active?.getSnapshot();
+    if (!suspended && live && (live.status === "connected" || live.status === "reconnecting"))
+      active?.setMuted(!live.muted);
+  }
+
   useEffect(() => {
     function muteShortcut(event: KeyboardEvent) {
       const active = session.current;
+      // The typed letter, so AZERTY and Dvorak use their M key; the physical
+      // key only when the layout types no ASCII character there.
+      const key = typeof event.key === "string" ? event.key : "";
+      const letterM =
+        key.toLowerCase() === "m" || (!/^[\x20-\x7e]$/.test(key) && event.code === "KeyM");
       if (
         !suspended &&
         current.current() &&
@@ -217,11 +236,13 @@ export function TeamVoiceControls({
         event.shiftKey &&
         !event.altKey &&
         !event.metaKey &&
-        event.code === "KeyM"
+        letterM
       ) {
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat) active.setMuted(!active.getSnapshot().muted);
+        const { status, muted } = active.getSnapshot();
+        if (!event.repeat && (status === "connected" || status === "reconnecting"))
+          active.setMuted(!muted);
       }
     }
     // Capture before the focused editor; one chord must never run both actions.
@@ -247,7 +268,7 @@ export function TeamVoiceControls({
         lobbyTarget={lobbyTarget}
         suspended={suspended}
         snapshot={snapshot}
-        onToggleMute={() => session.current?.setMuted(!snapshot?.muted)}
+        onToggleMute={toggleMute}
       >
         <VStack
           gap={2}
@@ -287,7 +308,7 @@ export function TeamVoiceControls({
                         ? "Retry voice"
                         : "Join voice"
                 }
-                isDisabled={!supportsRtc || busy || !open.current}
+                isDisabled={!supportsRtc || busy || !voiceOpen || suspended}
                 onClick={() => void connect()}
               />
             )}
@@ -302,13 +323,14 @@ export function TeamVoiceControls({
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-green)",
                 }}
-                onClick={() => session.current?.setMuted(!snapshot?.muted)}
+                onClick={toggleMute}
               />
             )}
-            {(connected || busy || resumeAfterPoll.current) && (
+            {(connected || busy || resumePending) && (
               <LeaveTeamVoice
                 onLeave={() => {
                   resumeAfterPoll.current = false;
+                  setResumePending(false);
                   unsubscribeSession.current?.();
                   unsubscribeSession.current = null;
                   session.current?.stop();

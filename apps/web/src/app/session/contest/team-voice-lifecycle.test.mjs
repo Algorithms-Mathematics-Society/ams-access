@@ -62,7 +62,7 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   ]);
   assert.match(ui, /const supportsRtc = typeof RTCPeerConnection === "function"/);
   assert.match(ui, /!supportsRtc\s*\? "Voice unavailable in this app"/);
-  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current\}/);
+  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
   assert.match(
     ui,
     /Ask your organizer for a supported app build or device\. You can continue with team parts/
@@ -188,9 +188,10 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   assert.match(ui, /removeEventListener\("keydown", muteShortcut, true\)/);
   let muted = true;
   let toggles = 0;
+  let status = "connected";
   const session = {
     current: {
-      getSnapshot: () => ({ muted }),
+      getSnapshot: () => ({ muted, status }),
       setMuted: (value) => {
         muted = value;
         toggles++;
@@ -230,17 +231,90 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
     editorCommands: 0,
   });
   assert.equal(toggles, 1);
+  // Layout-aware: AZERTY types M on the Semicolon key; non-Latin layouts fall back to KeyM.
+  assert.equal(dispatch({ key: "M", code: "Semicolon" }).prevented, true);
+  assert.equal(dispatch({ key: "Ь", code: "KeyM" }).prevented, true);
+  assert.equal(toggles, 3);
+  status = "connecting";
+  assert.equal(dispatch().prevented, true);
+  assert.equal(toggles, 3, "connecting must remain muted");
+  status = "reconnecting";
+  dispatch();
+  assert.equal(toggles, 4);
   for (const args of [
     [{ altKey: true }],
     [{ metaKey: true }],
     [{ ctrlKey: false }],
     [{ shiftKey: false }],
     [{ code: "KeyN" }],
+    [{ key: "?", code: "KeyM" }],
     [{}, true],
     [{}, false, false],
     [{}, false, true, { current: null }],
   ]) {
     assert.deepEqual(dispatch(...args), { prevented: false, stopped: false, editorCommands: 1 });
   }
-  assert.equal(toggles, 1);
+  assert.equal(toggles, 4);
+});
+
+test("media warning suspends voice controls and shortcut", () => {
+  const controls = client.match(/<TeamVoiceControls[\s\S]*?suspended=\{([\s\S]*?)\}\s*\/>/);
+  assert.ok(controls);
+  assert.match(controls[1], /showMediaToggleWarning/);
+});
+
+test("reopening the voice window updates rendered Join state without another poll", () => {
+  const body = ui.match(
+    /useEffect\(\(\) => \{\n    const decision = voiceProjectionDecision([\s\S]*?)\n  \}, \[projection.status, team, enabled\]\);/
+  );
+  assert.ok(body);
+  const renderStates = [];
+  const resumeStates = [];
+  const run = new Function(
+    "voiceProjectionDecision",
+    "enabled",
+    "projection",
+    "team",
+    "open",
+    "setVoiceOpen",
+    "session",
+    "resumeAfterPoll",
+    "setResumePending",
+    "unsubscribeSession",
+    "setSnapshot",
+    "autoJoin",
+    "current",
+    "connectCurrent",
+    "const decision = voiceProjectionDecision" + body[1]
+  );
+  const open = { current: false };
+  const resume = { current: false };
+  const session = { current: null };
+  const unsub = { current: null };
+  for (const decision of ["open", "closed", "open"]) {
+    run(
+      () => decision,
+      true,
+      { status: "team" },
+      { phase: { voice_open: decision === "open" } },
+      open,
+      (value) => renderStates.push(value),
+      session,
+      resume,
+      (value) => resumeStates.push(value),
+      unsub,
+      () => {},
+      { current: { take: () => false } },
+      { current: () => true },
+      {
+        current: () => {
+          throw new Error("must not automatically rejoin after intentional leave");
+        },
+      }
+    );
+  }
+  assert.deepEqual(renderStates, [true, false, true]);
+  assert.deepEqual(resumeStates, [false]);
+  assert.equal(open.current, true);
+  assert.match(ui, /connected \|\| busy \|\| resumePending/);
 });
