@@ -83,8 +83,9 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     stream: (tracks) => new MediaStream(tracks),
     now: Date.now,
     random: Math.random,
-    timeout: setTimeout,
-    clearTimeout,
+    // Browser timer methods must not receive our dependency object as `this`.
+    timeout: (callback, ms) => globalThis.setTimeout(callback, ms),
+    clearTimeout: (timer) => globalThis.clearTimeout(timer),
     fetch: (...args) => fetch(...args),
     ...options.deps,
   };

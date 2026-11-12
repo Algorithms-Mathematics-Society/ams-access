@@ -11,6 +11,7 @@ import type { TeamVoiceSnapshot } from "@/lib/team-voice-engine";
 export function TeamVoicePresentation({
   compact,
   toolbarTarget,
+  lobbyTarget,
   suspended,
   snapshot,
   onToggleMute,
@@ -18,6 +19,7 @@ export function TeamVoicePresentation({
 }: {
   compact: boolean;
   toolbarTarget: HTMLElement | null;
+  lobbyTarget?: HTMLElement | null;
   suspended: boolean;
   snapshot: TeamVoiceSnapshot | null;
   onToggleMute: () => void;
@@ -38,7 +40,7 @@ export function TeamVoicePresentation({
     window.addEventListener("keydown", escape, true);
     return () => window.removeEventListener("keydown", escape, true);
   }, [expanded]);
-  if (!compact) return children;
+  if (!compact) return lobbyTarget ? createPortal(children, lobbyTarget) : null;
   if (!toolbarTarget) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   return createPortal(

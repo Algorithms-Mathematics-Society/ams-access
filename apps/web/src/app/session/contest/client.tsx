@@ -414,6 +414,7 @@ export default function ContestPageClient() {
   });
   const lobbyController = useRef<ReturnType<typeof createTeamLobbyController> | null>(null);
   const [voiceToolbarTarget, setVoiceToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [lobbyVoiceTarget, setLobbyVoiceTarget] = useState<HTMLElement | null>(null);
   const [enteredTeamPart, setEnteredTeamPart] = useState(false);
   const loadedTeamWorkspace = useRef<WorkspaceIdentity | null>(null);
   const paperAssets = useRef<string[]>([]);
@@ -4787,8 +4788,16 @@ export default function ContestPageClient() {
     );
   }
 
+  const renderTeamLobby =
+    showTeamLobby ||
+    (desktopTeamRoom &&
+      lobbyState.status !== "solo" &&
+      lobbyState.status !== "wrong-contest" &&
+      loading);
+
   const cameraTile = (
     <CameraTile
+      inLobby={renderTeamLobby}
       presenceStatus={presenceStatus}
       onPickCamera={handlePickCamera}
       cameraVideoRef={cameraVideoRef}
@@ -4803,13 +4812,6 @@ export default function ContestPageClient() {
       handleToggleMedia={handleToggleMedia}
     />
   );
-
-  const renderTeamLobby =
-    showTeamLobby ||
-    (desktopTeamRoom &&
-      lobbyState.status !== "solo" &&
-      lobbyState.status !== "wrong-contest" &&
-      loading);
 
   if (loading && !renderTeamLobby) {
     const phase = entryWaitPhase(bootWaitedMs);
@@ -4968,6 +4970,7 @@ export default function ContestPageClient() {
             <TeamVoiceControls
               compact={!renderTeamLobby}
               toolbarTarget={voiceToolbarTarget}
+              lobbyTarget={lobbyVoiceTarget}
               contestUid={contestId}
               projection={lobbyState}
               enabled={
@@ -4992,14 +4995,11 @@ export default function ContestPageClient() {
         <VStack
           gap={0}
           className="contest-camera-region"
+          data-team-lobby={renderTeamLobby ? "true" : undefined}
           style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative", overflow: "hidden" }}
         >
           {renderTeamLobby ? (
-            <VStack gap={4} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <HStack gap={3} paddingInline={4} paddingBlock={2}>
-                <Button label="Help" variant="secondary" onClick={() => setShowSupportChat(true)} />
-                <Button label="Exit contest" variant="secondary" onClick={requestLeave} />
-              </HStack>
+            <VStack gap={4} as="main" className="team-lobby-main" style={{ minWidth: 0 }}>
               {editorLocked && <Text role="status">{judgingUnavailableReason}</Text>}
               <VStack
                 gap={0}
@@ -5008,7 +5008,6 @@ export default function ContestPageClient() {
                   networkOverlayActive ||
                   leaveConfirm ||
                   showSupportChat ||
-                  editorLocked ||
                   undefined
                 }
               >
@@ -5016,6 +5015,17 @@ export default function ContestPageClient() {
                   key={contestId}
                   contestUid={contestId}
                   state={lobbyState}
+                  voiceTargetRef={setLobbyVoiceTarget}
+                  actions={
+                    <HStack gap={2} wrap="wrap" aria-label="Lobby actions">
+                      <Button
+                        label="Help"
+                        variant="secondary"
+                        onClick={() => setShowSupportChat(true)}
+                      />
+                      <Button label="Exit contest" variant="secondary" onClick={requestLeave} />
+                    </HStack>
+                  }
                   onClaim={(label) => {
                     void lobbyController.current?.claim(label);
                   }}

@@ -419,11 +419,64 @@ test("microphone failures retain their cause without opening a voice socket", as
     ["NotFoundError", "No microphone was found."],
     ["NotReadableError", "Microphone could not be opened."],
   ]) {
-    const h = harness({ acquireMicrophone: async () => { throw new DOMException("private detail", name); } });
+    const h = harness({
+      acquireMicrophone: async () => {
+        throw new DOMException("private detail", name);
+      },
+    });
     await h.session.start();
     assert.equal(h.session.getSnapshot().status, "unavailable");
     assert.equal(h.session.getSnapshot().error, expected);
     assert.equal(h.sockets.length, 0);
     h.session.stop();
   }
+});
+
+// Browser timer methods reject an arbitrary receiver. Exercise the production
+// defaults: the ordinary harness replaces these and cannot catch this failure.
+test("default browser timers preserve their receiver during join and teardown", async (t) => {
+  const pending = new Set();
+  let nextTimer = 0;
+  t.mock.method(globalThis, "setTimeout", function () {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+    const id = ++nextTimer;
+    pending.add(id);
+    return id;
+  });
+  t.mock.method(globalThis, "clearTimeout", function (id) {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+    pending.delete(id);
+  });
+  let stopped = false;
+  let opened = false;
+  const track = {
+    kind: "audio",
+    enabled: true,
+    stop() {
+      stopped = true;
+    },
+  };
+  const session = createTeamVoiceSession({
+    contestUid: "contest",
+    apiBase: "https://api.test",
+    token: "test",
+    acquireMicrophone: async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }),
+    deps: {
+      inputMeter: () => ({ read: () => null, stop() {}, resume() {} }),
+      socket: () => {
+        opened = true;
+        return { readyState: 0, close() {} };
+      },
+    },
+  });
+  try {
+    await session.start();
+    assert.equal(opened, true, "join must reach signaling using the production timer defaults");
+    assert.equal(session.getSnapshot().status, "connecting");
+    assert.ok(pending.size > 0);
+  } finally {
+    session.stop();
+  }
+  assert.equal(stopped, true);
+  assert.equal(pending.size, 0);
 });

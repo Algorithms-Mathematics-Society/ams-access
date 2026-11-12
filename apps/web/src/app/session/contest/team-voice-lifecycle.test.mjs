@@ -58,14 +58,15 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   assert.equal(sessions, 0);
   assert.equal(microphones, 0);
   assert.deepEqual(messages, [
-    "Team voice is unavailable in this installed app because WebRTC support is missing.",
+    "Team voice is unavailable in this app. Ask your organizer for a supported app build or device.",
   ]);
   assert.match(ui, /const supportsRtc = typeof RTCPeerConnection === "function"/);
+  assert.match(ui, /!supportsRtc\s*\? "Voice unavailable in this app"/);
+  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current\}/);
   assert.match(
     ui,
-    /!supportsRtc\s*\? "Voice unavailable · WebRTC support is missing in this installed app"/
+    /Ask your organizer for a supported app build or device\. You can continue with team parts/
   );
-  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !open.current\}/);
 });
 
 test("team paper load never gates on a team status and fails closed without a label", () => {

@@ -6,6 +6,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 
 export interface CameraTileProps {
+  inLobby?: boolean;
   cameraVideoRef: RefObject<HTMLVideoElement | null>;
   cameraStream: MediaStream | null;
   cameraError: string | null;
@@ -44,6 +45,7 @@ const PRESENCE_BORDER: Record<string, string> = {
 // the screen does the talking.
 
 export function CameraTile({
+  inLobby = false,
   presenceStatus = "presence_ok",
   onPickCamera,
   cameraVideoRef,
@@ -82,19 +84,26 @@ export function CameraTile({
     <VStack
       id="contest-camera-preview"
       className="contest-camera-tile"
+      data-lobby-preview={inLobby ? "true" : undefined}
       aria-label={cameraStatusLabel}
       gap={0}
       style={{
-        position: "absolute",
-        left: sidebarCollapsed ? "calc(var(--spacing-10) + var(--spacing-4))" : 0,
+        position: inLobby ? "relative" : "absolute",
+        left: inLobby
+          ? undefined
+          : sidebarCollapsed
+            ? "calc(var(--spacing-10) + var(--spacing-4))"
+            : 0,
         // Expanded: dock inside the rail; only the collapsed rail needs a toggle.
         // Collapsed: preserve the pop-out beside the rail.
         bottom: 0,
-        width: "calc(var(--spacing-10) * 5.5)",
-        height: "calc(var(--spacing-10) * 4)",
-        zIndex: 50,
+        width: inLobby ? "100%" : "calc(var(--spacing-10) * 5.5)",
+        height: inLobby ? "calc(var(--spacing-10) * 6)" : "calc(var(--spacing-10) * 4)",
+        zIndex: inLobby ? undefined : 50,
+        gridArea: inLobby ? "preview" : undefined,
+        alignSelf: inLobby ? "start" : undefined,
         display:
-          (cameraStream ?? cameraError) && (!sidebarCollapsed || !cameraCollapsed)
+          (cameraStream ?? cameraError) && (inLobby || !sidebarCollapsed || !cameraCollapsed)
             ? "flex"
             : "none",
         background: "var(--color-background-card)",

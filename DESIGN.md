@@ -216,3 +216,15 @@ footer. The expanded question rail always shows the available preview inside it,
 with space reserved below the question list and no preview-toggle button. Only
 the minimized rail shows the camera button, which toggles the pop-out preview
 beside the rail without changing capture or microphone ownership.
+
+### Team lobby layout
+
+The team lobby uses a bounded phase, voice, and part-selection column beside a
+reserved camera region. Narrow windows stack the preview below the content; it
+does not float over lobby actions. The locked assignment action appears directly
+after voice guidance, before the part and member lists. The assignment roster
+stays visible; member audio settings use a disclosure after joining to avoid a
+duplicate idle roster. Help and Exit remain reachable when editor actions lock.
+The mounted media owners stay unchanged across lobby/workspace transitions.
+Missing native WebRTC remains an explicit unavailable state with recovery advice,
+not a claim that the layout change enables Linux audio.

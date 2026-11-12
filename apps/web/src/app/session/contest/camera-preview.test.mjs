@@ -158,3 +158,57 @@ test("camera keeps a stable workspace anchor above the independently sized foote
   assert.doesNotMatch(region.getText(ast), /<FooterTrustStrip/);
   assert.match(region.parent.getText(ast), /<FooterTrustStrip/);
 });
+
+test("lobby camera occupies its own region even after the workspace preview was collapsed", () => {
+  const source = readFileSync(new URL("./components/CameraTile.tsx", import.meta.url), "utf8");
+  const exports = {};
+  const jsx = (type, props) => ({ type, props });
+  new Function(
+    "require",
+    "exports",
+    ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText
+  )((name) => {
+    if (name === "react") return { useEffect() {}, useState: (v) => [v, () => {}] };
+    if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    return Object.fromEntries(
+      [
+        "HStack",
+        "VStack",
+        "Button",
+        "Text",
+        "StatusDot",
+        "Video",
+        "VideoOff",
+        "Mic",
+        "MicOff",
+        "SwitchCamera",
+      ].map((n) => [n, n])
+    );
+  }, exports);
+  const props = {
+    cameraVideoRef: { current: null },
+    cameraStream: {},
+    cameraError: null,
+    sidebarCollapsed: true,
+    cameraCollapsed: true,
+    cameraStatusLabel: "Camera ready",
+    cameraHealthy: true,
+    cameraEnabled: true,
+    micEnabled: false,
+    handleToggleMedia() {},
+  };
+  const hidden = exports.CameraTile(props);
+  assert.equal(hidden.props.style.display, "none");
+  const docked = exports.CameraTile({ ...props, inLobby: true });
+  assert.equal(docked.props.style.display, "flex");
+  assert.equal(docked.props.style.position, "relative");
+  assert.equal(docked.props.style.gridArea, "preview");
+  assert.equal(docked.props.style.zIndex, undefined, "lobby preview never floats over actions");
+  assert.equal(
+    docked.props.children[2].props.children.type,
+    "video",
+    "same video subtree remains mounted across presentation changes"
+  );
+});
