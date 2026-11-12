@@ -1,8 +1,9 @@
 # Windows team voice readiness
 
-The Windows integration is based on the team-lobby UI branch (PR #389). It
-adapts the shared fixes from PR #385 without enabling macOS or changing native
-Windows permissions, firewall configuration, or AWS resources.
+The team-lobby UI (#389) and Windows voice recovery fixes (#391) are merged
+into main. The follow-up registration fix makes startup fail if WebView2 cannot
+install the camera/microphone requesting-origin policy. It does not broaden
+allowed origins, change firewall rules, enable macOS, or provision AWS resources.
 
 ## Included fixes
 
@@ -51,3 +52,17 @@ policy enabled; do not disable lockdown to obtain a passing audio result.
 Repository CI can check Windows compilation and packaging. Linux mocks and a
 Chromium preview cannot certify native WebView2 permissions, real ICE/TURN audio,
 or supervised firewall behavior. Retain #301 and #323 until those checks pass.
+
+## Follow-up verification (12 November 2026)
+
+- The actual Windows keyboard-policy module passed its six portable Rust tests,
+  including Ctrl+Shift+M press and release with lockdown Escape protection. This
+  tests policy decisions, not delivery through a physical keyboard/WebView2.
+- Focused voice lifecycle, engine, API and CSP test files passed on the Linux host.
+- Windows permission-handler registration errors now propagate out of Tauri
+  setup. Missing window/core/callback results cannot silently skip the policy.
+- Cross-compilation on this Linux host stopped in `aws-lc-sys` before compiling
+  the application (`unknown type name pthread_rwlock_t`). Windows CI must compile
+  this native change; the local cross-compile is not a passing Windows result.
+- The native acceptance matrix above remains NOT RUN. No issue should be closed
+  on the strength of portable tests or compilation alone.
