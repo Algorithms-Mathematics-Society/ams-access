@@ -205,14 +205,18 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     cleanup();
     emit({ status, error });
   }
-  function disconnected() {
+  /** `atLeast` honours a server back-off, e.g. the admission limiter's 10 s refill. */
+  function disconnected(atLeast = 0) {
     if (!active) return;
     generation++;
     cleanup();
     if (retries >= MAX_RETRIES)
       return finish("unavailable", "Voice connection could not be restored.");
     emit({ status: "reconnecting" });
-    const delay = Math.min(30_000, 1000 * 2 ** retries++) * (0.8 + d.random() * 0.2);
+    const delay = Math.max(
+      atLeast,
+      Math.min(30_000, 1000 * 2 ** retries++) * (0.8 + d.random() * 0.2)
+    );
     later(() => {
       void connect();
     }, delay);
@@ -559,8 +563,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       }, 15_000);
       ws.onclose = (event) => {
         if (!valid(g)) return;
-        if (event.code >= 4400 && event.code < 4500)
-          finish(event.code === 4411 ? "replaced" : "closed");
+        const code = event.code;
+        // Only 4410 means the round is over; the other application codes stay retryable.
+        if (code === 4411) finish("replaced");
+        else if (code === 4410) finish("closed");
+        else if (code === 4401) finish("unavailable", "Your sign-in has expired.");
+        else if (code === 4403) finish("unavailable", "Team voice is not available to you.");
+        else if (code === 4429) disconnected(10_000);
+        else if (code >= 4400 && code < 4500)
+          finish("unavailable", "Team voice relay is unavailable.");
         else disconnected();
       };
       ws.onerror = () => {

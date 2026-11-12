@@ -182,16 +182,31 @@ test("missing TURN cannot silently enable direct traffic", async () => {
   assert.equal(h.session.getSnapshot().status, "unavailable");
   assert.equal(h.timers.size, 0);
 });
-test("replacement event and every application 44xx close are terminal", async () => {
-  for (const code of [4401, 4403, 4410, 4411, 4499]) {
+test("only 4410 ends the round; other application closes stay retryable", async () => {
+  for (const [code, status] of [
+    [4401, "unavailable"],
+    [4403, "unavailable"],
+    [4410, "closed"],
+    [4411, "replaced"],
+    [4499, "unavailable"],
+  ]) {
     const h = harness();
     await h.welcome();
     h.sockets[0].onclose({ code });
     await h.tick(100000);
     assert.equal(h.sockets.length, 1);
     assert.equal(h.timers.size, 0);
-    assert.equal(h.session.getSnapshot().status, code === 4411 ? "replaced" : "closed");
+    assert.equal(h.session.getSnapshot().status, status);
   }
+  const limited = harness();
+  await limited.welcome();
+  limited.sockets[0].onclose({ code: 4429 });
+  await limited.tick(9999);
+  assert.equal(limited.session.getSnapshot().status, "reconnecting");
+  assert.equal(limited.sockets.length, 1);
+  await limited.tick(1);
+  assert.equal(limited.sockets.length, 2);
+  limited.session.stop();
   const h = harness();
   await h.welcome();
   h.message({ type: "replaced" });
