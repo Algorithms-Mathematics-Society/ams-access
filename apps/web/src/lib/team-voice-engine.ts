@@ -114,7 +114,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     retries = 0,
     active = false,
     welcomed = false;
-  let lastPong = 0,
+  let pongs = 0,
     muteSent = true,
     muteTimer = false;
   const outgoing: { raw: string; peer?: Peer }[] = [];
@@ -441,9 +441,14 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     return (await response.json()) as TeamVoiceCredentials;
   }
   function heartbeat() {
+    // Ping first, then judge that ping on its own deadline: a throttled (App Nap,
+    // hidden window) timer only delays a ping and is never read as a missed pong.
     later(() => {
-      if (d.now() - lastPong > 55_000) return disconnected();
+      const seen = pongs;
       send({ type: "ping" });
+      later(() => {
+        if (pongs === seen) disconnected();
+      }, 20_000);
       heartbeat();
     }, 25_000);
   }
@@ -566,7 +571,6 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             useCredentials(raw);
             me = raw.me;
             welcomed = true;
-            lastPong = d.now();
             muteSent = snapshot.muted;
             send({ type: snapshot.muted ? "mute" : "unmute" });
             for (const p of raw.peers.slice(0, MAX_PEERS)) add(p);
@@ -574,7 +578,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             heartbeat();
             levels();
           } else if (welcomed) {
-            if (raw.type === "pong") lastPong = d.now();
+            if (raw.type === "pong") pongs++;
             else if (raw.type === "peer-joined") {
               remove(raw.member_uid);
               add(raw);

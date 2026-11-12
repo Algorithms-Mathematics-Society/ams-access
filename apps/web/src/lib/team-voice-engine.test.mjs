@@ -318,7 +318,9 @@ test("heartbeat every25 seconds and missing pong causes finite reconnect", async
   await h.welcome();
   await h.tick(25000);
   assert.ok(h.sockets[0].sent.some((m) => m.type === "ping"));
-  await h.tick(51000);
+  await h.tick(19000);
+  assert.equal(h.sockets.length, 1);
+  await h.tick(2000);
   assert.equal(h.sockets.length, 2);
   h.session.stop();
 });
