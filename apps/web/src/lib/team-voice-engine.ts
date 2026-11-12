@@ -558,6 +558,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       url.searchParams.set("token", token);
       const ws = d.socket(url.toString());
       socket = ws;
+      // The server sends {type:"error"} before closing a rate violation with 1000.
+      let serverError = false;
       later(() => {
         if (!welcomed) disconnected();
       }, 15_000);
@@ -572,7 +574,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         else if (code === 4429) disconnected(10_000);
         else if (code >= 4400 && code < 4500)
           finish("unavailable", "Team voice relay is unavailable.");
-        else disconnected();
+        else disconnected(serverError ? 10_000 : 0);
       };
       ws.onerror = () => {
         if (valid(g)) disconnected();
@@ -598,6 +600,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             levels();
           } else if (welcomed) {
             if (raw.type === "pong") pongs++;
+            else if (raw.type === "error") serverError = true;
             else if (raw.type === "peer-joined") {
               remove(raw.member_uid);
               add(raw);
