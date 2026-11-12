@@ -3,7 +3,7 @@ let shared: AudioContext | null = null;
  * One context per window. WebKit leaves a context created outside a user gesture
  * (auto-join, reconnect) suspended, so the next pointer or key press resumes it.
  */
-function meterContext() {
+export function voiceAudioContext() {
   if (shared && shared.state !== "closed") return shared;
   const context = new AudioContext();
   shared = context;
@@ -20,7 +20,7 @@ function meterContext() {
 
 /** Local-only level meter. This clone is never connected to a speaker or RTCPeerConnection. */
 export function createVoiceInputMeter(stream: MediaStream) {
-  const context = meterContext();
+  const context = voiceAudioContext();
   let local: MediaStream | null = null;
   try {
     local = new MediaStream(stream.getAudioTracks().map((track) => track.clone()));
