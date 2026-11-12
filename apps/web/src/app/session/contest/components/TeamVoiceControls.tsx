@@ -40,9 +40,11 @@ export function TeamVoiceControls({
   projection,
   compact = false,
   toolbarTarget = null,
+  lobbyTarget = null,
 }: {
   compact?: boolean;
   toolbarTarget?: HTMLElement | null;
+  lobbyTarget?: HTMLElement | null;
   contestUid: string;
   enabled: boolean;
   suspended?: boolean;
@@ -150,7 +152,7 @@ export function TeamVoiceControls({
     if (!authorized() || !open.current) return;
     if (!supportsRtc) {
       setMessage(
-        "Team voice is unavailable in this installed app because WebRTC support is missing."
+        "Team voice is unavailable in this app. Ask your organizer for a supported app build or device."
       );
       return;
     }
@@ -242,29 +244,32 @@ export function TeamVoiceControls({
       <TeamVoicePresentation
         compact={compact}
         toolbarTarget={toolbarTarget}
+        lobbyTarget={lobbyTarget}
         suspended={suspended}
         snapshot={snapshot}
         onToggleMute={() => session.current?.setMuted(!snapshot?.muted)}
       >
         <VStack
           gap={2}
-          paddingInline={4}
-          paddingBlock={2}
+          padding={4}
           as="section"
           aria-label="Team voice"
           inert={suspended || undefined}
           style={{
             background: "var(--color-background-surface)",
-            maxHeight: compact ? "60vh" : "30vh",
-            overflow: "auto",
+            maxHeight: compact ? "60vh" : undefined,
+            overflow: compact ? "auto" : undefined,
+            minWidth: 0,
+            overflowWrap: "anywhere",
+            borderRadius: "var(--radius-container)",
             flexShrink: 0,
           }}
         >
           <HStack gap={3} wrap="wrap" align="center">
-            <Text weight="semibold">Team voice{team ? ` · ${team.team.name}` : ""}</Text>
+            <Text weight="semibold">Team voice</Text>
             <Text role="status" aria-live="polite">
               {!supportsRtc
-                ? "Voice unavailable · WebRTC support is missing in this installed app"
+                ? "Voice unavailable in this app"
                 : snapshot
                   ? voiceStatusText(snapshot.status)
                   : team?.phase.voice_open
@@ -327,9 +332,11 @@ export function TeamVoiceControls({
               />
             )}
           </HStack>
-          {(message || projectionMessage || snapshot?.error) && (
+          {(!supportsRtc || message || projectionMessage || snapshot?.error) && (
             <Text role="status">
-              {message ?? projectionMessage ?? voiceErrorAdvice(snapshot?.error ?? null)}
+              {!supportsRtc
+                ? "Ask your organizer for a supported app build or device. You can continue with team parts."
+                : (message ?? projectionMessage ?? voiceErrorAdvice(snapshot?.error ?? null))}
             </Text>
           )}
           {connected && (
@@ -352,32 +359,39 @@ export function TeamVoiceControls({
               )}
             </VStack>
           )}
-          {team && (
-            <List header="Team members" density="compact" hasDividers>
-              {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
-                <ListItem
-                  key={key}
-                  label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
-                  description={
-                    <VStack gap={1}>
-                      <Text>{status}</Text>
-                      {peer && (
-                        <Slider
-                          label={`${member.display_name} volume`}
-                          value={peer.volume * 100}
-                          min={0}
-                          max={100}
-                          formatValue={(value) => `${value}%`}
-                          onChange={(value: number) =>
-                            session.current?.setMemberVolume(peer.memberUid, value / 100)
-                          }
-                        />
-                      )}
-                    </VStack>
-                  }
-                />
-              ))}
-            </List>
+          {team && (compact || connected) && (
+            <VStack as={compact ? "section" : "details"} gap={2}>
+              {!compact && (
+                <summary>
+                  <Text as="span">Member audio settings</Text>
+                </summary>
+              )}
+              <List header="Team members" density="compact" hasDividers>
+                {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
+                  <ListItem
+                    key={key}
+                    label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
+                    description={
+                      <VStack gap={1}>
+                        <Text>{status}</Text>
+                        {peer && (
+                          <Slider
+                            label={`${member.display_name} volume`}
+                            value={peer.volume * 100}
+                            min={0}
+                            max={100}
+                            formatValue={(value) => `${value}%`}
+                            onChange={(value: number) =>
+                              session.current?.setMemberVolume(peer.memberUid, value / 100)
+                            }
+                          />
+                        )}
+                      </VStack>
+                    }
+                  />
+                ))}
+              </List>
+            </VStack>
           )}
           {connected && (
             <HStack gap={4} wrap="wrap" align="start">
