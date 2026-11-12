@@ -398,6 +398,8 @@ extern "C" {
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
     fn CGEventGetTimestamp(event: *mut c_void) -> u64;
+    fn CGEventCreateKeyboardEvent(source: *mut c_void, keycode: u16, key_down: bool)
+        -> *mut c_void;
     fn CGEventKeyboardGetUnicodeString(
         event: *mut c_void,
         max_len: usize,
@@ -561,13 +563,19 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
     // keycode 12, nor "v" keycode 9.
     let clipboard_blocked = CLIPBOARD_BLOCKED.load(Ordering::Relaxed);
     if flags & FLAG_CMD != 0 {
-        let mut buf = [0u16; 4];
-        let mut len = 0usize;
-        CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
-        let letter = u8::try_from(buf[0])
-            .ok()
-            .filter(|c| len == 1 && c.is_ascii_alphabetic())
-            .map(|c| c.to_ascii_lowercase());
+        let mut letter = typed_letter(event);
+        // With Control held the key types a control code, so Ctrl+Cmd+Q
+        // (Lock Screen) would fall back to keycode 12. A fresh event for the
+        // same key, without modifiers, gives the letter in the current layout.
+        if letter.is_none() && flags & FLAG_CTRL != 0 {
+            if let Ok(code) = u16::try_from(kc) {
+                let bare = CGEventCreateKeyboardEvent(std::ptr::null_mut(), code, true);
+                if !bare.is_null() {
+                    letter = typed_letter(bare);
+                    CFRelease(bare);
+                }
+            }
+        }
         match letter {
             Some(b'q' | b'w' | b'h' | b'm') => return true,
             Some(b'c' | b'v' | b'x') if clipboard_blocked => return true,
@@ -591,6 +599,17 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
             clipboard_blocked,
         },
     )
+}
+
+/// The lower-case ASCII letter a key event types, if it types exactly one.
+unsafe fn typed_letter(event: *mut c_void) -> Option<u8> {
+    let mut buf = [0u16; 4];
+    let mut len = 0usize;
+    CGEventKeyboardGetUnicodeString(event, buf.len(), &mut len, buf.as_mut_ptr());
+    u8::try_from(buf[0])
+        .ok()
+        .filter(|c| len == 1 && c.is_ascii_alphabetic())
+        .map(|c| c.to_ascii_lowercase())
 }
 
 // ── CGEventTap watchdog ───────────────────────────────────────────────────────
