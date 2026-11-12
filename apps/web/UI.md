@@ -573,3 +573,26 @@ benchmark history refresh is manual and generated SVG profiles render as isolate
 images, never inline markup. Closing the dialog or changing sections tears down
 requests and profile object URLs. Native visual acceptance and 3,000-participant
 staging verification of visible-board polling and result artifact costs remain.
+
+## Team lobby layout and Linux runtime verification
+
+The lobby fills the available window width. Phase guidance and voice controls stay
+above part selection in the flexible main column; a 320px right column places the
+camera at the top and Members directly below it. The shared page scroll region
+reaches the right window edge, without a centered maximum width or separate member
+scrollbar. The locked assignment action appears before the parts list. Member
+audio settings are disclosed after joining; the assignment roster remains visible
+without a second idle voice roster. Help and Exit remain usable when editor
+actions are locked, while mandatory overlays still suspend interaction.
+
+Narrow windows stack main content, camera, then Members. The camera occupies a
+reserved layout region and never covers an action. The existing mounted camera and voice owners continue
+across entry into the coding workspace; moving presentation must not reacquire
+media or add requests. Render checks cover desktop, narrow windows, phase states
+and long content. They do not establish a native cross-network audio call.
+
+Linux plugin checks alone do not establish WebRTC availability. The system
+WebKitGTK 2.54 build tested on 12 November 2026 exposes camera APIs but no
+RTCPeerConnection, even with the WebRTC setting enabled and all media factories
+available. See DEMO.md and issue #388 for the native runtime blocker. Do not
+present a passing plugin smoke test as proof that Linux voice works.

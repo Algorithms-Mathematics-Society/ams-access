@@ -77,7 +77,8 @@ type Peer = {
   chain: Promise<void>;
 };
 const MAX_PEERS = 4,
-  MAX_ICE = 24,
+  // Fixed lifetime budget for initial negotiation plus three ICE retries.
+  MAX_ICE = 24 * 4,
   MAX_SDP = 48_000,
   MAX_RETRIES = 6,
   MAX_ICE_RESTARTS = 3;
@@ -98,9 +99,9 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     stream: (tracks) => new MediaStream(tracks),
     now: Date.now,
     random: Math.random,
-    // Called as d.timeout(): unbound browser timers throw "Illegal invocation".
-    timeout: (callback, ms) => setTimeout(callback, ms),
-    clearTimeout: (timer) => clearTimeout(timer),
+    // Browser timer methods must not receive our dependency object as `this`.
+    timeout: (callback, ms) => globalThis.setTimeout(callback, ms),
+    clearTimeout: (timer) => globalThis.clearTimeout(timer),
     fetch: (...args) => fetch(...args),
     ...options.deps,
   };
@@ -350,11 +351,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         return emit({ error: "A teammate audio connection failed." });
       }
       restarts++;
-      // Fresh candidates and descriptions for the new ICE session, still capped per attempt.
-      p.sent = p.received = p.descriptions = 0;
+      // Keep lifetime ICE/description limits: remote restarts use the same allowance.
       watching = true;
       later(recover, 15_000);
-      pc.restartIce();
+      try {
+        pc.restartIce();
+      } catch {
+        remove(uid);
+        emit({ error: "A teammate audio connection failed." });
+      }
     };
     pc.onconnectionstatechange = () => {
       if (!valid(g, p)) return;

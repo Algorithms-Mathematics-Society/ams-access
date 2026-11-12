@@ -58,12 +58,14 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   assert.equal(sessions, 0);
   assert.equal(microphones, 0);
   assert.deepEqual(messages, [
-    "Team voice is unavailable in this installed app because WebRTC support is missing.",
+    "Team voice is unavailable in this app. Ask your organizer for a supported app build or device.",
   ]);
   assert.match(ui, /const supportsRtc = typeof RTCPeerConnection === "function"/);
+  assert.match(ui, /!supportsRtc\s*\? "Voice unavailable in this app"/);
+  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
   assert.match(
     ui,
-    /!supportsRtc\s*\? "Voice unavailable · WebRTC support is missing in this installed app"/
+    /Ask your organizer for a supported app build or device\. You can continue with team parts/
   );
   assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
 });
@@ -237,7 +239,7 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   // Consumed but inert until the Live/Muted control is visible.
   status = "connecting";
   assert.equal(dispatch().prevented, true);
-  assert.equal(toggles, 3);
+  assert.equal(toggles, 3, "connecting must remain muted");
   status = "reconnecting";
   dispatch();
   assert.equal(toggles, 4);
@@ -255,4 +257,66 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
     assert.deepEqual(dispatch(...args), { prevented: false, stopped: false, editorCommands: 1 });
   }
   assert.equal(toggles, 4);
+});
+
+test("media warning suspends voice controls and shortcut", () => {
+  const controls = client.match(/<TeamVoiceControls[\s\S]*?suspended=\{([\s\S]*?)\}\s*\/>/);
+  assert.ok(controls);
+  assert.match(controls[1], /showMediaToggleWarning/);
+});
+
+test("reopening the voice window updates rendered Join state without another poll", () => {
+  const body = ui.match(
+    /useEffect\(\(\) => \{\n    const decision = voiceProjectionDecision([\s\S]*?)\n  \}, \[projection.status, team, enabled\]\);/
+  );
+  assert.ok(body);
+  const renderStates = [];
+  const resumeStates = [];
+  const run = new Function(
+    "voiceProjectionDecision",
+    "enabled",
+    "projection",
+    "team",
+    "open",
+    "setVoiceOpen",
+    "session",
+    "resumeAfterPoll",
+    "setResumePending",
+    "unsubscribeSession",
+    "setSnapshot",
+    "autoJoin",
+    "current",
+    "connectCurrent",
+    "const decision = voiceProjectionDecision" + body[1]
+  );
+  const open = { current: false };
+  const resume = { current: false };
+  const session = { current: null };
+  const unsub = { current: null };
+  for (const decision of ["open", "closed", "open"]) {
+    run(
+      () => decision,
+      true,
+      { status: "team" },
+      { phase: { voice_open: decision === "open" } },
+      open,
+      (value) => renderStates.push(value),
+      session,
+      resume,
+      (value) => resumeStates.push(value),
+      unsub,
+      () => {},
+      { current: { take: () => false } },
+      { current: () => true },
+      {
+        current: () => {
+          throw new Error("must not automatically rejoin after intentional leave");
+        },
+      }
+    );
+  }
+  assert.deepEqual(renderStates, [true, false, true]);
+  assert.deepEqual(resumeStates, [false]);
+  assert.equal(open.current, true);
+  assert.match(ui, /connected \|\| busy \|\| resumePending/);
 });

@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { VStack } from "@astryxdesign/core/Stack";
+import { useEffect, useState, type ReactNode } from "react";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Token } from "@astryxdesign/core/Token";
 import { Text } from "@astryxdesign/core/Text";
@@ -13,8 +13,8 @@ const duration = (ms: number) =>
   `${Math.floor(Math.ceil(ms / 1000) / 60)
     .toString()
     .padStart(2, "0")}:${(Math.ceil(ms / 1000) % 60).toString().padStart(2, "0")}`;
-/** Existing contest shell owns header/security/voice; the lobby is its flowing content region.
- * Single column at all widths; rows wrap names and keep native keyboard buttons reachable. */
+/** The contest shell owns security and media. The flexible main column prioritizes
+ * phase guidance, voice and part selection; camera and members share the right rail. */
 export function TeamLobby({
   state,
   contestUid,
@@ -22,6 +22,8 @@ export function TeamLobby({
   onRelease,
   onEnter,
   canEnter = true,
+  actions,
+  voiceTargetRef,
 }: {
   state: LobbyState;
   contestUid: string;
@@ -29,6 +31,8 @@ export function TeamLobby({
   onRelease: () => void;
   onEnter: () => void;
   canEnter?: boolean;
+  actions?: ReactNode;
+  voiceTargetRef?: (node: HTMLElement | null) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [now, setNow] = useState(() => performance.now());
@@ -65,8 +69,11 @@ export function TeamLobby({
   const board = state.board;
   if (!board)
     return (
-      <VStack gap={4} style={{ padding: "var(--spacing-6)" }}>
-        <Heading level={1}>Team lobby</Heading>
+      <VStack gap={4} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+        <HStack gap={3} wrap="wrap" align="center" justify="between">
+          <Heading level={1}>Team lobby</Heading>
+          {actions}
+        </HStack>
         <Text role="status">
           {state.status === "denied"
             ? "Team access unavailable"
@@ -85,11 +92,22 @@ export function TeamLobby({
   const startRemaining = contestStartRemaining(startsAt, board, state.sampledAt, now);
   const scheduleReady = hasProjectedStart || startConfirmed;
   const choosing =
-    state.status === "team" && phase === "choosing" && !board.allocation.locked && remaining !== 0;
+    canEnter &&
+    state.status === "team" &&
+    phase === "choosing" &&
+    !board.allocation.locked &&
+    remaining !== 0;
   const own = board.parts.find((p) => p.holder_is_me);
   return (
-    <VStack gap={6} style={{ padding: "var(--spacing-6)", minWidth: 0 }}>
-      <Heading level={1}>{board.team.name}</Heading>
+    <VStack
+      gap={4}
+      className="team-lobby-content"
+      style={{ minWidth: 0, overflowWrap: "anywhere" }}
+    >
+      <HStack gap={3} wrap="wrap" align="center" justify="between">
+        <Heading level={1}>{board.team.name}</Heading>
+        {actions}
+      </HStack>
       <VStack gap={2} aria-label="Team selection phase">
         <Heading level={2}>
           {phase === "waiting"
@@ -110,24 +128,53 @@ export function TeamLobby({
           <Text role="status">Checking the next phase…</Text>
         )}
       </VStack>
+      <VStack ref={voiceTargetRef} gap={0} className="team-lobby-voice" />
+      {phase === "locked" && (
+        <VStack gap={2}>
+          <Text>
+            {own
+              ? `Your assigned part is ${own.label} (${own.problem_label}).`
+              : "Waiting for your server-confirmed assignment."}
+          </Text>
+          <Button
+            variant="primary"
+            isDisabled={
+              !scheduleReady ||
+              startRemaining !== 0 ||
+              !canEnter ||
+              !own ||
+              !board.allocation.locked ||
+              state.status !== "team"
+            }
+            onClick={onEnter}
+            label="Go to your part"
+          />
+          {startRemaining !== null && startRemaining > 0 && (
+            <Text>Contest starts in {duration(startRemaining)}</Text>
+          )}
+          {(startRemaining === null || (startRemaining === 0 && !scheduleReady)) && (
+            <Text role="status">
+              {scheduleError
+                ? "Contest start time unavailable. Retry or use Help."
+                : "Checking the contest start time…"}
+            </Text>
+          )}
+          {scheduleError && !hasProjectedStart && (
+            <Button
+              label="Retry start time"
+              variant="secondary"
+              onClick={() => setScheduleAttempt((attempt) => attempt + 1)}
+            />
+          )}
+        </VStack>
+      )}
       {state.error && <Text role="alert">{state.error}</Text>}
       {state.pending && <Text role="status">{pendingAction ?? "Updating your part…"}</Text>}
-      <List hasDividers header={<Heading level={2}>Members</Heading>}>
-        {board.members.map((member, index) => (
-          <ListItem
-            key={index}
-            label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
-            description={
-              <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>
-            }
-            endContent={member.assigned_by === "auto" ? <Token label="Auto-assigned" /> : undefined}
-          />
-        ))}
-      </List>
-      <List hasDividers header={<Heading level={2}>Parts</Heading>}>
+      <List density="compact" hasDividers header={<Heading level={2}>Parts</Heading>}>
         {board.parts.map((part) => (
           <ListItem
             key={part.label}
+            className="team-lobby-part"
             label={`Part ${part.label} · ${part.problem_label}`}
             description={
               part.title || part.summary ? (
@@ -174,45 +221,33 @@ export function TeamLobby({
           />
         ))}
       </List>
-      {phase === "locked" && (
-        <VStack gap={2}>
-          <Text>
-            {own
-              ? `Your assigned part is ${own.label} (${own.problem_label}).`
-              : "Waiting for your server-confirmed assignment."}
-          </Text>
-          <Button
-            variant="primary"
-            isDisabled={
-              !scheduleReady ||
-              startRemaining !== 0 ||
-              !canEnter ||
-              !own ||
-              !board.allocation.locked ||
-              state.status !== "team"
+    </VStack>
+  );
+}
+
+/** One assignment roster in the shell's right column, below its stable camera. */
+export function TeamLobbyMembers({ state }: { state: LobbyState }) {
+  if (!state.board) return null;
+  return (
+    <VStack
+      as="aside"
+      aria-label="Team members and assignments"
+      className="team-lobby-members"
+      gap={0}
+      style={{ minWidth: 0, overflowWrap: "anywhere" }}
+    >
+      <List density="compact" hasDividers header={<Heading level={2}>Members</Heading>}>
+        {state.board.members.map((member, index) => (
+          <ListItem
+            key={member.member_uid ?? index}
+            label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
+            description={
+              <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>
             }
-            onClick={onEnter}
-            label="Go to your part"
+            endContent={member.assigned_by === "auto" ? <Token label="Auto-assigned" /> : undefined}
           />
-          {startRemaining !== null && startRemaining > 0 && (
-            <Text>Contest starts in {duration(startRemaining)}</Text>
-          )}
-          {(startRemaining === null || (startRemaining === 0 && !scheduleReady)) && (
-            <Text role="status">
-              {scheduleError
-                ? "Contest start time unavailable. Retry or use Help."
-                : "Checking the contest start time…"}
-            </Text>
-          )}
-          {scheduleError && !hasProjectedStart && (
-            <Button
-              label="Retry start time"
-              variant="secondary"
-              onClick={() => setScheduleAttempt((attempt) => attempt + 1)}
-            />
-          )}
-        </VStack>
-      )}
+        ))}
+      </List>
     </VStack>
   );
 }

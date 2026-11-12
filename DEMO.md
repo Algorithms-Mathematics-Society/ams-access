@@ -23,6 +23,28 @@ pnpm --filter @ams/desktop dev
 
 This prepares the helper and starts one Next.js server on port 3000 through Tauri. Do not start a second web server on that port. The desktop app is the product; a browser preview cannot demonstrate native lockdown or helper integration.
 
+Linux development first checks the host GStreamer voice plugins. A WebKitGTK
+development package alone does not supply `webrtcbin`, DTLS, or SRTP. On
+Arch/Omarchy install `gst-plugins-base gst-plugins-good gst-plugins-bad libnice`;
+on Debian/Ubuntu install `gstreamer1.0-tools gstreamer1.0-plugins-base
+gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice`. Restart the
+desktop app after installing plugins. Run `sh scripts/check-linux-rtc-media.sh`
+to check the factories and a device-free Opus/RTP pipeline. With PyGObject and
+WebKit2 4.1 introspection available, `python3 scripts/check-linux-webkit-rtc.py`
+also verifies the system WebKit can create an Opus audio offer in a temporary
+window. These checks do not establish microphone access, ICE/TURN connectivity,
+or a live team call.
+
+WebKit support is separate from installed GStreamer factories. Upstream
+[WebKitGTK 2.54 disables WebRTC during its backend transition](https://webkitgtk.org/2026/09/16/webkitgtk-2.54-highlights.html#multimedia-improvements).
+On a build without WebRTC, `enable-webrtc=true` can still be read back while
+`RTCPeerConnection` remains absent. More GStreamer packages cannot add a
+compiled-out browser feature. A controlled browser harness can test the voice
+engine independently, but the normal hosted participant flow requires the native
+desktop bridge and is not a contestant workaround. Native Linux voice needs a
+WebRTC-enabled runtime and a real call test. The current Linux packaging checks establish
+GStreamer prerequisites only, so they cannot certify native WebRTC support.
+
 The ignored `apps/web/.env.local` can contain `NEXT_PUBLIC_DEV_API_URL=https://api.amsaccess.com` for a development rehearsal. The existing local setting was preserved during reconciliation. Credentials and environment files are not committed. Packaged Tauri origins use the production API target independently of this development override.
 
 ## Build a Linux demo installer
