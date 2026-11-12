@@ -4079,12 +4079,16 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             {
                 use tauri::Manager;
-                if let Some(win) = app.get_webview_window("main") {
-                    #[cfg(debug_assertions)]
-                    let dev_url = app.config().build.dev_url.clone();
-                    #[cfg(not(debug_assertions))]
-                    let dev_url: Option<tauri::Url> = None;
-                    win.with_webview(move |wv| unsafe {
+                let win = app.get_webview_window("main").ok_or_else(|| {
+                    std::io::Error::other("Main window missing for Windows media permission policy")
+                })?;
+                #[cfg(debug_assertions)]
+                let dev_url = app.config().build.dev_url.clone();
+                #[cfg(not(debug_assertions))]
+                let dev_url: Option<tauri::Url> = None;
+                let (registration_tx, registration_rx) = std::sync::mpsc::sync_channel(1);
+                win.with_webview(move |wv| unsafe {
+                    let result = (|| -> Result<(), String> {
                         use webview2_com::Microsoft::Web::WebView2::Win32::{
                             COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
                             COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
@@ -4094,9 +4098,9 @@ pub fn run() {
                         use webview2_com::{CoTaskMemPWSTR, PermissionRequestedEventHandler};
                         use windows_core::PWSTR;
 
-                        let Ok(core) = wv.controller().CoreWebView2() else {
-                            return;
-                        };
+                        let core = wv.controller().CoreWebView2().map_err(|error| {
+                            format!("Cannot access WebView2 permission policy: {error}")
+                        })?;
                         let handler = PermissionRequestedEventHandler::create(Box::new(
                             move |_core, args| {
                                 if let Some(args) = args {
@@ -4131,10 +4135,24 @@ pub fn run() {
                             },
                         ));
                         let mut token = 0i64;
-                        let _ = core.add_PermissionRequested(&handler, &mut token);
-                    })
-                    .expect("with_webview failed — camera/mic permission handler not registered");
-                }
+                        core.add_PermissionRequested(&handler, &mut token)
+                            .map_err(|error| {
+                                format!("Cannot register WebView2 media permission policy: {error}")
+                            })?;
+                        Ok(())
+                    })();
+                    let _ = registration_tx.send(result);
+                })?;
+                // Setup runs on Tauri's UI thread, where with_webview executes
+                // immediately. A missing callback result is a failed policy gate.
+                registration_rx
+                    .try_recv()
+                    .map_err(|error| {
+                        std::io::Error::other(format!(
+                            "WebView2 media permission policy did not register: {error}"
+                        ))
+                    })?
+                    .map_err(std::io::Error::other)?;
             }
             // On macOS, WKWebView's getUserMedia() does NOT trigger the macOS TCC
             // permission dialog on its own — only a native AVCaptureDevice.requestAccess
