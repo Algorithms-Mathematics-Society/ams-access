@@ -1857,9 +1857,16 @@ pub fn enable_network_lockdown(
     // Marker-first: if the app or helper dies after the rules land, the
     // marker is what lets a later restore know the firewall may be active.
     // Reused while this boot's lockdown is recorded: the 60 s refresh and a
-    // re-arm must present the token the helper already holds.
-    let token = lockdown_token().unwrap_or_else(mint_token);
+    // re-arm must present the token the helper already holds. This process
+    // keeps its own copy, so a deleted marker cannot change it.
+    let mut armed = armed_token();
+    let token = armed
+        .clone()
+        .or_else(lockdown_token)
+        .unwrap_or_else(mint_token);
     write_lockdown_marker(&token).map_err(|e| format!("write lockdown marker: {e}"))?;
+    *armed = Some(token.clone());
+    drop(armed);
 
     let mut ips = allowed_ips.to_vec();
     for ip in resolvers.iter().chain(relays) {
@@ -1885,7 +1892,7 @@ pub fn disable_network_lockdown() -> Result<(), String> {
     if !network_helper_running() {
         // pf rules outlive the helper, so an unreachable helper only means
         // "nothing to flush" when no lockdown was recorded this boot.
-        return if lockdown_marker_may_exist() {
+        return if armed_token().is_some() || lockdown_marker_may_exist() {
             Err(format!(
                 "{HELPER_RULES_MAY_PERSIST}: network helper is not reachable"
             ))
@@ -1894,9 +1901,22 @@ pub fn disable_network_lockdown() -> Result<(), String> {
         };
     }
     // The helper lifts the rules only for the token that armed them.
-    let token = lockdown_token().unwrap_or_default();
+    let token = armed_token()
+        .clone()
+        .or_else(lockdown_token)
+        .unwrap_or_default();
     helper_send(&serde_json::json!({ "cmd": "disable", "token": token }).to_string())?;
+    *armed_token() = None;
     clear_lockdown_marker().map_err(|e| format!("network restored but marker cleanup failed: {e}"))
+}
+
+/// The token this process armed the helper with, if its lockdown is live.
+static ARMED_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+fn armed_token() -> std::sync::MutexGuard<'static, Option<String>> {
+    ARMED_TOKEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Error prefix when the helper is down but a lockdown was recorded.
@@ -1917,6 +1937,23 @@ fn boot_time() -> Option<String> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// `kern.boottime` is derived from the wall clock, so a clock adjustment
+/// moves it slightly ("{ sec = 1793933311, usec = 358001 } ..."). Within a
+/// minute counts as the same boot; a reboot moves it by its whole uptime.
+fn same_boot(recorded: &str, now: &str) -> bool {
+    fn secs(boot: &str) -> Option<i64> {
+        boot.split("sec = ")
+            .nth(1)?
+            .split(',')
+            .next()?
+            .trim()
+            .parse()
+            .ok()
+    }
+    recorded == now
+        || matches!((secs(recorded), secs(now)), (Some(a), Some(b)) if (a - b).abs() <= 60)
 }
 
 /// Line 1: the boot time. Line 2: the per-lockdown token the helper requires
@@ -1945,7 +1982,7 @@ fn lockdown_token() -> Option<String> {
     let (boot, token) = recorded.split_once('\n')?;
     let token = token.trim();
     let this_boot = match boot_time() {
-        Some(now) => boot.is_empty() || boot == now,
+        Some(now) => boot.is_empty() || same_boot(boot, &now),
         None => true,
     };
     (this_boot && !token.is_empty()).then(|| token.to_string())
@@ -1987,7 +2024,7 @@ fn lockdown_marker_may_exist() -> bool {
         Err(_) => true,
         Ok(recorded) => {
             let recorded = recorded.lines().next().unwrap_or_default();
-            let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && recorded != now);
+            let stale = matches!(boot_time(), Some(now) if !recorded.is_empty() && !same_boot(recorded, &now));
             if stale {
                 let _ = clear_lockdown_marker();
             }
