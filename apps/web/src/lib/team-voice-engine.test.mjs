@@ -42,7 +42,7 @@ function harness(extra = {}) {
     }
     addTrack() {
       return {
-        getParameters: () => ({}),
+        getParameters: () => ({ encodings: [{}] }),
         setParameters: async (p) => {
           this.parameters = p;
         },

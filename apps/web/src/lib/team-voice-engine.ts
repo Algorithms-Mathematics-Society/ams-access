@@ -276,10 +276,15 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     for (const track of microphone.getAudioTracks()) {
       const sender = pc.addTrack(track, microphone);
       work(p, async () => {
-        const params = sender.getParameters();
-        params.encodings = params.encodings?.length ? params.encodings : [{}];
-        for (const encoding of params.encodings) encoding.maxBitrate = 32_000;
-        await sender.setParameters(params);
+        // Best effort: WebKit rejects adding encodings, and a refused cap must not drop the peer.
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings?.length) return;
+          for (const encoding of params.encodings) encoding.maxBitrate = 32_000;
+          await sender.setParameters(params);
+        } catch {
+          /* keep the default bitrate */
+        }
       });
     }
     pc.onicecandidate = (event) => {
