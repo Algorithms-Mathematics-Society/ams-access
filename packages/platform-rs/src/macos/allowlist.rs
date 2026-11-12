@@ -8,7 +8,7 @@
 //! re-resolved every minute while the lockdown is live.
 
 use crate::process_runner::CommandDeadlineExt;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -31,10 +31,11 @@ static REFRESHER: AtomicBool = AtomicBool::new(false);
 /// Every allowed domain resolved to IPs, plus the system's DNS resolvers.
 pub fn resolve_allowlist(domains: &[String]) -> Vec<String> {
     let ips = resolve_domains(domains);
-    // Resolvers only when the API itself resolved: a list of nothing but DNS
-    // servers must not pass for a working lockdown.
-    if ips.is_empty() {
-        return ips;
+    // Resolvers only when the API itself resolved to IPv4: the pf rules drop
+    // IPv6, so a list of nothing but DNS servers (or IPv6-only API addresses on
+    // a NAT64 network) must not pass for a working lockdown.
+    if !ips.iter().any(|ip| ip.parse::<Ipv4Addr>().is_ok()) {
+        return Vec::new();
     }
     merged(&ips, &dns_resolvers())
 }
@@ -198,5 +199,7 @@ mod tests {
     #[test]
     fn resolvers_are_not_added_when_the_api_did_not_resolve() {
         assert!(resolve_allowlist(&["nonexistent.invalid".to_string()]).is_empty());
+        // IPv6-only API (NAT64): pf would allow only DNS and the relay.
+        assert!(resolve_allowlist(&["2001:db8::10".to_string()]).is_empty());
     }
 }

@@ -3012,7 +3012,8 @@ async fn enable_network_lockdown(
         // Resolvers are included and the API host is re-resolved while the
         // lockdown is live; see platform_rs::macos::allowlist.
         tauri::async_runtime::spawn_blocking(move || {
-            // resolve_allowlist adds DNS only after the API resolves. The live
+            // resolve_allowlist is empty (so the relay is refused) unless the
+            // API resolves to IPv4, which pf needs; it then adds DNS. The live
             // follower retains these initial IPs when it refreshes API DNS.
             let ips = network_allowlist::with_reviewed_voice_relay(
                 platform_rs::macos::resolve_allowlist(&allowed_domains),
