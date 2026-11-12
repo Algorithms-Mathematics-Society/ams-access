@@ -157,7 +157,7 @@ test("unsupported native clients probe the round before any paper fetch and bloc
   );
   assert.match(
     load,
-    /if \(nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
+    /if \(nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows, macOS or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
   );
 });
 
