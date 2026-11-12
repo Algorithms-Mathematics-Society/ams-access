@@ -556,8 +556,10 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
 
     let kc = CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE);
     let flags = CGEventGetFlags(event);
-    // Quit, Close, Hide and Minimize go by the letter typed: the menu matches
-    // by character, and on AZERTY or Dvorak "q" is not keycode 12.
+    // Quit, Close, Hide, Minimize and the clipboard go by the letter typed:
+    // the menu matches by character, and on AZERTY or Dvorak "q" is not
+    // keycode 12, nor "v" keycode 9.
+    let clipboard_blocked = CLIPBOARD_BLOCKED.load(Ordering::Relaxed);
     if flags & FLAG_CMD != 0 {
         let mut buf = [0u16; 4];
         let mut len = 0usize;
@@ -568,9 +570,15 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
             .map(|c| c.to_ascii_lowercase());
         match letter {
             Some(b'q' | b'w' | b'h' | b'm') => return true,
+            Some(b'c' | b'v' | b'x') if clipboard_blocked => return true,
             // On AZERTY the physical Q and W keys type "a" and "z": Cmd+A and
             // Cmd+Z must reach the editor though their keycodes are Q's and W's.
-            Some(_) if keyboard_policy::is_quit_close_hide_minimize_key(kc) => return false,
+            Some(_)
+                if keyboard_policy::is_quit_close_hide_minimize_key(kc)
+                    || keyboard_policy::is_clipboard_key(kc) =>
+            {
+                return false
+            }
             _ => {}
         }
     }
@@ -580,7 +588,7 @@ unsafe fn kb_tap_should_block(event_type: u32, event: *mut c_void) -> bool {
         keyboard_policy::Policy {
             function_keys_blocked: FUNCTION_KEYS_BLOCKED.load(Ordering::Relaxed),
             escape_blocked: ESCAPE_BLOCKED.load(Ordering::Relaxed),
-            clipboard_blocked: CLIPBOARD_BLOCKED.load(Ordering::Relaxed),
+            clipboard_blocked,
         },
     )
 }

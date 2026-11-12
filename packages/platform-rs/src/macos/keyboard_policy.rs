@@ -59,6 +59,11 @@ pub(super) fn is_quit_close_hide_minimize_key(kc: i64) -> bool {
     matches!(kc, VK_Q | VK_W | VK_H | VK_M)
 }
 
+/// The physical QWERTY C, V and X keys: Copy, Paste and Cut on QWERTY.
+pub(super) fn is_clipboard_key(kc: i64) -> bool {
+    matches!(kc, VK_C | VK_V | VK_X)
+}
+
 /// The shortcut policy, free of FFI so it reads as one table.
 pub(super) fn should_block_key(kc: i64, flags: u64, policy: Policy) -> bool {
     let cmd = (flags & FLAG_CMD) != 0;
