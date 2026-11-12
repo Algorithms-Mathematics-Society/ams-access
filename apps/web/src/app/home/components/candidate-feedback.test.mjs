@@ -139,7 +139,9 @@ test("failed and missing approval reads keep uncertainty distinct from pending",
     async () => null,
   ]) {
     const h = approvalHarness({ latest });
-    await h.refreshResumeRequest(h.session).catch((error) => assert.equal(error.message, "offline"));
+    await h
+      .refreshResumeRequest(h.session)
+      .catch((error) => assert.equal(error.message, "offline"));
     assert.equal(h.state.unavailable, true);
     assert.doesNotMatch(h.state.message, /^Waiting for organizer approval/);
     assert.equal(h.state.session, undefined);
