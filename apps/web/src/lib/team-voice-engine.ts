@@ -1,4 +1,4 @@
-import { createVoiceInputMeter, voiceAudioContext } from "./team-voice-input.ts";
+import { createVoiceInputMeter } from "./team-voice-input.ts";
 /** Bounded, relay-only team audio. This module owns only microphone clones. */
 export type TeamVoiceCredentials = {
   ice_servers: RTCIceServer[];
@@ -44,8 +44,6 @@ export type TeamVoiceDeps = {
   socket: (url: string) => WebSocket;
   rtc: (configuration: RTCConfiguration) => RTCPeerConnection;
   audio: () => HTMLAudioElement;
-  /** Context that plays teammates instead of the <audio> element, or null to use the element. */
-  playbackContext: () => AudioContext | null;
   stream: (tracks: MediaStreamTrack[]) => MediaStream;
   now: () => number;
   random: () => number;
@@ -77,7 +75,6 @@ type Peer = {
   descriptions: number;
   statsPending: boolean;
   chain: Promise<void>;
-  route: { source: MediaStreamAudioSourceNode; gain: GainNode } | null;
 };
 const MAX_PEERS = 4,
   MAX_ICE = 24,
@@ -98,13 +95,6 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       document.body.append(element);
       return element;
     },
-    // macOS WKWebView: with a Bluetooth headset in hands-free mode the <audio>
-    // element plays silently, while Web Audio reaches the headset. The shared
-    // context resumes on the first pointer or key press (team-voice-input.ts).
-    playbackContext: () =>
-      typeof navigator !== "undefined" && navigator.platform === "MacIntel"
-        ? voiceAudioContext()
-        : null,
     stream: (tracks) => new MediaStream(tracks),
     now: Date.now,
     random: Math.random,
@@ -196,8 +186,6 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     p.audio.pause();
     p.audio.srcObject = null;
     p.audio.remove?.();
-    p.route?.source.disconnect();
-    p.route?.gain.disconnect();
     p.view.stream?.getTracks().forEach((t) => t.stop());
   }
   function releaseMicrophone() {
@@ -302,7 +290,6 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       descriptions: 0,
       statsPending: false,
       chain: Promise.resolve(),
-      route: null,
     };
     peers.set(uid, p);
     const g = generation;
@@ -331,35 +318,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       audio.srcObject = stream;
       if (snapshot.outputDevice && audio.setSinkId)
         void audio.setSinkId(snapshot.outputDevice).catch(() => {});
-      const context = d.playbackContext();
-      if (context) {
-        // The element keeps the stream flowing; Web Audio is what is heard.
-        audio.muted = true;
-        p.route?.source.disconnect();
-        p.route?.gain.disconnect();
-        const source = context.createMediaStreamSource(stream);
-        const gain = context.createGain();
-        gain.gain.value = snapshot.volume * p.view.volume;
-        source.connect(gain).connect(context.destination);
-        p.route = { source, gain };
-        if (context.state !== "running") {
-          emit({ error: "Allow audio playback to hear your team." });
-          context.addEventListener(
-            "statechange",
-            () => {
-              if (
-                valid(g, p) &&
-                context.state === "running" &&
-                snapshot.error === "Allow audio playback to hear your team."
-              )
-                emit({ error: null });
-            },
-            { once: true }
-          );
-        }
-      }
       void audio.play().catch(() => {
-        if (valid(g, p) && !context) emit({ error: "Allow audio playback to hear your team." });
+        if (valid(g, p)) emit({ error: "Allow audio playback to hear your team." });
       });
       emit();
     };
@@ -766,10 +726,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         const p = peers.get(uid);
         if (p) p.view.volume = safe;
       } else snapshot = { ...snapshot, volume: safe };
-      for (const p of peers.values()) {
-        p.audio.volume = snapshot.volume * p.view.volume;
-        if (p.route) p.route.gain.gain.value = snapshot.volume * p.view.volume;
-      }
+      for (const p of peers.values()) p.audio.volume = snapshot.volume * p.view.volume;
       emit();
     },
     setMemberVolume(uid, volume) {
@@ -778,7 +735,6 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     async retryPlayback() {
       inputMeter?.resume();
       const g = generation;
-      if ([...peers.values()].some((p) => p.route)) await d.playbackContext()?.resume();
       await Promise.all([...peers.values()].map((p) => p.audio.play()));
       if (valid(g)) emit({ error: null });
     },
