@@ -95,7 +95,10 @@ export function startLiveBoardPolling(options: {
   let stopped = false,
     terminal = false,
     failures = 0,
-    etag: string | null = null;
+    etag: string | null = null,
+    // Cleared once a conditional GET fails at the network layer, so a CORS
+    // preflight that refuses If-None-Match cannot fail every other poll.
+    conditional = true;
   let board: LiveBoard | null = null,
     timer: ReturnType<typeof setTimeout> | undefined;
   let active: AbortController | null = null;
@@ -108,11 +111,16 @@ export function startLiveBoardPolling(options: {
     active = controller;
     const timeout = schedule(() => controller.abort(), 8000);
     let delay = 5000;
+    const sentEtag = conditional && etag !== null;
+    let refused = false;
     try {
       const response = await (options.request ?? fetch)(options.url, {
-        headers: { ...options.headers(), ...(etag ? { "If-None-Match": etag } : {}) },
+        headers: { ...options.headers(), ...(sentEtag ? { "If-None-Match": etag! } : {}) },
         signal: controller.signal,
         cache: "no-store",
+      }).catch((error: unknown) => {
+        refused = sentEtag && error instanceof TypeError;
+        throw error;
       });
       if (stopped || !options.isCurrent()) return;
       if (response.status === 401 || response.status === 403) {
@@ -165,7 +173,11 @@ export function startLiveBoardPolling(options: {
         throw new Error("Board unavailable");
       }
     } catch {
-      if (!stopped && options.isCurrent()) {
+      if (refused) {
+        conditional = false;
+        etag = null;
+        delay = 0;
+      } else if (!stopped && options.isCurrent()) {
         failures += 1;
         delay = Math.max(delay, Math.min(5000 * 2 ** Math.min(failures, 4), 60000));
         emit("retrying");

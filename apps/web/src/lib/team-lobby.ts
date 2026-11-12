@@ -211,6 +211,9 @@ export function createTeamLobbyController(options: {
     busy = false,
     terminal = false,
     etag: string | null = null,
+    // Cleared once a conditional GET fails at the network layer: a CORS
+    // preflight that refuses If-None-Match must not fail every other poll.
+    conditional = true,
     timer: ReturnType<typeof setTimeout> | undefined,
     active: AbortController | undefined,
     queued = false,
@@ -257,6 +260,7 @@ export function createTeamLobbyController(options: {
     active = new AbortController();
     const controller = active;
     const timeout = setTimeout(() => controller.abort(), 8000);
+    const sentEtag = !action && conditional && etag !== null;
     if (action) emit({ pending: true, error: null });
     try {
       const voteAction = action === "approve" || action === "withdraw";
@@ -271,8 +275,8 @@ export function createTeamLobbyController(options: {
           ...options.headers(),
           ...(action
             ? { "Content-Type": "application/json" }
-            : etag
-              ? { "If-None-Match": etag }
+            : sentEtag
+              ? { "If-None-Match": etag! }
               : {}),
         },
         ...(action === "claim" ? { body: JSON.stringify({ part_label: label }) } : {}),
@@ -337,6 +341,12 @@ export function createTeamLobbyController(options: {
       emit({ board, status: "team", error: null, sampledAt: now() });
     } catch (error) {
       etag = null;
+      if (sentEtag && error instanceof TypeError) {
+        // Retry at once without the conditional header instead of failing.
+        conditional = false;
+        queued = true;
+        return;
+      }
       emit({
         error:
           error instanceof Error && error.name !== "AbortError"
