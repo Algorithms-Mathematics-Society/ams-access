@@ -215,6 +215,13 @@ export function TeamVoiceControls({
 
   connectCurrent.current = connect;
 
+  function toggleMute() {
+    const active = session.current;
+    const live = active?.getSnapshot();
+    if (live && (live.status === "connected" || live.status === "reconnecting"))
+      active?.setMuted(!live.muted);
+  }
+
   useEffect(() => {
     function muteShortcut(event: KeyboardEvent) {
       const active = session.current;
@@ -235,7 +242,10 @@ export function TeamVoiceControls({
       ) {
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat) active.setMuted(!active.getSnapshot().muted);
+        // Never unmute before the Live/Muted control is visible.
+        const { status, muted } = active.getSnapshot();
+        if (!event.repeat && (status === "connected" || status === "reconnecting"))
+          active.setMuted(!muted);
       }
     }
     // Capture before the focused editor; one chord must never run both actions.
@@ -260,7 +270,7 @@ export function TeamVoiceControls({
         toolbarTarget={toolbarTarget}
         suspended={suspended}
         snapshot={snapshot}
-        onToggleMute={() => session.current?.setMuted(!snapshot?.muted)}
+        onToggleMute={toggleMute}
       >
         <VStack
           gap={2}
@@ -313,7 +323,7 @@ export function TeamVoiceControls({
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-green)",
                 }}
-                onClick={() => session.current?.setMuted(!snapshot?.muted)}
+                onClick={toggleMute}
               />
             )}
             {(connected || busy || resumeAfterPoll.current) && (

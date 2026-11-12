@@ -187,9 +187,10 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   assert.match(ui, /removeEventListener\("keydown", muteShortcut, true\)/);
   let muted = true;
   let toggles = 0;
+  let status = "connected";
   const session = {
     current: {
-      getSnapshot: () => ({ muted }),
+      getSnapshot: () => ({ muted, status }),
       setMuted: (value) => {
         muted = value;
         toggles++;
@@ -233,6 +234,13 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   assert.equal(dispatch({ key: "M", code: "Semicolon" }).prevented, true);
   assert.equal(dispatch({ key: "Ь", code: "KeyM" }).prevented, true);
   assert.equal(toggles, 3);
+  // Consumed but inert until the Live/Muted control is visible.
+  status = "connecting";
+  assert.equal(dispatch().prevented, true);
+  assert.equal(toggles, 3);
+  status = "reconnecting";
+  dispatch();
+  assert.equal(toggles, 4);
   for (const args of [
     [{ altKey: true }],
     [{ metaKey: true }],
@@ -246,5 +254,5 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   ]) {
     assert.deepEqual(dispatch(...args), { prevented: false, stopped: false, editorCommands: 1 });
   }
-  assert.equal(toggles, 3);
+  assert.equal(toggles, 4);
 });
