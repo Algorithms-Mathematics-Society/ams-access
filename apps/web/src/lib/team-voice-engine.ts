@@ -71,9 +71,11 @@ type Peer = {
   chain: Promise<void>;
 };
 const MAX_PEERS = 4,
-  MAX_ICE = 24,
+  // Fixed lifetime budget for initial negotiation plus three ICE retries.
+  MAX_ICE = 24 * 4,
   MAX_SDP = 48_000,
-  MAX_RETRIES = 6;
+  MAX_RETRIES = 6,
+  MAX_ICE_RESTARTS = 3;
 export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSession {
   const d: TeamVoiceDeps = {
     inputMeter: createVoiceInputMeter,
@@ -308,11 +310,32 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
           p.making = false;
         }
       });
-    pc.onconnectionstatechange = () => {
-      if (valid(g, p) && pc.connectionState === "failed") {
+    // A failed relay path is restarted on the same connection: restartIce() fires
+    // negotiationneeded and perfect negotiation re-offers. Bounded per failure run.
+    let restarts = 0,
+      watching = false;
+    const recover = () => {
+      watching = false;
+      if (!valid(g, p) || pc.connectionState === "connected") return;
+      if (restarts >= MAX_ICE_RESTARTS || typeof pc.restartIce !== "function") {
+        remove(uid);
+        return emit({ error: "A teammate audio connection failed." });
+      }
+      restarts++;
+      // Keep lifetime ICE/description limits: remote restarts use the same allowance.
+      watching = true;
+      later(recover, 15_000);
+      try {
+        pc.restartIce();
+      } catch {
         remove(uid);
         emit({ error: "A teammate audio connection failed." });
       }
+    };
+    pc.onconnectionstatechange = () => {
+      if (!valid(g, p)) return;
+      if (pc.connectionState === "connected") restarts = 0;
+      else if (pc.connectionState === "failed" && !watching) recover();
     };
     emit();
   }

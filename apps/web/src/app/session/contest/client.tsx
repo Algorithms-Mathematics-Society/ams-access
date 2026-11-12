@@ -4992,6 +4992,7 @@ export default function ContestPageClient() {
                 submitConfirm ||
                 showSupportModal ||
                 showSupportChat ||
+                showMediaToggleWarning ||
                 timeUpState !== "idle"
               }
             />

@@ -292,7 +292,7 @@ test("malformed and excessive ICE/SDP cannot grow candidate queue or peers", asy
     data: { type: "offer", sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" },
   });
   await h.flush();
-  assert.ok(h.pcs[0].candidates.length <= 64);
+  assert.ok(h.pcs[0].candidates.length <= 96);
   assert.equal(h.pcs.length, 1);
   h.session.stop();
 });
@@ -479,4 +479,136 @@ test("default browser timers preserve their receiver during join and teardown", 
   }
   assert.equal(stopped, true);
   assert.equal(pending.size, 0);
+});
+
+test("failed peer retries ICE three times without duplicating peers or microphone capture", async () => {
+  const h = harness();
+  await h.welcome();
+  h.sockets[0].autoPong = true;
+  const pc = h.pcs[0];
+  let restarts = 0;
+  pc.restartIce = () => restarts++;
+  pc.connectionState = "failed";
+  pc.onconnectionstatechange();
+  pc.onconnectionstatechange();
+  assert.equal(restarts, 1);
+  assert.equal(h.session.getSnapshot().peers.length, 1);
+  await h.tick(30_000);
+  assert.equal(restarts, 3);
+  await h.tick(15_000);
+  assert.equal(restarts, 3);
+  assert.equal(pc.closed, true);
+  assert.equal(h.session.getSnapshot().peers.length, 0);
+  assert.equal(h.pcs.length, 1);
+  assert.equal(h.tracks.length, 1);
+  assert.match(h.session.getSnapshot().error, /teammate audio connection failed/);
+  h.session.stop();
+  assert.equal(h.timers.size, 0);
+});
+
+test("recovered peer resets its bounded retry budget and stale timers do not restart connected audio", async () => {
+  const h = harness();
+  await h.welcome();
+  h.sockets[0].autoPong = true;
+  const pc = h.pcs[0];
+  let restarts = 0;
+  pc.restartIce = () => restarts++;
+  pc.connectionState = "failed";
+  pc.onconnectionstatechange();
+  pc.connectionState = "connected";
+  pc.onconnectionstatechange();
+  await h.tick(15_000);
+  assert.equal(restarts, 1);
+  pc.connectionState = "failed";
+  pc.onconnectionstatechange();
+  assert.equal(restarts, 2);
+  await h.tick(30_000);
+  assert.equal(restarts, 4);
+  assert.equal(h.session.getSnapshot().peers.length, 1);
+  h.session.stop();
+  await h.tick(60_000);
+  assert.equal(restarts, 4);
+});
+
+test("peer departure prevents its pending ICE recovery from restarting audio", async () => {
+  const h = harness();
+  await h.welcome();
+  const pc = h.pcs[0];
+  let restarts = 0;
+  pc.restartIce = () => restarts++;
+  pc.connectionState = "failed";
+  pc.onconnectionstatechange();
+  h.message({ type: "peer-left", member_uid: "peer0" });
+  await h.tick(15_000);
+  assert.equal(restarts, 1);
+  assert.equal(pc.closed, true);
+  h.session.stop();
+});
+
+test("unavailable or throwing restartIce closes only the failed peer", async () => {
+  for (const unsupported of [true, false]) {
+    const h = harness();
+    await h.welcome("a", 2);
+    const pc = h.pcs[0];
+    if (!unsupported)
+      pc.restartIce = () => {
+        throw new Error("closed connection");
+      };
+    pc.connectionState = "failed";
+    assert.doesNotThrow(() => pc.onconnectionstatechange());
+    assert.equal(pc.closed, true);
+    assert.equal(h.session.getSnapshot().peers.length, 1);
+    assert.equal(h.pcs[1].closed, false);
+    assert.equal(h.tracks[0].stops, 0);
+    h.session.stop();
+  }
+});
+
+test("remote ICE restart can exchange fresh candidates after the first 24, with a fixed lifetime cap", async () => {
+  const h = harness();
+  await h.welcome();
+  h.sockets[0].autoPong = true;
+  const pc = h.pcs[0];
+  const candidate = { toJSON: () => ({ candidate: "candidate:test" }) };
+  const sendCandidates = (count) => {
+    for (let i = 0; i < count; i++) {
+      pc.onicecandidate({ candidate });
+      h.message({ type: "signal", from: "peer0", kind: "ice", data: candidate.toJSON() });
+    }
+  };
+  sendCandidates(24);
+  await h.tick(5_000);
+  h.message({
+    type: "signal",
+    from: "peer0",
+    kind: "offer",
+    data: { type: "offer", sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:restart\r\n" },
+  });
+  for (let i = 0; i < 20; i++) await h.flush();
+  assert.match(pc.remoteDescription.sdp, /ice-ufrag:restart/);
+  sendCandidates(1);
+  await h.tick(5_000);
+  const sentIce = () =>
+    h.sockets[0].sent.filter((message) => message.type === "signal" && message.kind === "ice")
+      .length;
+  assert.equal(sentIce(), 25);
+  assert.equal(pc.candidates.length, 25);
+  sendCandidates(100);
+  for (let i = 0; i < 30; i++) await h.flush();
+  await h.tick(15_000);
+  assert.equal(sentIce(), 96);
+  assert.equal(pc.candidates.length, 96);
+  // Another restart offer cannot replenish the lifetime budget.
+  h.message({
+    type: "signal",
+    from: "peer0",
+    kind: "offer",
+    data: { type: "offer", sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:again\r\n" },
+  });
+  await h.flush();
+  sendCandidates(1);
+  await h.tick(5_000);
+  assert.equal(sentIce(), 96);
+  assert.equal(pc.candidates.length, 96);
+  h.session.stop();
 });
