@@ -15,7 +15,13 @@ export type TeamVoicePeer = {
 };
 export type TeamVoiceSnapshot = {
   status:
-    "idle" | "connecting" | "connected" | "reconnecting" | "unavailable" | "closed" | "replaced";
+    | "idle"
+    | "connecting"
+    | "connected"
+    | "reconnecting"
+    | "unavailable"
+    | "closed"
+    | "replaced";
   muted: boolean;
   inputLevel?: number | null;
   volume: number;

@@ -419,7 +419,11 @@ test("microphone failures retain their cause without opening a voice socket", as
     ["NotFoundError", "No microphone was found."],
     ["NotReadableError", "Microphone could not be opened."],
   ]) {
-    const h = harness({ acquireMicrophone: async () => { throw new DOMException("private detail", name); } });
+    const h = harness({
+      acquireMicrophone: async () => {
+        throw new DOMException("private detail", name);
+      },
+    });
     await h.session.start();
     assert.equal(h.session.getSnapshot().status, "unavailable");
     assert.equal(h.session.getSnapshot().error, expected);
