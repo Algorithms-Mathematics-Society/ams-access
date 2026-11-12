@@ -152,8 +152,9 @@ fn dns_resolvers() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `nameserver[0] : 192.168.1.1` lines; scoped IPv6 (`fe80::1%en0`) is skipped
-/// because the pf rules are IPv4-only.
+/// `nameserver[0] : 192.168.1.1` lines. Scoped IPv6 (`fe80::1%en0`) does not
+/// parse as an IP and is skipped; other IPv6 resolvers are kept, and the helper
+/// drops them because the pf rules are IPv4-only.
 fn parse_scutil_resolvers(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines().map(str::trim) {
