@@ -66,6 +66,9 @@ export function pollVoiceTeam(options: {
 }) {
   let stopped = false;
   let etag: string | null = null;
+  // A CORS preflight that rejects If-None-Match fails as a TypeError. Retry
+  // once unconditionally and stop sending it for this poller's life.
+  let conditional = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: AbortController | undefined;
   async function tick() {
@@ -73,7 +76,15 @@ export function pollVoiceTeam(options: {
     const deadline = setTimeout(() => pending?.abort(), 8_000);
     let terminal = false;
     try {
-      const result = await options.read(pending.signal, etag);
+      const signal = pending.signal;
+      let result: TeamVoiceRead;
+      try {
+        result = await options.read(signal, conditional ? etag : null);
+      } catch (error) {
+        if (!(error instanceof TypeError) || !conditional || !etag || signal.aborted) throw error;
+        conditional = false;
+        result = await options.read(signal, null);
+      }
       if (stopped) return;
       if (result.kind === "team") etag = result.etag;
       terminal = result.kind === "solo";
