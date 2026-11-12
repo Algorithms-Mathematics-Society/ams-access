@@ -13,6 +13,7 @@ mod linux_network;
 mod lockdown_lifecycle;
 #[cfg(target_os = "linux")]
 static LINUX_NETWORK: linux_network::Coordinator = linux_network::Coordinator::new();
+mod network_allowlist;
 mod network_probe;
 mod reference_navigation;
 mod shutdown;
@@ -2961,6 +2962,7 @@ fn get_proctoring_log_now(app: tauri::AppHandle) -> Vec<ProctoringEventEntry> {
 
 /// Restrict native and (for supervised Windows builds) verified private WebView2
 /// outbound destinations to `allowed_domains`, resolved to IPs at call time.
+/// The native-owned dedicated voice relay is added after the API resolves.
 /// Rules persist until `disable_network_lockdown` is called.
 #[tauri::command]
 async fn enable_network_lockdown(
@@ -2991,9 +2993,7 @@ async fn enable_network_lockdown(
             }
             // DNS-only destinations must never turn an unresolved API allowlist
             // into a successful lockdown that prevents reaching the contest.
-            if ips.is_empty() {
-                return Err("Could not resolve any allowed domains to IPs".into());
-            }
+            let mut ips = network_allowlist::with_reviewed_voice_relay(ips)?;
             for ns in resolv_conf_nameservers() {
                 if !ips.contains(&ns) {
                     ips.push(ns);
@@ -3012,10 +3012,11 @@ async fn enable_network_lockdown(
         // Resolvers are included and the API host is re-resolved while the
         // lockdown is live; see platform_rs::macos::allowlist.
         tauri::async_runtime::spawn_blocking(move || {
-            let ips = platform_rs::macos::resolve_allowlist(&allowed_domains);
-            if ips.is_empty() {
-                return Err("Could not resolve any allowed domains to IPs".to_string());
-            }
+            // resolve_allowlist adds DNS only after the API resolves. The live
+            // follower retains these initial IPs when it refreshes API DNS.
+            let ips = network_allowlist::with_reviewed_voice_relay(
+                platform_rs::macos::resolve_allowlist(&allowed_domains),
+            )?;
             platform_rs::macos::enable_and_follow(&allowed_domains, &ips).map(|_| true)
         })
         .await
@@ -3073,9 +3074,7 @@ async fn enable_network_lockdown(
             }
         }
 
-        if ips.is_empty() {
-            return Err("Could not resolve any allowed domains to IPs".to_string());
-        }
+        let ips = network_allowlist::with_reviewed_voice_relay(ips)?;
 
         // The Linux/macOS client returns Err when the privileged helper is not
         // installed/running. Propagate that failure to ContestLaunch's final network

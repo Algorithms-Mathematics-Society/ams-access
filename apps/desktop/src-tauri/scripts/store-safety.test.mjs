@@ -15,6 +15,41 @@ test("Windows executable rebuilds its embedded icon when the artwork changes", a
   assert.match(build, /\.window_icon_path\("icons\/icon\.ico"\)/);
 });
 
+test("release lockdown adds the native reviewed relay in every platform branch", async () => {
+  const [desktop, allowlist, onboarding, macos] = await Promise.all([
+    read("apps/desktop/src-tauri/src/lib.rs"),
+    read("apps/desktop/src-tauri/src/network_allowlist.rs"),
+    read("apps/web/src/app/session/onboarding/page.tsx"),
+    read("packages/platform-rs/src/macos/allowlist.rs"),
+  ]);
+  assert.match(desktop, /^mod network_allowlist;/m);
+  const enable = desktop.slice(
+    desktop.indexOf("async fn enable_network_lockdown("),
+    desktop.indexOf("/// Parse `nameserver <ip>`")
+  );
+  const branches = [
+    enable.slice(0, enable.indexOf('#[cfg(target_os = "macos")]')),
+    enable.slice(
+      enable.indexOf('#[cfg(target_os = "macos")]'),
+      enable.indexOf('#[cfg(not(any(target_os = "linux", target_os = "macos")))]')
+    ),
+    enable.slice(enable.indexOf('#[cfg(not(any(target_os = "linux", target_os = "macos")))]')),
+  ];
+  for (const branch of branches) {
+    assert.match(branch, /network_allowlist::with_reviewed_voice_relay\(/);
+  }
+  assert.match(allowlist, /const REVIEWED_VOICE_RELAY_IP: &str = "43\.204\.79\.244";/);
+  assert.doesNotMatch(allowlist, /std::env|ToSocketAddrs|serde/);
+  // Initial entry, practice, retries, and approved resumes use this one native
+  // command. JS supplies only the strict API host, never server-supplied ICE.
+  assert.equal((onboarding.match(/"enable_network_lockdown"/g) ?? []).length, 2);
+  assert.equal(
+    (onboarding.match(/allowedDomains: \[getNetworkLockdownAllowlistHost\(\)\]/g) ?? []).length,
+    2
+  );
+  assert.match(macos, /let next = merged\(&live\.ips, &fresh\);/);
+});
+
 test("Windows installers and Store tiles use the shared icon assets", async () => {
   const config = JSON.parse(await read("apps/desktop/src-tauri/tauri.conf.json"));
   const icon = "icons/icon.ico";
