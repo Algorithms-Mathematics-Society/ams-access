@@ -42,7 +42,13 @@ export function TeamVoicePresentation({
   if (!toolbarTarget) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   return createPortal(
-    <HStack gap={1} align="center" inert={suspended || undefined} aria-label="Team voice">
+    <HStack
+      gap={1}
+      align="center"
+      inert={suspended || undefined}
+      role="group"
+      aria-label="Team voice"
+    >
       {connected && (
         <Button
           size="sm"
@@ -61,6 +67,7 @@ export function TeamVoicePresentation({
       {snapshot?.peers.map((peer) => (
         <Text
           key={peer.memberUid}
+          role="img"
           aria-label={`${peer.displayName}: ${peer.speaking && !peer.muted ? "speaking" : peer.muted ? "muted" : "in voice"}`}
           style={{
             color:
