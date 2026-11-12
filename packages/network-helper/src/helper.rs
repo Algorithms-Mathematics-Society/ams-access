@@ -1059,7 +1059,26 @@ fn pf_owner() -> Option<(String, libc::pid_t)> {
         .next()
         .and_then(|p| p.trim().parse().ok())
         .unwrap_or(0);
-    (boot == pf_boot_time() && !token.is_empty()).then(|| (token.to_string(), pid))
+    (same_boot(boot, &pf_boot_time()) && !token.is_empty()).then(|| (token.to_string(), pid))
+}
+
+/// `kern.boottime` follows the wall clock, so a clock adjustment moves it
+/// slightly. Within a minute is the same boot; a reboot moves it by the whole
+/// uptime. Without this, a clock step left the rules unclaimed, so any token
+/// could lift them.
+#[cfg(target_os = "macos")]
+fn same_boot(recorded: &str, now: &str) -> bool {
+    fn secs(boot: &str) -> Option<i64> {
+        boot.split("sec = ")
+            .nth(1)?
+            .split(',')
+            .next()?
+            .trim()
+            .parse()
+            .ok()
+    }
+    recorded == now
+        || matches!((secs(recorded), secs(now)), (Some(a), Some(b)) if (a - b).abs() <= 60)
 }
 
 /// Root may signal any live process, so only ESRCH means it is gone.
