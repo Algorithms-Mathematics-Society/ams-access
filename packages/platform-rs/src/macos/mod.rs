@@ -1640,11 +1640,22 @@ pub fn network_helper_running() -> bool {
     helper_send(r#"{"cmd":"ping"}"#).is_ok()
 }
 
-/// An installed helper from before on-demand start: launchd keeps it running
-/// all the time. Setup reinstalls it once so it runs only while needed.
+/// Helper protocol this app needs; matches MACOS_PROTOCOL in network-helper.
+const HELPER_PROTOCOL: u32 = 2;
+
+/// An installed helper older than this app needs, so setup reinstalls it: one
+/// from before on-demand start (launchd keeps it running all the time), or one
+/// that rejects this app's protocol probe. Only a definite rejection counts; a
+/// busy or unreachable helper is not reported as outdated.
 pub fn network_helper_outdated() -> bool {
-    std::fs::read_to_string(HELPER_PLIST_DEST)
+    if std::fs::read_to_string(HELPER_PLIST_DEST)
         .is_ok_and(|plist| !plist.contains("<key>Sockets</key>"))
+    {
+        return true;
+    }
+    let probe = serde_json::json!({ "cmd": "ping_protocol", "protocol": HELPER_PROTOCOL });
+    helper_send(&probe.to_string())
+        .is_err_and(|error| error.starts_with("invalid request") || error == "unsupported protocol")
 }
 
 /// Install the helper binary and LaunchDaemon plist, then bootstrap the daemon.

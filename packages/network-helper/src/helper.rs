@@ -9,6 +9,7 @@
 //! Protocol (shared verbatim with the macOS/Linux clients): newline-delimited
 //! JSON, one request -> one response.
 //!   Request:  {"cmd":"ping"}
+//!             {"cmd":"ping_protocol","protocol":N}   (macOS: ok when N <= MACOS_PROTOCOL)
 //!             {"cmd":"enable","ips":["1.2.3.4"],"resolvers":["9.9.9.9"],"token":"<hex>"}
 //!             {"cmd":"disable","token":"<token from enable>"}
 //!   Response: {"ok":true}
@@ -281,10 +282,22 @@ fn remove_marker() -> Result<(), String> {
         .map_err(|error| format!("firewall restored but recovery marker cleanup failed: {error}"))
 }
 
+/// Bumped whenever the macOS helper gains behaviour the app relies on. The app
+/// treats a helper that rejects its `ping_protocol` as outdated and reinstalls it.
+/// 2: lockdown token ownership, team-signature client check, DNS-port-only
+///    resolvers, token-less restore once the arming app has exited.
+#[cfg(target_os = "macos")]
+const MACOS_PROTOCOL: u32 = 2;
+
 #[derive(Deserialize)]
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
     Ping,
+    #[cfg(target_os = "macos")]
+    #[serde(rename = "ping_protocol")]
+    PingProtocol {
+        protocol: u32,
+    },
     #[cfg(target_os = "linux")]
     #[serde(rename = "ping_v2")]
     PingV2,
@@ -973,6 +986,10 @@ fn dispatch(json: &str) -> String {
         Ok(Request::Ping) => json_ok(),
         #[cfg(target_os = "linux")]
         Ok(Request::PingV2) => json_ok(),
+        #[cfg(target_os = "macos")]
+        Ok(Request::PingProtocol { protocol }) if protocol <= MACOS_PROTOCOL => json_ok(),
+        #[cfg(target_os = "macos")]
+        Ok(Request::PingProtocol { .. }) => json_err("unsupported protocol"),
         Ok(Request::Enable {
             ips,
             resolvers,
