@@ -14,6 +14,7 @@ import {
   benchmarkStatus,
   benchmarkTrend,
   readBoundedResponse,
+  BENCHMARK_HISTORY_LIMIT,
   type BenchmarkRun,
 } from "@/lib/team-benchmarks";
 const ns = (n: number | null) => (n === null ? "unavailable" : `${n.toLocaleString()} ns`);
@@ -39,7 +40,8 @@ export function TeamBenchmarks({
     [profile, setProfile] = useState<{ url: string; revision: number } | null>(null),
     [stacks, setStacks] = useState<{ text: string; revision: number; truncated: boolean } | null>(
       null
-    );
+    ),
+    [truncated, setTruncated] = useState(false);
   const flight = useRef<AbortController | null>(null),
     objectUrl = useRef<string | null>(null),
     epoch = useRef(0),
@@ -85,11 +87,13 @@ export function TeamBenchmarks({
         );
       const bytes = await readBoundedResponse(
         response,
-        artifact ? 32 * 1024 * 1024 : 2 * 1024 * 1024
+        artifact ? 32 * 1024 * 1024 : 8 * 1024 * 1024
       );
       if (!current()) return;
       if (!artifact) {
-        setRuns(parseBenchmarks(JSON.parse(new TextDecoder().decode(bytes))));
+        const history: unknown = JSON.parse(new TextDecoder().decode(bytes));
+        setRuns(parseBenchmarks(history));
+        setTruncated(Array.isArray(history) && history.length > BENCHMARK_HISTORY_LIMIT);
         setLoaded(true);
       } else {
         const expected = artifact === "flamegraph" ? "image/svg+xml" : "text/plain";
@@ -153,6 +157,7 @@ export function TeamBenchmarks({
     setError(null);
     clearProfile();
     setStacks(null);
+    setTruncated(false);
     if (visible) void request();
     const stop = () => {
       epoch.current++;
@@ -161,6 +166,7 @@ export function TeamBenchmarks({
       setBusy(false);
       setRuns([]);
       setLoaded(false);
+      setTruncated(false);
       clearProfile();
       setStacks(null);
       clearDownloads();
@@ -196,6 +202,9 @@ export function TeamBenchmarks({
         count before treating a difference as an improvement.
       </Text>
       {error && <Text role="alert">{error}</Text>}
+      {truncated && (
+        <Text>Showing the newest {BENCHMARK_HISTORY_LIMIT.toLocaleString()} measurements.</Text>
+      )}
       {loaded && !runs.length && (
         <Text>
           No benchmark measurements yet. They appear when benchmarking is enabled and your team has

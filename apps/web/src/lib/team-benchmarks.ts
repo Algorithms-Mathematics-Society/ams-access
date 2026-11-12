@@ -17,10 +17,12 @@ const record = (v: unknown): v is Record<string, unknown> =>
 const number = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+/** The server returns every run, newest first; only the newest are kept. */
+export const BENCHMARK_HISTORY_LIMIT = 1000;
 export function parseBenchmarks(value: unknown): BenchmarkRun[] {
-  if (!Array.isArray(value) || value.length > 1000) throw new Error("Invalid benchmark history");
+  if (!Array.isArray(value)) throw new Error("Invalid benchmark history");
   const ids = new Set<string>();
-  const runs = value.map((v): BenchmarkRun => {
+  const runs = value.slice(0, BENCHMARK_HISTORY_LIMIT).map((v): BenchmarkRun => {
     if (
       !record(v) ||
       typeof v.uid !== "string" ||
