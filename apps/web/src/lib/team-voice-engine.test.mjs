@@ -372,7 +372,9 @@ test("microphone timeout releases a late owned clone", async () => {
   });
   const starting = h.session.start();
   await h.flush();
-  await h.tick(10000);
+  await h.tick(59999);
+  assert.equal(h.session.getSnapshot().status, "connecting");
+  await h.tick(1);
   assert.equal(h.session.getSnapshot().status, "unavailable");
   const track = h.track();
   resolve(h.stream([track]));

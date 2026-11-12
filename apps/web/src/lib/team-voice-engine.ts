@@ -484,9 +484,10 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     try {
       const token = (await options.getToken?.()) ?? options.token ?? "";
       if (!valid(g)) return;
+      // Long enough for a first-run macOS microphone prompt to be read and answered.
       later(() => {
         if (!microphone) finish("unavailable", "Microphone request timed out.");
-      }, 10_000);
+      }, 60_000);
       let owned: MediaStream;
       try {
         owned = await options.acquireMicrophone();
