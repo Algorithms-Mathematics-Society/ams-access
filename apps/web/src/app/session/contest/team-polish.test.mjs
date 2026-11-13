@@ -196,7 +196,7 @@ test("voice presentation moves between reserved lobby region and toolbar without
       compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
   )((name) => {
-    if (name === "react") return { useEffect() {}, useState: () => [false, () => {}] };
+    if (name === "react") return { useEffect() {}, useRef: (value) => ({ current: value }), useState: () => [false, () => {}] };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name === "react-dom") return { createPortal: (node, target) => ({ node, target }) };
     return Object.fromEntries(
