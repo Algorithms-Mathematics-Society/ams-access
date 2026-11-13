@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import React from "react";
+import { jsx, jsxs } from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
 import { startCameraPreview } from "../../../lib/camera-readiness.ts";
 
 const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
@@ -219,4 +222,63 @@ test("lobby camera occupies its own region even after the workspace preview was 
     "video",
     "same video subtree remains mounted across presentation changes"
   );
+});
+
+test("five rendered camera choices remain in a bounded scroll region in workspace and lobby", () => {
+  const tileSource = readFileSync(new URL("./components/CameraTile.tsx", import.meta.url), "utf8");
+  const exports = {};
+  const cameras = Array.from({ length: 5 }, (_, index) => ({
+    kind: "videoinput",
+    deviceId: `camera-${index + 1}`,
+    label: `Camera ${index + 1}`,
+  }));
+  const Stack = ({ children, ...props }) =>
+    React.createElement("div", { style: props.style, role: props.role, "aria-label": props["aria-label"] }, React.Children.toArray(children));
+  const renderedButtons = [];
+  const Button = ({ label, ...props }) => {
+    renderedButtons.push({ label, onClick: props.onClick });
+    return React.createElement("button", { "aria-label": label, style: props.style }, label);
+  };
+  const Text = ({ children }) => React.createElement("span", null, children);
+  new Function(
+    "require",
+    "exports",
+    ts.transpileModule(tileSource, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText
+  )((name) => {
+    if (name === "react") return { useEffect() {}, useState: (initial) =>
+      Array.isArray(initial) ? [cameras, () => {}] : [true, () => {}] };
+    if (name === "react/jsx-runtime") return { jsx, jsxs };
+    if (name === "@astryxdesign/core/Stack") return { HStack: Stack, VStack: Stack };
+    if (name === "@astryxdesign/core/Button") return { Button };
+    if (name === "@astryxdesign/core/Text") return { Text };
+    if (name === "@astryxdesign/core/StatusDot") return { StatusDot: Text };
+    return Object.fromEntries(["Video", "VideoOff", "Mic", "MicOff", "SwitchCamera"].map((key) => [key, Text]));
+  }, exports);
+  const selected = [];
+  const props = {
+    cameraVideoRef: { current: null },
+    cameraStream: {},
+    cameraError: null,
+    sidebarCollapsed: false,
+    cameraCollapsed: false,
+    cameraStatusLabel: "Camera ready",
+    cameraHealthy: true,
+    cameraEnabled: true,
+    micEnabled: false,
+    handleToggleMedia() {},
+    onPickCamera: (deviceId) => selected.push(deviceId),
+  };
+  for (const inLobby of [false, true]) {
+    renderedButtons.length = 0;
+    const markup = renderToStaticMarkup(exports.CameraTile({ ...props, inLobby }));
+    assert.equal((markup.match(/aria-label="Camera [1-5]"/g) ?? []).length, 5);
+    assert.equal((markup.match(/<video\b/g) ?? []).length, 1);
+    assert.match(markup, /max-height:calc\(100% - var\(--spacing-10\) - var\(--spacing-4\)\)/);
+    assert.match(markup, /overflow-y:auto/);
+    assert.match(markup, /box-sizing:border-box/);
+    renderedButtons.find((button) => button.label === "Camera 5").onClick();
+  }
+  assert.deepEqual(selected, ["camera-5", "camera-5"]);
 });
