@@ -10,6 +10,7 @@ mod keyboard_recovery;
 mod linux_media_permission;
 #[cfg(target_os = "linux")]
 mod linux_network;
+mod linux_voice;
 mod lockdown_lifecycle;
 #[cfg(target_os = "linux")]
 static LINUX_NETWORK: linux_network::Coordinator = linux_network::Coordinator::new();
@@ -3653,6 +3654,7 @@ static SHUTDOWN: shutdown::Coordinator = shutdown::Coordinator::new();
 static EVENT_LIFECYCLE: Mutex<bool> = Mutex::new(false);
 
 fn finish_shutdown() {
+    linux_voice::shutdown();
     SHUTDOWN.run(|| {
         let mut shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
         *shutting_down = true;
@@ -3932,9 +3934,20 @@ pub fn run() {
                         webview.app_handle().config().build.dev_url.as_ref(),
                     )
                 })
+                .on_page_load(|webview, payload| {
+                    if webview.label() == "main"
+                        && payload.event() == tauri::webview::PageLoadEvent::Started
+                    {
+                        linux_voice::suspend();
+                    }
+                })
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            linux_voice::linux_voice_probe,
+            linux_voice::linux_voice_start,
+            linux_voice::linux_voice_call,
+            linux_voice::linux_voice_stop,
             cppref::read_cppref_asset,
             collect_device_state,
             evaluate_session_readiness,
@@ -4258,8 +4271,11 @@ pub fn run() {
             let _ = app;
             Ok(())
         })
-        .on_window_event(|_win, event| {
+        .on_window_event(|win, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                if win.label() == "main" {
+                    linux_voice::shutdown();
+                }
                 // Preserve destruction-time recovery even if Exit is delayed,
                 // but never overlap platform teardown with the signal worker.
                 let shutting_down = EVENT_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());

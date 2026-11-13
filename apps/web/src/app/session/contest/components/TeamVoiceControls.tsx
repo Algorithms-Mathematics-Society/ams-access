@@ -31,6 +31,7 @@ import {
   type TeamVoiceSession,
   type TeamVoiceSnapshot,
 } from "@/lib/team-voice-engine";
+import { createLinuxVoiceBackend, probeLinuxVoice } from "@/lib/team-voice-native";
 
 /** One voice session consumes the room’s shared team projection across lobby and workspace. */
 export function TeamVoiceControls({
@@ -59,7 +60,11 @@ export function TeamVoiceControls({
     compact,
     toolbarTarget,
   });
-  const supportsRtc = typeof RTCPeerConnection === "function";
+  const linuxNative = typeof navigator !== "undefined" && navigator.platform === "Linux x86_64";
+  const [nativeSupported, setNativeSupported] = useState(false);
+  const nativeProbe = useRef<Promise<boolean> | null>(null);
+  const connectPending = useRef(false);
+  const supportsRtc = linuxNative ? nativeSupported : typeof RTCPeerConnection === "function";
   const [snapshot, setSnapshot] = useState<TeamVoiceSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
@@ -73,6 +78,20 @@ export function TeamVoiceControls({
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [resumePending, setResumePending] = useState(false);
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    if (!linuxNative || !window.__TAURI__) return;
+    let alive = true;
+    const probe = probeLinuxVoice();
+    nativeProbe.current = probe;
+    void probe.then((available) => {
+      if (alive) setNativeSupported(available);
+    });
+    return () => {
+      alive = false;
+      nativeProbe.current = null;
+    };
+  }, [linuxNative]);
 
   useEffect(() => {
     autoJoin.current.reset();
@@ -157,14 +176,26 @@ export function TeamVoiceControls({
     const authorized = current.current;
     const lifecycle = lifecycleAbort.current;
     if (!authorized() || !open.current) return;
-    if (!supportsRtc) {
+    if (connectPending.current) return;
+    connectPending.current = true;
+    const available = linuxNative ? await (nativeProbe.current ?? probeLinuxVoice()) : supportsRtc;
+    if (!authorized() || !open.current) {
+      connectPending.current = false;
+      return;
+    }
+    if (!available) {
+      connectPending.current = false;
       setMessage(
         "Team voice is unavailable in this app. Ask your organizer for a supported app build or device."
       );
       return;
     }
+    if (linuxNative) setNativeSupported(true);
     autoJoin.current.take(true);
-    if (session.current?.getSnapshot().status === "connecting") return;
+    if (session.current?.getSnapshot().status === "connecting") {
+      connectPending.current = false;
+      return;
+    }
     setMessage(null);
     unsubscribeSession.current?.();
     session.current?.stop();
@@ -175,7 +206,8 @@ export function TeamVoiceControls({
         if (!authorized()) throw new Error("Voice session ended");
         return participantToken() ?? "";
       },
-      acquireMicrophone: () => acquireVoiceMicrophone(cameraSession.current()),
+      acquireMicrophone: linuxNative ? undefined : () => acquireVoiceMicrophone(cameraSession.current()),
+      nativeVoice: linuxNative ? createLinuxVoiceBackend : undefined,
       refreshCredentials: async () => {
         if (!authorized()) throw new Error("Voice session ended");
         const credentials = await readVoiceCredentials(
@@ -200,14 +232,21 @@ export function TeamVoiceControls({
         active.stop();
         return;
       }
-      if ("setSinkId" in HTMLMediaElement.prototype) {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        if (current.current() && session.current === active)
-          setOutputs(devices.filter((device) => device.kind === "audiooutput"));
+      if (!linuxNative && "setSinkId" in HTMLMediaElement.prototype) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          if (current.current() && session.current === active)
+            setOutputs(devices.filter((device) => device.kind === "audiooutput"));
+        } catch {
+          // Output selection is optional; system default still plays connected audio.
+          if (current.current() && session.current === active) setOutputs([]);
+        }
       }
     } catch {
       if (current.current() && session.current === active)
         setMessage("Voice could not start. Check your connection, then choose Retry voice.");
+    } finally {
+      connectPending.current = false;
     }
   }
 
@@ -341,12 +380,13 @@ export function TeamVoiceControls({
               />
             )}
             {connected && <Text>Mute shortcut: Ctrl+Shift+M</Text>}
-            {connected && snapshot?.error && (
+            {connected && snapshot?.error === "Allow audio playback to hear your team." && !linuxNative && (
               <Button
                 label="Retry audio playback"
                 onClick={() =>
                   void session.current
                     ?.retryPlayback()
+                    .then(() => setMessage(null))
                     .catch(() =>
                       setMessage("Playback is still blocked. Check system audio output and retry.")
                     )
@@ -358,18 +398,20 @@ export function TeamVoiceControls({
             <Text role="status">
               {!supportsRtc
                 ? "Ask your organizer for a supported app build or device. You can continue with team parts."
-                : (message ?? projectionMessage ?? voiceErrorAdvice(snapshot?.error ?? null))}
+                : (message ?? (snapshot?.error ? voiceErrorAdvice(snapshot.error) : projectionMessage))}
             </Text>
           )}
           {connected && (
             <VStack gap={1}>
               <Text>Microphone starts muted. Only unmuting sends your voice to the team.</Text>
               <Text aria-label="Microphone input level">
-                {snapshot?.inputLevel == null
+                {linuxNative
+                  ? "Microphone level is controlled by the system audio settings."
+                  : snapshot?.inputLevel == null
                   ? "Input level unavailable. Enable the local meter to check your microphone."
                   : `Microphone input: ${Math.round(snapshot.inputLevel * 100)}%`}
               </Text>
-              {snapshot?.inputLevel == null && (
+              {!linuxNative && snapshot?.inputLevel == null && (
                 <Button
                   label="Enable microphone meter"
                   variant="ghost"
@@ -415,7 +457,7 @@ export function TeamVoiceControls({
               </List>
             </VStack>
           )}
-          {connected && (
+          {connected && !linuxNative && (
             <HStack gap={4} wrap="wrap" align="start">
               {outputs.some((device) => !device.label) && (
                 <Text>

@@ -58,7 +58,12 @@
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good",
           "gstreamer1.0-plugins-bad",
-          "gstreamer1.0-nice"
+          "gstreamer1.0-nice",
+          "gstreamer1.0-pulseaudio",
+          "libgstreamer1.0-0",
+          "libgstreamer-plugins-base1.0-0",
+          "libgstreamer-plugins-bad1.0-0",
+          "libnice10"
         ],
         "postInstallScript": "debian/postinst",
         "preRemoveScript": "debian/prerm"
