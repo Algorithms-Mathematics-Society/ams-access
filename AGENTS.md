@@ -2,6 +2,14 @@
 
 Project-specific guidance for AI coding agents.
 
+## Small-task delegation
+
+- When the user gives a small, independent task, create a sub-agent and hand it over. Examples include CI checks, already-authorized merges, and issue updates.
+- Give each sub-agent clear ownership and scope; do not duplicate its work. Continue the main task while the delegated work runs when independent work remains.
+- Delegation does not expand authorization or bypass approval requirements. Preserve existing scope, approval requirements, and other agents' changes; review the result before reporting completion.
+
+## Project guidance
+
 Changes must account for at least 3,000 concurrent contest participants. Review
 request rates, bounded polling/retries, duplicate prevention, memory growth and
 backend/judge costs. Verify request bounds for affected flows; do not equate
