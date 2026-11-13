@@ -26,6 +26,7 @@ function fixture(shared = { accepted: new Map(), posts: [], store: new Map(), ne
     editorFiles: [{ id: "main", content: "answer one" }],
     activeFileId: "main",
     selectedLanguage: "cpp17",
+    questionEntrypoints: {},
     latestActiveDraftRef: { current: null },
     submitInFlightRef: { current: false },
     submissionRefreshRef: {
@@ -43,6 +44,9 @@ function fixture(shared = { accepted: new Map(), posts: [], store: new Map(), ne
     acknowledgedSubmitKeysRef: { current: {} },
     toLanguageId: (value) => value,
     attemptLimitError,
+    workspaceFromFiles: () => {
+      throw new Error("legacy fixture must not enter multi-file path");
+    },
     newIdempotencyKey: () => `key-${++shared.nextKey}`,
     localStorage: {
       getItem: (key) => shared.store.get(key) ?? null,
@@ -256,7 +260,7 @@ test("failed cleanup on A, then B, still permits a new same-source A attempt", a
 });
 
 for (const dimension of ["source", "problem", "language", "session"]) {
-  test(`a changed ${dimension} cannot be discarded as the previous submission's retry`, async () => {
+  test(`an unconfirmed attempt handles changed ${dimension} without losing its request`, async () => {
     const f = fixture();
     await f.submit();
     if (dimension === "source") f.state.editorFiles = [{ id: "main", content: "answer two" }];
@@ -264,11 +268,21 @@ for (const dimension of ["source", "problem", "language", "session"]) {
     if (dimension === "language") f.state.selectedLanguage = "python3";
     if (dimension === "session") f.state.sessionId = "session-2";
     await f.submit();
-    assert.notEqual(f.posts[0].idempotencyKey, f.posts[1].idempotencyKey);
-    assert.equal(f.accepted.size, 2);
+    if (dimension === "source" || dimension === "language") {
+      assert.equal(f.posts[0].idempotencyKey, f.posts[1].idempotencyKey);
+      assert.equal(f.posts[1].source, f.posts[0].source);
+      assert.equal(f.posts[1].language, f.posts[0].language);
+      assert.equal(f.accepted.size, 1);
+      await f.submit();
+      assert.notEqual(f.posts[1].idempotencyKey, f.posts[2].idempotencyKey);
+      assert.equal(f.accepted.size, 2);
+    } else {
+      assert.notEqual(f.posts[0].idempotencyKey, f.posts[1].idempotencyKey);
+      assert.equal(f.accepted.size, 2);
+    }
     assert.deepEqual(f.state.sources["attempt-2"], {
-      source: f.posts[1].source,
-      language: f.posts[1].language,
+      source: f.posts.at(-1).source,
+      language: f.posts.at(-1).language,
     });
   });
 }
@@ -364,4 +378,23 @@ test("a failed final Run poll cannot time out a newer visit", async () => {
   rejectRun(new Error("connection lost"));
   await pending;
   assert.deepEqual(writes, []);
+});
+
+test("definitive validation rejection lets corrected code create a fresh attempt", async () => {
+  const f = fixture();
+  const reject = new f.state.ProctorApiError("Invalid source");
+  reject.status = 422;
+  f.state.submitSolution = async (_session, payload) => {
+    f.posts.push(payload);
+    throw reject;
+  };
+  await f.submit();
+  assert.equal(f.state.submitKeyRef.current, null);
+  assert.equal(f.shared.store.size, 0);
+  const resumed = fixture(f.shared);
+  resumed.state.loseResponse = false;
+  resumed.state.editorFiles[0].content = "corrected code";
+  await resumed.submit();
+  assert.notEqual(resumed.posts[0].idempotencyKey, resumed.posts[1].idempotencyKey);
+  assert.equal(resumed.posts[1].source, "corrected code");
 });

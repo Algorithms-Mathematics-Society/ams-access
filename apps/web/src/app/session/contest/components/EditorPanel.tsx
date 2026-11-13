@@ -1,7 +1,7 @@
 import type { DiagnosticNavigation } from "../compiler-diagnostics";
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { Play, Send, Check, X, Settings2, AlignLeft } from "lucide-react";
+import { Play, Send, Check, X, Settings2, AlignLeft, Plus, Trash2 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -83,12 +83,19 @@ export interface EditorPanelProps {
   currentCode: string;
   handleCodeChange: (value: string) => void;
   handleResetCode: () => void;
+  multiFile?: boolean;
+  entrypoint?: string;
+  referenceDocs?: { path: string; content: string }[];
+  onAddFile?: (path: string) => string | null;
+  onRemoveFile?: (id: string) => void;
+  onSetEntrypoint?: (path: string) => void;
 }
 
 export function EditorPanel({
   diagnosticNavigation,
   editorFiles,
   activeFileId,
+  setQuestionActiveFile,
   currentQId,
   selectedLanguage,
   handleLanguageChange,
@@ -115,7 +122,20 @@ export function EditorPanel({
   currentCode,
   handleCodeChange,
   handleResetCode,
+  multiFile = false,
+  entrypoint,
+  referenceDocs = [],
+  onAddFile,
+  onRemoveFile,
+  onSetEntrypoint,
 }: EditorPanelProps) {
+  const [newFileOpen, setNewFileOpen] = useState(false);
+  const [newFilePath, setNewFilePath] = useState("");
+  const [newFileError, setNewFileError] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<EditorFile | null>(null);
+  const [activeReferencePath, setActiveReferencePath] = useState<string | null>(null);
+  const activeReference = referenceDocs.find((doc) => doc.path === activeReferencePath) ?? null;
+  useEffect(() => setActiveReferencePath(null), [currentQId]);
   const [resetTarget, setResetTarget] = useState<string | null>(null);
   const resetContext = JSON.stringify([sessionId, currentQId, activeFileId, selectedLanguage]);
   const resetOpen = resetTarget === resetContext && !readOnly;
@@ -202,6 +222,7 @@ export function EditorPanel({
     Boolean(judgingUnavailableReason);
 
   const activeFileName = activeFile?.name ?? "main.cpp";
+  const displayedName = activeReference?.path ?? activeFileName;
 
   return (
     <VStack
@@ -271,7 +292,7 @@ export function EditorPanel({
           {/* Indentation only, and the same command Ctrl/Cmd-S runs. Hidden
               once the bell has rung, when the document is read-only and the
               button could only fail. */}
-          {!readOnly && (
+          {!readOnly && !activeReference && (
             <IconButton
               label="Format code"
               {...{ title: "Format code (Ctrl+S)" }}
@@ -431,7 +452,7 @@ export function EditorPanel({
           </VStack>
           <Button
             label="Run"
-            aria-label={`Run ${activeFileName} on sample tests`}
+            aria-label={`Run ${multiFile ? "workspace" : activeFileName} on sample tests`}
             variant="secondary"
             icon={isRunning ? <Spinner size="sm" /> : <Play size={14} aria-hidden="true" />}
             isDisabled={runDisabled}
@@ -445,7 +466,8 @@ export function EditorPanel({
           <Button
             label={teamSubmissionBlock ?? submitButton.label}
             aria-label={
-              teamSubmissionBlock ?? `${submitButton.label} ${activeFileName} for scoring`
+              teamSubmissionBlock ??
+              `${submitButton.label} ${multiFile ? "workspace" : activeFileName} for scoring`
             }
             variant="primary"
             icon={
@@ -472,6 +494,107 @@ export function EditorPanel({
         </HStack>
       </HStack>
 
+      {multiFile && (
+        <HStack
+          gap={2}
+          align="center"
+          wrap="wrap"
+          paddingInline={4}
+          paddingBlock={2}
+          role="group"
+          aria-label="Workspace files"
+          style={{
+            flexShrink: 0,
+            maxHeight: "calc(var(--spacing-10) * 3)",
+            overflowY: "auto",
+            borderBottom: "var(--border-width) solid var(--color-border)",
+          }}
+        >
+          {editorFiles.map((file) => (
+            <Button
+              key={file.id}
+              size="sm"
+              variant="ghost"
+              label={file.name}
+              aria-pressed={!activeReference && file.id === activeFileId}
+              {...{ title: file.name }}
+              style={{
+                maxWidth: "min(100%, calc(var(--spacing-10) * 6))",
+                background:
+                  !activeReference && file.id === activeFileId
+                    ? "var(--color-background-muted)"
+                    : undefined,
+              }}
+              onClick={() => {
+                setActiveReferencePath(null);
+                setQuestionActiveFile((previous) => ({ ...previous, [currentQId]: file.id }));
+              }}
+            />
+          ))}
+          {referenceDocs.map((doc) => (
+            <Button
+              key={`reference:${doc.path}`}
+              size="sm"
+              variant="ghost"
+              label={`${doc.path} · Reference`}
+              aria-pressed={activeReferencePath === doc.path}
+              {...{ title: `Organizer reference: ${doc.path}` }}
+              style={{
+                maxWidth: "min(100%, calc(var(--spacing-10) * 6))",
+                background:
+                  activeReferencePath === doc.path ? "var(--color-background-muted)" : undefined,
+              }}
+              onClick={() => setActiveReferencePath(doc.path)}
+            />
+          ))}
+          {!readOnly && (
+            <IconButton
+              label="Add source file"
+              icon={<Plus size={14} aria-hidden="true" />}
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setNewFilePath("");
+                setNewFileError(null);
+                setNewFileOpen(true);
+              }}
+            />
+          )}
+          {!readOnly &&
+            !activeReference &&
+            activeFile &&
+            editorFiles.length > 1 &&
+            editorFiles.some(
+              (file) => file.id !== activeFile.id && /\.(?:cpp|cc|cxx)$/i.test(file.name)
+            ) && (
+              <IconButton
+                label={`Delete ${activeFile.name}`}
+                icon={<Trash2 size={14} aria-hidden="true" />}
+                size="sm"
+                variant="ghost"
+                onClick={() => setRemoveTarget(activeFile)}
+              />
+            )}
+          {!readOnly &&
+            !activeReference &&
+            activeFile &&
+            /\.(?:cpp|cc|cxx)$/i.test(activeFile.name) &&
+            activeFile.name !== entrypoint && (
+              <Button
+                size="sm"
+                variant="ghost"
+                label="Set as entrypoint"
+                onClick={() => onSetEntrypoint?.(activeFile.name)}
+              />
+            )}
+          {entrypoint && (
+            <Text type="supporting" color="secondary">
+              Entrypoint: {entrypoint}
+            </Text>
+          )}
+        </HStack>
+      )}
+
       {teamRevisionWarning && (
         <Text type="supporting" style={{ padding: "var(--spacing-2)" }}>
           Submitting creates a new team revision — the team’s votes reset.
@@ -493,17 +616,91 @@ export function EditorPanel({
           props: presentation changes must not remount CodeMirror or lose drafts. */}
       <EditorPane
         diagnosticNavigation={diagnosticNavigation}
-        fileId={activeFileId}
+        fileId={activeReference ? `reference:${activeReference.path}` : activeFileId}
         activeQ={activeQ}
-        activeTab={activeFile?.name ?? "main.cpp"}
-        currentCode={currentCode}
-        onCodeChange={handleCodeChange}
+        activeTab={displayedName}
+        currentCode={activeReference?.content ?? currentCode}
+        onCodeChange={activeReference ? () => {} : handleCodeChange}
         editorTheme={editorTheme}
         selectedLanguage={selectedLanguage}
         problemId={currentQId}
-        readOnly={readOnly}
+        readOnly={readOnly || Boolean(activeReference)}
         preferences={preferences}
       />
+      {activeReference && (
+        <Text type="supporting" color="secondary" style={{ padding: "var(--spacing-2)" }}>
+          Organizer reference · Read only · Excluded from Run and Submit
+        </Text>
+      )}
+      <AccessDialog
+        open={newFileOpen && !readOnly}
+        onClose={() => setNewFileOpen(false)}
+        title="Add source file"
+        subtitle="Use a relative C++ source or header path."
+        width="min(100%, calc(var(--spacing-10) * 12))"
+        labelId="add-source-file-dialog"
+      >
+        <VStack gap={3}>
+          <label htmlFor="new-source-path">
+            <Text type="supporting">File path</Text>
+          </label>
+          <input
+            id="new-source-path"
+            value={newFilePath}
+            onChange={(event) => setNewFilePath(event.target.value)}
+            maxLength={160}
+            autoFocus
+            style={{
+              width: "100%",
+              color: "var(--color-text-primary)",
+              background: "var(--color-background-surface)",
+              border: "var(--border-width) solid var(--color-border)",
+              borderRadius: "var(--radius-element)",
+              padding: "var(--spacing-2)",
+            }}
+          />
+          {newFileError && (
+            <Text type="supporting" role="alert" color="secondary">
+              {newFileError}
+            </Text>
+          )}
+          <HStack gap={2} justify="end">
+            <Button label="Cancel" onClick={() => setNewFileOpen(false)} />
+            <Button
+              label="Add file"
+              variant="primary"
+              onClick={() => {
+                const error = onAddFile?.(newFilePath) ?? null;
+                if (error) setNewFileError(error);
+                else {
+                  setActiveReferencePath(null);
+                  setNewFileOpen(false);
+                }
+              }}
+            />
+          </HStack>
+        </VStack>
+      </AccessDialog>
+      <AccessDialog
+        open={Boolean(removeTarget) && !readOnly}
+        onClose={() => setRemoveTarget(null)}
+        title={`Delete ${removeTarget?.name ?? "file"}?`}
+        subtitle="This removes the file from your current workspace. You can restore it only from a saved copy."
+        width="min(100%, calc(var(--spacing-10) * 12))"
+        labelId="delete-source-file-dialog"
+      >
+        <HStack gap={2} justify="end">
+          <Button label="Cancel" onClick={() => setRemoveTarget(null)} />
+          <Button
+            label="Delete file"
+            variant="destructive"
+            onClick={() => {
+              if (removeTarget) onRemoveFile?.(removeTarget.id);
+              setRemoveTarget(null);
+            }}
+          />
+        </HStack>
+      </AccessDialog>
       <AccessDialog
         open={resetOpen}
         onClose={() => setResetTarget(null)}

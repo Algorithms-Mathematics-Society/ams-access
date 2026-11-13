@@ -77,6 +77,7 @@ function fixture(overrides = {}) {
     sessionId: "session-1",
     questionFiles: { A: files },
     questionActiveFile: { A: "A:main" },
+    questionEntrypoints: {},
     editorFiles: files,
     activeFileId: "A:main",
     selectedLanguage: "C++23",
@@ -108,6 +109,9 @@ function fixture(overrides = {}) {
     },
     toLanguageId: (value) => (value === "Python 3" ? "python3" : "cpp23"),
     attemptLimitError,
+    workspaceFromFiles: () => {
+      throw new Error("legacy fixture must not enter multi-file path");
+    },
     normalizeLanguageLabel: (value) => value,
     questionFileName: (_question, language) => (language === "Python 3" ? "main.py" : "main.cpp"),
     isPristineStarter: () => false,

@@ -1,4 +1,5 @@
 mod blocking_probe;
+mod boost_reference;
 mod cppref;
 mod event_recorder;
 mod event_store;
@@ -3949,6 +3950,11 @@ pub fn run() {
             linux_voice::linux_voice_call,
             linux_voice::linux_voice_stop,
             cppref::read_cppref_asset,
+            boost_reference::boost_reference_status,
+            boost_reference::boost_reference_local_status,
+            boost_reference::install_boost_reference,
+            boost_reference::cancel_boost_reference_download,
+            boost_reference::read_boost_reference_asset,
             collect_device_state,
             evaluate_session_readiness,
             start_secure_session,
