@@ -271,6 +271,7 @@ export function TeamVoiceControls({
         key.toLowerCase() === "m" || (!/^[\x20-\x7e]$/.test(key) && event.code === "KeyM");
       if (
         !suspended &&
+        Boolean(compact ? toolbarTarget : lobbyTarget) &&
         current.current() &&
         active &&
         event.ctrlKey &&
@@ -289,7 +290,7 @@ export function TeamVoiceControls({
     // Capture before the focused editor; one chord must never run both actions.
     window.addEventListener("keydown", muteShortcut, true);
     return () => window.removeEventListener("keydown", muteShortcut, true);
-  }, [suspended]);
+  }, [suspended, compact, toolbarTarget, lobbyTarget]);
 
   const projectionMessage =
     projection.status === "error"
@@ -355,7 +356,7 @@ export function TeamVoiceControls({
                 onClick={() => void connect()}
               />
             )}
-            {connected && (
+            {connected && !compact && (
               <Button
                 label={snapshot?.muted ? "Muted" : "Live"}
                 aria-label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}

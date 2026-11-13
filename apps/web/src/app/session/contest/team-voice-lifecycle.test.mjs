@@ -258,6 +258,9 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
     "session",
     "suspended",
     "current",
+    "compact",
+    "toolbarTarget",
+    "lobbyTarget",
     `return function(event) { ${source} };`
   );
   assert.match(ui, /addEventListener\("keydown", muteShortcut, true\)/);
@@ -274,7 +277,13 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
       },
     },
   };
-  function dispatch(overrides = {}, suspended = false, valid = true, active = session) {
+  function dispatch(
+    overrides = {},
+    suspended = false,
+    valid = true,
+    active = session,
+    visible = true
+  ) {
     let prevented = false,
       stopped = false,
       editorCommands = 0;
@@ -293,7 +302,7 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
       },
       ...overrides,
     };
-    handler(active, suspended, { current: () => valid })(event);
+    handler(active, suspended, { current: () => valid }, true, visible ? {} : null, null)(event);
     // A target editor receives only events not stopped by the window capture handler.
     if (!stopped) editorCommands++;
     return { prevented, stopped, editorCommands };
@@ -311,6 +320,8 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   assert.equal(dispatch({ key: "M", code: "Semicolon" }).prevented, true);
   assert.equal(dispatch({ key: "Ь", code: "KeyM" }).prevented, true);
   assert.equal(toggles, 3);
+  assert.equal(dispatch({}, false, true, session, false).prevented, false);
+  assert.equal(toggles, 3, "a hidden microphone cannot be toggled by the shortcut");
   status = "connecting";
   assert.equal(dispatch().prevented, true);
   assert.equal(toggles, 3, "connecting must remain muted");

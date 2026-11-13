@@ -39,13 +39,13 @@ export function workspaceAlreadyLoaded(
   );
 }
 
-/** Only published, locked team parts may be loaded, with the member's part first. */
+/** Only the assigned part may be fetched; teammate statements stay private. */
 export function teamWorkspaceLabels(state: LobbyState): string[] {
   const own = assignedWorkspaceLabel(state);
   if (!own || !state.board) return [];
   const labels = state.board.parts.map((part) => part.problem_label);
   if (labels.some((label) => !label) || new Set(labels).size !== labels.length) return [];
-  return [own, ...labels.filter((label) => label !== own)];
+  return [own];
 }
 
 export function teamPartAccess(state: LobbyState, label: string) {

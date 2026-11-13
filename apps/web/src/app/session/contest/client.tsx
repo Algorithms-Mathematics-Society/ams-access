@@ -4815,6 +4815,7 @@ export default function ContestPageClient() {
   const cameraTile = (
     <CameraTile
       inLobby={renderTeamLobby}
+      teamVoice={desktopTeamRoom && lobbyState.status !== "solo"}
       presenceStatus={presenceStatus}
       onPickCamera={handlePickCamera}
       cameraVideoRef={cameraVideoRef}

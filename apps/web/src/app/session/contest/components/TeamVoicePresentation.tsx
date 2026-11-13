@@ -76,24 +76,37 @@ export function TeamVoicePresentation({
       inert={suspended || undefined}
       aria-label="Team voice"
     >
-      {connected && (
-        <Button
-          size="sm"
-          label={snapshot.muted ? "Muted" : "Live"}
-          aria-label={snapshot.muted ? "Unmute team microphone" : "Mute team microphone"}
-          aria-pressed={!snapshot.muted}
-          aria-keyshortcuts="Control+Shift+M"
-          tooltip={`${snapshot.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`}
-          icon={snapshot.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-          style={{
-            background: snapshot.muted ? undefined : "var(--color-success-muted)",
-            borderColor: snapshot.muted ? undefined : "var(--color-border-green)",
-            color: snapshot.muted ? "var(--color-text-secondary)" : "var(--color-text-green)",
-          }}
-          onClick={onToggleMute}
-          isDisabled={suspended}
-        />
-      )}
+      <Button
+        size="sm"
+        label={!connected ? "Mic off" : snapshot?.muted ? "Muted" : "Live"}
+        aria-label={
+          !connected
+            ? "Team microphone off"
+            : snapshot?.muted
+              ? "Unmute team microphone"
+              : "Mute team microphone"
+        }
+        aria-pressed={Boolean(connected && !snapshot?.muted)}
+        aria-keyshortcuts="Control+Shift+M"
+        tooltip={
+          connected
+            ? `${snapshot?.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`
+            : "Join team voice in Voice settings to enable your microphone"
+        }
+        icon={
+          !connected || snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />
+        }
+        style={{
+          background: !connected || snapshot?.muted ? undefined : "var(--color-success-muted)",
+          borderColor: !connected || snapshot?.muted ? undefined : "var(--color-border-green)",
+          color:
+            !connected || snapshot?.muted
+              ? "var(--color-text-secondary)"
+              : "var(--color-text-green)",
+        }}
+        onClick={onToggleMute}
+        isDisabled={suspended || !connected}
+      />
       {snapshot?.muted && (snapshot.inputLevel ?? 0) > 0.02 && (
         <Text role="status">You are muted</Text>
       )}

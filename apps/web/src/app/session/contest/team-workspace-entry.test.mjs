@@ -70,9 +70,9 @@ test("same authorized locked assignment recovers without reinstalling drafts or 
   assert.equal(workspaceAlreadyLoaded(null, loaded), false);
 });
 
-test("published locked parts load own first and never invent or duplicate labels", () => {
-  assert.deepEqual(teamWorkspaceLabels(state()), ["A", "B"]);
-  assert.deepEqual(teamWorkspaceLabels({ ...state(), status: "error" }), ["A", "B"]);
+test("published locked parts load only the assigned part and reject ambiguous labels", () => {
+  assert.deepEqual(teamWorkspaceLabels(state()), ["A"]);
+  assert.deepEqual(teamWorkspaceLabels({ ...state(), status: "error" }), ["A"]);
   assert.deepEqual(teamWorkspaceLabels({ ...state(), status: "denied" }), []);
   assert.deepEqual(teamWorkspaceLabels(state("choosing", false)), []);
   const bad = state();

@@ -7,6 +7,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 
 export interface CameraTileProps {
   inLobby?: boolean;
+  teamVoice?: boolean;
   cameraVideoRef: RefObject<HTMLVideoElement | null>;
   cameraStream: MediaStream | null;
   cameraError: string | null;
@@ -46,6 +47,7 @@ const PRESENCE_BORDER: Record<string, string> = {
 
 export function CameraTile({
   inLobby = false,
+  teamVoice = false,
   presenceStatus = "presence_ok",
   onPickCamera,
   cameraVideoRef,
@@ -160,18 +162,20 @@ export function CameraTile({
             onClick={() => setPickerOpen((open) => !open)}
           />
         )}
-        <Button
-          type="button"
-          label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
-          tooltip={
-            micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
-          }
-          variant="ghost"
-          size="sm"
-          isIconOnly
-          icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
-          onClick={() => handleToggleMedia("mic", !micEnabled)}
-        />
+        {!teamVoice && (
+          <Button
+            type="button"
+            label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
+            tooltip={
+              micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
+            }
+            variant="ghost"
+            size="sm"
+            isIconOnly
+            icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
+            onClick={() => handleToggleMedia("mic", !micEnabled)}
+          />
+        )}
       </HStack>
       {onPickCamera && pickerOpen && cameras.length > 0 && (
         <VStack
