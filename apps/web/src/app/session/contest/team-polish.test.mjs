@@ -222,6 +222,28 @@ test("voice presentation moves between reserved lobby region and toolbar without
   assert.equal(lobby.node, props.children);
   const workspace = exports.TeamVoicePresentation({ ...props, compact: true });
   assert.equal(workspace.target, props.toolbarTarget);
+  assert.equal(workspace.node.props.children[0].props.label, "Mic off");
+  assert.equal(workspace.node.props.children[0].props.isDisabled, true);
+  for (const muted of [true, false]) {
+    let toggles = 0;
+    const joined = exports.TeamVoicePresentation({
+      ...props,
+      compact: true,
+      snapshot: { status: "connected", muted, peers: [] },
+      onToggleMute() {
+        toggles += 1;
+      },
+    });
+    const mic = joined.node.props.children[0];
+    assert.equal(mic.props.label, muted ? "Muted" : "Live");
+    assert.equal(mic.props["aria-keyshortcuts"], "Control+Shift+M");
+    assert.match(mic.props.tooltip, /Ctrl\+Shift\+M/);
+    assert.equal(mic.props.isDisabled, false);
+    if (!muted) assert.equal(mic.props.style.color, "var(--color-text-green)");
+    mic.props.onClick();
+    assert.equal(toggles, 1);
+  }
+
   assert.equal(workspace.node.props.children.at(-1).props.content, props.children);
   assert.equal(
     exports.TeamVoicePresentation({ ...props, lobbyTarget: null }),
@@ -336,6 +358,10 @@ test("connected voice uses the mic control for state and shortcut without redund
       const mic = header.props.children.find(
         (node) => node?.props?.label === (muted ? "Muted" : "Live")
       );
+      if (compact) {
+        assert.equal(mic, undefined, "workspace uses only the persistent toolbar microphone");
+        continue;
+      }
       assert.equal(mic.props["aria-pressed"], !muted);
       assert.equal(mic.props["aria-keyshortcuts"], "Control+Shift+M");
       assert.match(mic.props.tooltip, /Ctrl\+Shift\+M/);

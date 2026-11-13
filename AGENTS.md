@@ -48,3 +48,13 @@ swizzle <Name> eject component source for deep customization
 upgrade --apply run after any @astryxdesign/core bump
 
 <!-- ASTRYX:END -->
+
+## Issue and pull-request workflow
+
+- Before opening a PR, search the repository's existing open and closed issues for the same scope. Reuse a relevant issue; create a focused issue only when the work is not already tracked.
+- Record the problem, acceptance criteria, implementation progress, validation evidence, and remaining checks in the issue.
+- Link every PR to its issue(s). Use `Closes #N` only when that PR fully satisfies the issue; use `Refs #N` for partial work or outstanding device/deployment acceptance.
+- Update related issues when the PR or validation status changes. Passing CI alone does not prove native-device, production, or capacity acceptance.
+- Before closing an issue, verify its acceptance criteria and merged PR. Preserve any explicit user requirement to confirm closure first.
+- Keep independently testable fixes separate from unfinished feature work. Never include local operator notes, secrets, or unrelated changes in a PR.
+- Use `gh` CLI for GitHub operations.

@@ -212,6 +212,10 @@ test("lobby camera occupies its own region even after the workspace preview was 
   };
   const hidden = exports.CameraTile(props);
   assert.equal(hidden.props.style.display, "none");
+  assert.match(JSON.stringify(hidden), /Turn microphone on/);
+  const teamTile = exports.CameraTile({ ...props, teamVoice: true });
+  assert.doesNotMatch(JSON.stringify(teamTile), /Turn microphone on|Turn microphone off/);
+  assert.match(JSON.stringify(teamTile), /Turn camera off/);
   const docked = exports.CameraTile({ ...props, inLobby: true });
   assert.equal(docked.props.style.display, "flex");
   assert.equal(docked.props.style.position, "relative");
@@ -233,7 +237,11 @@ test("five rendered camera choices remain in a bounded scroll region in workspac
     label: `Camera ${index + 1}`,
   }));
   const Stack = ({ children, ...props }) =>
-    React.createElement("div", { style: props.style, role: props.role, "aria-label": props["aria-label"] }, React.Children.toArray(children));
+    React.createElement(
+      "div",
+      { style: props.style, role: props.role, "aria-label": props["aria-label"] },
+      React.Children.toArray(children)
+    );
   const renderedButtons = [];
   const Button = ({ label, ...props }) => {
     renderedButtons.push({ label, onClick: props.onClick });
@@ -247,14 +255,19 @@ test("five rendered camera choices remain in a bounded scroll region in workspac
       compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
   )((name) => {
-    if (name === "react") return { useEffect() {}, useState: (initial) =>
-      Array.isArray(initial) ? [cameras, () => {}] : [true, () => {}] };
+    if (name === "react")
+      return {
+        useEffect() {},
+        useState: (initial) => (Array.isArray(initial) ? [cameras, () => {}] : [true, () => {}]),
+      };
     if (name === "react/jsx-runtime") return { jsx, jsxs };
     if (name === "@astryxdesign/core/Stack") return { HStack: Stack, VStack: Stack };
     if (name === "@astryxdesign/core/Button") return { Button };
     if (name === "@astryxdesign/core/Text") return { Text };
     if (name === "@astryxdesign/core/StatusDot") return { StatusDot: Text };
-    return Object.fromEntries(["Video", "VideoOff", "Mic", "MicOff", "SwitchCamera"].map((key) => [key, Text]));
+    return Object.fromEntries(
+      ["Video", "VideoOff", "Mic", "MicOff", "SwitchCamera"].map((key) => [key, Text])
+    );
   }, exports);
   const selected = [];
   const props = {
