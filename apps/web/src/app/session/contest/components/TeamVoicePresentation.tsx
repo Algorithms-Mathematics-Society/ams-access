@@ -68,14 +68,28 @@ export function TeamVoicePresentation({
   if (!toolbarTarget) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   return createPortal(
-    <HStack gap={1} align="center" inert={suspended || undefined} aria-label="Team voice">
+    <HStack
+      gap={2}
+      align="center"
+      wrap="wrap"
+      style={{ flexShrink: 0, minWidth: 0 }}
+      inert={suspended || undefined}
+      aria-label="Team voice"
+    >
       {connected && (
         <Button
           size="sm"
           label={snapshot.muted ? "Muted" : "Live"}
           aria-label={snapshot.muted ? "Unmute team microphone" : "Mute team microphone"}
           aria-pressed={!snapshot.muted}
+          aria-keyshortcuts="Control+Shift+M"
+          tooltip={`${snapshot.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`}
           icon={snapshot.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+          style={{
+            background: snapshot.muted ? undefined : "var(--color-success-muted)",
+            borderColor: snapshot.muted ? undefined : "var(--color-border-green)",
+            color: snapshot.muted ? "var(--color-text-secondary)" : "var(--color-text-green)",
+          }}
           onClick={onToggleMute}
           isDisabled={suspended}
         />

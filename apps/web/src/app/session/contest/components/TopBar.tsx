@@ -164,12 +164,14 @@ export function TopBar({
       className="contest-topbar"
       gap={5}
       align="center"
+      wrap="wrap"
       paddingInline={5}
       minHeight="calc(var(--spacing-8) * 2)"
       style={{
         flexShrink: 0,
         borderBottom: "var(--border-width) solid var(--color-border)",
         background: "var(--color-background-body)",
+        paddingBlock: "var(--spacing-2)",
       }}
     >
       <HStack gap={3} align="center" style={{ flex: 1, minWidth: 0 }}>
@@ -184,10 +186,17 @@ export function TopBar({
         gap={2}
         align="center"
         justify="end"
+        wrap="wrap"
         className="contest-topbar-actions"
-        style={{ flex: 1, minWidth: 0 }}
+        style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "100%", marginInlineStart: "auto" }}
       >
-        <HStack ref={voiceToolbarRef} gap={0} align="center" />
+        <HStack
+          ref={voiceToolbarRef}
+          gap={2}
+          align="center"
+          wrap="wrap"
+          style={{ flexShrink: 0, maxWidth: "100%" }}
+        />
         <ThemeToggle />
         <ContestInformation
           contest={contest}

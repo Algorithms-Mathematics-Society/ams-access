@@ -196,7 +196,12 @@ test("voice presentation moves between reserved lobby region and toolbar without
       compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
   )((name) => {
-    if (name === "react") return { useEffect() {}, useRef: (value) => ({ current: value }), useState: () => [false, () => {}] };
+    if (name === "react")
+      return {
+        useEffect() {},
+        useRef: (value) => ({ current: value }),
+        useState: () => [false, () => {}],
+      };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name === "react-dom") return { createPortal: (node, target) => ({ node, target }) };
     return Object.fromEntries(
@@ -225,16 +230,19 @@ test("voice presentation moves between reserved lobby region and toolbar without
   );
 });
 
-function renderVoiceSettings({ compact = false, connected = false } = {}) {
+function renderVoiceSettings({
+  compact = false,
+  connected = false,
+  muted = true,
+  status = "connected",
+} = {}) {
   const source = readFileSync(
     new URL("./components/TeamVoiceControls.tsx", import.meta.url),
     "utf8"
   );
   const exports = {};
   let snapshotUsed = false;
-  const snapshot = connected
-    ? { status: "connected", muted: true, inputLevel: 0, peers: [], error: null }
-    : null;
+  const snapshot = connected ? { status, muted, inputLevel: 0, peers: [], error: null } : null;
   const jsx = (type, props) => ({ type, props });
   new Function(
     "require",
@@ -318,6 +326,83 @@ test("lobby keeps one visible assignment roster, with member audio settings disc
     "workspace popover keeps the audio roster visible"
   );
   assert.equal(workspace.settings.props.style.maxHeight, "60vh");
+});
+
+test("connected voice uses the mic control for state and shortcut without redundant guidance", () => {
+  for (const compact of [false, true]) {
+    for (const muted of [true, false]) {
+      const { settings } = renderVoiceSettings({ connected: true, compact, muted });
+      const header = settings.props.children[0];
+      const mic = header.props.children.find(
+        (node) => node?.props?.label === (muted ? "Muted" : "Live")
+      );
+      assert.equal(mic.props["aria-pressed"], !muted);
+      assert.equal(mic.props["aria-keyshortcuts"], "Control+Shift+M");
+      assert.match(mic.props.tooltip, /Ctrl\+Shift\+M/);
+      assert.equal(
+        header.props.children[1],
+        false,
+        "connected status is conveyed by the mic button"
+      );
+      if (!muted) {
+        assert.equal(mic.props.style.color, "var(--color-text-green)");
+        assert.equal(mic.props.style.background, "var(--color-success-muted)");
+      }
+      const rendered = JSON.stringify(settings);
+      assert.doesNotMatch(
+        rendered,
+        /Microphone starts muted|microphone starts muted|controlled by the system audio settings|Mute shortcut:/
+      );
+    }
+  }
+  const reconnecting = renderVoiceSettings({ connected: true, status: "reconnecting" });
+  assert.equal(reconnecting.settings.props.children[0].props.children[1].props.role, "status");
+});
+
+test("leave confirmation keeps Stay primary and only confirms a deliberate leave", () => {
+  const source = readFileSync(new URL("./components/LeaveTeamVoice.tsx", import.meta.url), "utf8");
+  const exports = {};
+  const jsx = (type, props) => ({ type, props });
+  let confirming = false;
+  let leaves = 0;
+  new Function(
+    "require",
+    "exports",
+    ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText
+  )((name) => {
+    if (name === "react")
+      return {
+        useState: () => [
+          confirming,
+          (value) => {
+            confirming = value;
+          },
+        ],
+      };
+    if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    return { Button: "Button", HStack: "HStack", Text: "Text" };
+  }, exports);
+  const render = () =>
+    exports.LeaveTeamVoice({
+      onLeave: () => {
+        leaves++;
+      },
+    });
+  render().props.onClick();
+  assert.equal(leaves, 0, "opening confirmation never disconnects voice");
+  const stay = render().props.children[1];
+  assert.equal(stay.props.variant, "primary");
+  stay.props.onClick();
+  assert.equal(leaves, 0);
+  assert.equal(render().props.label, "Leave voice");
+  render().props.onClick();
+  const leave = render().props.children[2];
+  assert.equal(leave.props.variant, "destructive");
+  leave.props.onClick();
+  assert.equal(leaves, 1);
+  assert.equal(render().props.label, "Leave voice");
 });
 
 test("recovery actions remain reachable when editing is locked, and locked entry precedes parts", () => {

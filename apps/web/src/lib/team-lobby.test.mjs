@@ -1031,3 +1031,133 @@ test("progress strip cannot advertise raw AC without confirmed non-substituted d
     "AC"
   );
 });
+
+const readinessBoard = () => {
+  const b = board();
+  b.phase.starts_at = "2026-01-01T00:02:00Z";
+  b.readiness_supported = true;
+  b.readiness = { ready: 0, needed: 1, mine: false, can_ready: true };
+  b.members[0] = { ...b.members[0], part_label: "1", ready: false, ready_at: null };
+  b.parts[0] = { ...b.parts[0], holder: "Me", holder_is_me: true };
+  return b;
+};
+
+test("readiness is capability gated, bounded and consistent with the published roster", () => {
+  const parsed = parseTeamLobby(readinessBoard());
+  assert.deepEqual(parsed.readiness, { ready: 0, needed: 1, mine: false, can_ready: true });
+  assert.equal(parsed.members[0].ready, false);
+  assert.equal(parseTeamLobby(board()).readiness_supported, undefined);
+  for (const alter of [
+    (b) => delete b.readiness,
+    (b) => (b.readiness.ready = 2),
+    (b) => (b.readiness.needed = 2),
+    (b) => (b.readiness.mine = true),
+    (b) => (b.members[0].ready_at = "invalid"),
+    (b) => (b.members[0].ready = true),
+  ]) {
+    const b = readinessBoard();
+    alter(b);
+    assert.throws(() => parseTeamLobby(b), /readiness/);
+  }
+});
+
+test("Ready is a single server mutation; its response alone confirms readiness and release", async () => {
+  let state, finish;
+  const calls = [];
+  const b = readinessBoard();
+  const controller = createTeamLobbyController({
+    apiBase: "https://example.test",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    onState: (s) => (state = s),
+    request: async (url, init) => {
+      calls.push({ url, init });
+      if (calls.length === 1) return Response.json(b);
+      await new Promise((resolve) => (finish = resolve));
+      const locked = readinessBoard();
+      locked.phase.name = "locked";
+      locked.allocation.locked = true;
+      locked.readiness = { ready: 1, needed: 1, mine: true, can_ready: false };
+      locked.members[0].ready = true;
+      locked.members[0].ready_at = locked.server_time;
+      return Response.json(locked);
+    },
+  });
+  await flush();
+  controller.ready();
+  controller.ready();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, "https://example.test/participant/contests/contest/team/ready");
+  assert.equal(calls[1].init.method, "POST");
+  assert.equal(calls[1].init.body, undefined);
+  assert.equal(state.pending, true);
+  assert.equal(state.board.readiness.mine, false);
+  assert.equal(state.board.allocation.locked, false);
+  finish();
+  await flush();
+  assert.equal(state.pending, false);
+  assert.equal(state.board.readiness.mine, true);
+  assert.equal(state.board.phase.name, "locked");
+  controller.ready();
+  assert.equal(calls.length, 2);
+  controller.stop();
+});
+
+test("Ready conflicts refresh once without replay or optimistic readiness", async () => {
+  let state;
+  const calls = [];
+  const controller = createTeamLobbyController({
+    apiBase: "",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    onState: (s) => (state = s),
+    request: async (url, init) => {
+      calls.push(init.method);
+      if (init.method === "POST") return Response.json({ detail: "part changed" }, { status: 409 });
+      return Response.json(readinessBoard());
+    },
+  });
+  await flush();
+  controller.ready();
+  await flush();
+  await flush();
+  assert.deepEqual(calls, ["GET", "POST", "GET"]);
+  assert.equal(state.board.readiness.mine, false);
+  assert.equal(state.error, "part changed");
+  controller.stop();
+});
+
+test("Ready never requests unsupported, unchosen, expired, unavailable or locked allocations", async () => {
+  for (const alter of [
+    (b) => {
+      delete b.readiness_supported;
+      delete b.readiness;
+    },
+    (b) => (b.members[0].part_label = null),
+    (b) => (b.readiness.can_ready = false),
+    (b) => (b.phase.name = "discussion"),
+    (b) => (b.allocation.locked = true),
+    (b) => (b.server_time = b.allocation.locks_at),
+  ]) {
+    const b = readinessBoard();
+    alter(b);
+    let calls = 0;
+    const controller = createTeamLobbyController({
+      apiBase: "",
+      contestUid: "contest",
+      headers: () => ({}),
+      hidden: () => false,
+      onState: () => {},
+      request: async () => {
+        calls++;
+        return Response.json(b);
+      },
+    });
+    await flush();
+    controller.ready();
+    assert.equal(calls, 1);
+    controller.stop();
+  }
+});

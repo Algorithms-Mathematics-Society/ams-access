@@ -206,7 +206,9 @@ export function TeamVoiceControls({
         if (!authorized()) throw new Error("Voice session ended");
         return participantToken() ?? "";
       },
-      acquireMicrophone: linuxNative ? undefined : () => acquireVoiceMicrophone(cameraSession.current()),
+      acquireMicrophone: linuxNative
+        ? undefined
+        : () => acquireVoiceMicrophone(cameraSession.current()),
       nativeVoice: linuxNative ? createLinuxVoiceBackend : undefined,
       refreshCredentials: async () => {
         if (!authorized()) throw new Error("Voice session ended");
@@ -327,15 +329,17 @@ export function TeamVoiceControls({
         >
           <HStack gap={3} wrap="wrap" align="center">
             <Text weight="semibold">Team voice</Text>
-            <Text role="status" aria-live="polite">
-              {!supportsRtc
-                ? "Voice unavailable in this app"
-                : snapshot
-                  ? voiceStatusText(snapshot.status)
-                  : team?.phase.voice_open
-                    ? "Ready · microphone starts muted"
-                    : "Voice has ended for this round"}
-            </Text>
+            {snapshot?.status !== "connected" && (
+              <Text role="status" aria-live="polite">
+                {!supportsRtc
+                  ? "Voice unavailable in this app"
+                  : snapshot
+                    ? voiceStatusText(snapshot.status)
+                    : team?.phase.voice_open
+                      ? "Ready"
+                      : "Voice has ended for this round"}
+              </Text>
+            )}
             {team?.phase.voice_open && !connected && snapshot?.status !== "closed" && (
               <Button
                 label={
@@ -356,8 +360,12 @@ export function TeamVoiceControls({
                 label={snapshot?.muted ? "Muted" : "Live"}
                 aria-label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}
                 aria-pressed={!snapshot?.muted}
+                aria-keyshortcuts="Control+Shift+M"
+                tooltip={`${snapshot?.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`}
                 icon={snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
                 style={{
+                  background: snapshot?.muted ? undefined : "var(--color-success-muted)",
+                  borderColor: snapshot?.muted ? undefined : "var(--color-border-green)",
                   color: snapshot?.muted
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-green)",
@@ -379,38 +387,41 @@ export function TeamVoiceControls({
                 }}
               />
             )}
-            {connected && <Text>Mute shortcut: Ctrl+Shift+M</Text>}
-            {connected && snapshot?.error === "Allow audio playback to hear your team." && !linuxNative && (
-              <Button
-                label="Retry audio playback"
-                onClick={() =>
-                  void session.current
-                    ?.retryPlayback()
-                    .then(() => setMessage(null))
-                    .catch(() =>
-                      setMessage("Playback is still blocked. Check system audio output and retry.")
-                    )
-                }
-              />
-            )}
+            {connected &&
+              snapshot?.error === "Allow audio playback to hear your team." &&
+              !linuxNative && (
+                <Button
+                  label="Retry audio playback"
+                  onClick={() =>
+                    void session.current
+                      ?.retryPlayback()
+                      .then(() => setMessage(null))
+                      .catch(() =>
+                        setMessage(
+                          "Playback is still blocked. Check system audio output and retry."
+                        )
+                      )
+                  }
+                />
+              )}
           </HStack>
           {(!supportsRtc || message || projectionMessage || snapshot?.error) && (
             <Text role="status">
               {!supportsRtc
                 ? "Ask your organizer for a supported app build or device. You can continue with team parts."
-                : (message ?? (snapshot?.error ? voiceErrorAdvice(snapshot.error) : projectionMessage))}
+                : (message ??
+                  (snapshot?.error ? voiceErrorAdvice(snapshot.error) : projectionMessage))}
             </Text>
           )}
           {connected && (
             <VStack gap={1}>
-              <Text>Microphone starts muted. Only unmuting sends your voice to the team.</Text>
-              <Text aria-label="Microphone input level">
-                {linuxNative
-                  ? "Microphone level is controlled by the system audio settings."
-                  : snapshot?.inputLevel == null
-                  ? "Input level unavailable. Enable the local meter to check your microphone."
-                  : `Microphone input: ${Math.round(snapshot.inputLevel * 100)}%`}
-              </Text>
+              {!linuxNative && (
+                <Text aria-label="Microphone input level">
+                  {snapshot?.inputLevel == null
+                    ? "Input level unavailable. Enable the local meter to check your microphone."
+                    : `Microphone input: ${Math.round(snapshot.inputLevel * 100)}%`}
+                </Text>
+              )}
               {!linuxNative && snapshot?.inputLevel == null && (
                 <Button
                   label="Enable microphone meter"
