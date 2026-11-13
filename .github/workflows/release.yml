@@ -178,10 +178,13 @@ jobs:
             \( -name sources.list -o -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors*.txt' \) \
             -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
           sudo apt-get update
+          # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
+          # Replace libunwind-14-dev in the same apt transaction (trailing -).
           sudo apt-get install -y \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
+            libunwind-14-dev- libunwind-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \

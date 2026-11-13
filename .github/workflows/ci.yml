@@ -92,10 +92,13 @@ jobs:
             sudo rm -rf /var/lib/apt/lists/*
             sleep 5
           done
+          # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
+          # Replace libunwind-14-dev in the same apt transaction (trailing -).
           sudo timeout 900 apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
+            libunwind-14-dev- libunwind-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
@@ -282,10 +285,13 @@ jobs:
             sudo rm -rf /var/lib/apt/lists/*
             sleep 5
           done
+          # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
+          # Replace libunwind-14-dev in the same apt transaction (trailing -).
           sudo timeout 900 apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
+            libunwind-14-dev- libunwind-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \

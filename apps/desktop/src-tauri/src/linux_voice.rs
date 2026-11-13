@@ -211,14 +211,13 @@ fn validate_request(request: &Value) -> Result<(), String> {
                 return fail();
             }
         }
-        "volume" => {
+        "volume"
             if !obj
                 .get("volume")
                 .and_then(Value::as_f64)
-                .is_some_and(|v| (0.0..=1.0).contains(&v))
-            {
-                return fail();
-            }
+                .is_some_and(|v| (0.0..=1.0).contains(&v)) =>
+        {
+            return fail();
         }
         _ => {}
     }
@@ -382,10 +381,7 @@ mod native {
                 .name("ams-native-voice".into())
                 .spawn(move || {
                     let mut reader = BufReader::new(output);
-                    loop {
-                        let Ok(value) = read_frame(&mut reader) else {
-                            break;
-                        };
+                    while let Ok(value) = read_frame(&mut reader) {
                         if value.get("id").is_some() {
                             if tx.try_send(value).is_err() {
                                 break;
