@@ -20,6 +20,7 @@ export function TeamLobby({
   contestUid,
   onClaim,
   onRelease,
+  onReady,
   onEnter,
   canEnter = true,
   actions,
@@ -29,6 +30,7 @@ export function TeamLobby({
   contestUid: string;
   onClaim: (label: string) => void;
   onRelease: () => void;
+  onReady: () => void;
   onEnter: () => void;
   canEnter?: boolean;
   actions?: ReactNode;
@@ -67,6 +69,25 @@ export function TeamLobby({
     });
   }, [contestUid, scheduleAttempt, hasBoard, hasProjectedStart]);
   const board = state.board;
+  const own = board?.parts.find((p) => p.holder_is_me);
+  const startRemaining = board
+    ? contestStartRemaining(startsAt, board, state.sampledAt, now)
+    : null;
+  const scheduleReady = hasProjectedStart || startConfirmed;
+  const enterReady = Boolean(
+    canEnter &&
+    state.status === "team" &&
+    !state.pending &&
+    own &&
+    board?.phase.name === "locked" &&
+    board.allocation.locked &&
+    scheduleReady &&
+    startRemaining === 0
+  );
+  // The board owns release. Neither a local Ready click nor countdown zero grants entry.
+  useEffect(() => {
+    if (board?.readiness_supported === true && enterReady) onEnter();
+  }, [board?.readiness_supported, enterReady, onEnter]);
   if (!board)
     return (
       <VStack gap={4} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
@@ -89,15 +110,13 @@ export function TeamLobby({
   const remaining = countdownMs(board, state.sampledAt, now);
   const clock = remaining === null ? null : duration(remaining);
   const phase = board.phase.name;
-  const startRemaining = contestStartRemaining(startsAt, board, state.sampledAt, now);
-  const scheduleReady = hasProjectedStart || startConfirmed;
   const choosing =
     canEnter &&
     state.status === "team" &&
     phase === "choosing" &&
     !board.allocation.locked &&
     remaining !== 0;
-  const own = board.parts.find((p) => p.holder_is_me);
+  const supportsReadiness = board.readiness_supported === true;
   return (
     <VStack
       gap={4}
@@ -129,6 +148,39 @@ export function TeamLobby({
         )}
       </VStack>
       <VStack ref={voiceTargetRef} gap={0} className="team-lobby-voice" />
+      {phase === "choosing" && supportsReadiness && (
+        <VStack gap={2}>
+          <Text role="status">
+            {board.readiness?.ready} of {board.readiness?.needed} members ready
+          </Text>
+          <Text>
+            {board.readiness?.mine
+              ? "You’re ready. Waiting for your teammates. Changing or releasing your part clears your readiness."
+              : own
+                ? board.allocation.locks_at
+                  ? "Ready to work on this part? Your team enters when everyone is ready or the selection timer ends."
+                  : "Ready to work on this part? Your team enters when everyone is ready."
+                : board.allocation.locks_at
+                  ? "Choose a part before marking yourself ready. Unclaimed parts are assigned when the selection timer ends."
+                  : "Choose a part before marking yourself ready."}
+          </Text>
+          <Button
+            variant="primary"
+            label="Ready"
+            isDisabled={
+              !choosing ||
+              !own ||
+              state.pending ||
+              !board.readiness?.can_ready ||
+              board.readiness.mine
+            }
+            onClick={() => {
+              setPendingAction("Marking you ready…");
+              onReady();
+            }}
+          />
+        </VStack>
+      )}
       {phase === "locked" && (
         <VStack gap={2}>
           <Text>
@@ -136,19 +188,20 @@ export function TeamLobby({
               ? `Your assigned part is ${own.label} (${own.problem_label}).`
               : "Waiting for your server-confirmed assignment."}
           </Text>
-          <Button
-            variant="primary"
-            isDisabled={
-              !scheduleReady ||
-              startRemaining !== 0 ||
-              !canEnter ||
-              !own ||
-              !board.allocation.locked ||
-              state.status !== "team"
-            }
-            onClick={onEnter}
-            label="Go to your part"
-          />
+          {supportsReadiness ? (
+            <Text role="status">
+              {enterReady
+                ? "Opening your part…"
+                : "Your part opens automatically when the contest starts and entry is available."}
+            </Text>
+          ) : (
+            <Button
+              variant="primary"
+              isDisabled={!enterReady}
+              onClick={onEnter}
+              label="Go to your part"
+            />
+          )}
           {startRemaining !== null && startRemaining > 0 && (
             <Text>Contest starts in {duration(startRemaining)}</Text>
           )}
@@ -244,7 +297,13 @@ export function TeamLobbyMembers({ state }: { state: LobbyState }) {
             description={
               <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>
             }
-            endContent={member.assigned_by === "auto" ? <Token label="Auto-assigned" /> : undefined}
+            endContent={
+              state.board?.readiness_supported === true && state.board.phase.name === "choosing" ? (
+                <Token label={member.ready ? "Ready" : "Not ready"} />
+              ) : member.assigned_by === "auto" ? (
+                <Token label="Auto-assigned" />
+              ) : undefined
+            }
           />
         ))}
       </List>

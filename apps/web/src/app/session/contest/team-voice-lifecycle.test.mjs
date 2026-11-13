@@ -66,9 +66,18 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   assert.deepEqual(messages, [
     "Team voice is unavailable in this app. Ask your organizer for a supported app build or device.",
   ]);
-  assert.match(ui, /const supportsRtc = linuxNative \? nativeSupported : typeof RTCPeerConnection === "function"/);
-  assert.match(ui, /linuxNative \? await \(nativeProbe\.current \?\? probeLinuxVoice\(\)\) : supportsRtc/);
-  assert.match(ui, /acquireMicrophone: linuxNative \? undefined : \(\) => acquireVoiceMicrophone/);
+  assert.match(
+    ui,
+    /const supportsRtc = linuxNative \? nativeSupported : typeof RTCPeerConnection === "function"/
+  );
+  assert.match(
+    ui,
+    /linuxNative \? await \(nativeProbe\.current \?\? probeLinuxVoice\(\)\) : supportsRtc/
+  );
+  assert.match(
+    ui.replace(/\s+/g, " "),
+    /acquireMicrophone: linuxNative \? undefined : \(\) => acquireVoiceMicrophone/
+  );
   assert.match(ui, /nativeVoice: linuxNative \? createLinuxVoiceBackend : undefined/);
   assert.match(ui, /!supportsRtc\s*\? "Voice unavailable in this app"/);
   assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
@@ -79,7 +88,8 @@ test("missing WebRTC blocks connection before session creation or microphone cap
 });
 
 test("Windows output enumeration failure leaves connected voice usable", async () => {
-  const body = ui.match(/async function connect\(\) \{([\s\S]*?)\n  \}\n\n  connectCurrent/)[1]
+  const body = ui
+    .match(/async function connect\(\) \{([\s\S]*?)\n  \}\n\n  connectCurrent/)[1]
     .replaceAll("lifecycle!", "lifecycle");
   const messages = [];
   const outputs = [];
@@ -90,21 +100,41 @@ test("Windows output enumeration failure leaves connected voice usable", async (
     subscribe: () => () => {},
   };
   const scope = {
-    current: { current: () => true }, lifecycleAbort: { current: { signal: {} } },
-    open: { current: true }, connectPending: { current: false },
-    linuxNative: false, nativeProbe: { current: null }, supportsRtc: true,
-    setMessage: (value) => messages.push(value), setNativeSupported() {},
-    autoJoin: { current: { take() {} } }, unsubscribeSession: { current: null },
-    session: { current: null }, createTeamVoiceSession: () => active,
-    contestUid: "contest", resolveApiBase: () => "https://api.test",
-    participantToken: () => "token", acquireVoiceMicrophone() {},
-    cameraSession: { current: () => null }, createLinuxVoiceBackend() {},
-    readVoiceCredentials() {}, authHeaders() {}, setSnapshot() {},
+    current: { current: () => true },
+    lifecycleAbort: { current: { signal: {} } },
+    open: { current: true },
+    connectPending: { current: false },
+    linuxNative: false,
+    nativeProbe: { current: null },
+    supportsRtc: true,
+    setMessage: (value) => messages.push(value),
+    setNativeSupported() {},
+    autoJoin: { current: { take() {} } },
+    unsubscribeSession: { current: null },
+    session: { current: null },
+    createTeamVoiceSession: () => active,
+    contestUid: "contest",
+    resolveApiBase: () => "https://api.test",
+    participantToken: () => "token",
+    acquireVoiceMicrophone() {},
+    cameraSession: { current: () => null },
+    createLinuxVoiceBackend() {},
+    readVoiceCredentials() {},
+    authHeaders() {},
+    setSnapshot() {},
     setOutputs: (value) => outputs.push(value),
     HTMLMediaElement: { prototype: { setSinkId() {} } },
-    navigator: { mediaDevices: { async enumerateDevices() { throw new Error("denied"); } } },
+    navigator: {
+      mediaDevices: {
+        async enumerateDevices() {
+          throw new Error("denied");
+        },
+      },
+    },
   };
-  const connect = new Function(...Object.keys(scope), `return async function() { ${body} };`)(...Object.values(scope));
+  const connect = new Function(...Object.keys(scope), `return async function() { ${body} };`)(
+    ...Object.values(scope)
+  );
   await connect();
   assert.equal(scope.session.current, active);
   assert.equal(active.getSnapshot().status, "connected");

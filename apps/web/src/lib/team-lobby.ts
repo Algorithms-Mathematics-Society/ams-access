@@ -12,6 +12,8 @@ export type TeamLobbyBoard = {
     is_me: boolean;
     part_label: string | null;
     assigned_by: string | null;
+    ready?: boolean;
+    ready_at?: string | null;
   }[];
   parts: {
     label: string;
@@ -38,6 +40,8 @@ export type TeamLobbyBoard = {
     locked: boolean;
     locks_at: string | null;
   };
+  readiness_supported?: true;
+  readiness?: { ready: number; needed: number; mine: boolean; can_ready: boolean };
   submission?: TeamVote;
   server_time: string;
 };
@@ -109,18 +113,38 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
     new Set(v.parts.map((p) => p.label)).size !== v.parts.length
   )
     throw new Error("Team status unavailable.");
+  if (
+    v.readiness_supported === true &&
+    (!object(v.readiness) ||
+      !Number.isInteger(v.readiness.ready) ||
+      !Number.isInteger(v.readiness.needed) ||
+      v.readiness.needed !== v.members.length ||
+      Number(v.readiness.ready) < 0 ||
+      Number(v.readiness.ready) > v.members.length ||
+      typeof v.readiness.mine !== "boolean" ||
+      typeof v.readiness.can_ready !== "boolean" ||
+      !v.members.every(
+        (m) => typeof m.ready === "boolean" && (m.ready_at === null || date(m.ready_at))
+      ) ||
+      v.members.filter((m) => m.ready).length !== v.readiness.ready ||
+      v.members.find((m) => m.is_me)?.ready !== v.readiness.mine)
+  )
+    throw new Error("Team readiness unavailable.");
   // Retain only the small lobby projection, never integration/history payloads.
   const source = v as TeamLobbyBoard;
   const submission = parseTeamVote(v);
   return {
     team: { uid: source.team.uid, name: source.team.name, number: source.team.number },
-    members: source.members.map(({ member_uid, display_name, is_me, part_label, assigned_by }) => ({
-      ...(member_uid ? { member_uid } : {}),
-      display_name,
-      is_me,
-      part_label,
-      assigned_by,
-    })),
+    members: source.members.map(
+      ({ member_uid, display_name, is_me, part_label, assigned_by, ready, ready_at }) => ({
+        ...(member_uid ? { member_uid } : {}),
+        display_name,
+        is_me,
+        part_label,
+        assigned_by,
+        ...(source.readiness_supported === true ? { ready, ready_at } : {}),
+      })
+    ),
     parts: source.parts.map(
       ({
         label,
@@ -156,6 +180,17 @@ export function parseTeamLobby(v: unknown): TeamLobbyBoard {
       discussion_seconds: source.phase.discussion_seconds,
     },
     allocation: { locked: source.allocation.locked, locks_at: source.allocation.locks_at },
+    ...(source.readiness_supported === true
+      ? {
+          readiness_supported: true as const,
+          readiness: {
+            ready: source.readiness!.ready,
+            needed: source.readiness!.needed,
+            mine: source.readiness!.mine,
+            can_ready: source.readiness!.can_ready,
+          },
+        }
+      : {}),
     ...(submission ? { submission } : {}),
     server_time: source.server_time,
   };
@@ -239,7 +274,7 @@ export function createTeamLobbyController(options: {
     timer = setTimeout(() => void run(), delay);
   };
   async function run(
-    action?: "claim" | "release" | "approve" | "withdraw",
+    action?: "claim" | "release" | "ready" | "approve" | "withdraw",
     label?: string,
     revision?: number
   ) {
@@ -329,7 +364,9 @@ export function createTeamLobbyController(options: {
             ? response.status === 409
               ? "The team revision or approval changed. Review the updated count before approving again."
               : "Could not update your approval. Check the current revision and try again."
-            : detail
+            : action === "ready" && response.status === 404
+              ? "Ready is unavailable on this server. Your parts will lock when the selection timer ends."
+              : detail
         );
       }
       const board = parseTeamLobby(body);
@@ -413,6 +450,25 @@ export function createTeamLobbyController(options: {
       )
         return;
       void run("release");
+    },
+    ready: () => {
+      const board = state.board;
+      if (
+        stopped ||
+        terminal ||
+        state.pending ||
+        busy ||
+        state.status !== "team" ||
+        board?.readiness_supported !== true ||
+        !board.readiness?.can_ready ||
+        board.readiness.mine ||
+        board.phase.name !== "choosing" ||
+        board.allocation.locked ||
+        !board.members.some((m) => m.is_me && m.part_label) ||
+        countdownMs(board, state.sampledAt, now()) === 0
+      )
+        return;
+      void run("ready");
     },
     approve: (revision: number) => vote("approve", revision),
     withdraw: (revision: number) => vote("withdraw", revision),

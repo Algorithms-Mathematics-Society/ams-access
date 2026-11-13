@@ -11,10 +11,10 @@ export function LeaveTeamVoice({ onLeave }: { onLeave: () => void }) {
   return (
     <HStack gap={2} align="center" wrap="wrap">
       <Text role="status">Leave team voice?</Text>
-      <Button label="Stay in voice" variant="secondary" onClick={() => setConfirming(false)} />
+      <Button label="Stay in voice" variant="primary" onClick={() => setConfirming(false)} />
       <Button
         label="Confirm leave voice"
-        variant="ghost"
+        variant="destructive"
         onClick={() => {
           setConfirming(false);
           onLeave();

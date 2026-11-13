@@ -1,4 +1,5 @@
 "use client";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 import { supportsTeamDesktopWebView } from "@/lib/team-platform";
 
@@ -4770,6 +4771,18 @@ export default function ContestPageClient() {
     timeUpState,
   ]);
 
+  const canEnterTeamPart =
+    entryReady &&
+    !editorLocked &&
+    !criticalOverlayActive &&
+    !networkOverlayActive &&
+    !leaveConfirm &&
+    !submitConfirm &&
+    !showSupportChat &&
+    !showSupportModal &&
+    !showMediaToggleWarning &&
+    !pendingRedirect;
+
   if (pendingRedirect) {
     return loadError ? (
       <ContestLoadErrorScreen
@@ -5023,6 +5036,7 @@ export default function ContestPageClient() {
                   voiceTargetRef={setLobbyVoiceTarget}
                   actions={
                     <HStack gap={2} wrap="wrap" aria-label="Lobby actions">
+                      <ThemeToggle />
                       <Button
                         label="Help"
                         variant="secondary"
@@ -5037,9 +5051,12 @@ export default function ContestPageClient() {
                   onRelease={() => {
                     void lobbyController.current?.release();
                   }}
-                  canEnter={!editorLocked}
+                  onReady={() => {
+                    if (canEnterTeamPart) lobbyController.current?.ready();
+                  }}
+                  canEnter={canEnterTeamPart}
                   onEnter={() => {
-                    if (!editorLocked) setEnteredTeamPart(true);
+                    if (canEnterTeamPart) setEnteredTeamPart(true);
                   }}
                 />
               </VStack>
