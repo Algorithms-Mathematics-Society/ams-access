@@ -66,3 +66,11 @@ upgrade --apply run after any @astryxdesign/core bump
 - Before closing an issue, verify its acceptance criteria and merged PR. Preserve any explicit user requirement to confirm closure first.
 - Keep independently testable fixes separate from unfinished feature work. Never include local operator notes, secrets, or unrelated changes in a PR.
 - Use `gh` CLI for GitHub operations.
+
+## Final formatting and CI parity gate
+
+- Before publishing any commit, read the repository CI workflow and identify its formatting, lint, type, build, and test commands. Run the formatter for changed files, then the formatter's check mode. `git diff --check` alone is not a formatting check.
+- Run final formatting checks after the last source/test edit, including edits from sub-agents and commit hooks. Stage and verify every required new helper/test file; do not publish an incomplete snapshot.
+- Use the CI tools and versions where available: Ruff format plus `ruff format --check` for Python, Prettier checks for changed web files, `cargo fmt --check` for Rust, and the configured C++ formatting/clang-tidy checks. Do not suppress a rule or weaken a test merely to pass CI.
+- Run the affected existing suites as well as new regression tests. Compatibility changes to package parsing require the full existing package/attachment suite, not only new multi-file tests.
+- Keep evidence tied to the final commit or staged snapshot. Distinguish passing checks from unavailable platform/sandbox checks. If a local gate is unavailable, record it explicitly and require the corresponding CI result before merge.
