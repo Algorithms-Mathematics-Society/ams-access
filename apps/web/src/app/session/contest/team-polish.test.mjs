@@ -231,7 +231,7 @@ function renderVoiceSettings({ compact = false, connected = false } = {}) {
     "utf8"
   );
   const exports = {};
-  let stateIndex = 0;
+  let snapshotUsed = false;
   const snapshot = connected
     ? { status: "connected", muted: true, inputLevel: 0, peers: [], error: null }
     : null;
@@ -247,7 +247,13 @@ function renderVoiceSettings({ compact = false, connected = false } = {}) {
       return {
         useEffect() {},
         useRef: (v) => ({ current: v }),
-        useState: (v) => [stateIndex++ === 0 ? snapshot : v, () => {}],
+        useState: (v) => {
+          if (v === null && !snapshotUsed) {
+            snapshotUsed = true;
+            return [snapshot, () => {}];
+          }
+          return [v, () => {}];
+        },
       };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name === "@/lib/team-voice-input") return { createVoiceAutoJoinGate: () => ({}) };

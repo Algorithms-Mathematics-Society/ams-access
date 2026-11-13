@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "helpers/ams-linux-voice-worker": "helpers/ams-linux-voice-worker"
+    }
+  }
+}

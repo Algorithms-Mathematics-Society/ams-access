@@ -9,7 +9,7 @@ for tool in patchelf gst-inspect-1.0 gst-launch-1.0 glib-compile-schemas; do
     fi
 done
 [ "$missing" -eq 0 ] || exit 1
-for plugin in v4l2src videoconvert audioconvert; do
+for plugin in v4l2src videoconvert audioconvert pulsesrc pulsesink; do
     gst-inspect-1.0 "$plugin" >/dev/null || {
         echo "Linux packaging GStreamer plugin unavailable: $plugin (install base/good plugins in the builder)" >&2
         exit 1

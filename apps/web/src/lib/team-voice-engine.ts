@@ -1,4 +1,5 @@
 import { createVoiceInputMeter } from "./team-voice-input.ts";
+import type { NativeVoiceBackend, NativeVoiceEvent } from "./team-voice-native.ts";
 /** Bounded, relay-only team audio. This module owns only microphone clones. */
 export type TeamVoiceCredentials = {
   ice_servers: RTCIceServer[];
@@ -29,7 +30,8 @@ export type TeamVoiceOptions = {
   token?: string;
   getToken?: () => string | Promise<string>;
   /** Must return an OWNED clone, never the proctor's original stream. */
-  acquireMicrophone: () => Promise<MediaStream>;
+  acquireMicrophone?: () => Promise<MediaStream>;
+  nativeVoice?: () => NativeVoiceBackend;
   refreshCredentials?: () => Promise<TeamVoiceCredentials>;
   deps?: Partial<TeamVoiceDeps>;
 };
@@ -56,10 +58,8 @@ export type TeamVoiceSession = {
   subscribe(listener: () => void): () => void;
   getSnapshot(): TeamVoiceSnapshot;
 };
-type Peer = {
+type PeerBase = {
   view: TeamVoicePeer;
-  pc: RTCPeerConnection;
-  audio: HTMLAudioElement;
   making: boolean;
   ignore: boolean;
   answering: boolean;
@@ -70,12 +70,32 @@ type Peer = {
   statsPending: boolean;
   chain: Promise<void>;
 };
+type BrowserPeer = PeerBase & { kind: "browser"; pc: RTCPeerConnection; audio: HTMLAudioElement };
+type NativePeer = PeerBase & {
+  kind: "native";
+  remoteSet: boolean;
+  signalingState: "stable" | "have-local-offer" | "have-remote-offer";
+  restarts: number;
+  watching: boolean;
+  recoveryToken: number;
+  connectionState: string;
+};
+type Peer = BrowserPeer | NativePeer;
 const MAX_PEERS = 4,
   // Fixed lifetime budget for initial negotiation plus three ICE retries.
   MAX_ICE = 24 * 4,
   MAX_SDP = 48_000,
   MAX_RETRIES = 6,
   MAX_ICE_RESTARTS = 3;
+function nativeTurnServers(servers: RTCIceServer[]): RTCIceServer[] {
+  return servers.flatMap((server) => {
+    if (typeof server.username !== "string" || !server.username ||
+      typeof server.credential !== "string" || !server.credential) return [];
+    const urls = (Array.isArray(server.urls) ? server.urls : [server.urls])
+      .filter((url): url is string => typeof url === "string" && /^turns?:/.test(url));
+    return urls.length ? [{ ...server, urls }] : [];
+  });
+}
 export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSession {
   const d: TeamVoiceDeps = {
     inputMeter: createVoiceInputMeter,
@@ -105,6 +125,9 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   let generation = 0,
     socket: WebSocket | null = null,
     microphone: MediaStream | null = null;
+  let nativeBackend: NativeVoiceBackend | null = null;
+  let nativeSession = "";
+  let pendingNativeEnd: NativeVoiceEvent | null = null;
   let inputMeter: ReturnType<typeof createVoiceInputMeter> | null = null;
   let me = "",
     credentials: TeamVoiceCredentials | null = null,
@@ -113,7 +136,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     welcomed = false;
   let lastPong = 0,
     muteSent = true,
-    muteTimer = false;
+    muteTimer = false,
+    muteIntent = 0;
   const outgoing: { raw: string; peer?: Peer }[] = [];
   let sending = false;
   function drain() {
@@ -159,19 +183,40 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       if (!sending) drain();
     }
   }
+  function announceMute() {
+    if (welcomed && !muteTimer) {
+      muteTimer = true;
+      later(() => {
+        muteTimer = false;
+        if (muteSent !== snapshot.muted) {
+          muteSent = snapshot.muted;
+          send({ type: muteSent ? "mute" : "unmute" });
+        }
+      }, 500);
+    }
+  }
   function remove(uid: string) {
     const p = peers.get(uid);
     if (!p) return;
     peers.delete(uid);
-    p.pc.onicecandidate =
-      p.pc.ontrack =
-      p.pc.onnegotiationneeded =
-      p.pc.onconnectionstatechange =
-        null;
-    p.pc.close();
-    p.audio.pause();
-    p.audio.srcObject = null;
-    p.view.stream?.getTracks().forEach((t) => t.stop());
+    if (p.kind === "browser") {
+      p.pc.onicecandidate =
+        p.pc.ontrack =
+        p.pc.onnegotiationneeded =
+        p.pc.onconnectionstatechange =
+          null;
+      p.pc.close();
+      p.audio.pause();
+      p.audio.srcObject = null;
+      p.view.stream?.getTracks().forEach((t) => t.stop());
+    } else if (nativeSession) {
+      const session = nativeSession;
+      const g = generation;
+      void nativeBackend?.call({ op: "peer_close", session, peer: uid }).catch(() => {
+        if (valid(g) && nativeSession === session)
+          finish("unavailable", "Native peer could not be closed.");
+      });
+    }
   }
   function cleanup() {
     for (const timer of timers) d.clearTimeout(timer);
@@ -194,13 +239,17 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       t.stop();
     });
     microphone = null;
+    nativeSession = "";
+    pendingNativeEnd = null;
+    nativeBackend?.stop();
+    nativeBackend = null;
     welcomed = false;
   }
   function finish(status: TeamVoiceSnapshot["status"], error: string | null = null) {
     active = false;
     generation++;
     cleanup();
-    emit({ status, error });
+    emit({ status, error, ...(options.nativeVoice ? { muted: true } : {}) });
   }
   function disconnected() {
     if (!active) return;
@@ -231,6 +280,156 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         }
       });
   }
+  function addNative(raw: Record<string, unknown>, uid: string) {
+    const p: NativePeer = {
+      kind: "native",
+      view: {
+        memberUid: uid,
+        displayName: String(raw.display_name ?? "").slice(0, 160),
+        muted: raw.muted === true,
+        speaking: false,
+        stream: null,
+        volume: 1,
+      },
+      making: false,
+      ignore: false,
+      answering: false,
+      candidates: [],
+      sent: 0,
+      received: 0,
+      descriptions: 0,
+      statsPending: false,
+      chain: Promise.resolve(),
+      remoteSet: false,
+      signalingState: "stable",
+      restarts: 0,
+      watching: false,
+      recoveryToken: 0,
+      connectionState: "new",
+    };
+    peers.set(uid, p);
+    const session = nativeSession;
+    const credential = credentials!;
+    work(p, async () => {
+      await nativeBackend!.call({ op: "peer_create", session, peer: uid, ice_servers: nativeTurnServers(credential.ice_servers), expires_at: credential.expires_at });
+      if (!valid(generation, p)) return;
+      await nativeBackend!.call({ op: "volume", session, peer: uid, volume: snapshot.volume });
+    });
+    emit();
+  }
+  function nativeOffer(p: NativePeer, iceRestart = false) {
+    const g = generation;
+    work(p, async () => {
+      if (p.making || p.signalingState !== "stable") return;
+      p.making = true;
+      try {
+        const description = await nativeBackend!.call<RTCSessionDescriptionInit>({
+          op: "local_description", session: nativeSession, peer: p.view.memberUid,
+          type: "offer", ice_restart: iceRestart,
+        });
+        if (valid(g, p) && description.type === "offer" && typeof description.sdp === "string" && description.sdp.length <= MAX_SDP) {
+          p.signalingState = "have-local-offer";
+          signal(p, "offer", description);
+        }
+      } finally {
+        p.making = false;
+      }
+    });
+  }
+  function handleNativeEvent(g: number, event: NativeVoiceEvent) {
+    if (!valid(g)) return;
+    if (!nativeSession && nativeBackend && event.event === "ended") {
+      pendingNativeEnd = event;
+      return;
+    }
+    if (event.session !== nativeSession) return;
+    if (event.event === "ended") return finish("unavailable", "Native audio stopped.");
+    if (!event.peer) return;
+    const p = peers.get(event.peer);
+    if (!p || p.kind !== "native") return;
+    if (event.event === "ice" && event.candidate) {
+      if (event.candidate.candidate.length <= 4096 && p.sent++ < MAX_ICE)
+        signal(p, "ice", event.candidate);
+    } else if (event.event === "negotiation") {
+      // The higher UID offers. Browser peers may offer independently; their
+      // lower UID endpoint is polite, so the native endpoint never needs glare rollback.
+      if (me > p.view.memberUid) nativeOffer(p);
+    } else if (event.event === "state") {
+      p.connectionState = event.state ?? "unknown";
+      if (event.state === "connected") {
+        p.restarts = 0;
+        p.watching = false;
+        p.recoveryToken++;
+      } else if (event.state === "failed" && !p.watching) {
+        const token = ++p.recoveryToken;
+        const recover = () => {
+          if (!valid(g, p) || p.recoveryToken !== token || p.connectionState === "connected") return;
+          if (p.restarts >= MAX_ICE_RESTARTS ||
+            (me > p.view.memberUid && p.signalingState !== "stable")) {
+            p.watching = false;
+            remove(p.view.memberUid);
+            emit({ error: "A teammate audio connection failed." });
+            return;
+          }
+          p.restarts++;
+          p.watching = true;
+          if (me > p.view.memberUid) nativeOffer(p, true);
+          later(recover, 15_000);
+        };
+        recover();
+      }
+    }
+  }
+  function relayNative(p: NativePeer, raw: Record<string, unknown>) {
+    const data = raw.data as Record<string, unknown> | null;
+    if (!data || typeof data !== "object") return;
+    const g = generation;
+    if (raw.kind === "ice") {
+      if (typeof data.candidate !== "string" || data.candidate.length > 4096 ||
+        !Number.isInteger(data.sdpMLineIndex) || Number(data.sdpMLineIndex) < 0 ||
+        ++p.received > MAX_ICE) return;
+      const candidate: RTCIceCandidateInit = {
+        candidate: data.candidate,
+        sdpMid: typeof data.sdpMid === "string" ? data.sdpMid.slice(0, 64) : null,
+        sdpMLineIndex: Number(data.sdpMLineIndex),
+      };
+      work(p, async () => {
+        if (p.ignore) return;
+        if (!p.remoteSet) p.candidates.push(candidate);
+        else await nativeBackend!.call({ op: "ice", session: nativeSession, peer: p.view.memberUid, candidate });
+      });
+    } else if ((raw.kind === "offer" || raw.kind === "answer") && data.type === raw.kind &&
+      typeof data.sdp === "string" && data.sdp.length <= MAX_SDP &&
+      data.sdp.match(/^m=/gm)?.length === 1 && /^m=audio\s/m.test(data.sdp)) {
+      if (++p.descriptions > 16) return;
+      work(p, async () => {
+        const collision = data.type === "offer" && (p.making || p.signalingState !== "stable");
+        p.ignore = me > p.view.memberUid && collision;
+        if (p.ignore) return;
+        if (collision) {
+          await nativeBackend!.call({ op: "remote_description", session: nativeSession, peer: p.view.memberUid, description: { type: "rollback" } });
+          p.signalingState = "stable";
+        }
+        await nativeBackend!.call({ op: "remote_description", session: nativeSession, peer: p.view.memberUid,
+          description: { type: data.type as RTCSdpType, sdp: data.sdp as string } });
+        if (!valid(g, p)) return;
+        p.remoteSet = true;
+        p.signalingState = data.type === "offer" ? "have-remote-offer" : "stable";
+        for (const candidate of p.candidates.splice(0)) {
+          await nativeBackend!.call({ op: "ice", session: nativeSession, peer: p.view.memberUid, candidate });
+          if (!valid(g, p)) return;
+        }
+        if (data.type === "offer") {
+          const answer = await nativeBackend!.call<RTCSessionDescriptionInit>({ op: "local_description", session: nativeSession,
+            peer: p.view.memberUid, type: "answer" });
+          if (valid(g, p) && answer.type === "answer" && typeof answer.sdp === "string" && answer.sdp.length <= MAX_SDP) {
+            p.signalingState = "stable";
+            signal(p, "answer", answer);
+          }
+        }
+      });
+    }
+  }
   function add(raw: Record<string, unknown>) {
     const uid = raw.member_uid;
     if (
@@ -240,14 +439,18 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       peers.has(uid) ||
       peers.size >= MAX_PEERS ||
       !credentials ||
-      !microphone
+      (!options.nativeVoice && !microphone)
     )
       return;
+    if (options.nativeVoice) return addNative(raw, uid);
+    const mic = microphone;
+    if (!mic) return;
     const pc = d.rtc({ iceServers: credentials.ice_servers, iceTransportPolicy: "relay" });
     const audio = d.audio();
     audio.autoplay = true;
     audio.volume = snapshot.volume;
-    const p: Peer = {
+    const p: BrowserPeer = {
+      kind: "browser",
       pc,
       audio,
       view: {
@@ -270,8 +473,8 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     };
     peers.set(uid, p);
     const g = generation;
-    for (const track of microphone.getAudioTracks()) {
-      const sender = pc.addTrack(track, microphone);
+    for (const track of mic.getAudioTracks()) {
+      const sender = pc.addTrack(track, mic);
       work(p, async () => {
         const params = sender.getParameters();
         params.encodings = params.encodings?.length ? params.encodings : [{}];
@@ -342,6 +545,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   function relay(raw: Record<string, unknown>) {
     const p = peers.get(String(raw.from));
     if (!p) return;
+    if (p.kind === "native") return relayNative(p, raw);
     const data = raw.data as Record<string, unknown> | null;
     if (!data || typeof data !== "object") return;
     const g = generation;
@@ -416,8 +620,12 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     )
       throw new Error("Team voice requires an available TURN relay.");
     credentials = value;
-    for (const p of peers.values())
-      p.pc.setConfiguration({ iceServers: value.ice_servers, iceTransportPolicy: "relay" });
+    for (const p of peers.values()) {
+      if (p.kind === "browser")
+        p.pc.setConfiguration({ iceServers: value.ice_servers, iceTransportPolicy: "relay" });
+      else if (nativeSession)
+        work(p, () => nativeBackend!.call({ op: "configure", session: nativeSession, peer: p.view.memberUid, ice_servers: nativeTurnServers(value.ice_servers), expires_at: value.expires_at }));
+    }
     const g = generation;
     // One refresh per credential lifetime, no polling; failure closes rather than using expired credentials.
     later(
@@ -466,19 +674,19 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       for (const p of peers.values()) {
         if (p.statsPending) continue;
         p.statsPending = true;
-        void p.pc
-          .getStats()
-          .then((stats) => {
-            if (!valid(g, p)) return;
+        const reading = p.kind === "native"
+          ? nativeBackend!.stats(p.view.memberUid).then((level) => level != null && level > 0.02)
+          : p.pc.getStats().then((stats) => {
             let speaking = false;
             stats.forEach((report) => {
-              if (
-                report.type === "inbound-rtp" &&
-                report.kind === "audio" &&
-                report.audioLevel > 0.02
-              )
+              if (report.type === "inbound-rtp" && report.kind === "audio" && report.audioLevel > 0.02)
                 speaking = true;
             });
+            return speaking;
+          });
+        void reading
+          .then((speaking) => {
+            if (!valid(g, p)) return;
             if (p.view.speaking !== speaking) {
               p.view.speaking = speaking;
               emit();
@@ -497,12 +705,30 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     try {
       const token = (await options.getToken?.()) ?? options.token ?? "";
       if (!valid(g)) return;
+      if (options.nativeVoice) {
+        const backend = options.nativeVoice();
+        nativeBackend = backend;
+        const session = await backend.start((event) => handleNativeEvent(g, event));
+        if (!valid(g) || nativeBackend !== backend) {
+          backend.stop();
+          return;
+        }
+        nativeSession = session;
+        if (pendingNativeEnd?.session === session) {
+          handleNativeEvent(g, pendingNativeEnd);
+          return;
+        }
+        pendingNativeEnd = null;
+        if (!snapshot.muted)
+          await backend.call({ op: "mute", session, muted: false });
+        if (!valid(g) || nativeBackend !== backend) return;
+      } else {
       later(() => {
         if (!microphone) finish("unavailable", "Microphone request timed out.");
       }, 10_000);
       let owned: MediaStream;
       try {
-        owned = await options.acquireMicrophone();
+        owned = await options.acquireMicrophone!();
       } catch (error) {
         const name = error instanceof Error ? error.name : "";
         if (valid(g))
@@ -546,6 +772,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         later(sampleInput, 250);
       }
       if (inputMeter) sampleInput();
+      }
       const url = new URL(
         `${options.apiBase.replace(/\/$/, "")}/participant/contests/${encodeURIComponent(options.contestUid)}/team/voice`
       );
@@ -627,20 +854,29 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     },
     setMuted(muted) {
       inputMeter?.resume();
+      const intent = ++muteIntent;
+      if (nativeSession) {
+        const session = nativeSession;
+        const g = generation;
+        if (muted) emit({ muted: true });
+        void nativeBackend?.call({ op: "mute", session, muted })
+          .then(() => {
+            if (valid(g) && nativeSession === session && intent === muteIntent && !muted) {
+              emit({ muted: false });
+              announceMute();
+            }
+          })
+          .catch(() => {
+            if (valid(g) && nativeSession === session)
+              finish("unavailable", "Native microphone could not be changed.");
+          });
+        if (!muted) return;
+      }
       microphone?.getAudioTracks().forEach((t) => {
         t.enabled = !muted;
       });
       emit({ muted });
-      if (welcomed && !muteTimer) {
-        muteTimer = true;
-        later(() => {
-          muteTimer = false;
-          if (muteSent !== snapshot.muted) {
-            muteSent = snapshot.muted;
-            send({ type: muteSent ? "mute" : "unmute" });
-          }
-        }, 500);
-      }
+      announceMute();
     },
     setVolume(volume, uid) {
       const safe = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 0));
@@ -648,7 +884,16 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         const p = peers.get(uid);
         if (p) p.view.volume = safe;
       } else snapshot = { ...snapshot, volume: safe };
-      for (const p of peers.values()) p.audio.volume = snapshot.volume * p.view.volume;
+      for (const p of peers.values()) {
+        const output = snapshot.volume * p.view.volume;
+        if (p.kind === "browser") p.audio.volume = output;
+        else if (nativeSession) {
+          const session = nativeSession;
+          void nativeBackend?.call({ op: "volume", session, peer: p.view.memberUid, volume: output }).catch(() => {
+            if (nativeSession === session) remove(p.view.memberUid);
+          });
+        }
+      }
       emit();
     },
     setMemberVolume(uid, volume) {
@@ -657,13 +902,14 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     async retryPlayback() {
       inputMeter?.resume();
       const g = generation;
-      await Promise.all([...peers.values()].map((p) => p.audio.play()));
+      await Promise.all([...peers.values()].filter((p): p is BrowserPeer => p.kind === "browser").map((p) => p.audio.play()));
       if (valid(g)) emit({ error: null });
     },
     async setOutputDevice(outputDevice) {
+      if (options.nativeVoice) throw new Error("Use the system audio output setting.");
       const g = generation;
       await Promise.all(
-        [...peers.values()].map((p) => {
+        [...peers.values()].filter((p): p is BrowserPeer => p.kind === "browser").map((p) => {
           if (!p.audio.setSinkId) throw new Error("Output selection is unavailable.");
           return p.audio.setSinkId(outputDevice);
         })
