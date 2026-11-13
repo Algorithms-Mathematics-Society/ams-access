@@ -5,6 +5,11 @@ import {
   type BufferedFile,
   type ServerDraft,
 } from "./answer-buffer.ts";
+import {
+  isCompilationUnit,
+  sourceWorkspaceError,
+  workspaceFingerprint,
+} from "./source-workspace.ts";
 
 /** Deferred writes retain their question and source, even when the user navigates. */
 export function createDraftSaveQueue() {
@@ -54,6 +59,7 @@ export function restoreDraftWorkspace(
     return {
       files: buffered.files,
       activeFileId: buffered.activeFileId,
+      entrypoint: buffered.entrypoint,
       language: buffered.language,
       recovered: choice === "buffer",
     };
@@ -61,11 +67,26 @@ export function restoreDraftWorkspace(
   // A newer server draft, or the only copy (a spare machine, cleared site
   // data), wins the active answer; scratch work has no server copy.
   if (!server) return null;
+  if (server.source_files?.length && server.entrypoint) {
+    const files: BufferedFile[] = server.source_files.map((file) => ({
+      id: `${questionId}:source:${file.path}`,
+      name: file.path,
+      content: file.content,
+    }));
+    return {
+      files,
+      activeFileId: files.find((file) => file.name === server.entrypoint)?.id ?? files[0].id,
+      entrypoint: server.entrypoint,
+      language: server.language,
+      recovered: false,
+    };
+  }
   const scratch = buffered?.files.filter((file) => file.id !== `${questionId}:main`) ?? [];
   const main: BufferedFile = { id: `${questionId}:main`, name: mainName, content: server.source };
   return {
     files: [main, ...scratch],
     activeFileId: main.id,
+    entrypoint: undefined,
     language: server.language,
     recovered: false,
   };
@@ -76,11 +97,47 @@ export const DRAFT_BACKUP_MS = 45_000;
 
 /** What to back up for one problem, or null when the server already holds it.
  * `fingerprint` is what the caller records once the server accepts it. */
-export function draftBackup(buffered: BufferedAnswer | null, serverHolds: string | undefined) {
+export function draftBackup(
+  buffered: BufferedAnswer | null,
+  serverHolds: string | undefined,
+  multiFile = false
+) {
   if (!buffered) return null;
   const source = activeContent(buffered);
-  const fingerprint = `${buffered.language}\n${source}`;
-  return fingerprint === serverHolds ? null : { source, language: buffered.language, fingerprint };
+  const sourceFiles =
+    multiFile && buffered.entrypoint
+      ? buffered.files.map((file) => ({ path: file.name, content: file.content }))
+      : undefined;
+  const compilationUnits = sourceFiles
+    ?.filter((file) => isCompilationUnit(file.path))
+    .map((file) => file.path);
+  if (
+    sourceFiles &&
+    sourceWorkspaceError(
+      {
+        source_files: sourceFiles,
+        entrypoint: buffered.entrypoint!,
+        compilation_units: compilationUnits ?? [],
+      },
+      true
+    )
+  )
+    return null;
+  const fingerprint = sourceFiles
+    ? workspaceFingerprint(buffered.language, {
+        source_files: sourceFiles,
+        entrypoint: buffered.entrypoint!,
+        compilation_units: compilationUnits ?? [],
+      })
+    : `${buffered.language}\n${source}`;
+  return fingerprint === serverHolds
+    ? null
+    : {
+        source,
+        language: buffered.language,
+        fingerprint,
+        ...(sourceFiles ? { sourceFiles, entrypoint: buffered.entrypoint, compilationUnits } : {}),
+      };
 }
 
 /** A failure that ends backups for the session: no connection to the server

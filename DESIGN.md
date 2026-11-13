@@ -217,6 +217,14 @@ with space reserved below the question list and no preview-toggle button. Only
 the minimized rail shows the camera button, which toggles the pop-out preview
 beside the rail without changing capture or microphone ownership.
 
+The capability-gated multi-file editor uses a compact file row inside the existing
+editor region. Editable C++ source and header tabs share one Run and Submit action;
+the entrypoint is named in the row. Organizer reference tabs carry an explicit
+read-only label and stay outside drafts and judging payloads. Keep source paths
+readable, keyboard reachable and independently scrollable without resizing the
+problem or output regions. This capability remains off until the companion API
+and judge rollout is complete.
+
 ### Team lobby layout
 
 The team lobby fills the window with a flexible phase, voice, and part-selection

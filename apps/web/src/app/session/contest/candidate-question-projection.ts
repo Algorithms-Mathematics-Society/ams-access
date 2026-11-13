@@ -66,6 +66,11 @@ export type CandidateQuestion = {
   description: string | null;
   starter_code: string | null;
   starter_filename: string | null;
+  multi_file_enabled?: boolean;
+  starter_files?: { path: string; content: string }[];
+  reference_docs?: { path: string; content: string }[];
+  entrypoint?: string;
+  compilation_units?: string[];
   order_index: number;
   question_type: string;
   points: number;

@@ -2,6 +2,14 @@
 
 Project-specific guidance for AI coding agents.
 
+## Small-task delegation
+
+- When the user gives a small, independent task, create a sub-agent and hand it over. Examples include CI checks, already-authorized merges, and issue updates.
+- Give each sub-agent clear ownership and scope; do not duplicate its work. Continue the main task while the delegated work runs when independent work remains.
+- Delegation does not expand authorization or bypass approval requirements. Preserve existing scope, approval requirements, and other agents' changes; review the result before reporting completion.
+
+## Project guidance
+
 Changes must account for at least 3,000 concurrent contest participants. Review
 request rates, bounded polling/retries, duplicate prevention, memory growth and
 backend/judge costs. Verify request bounds for affected flows; do not equate
@@ -58,3 +66,11 @@ upgrade --apply run after any @astryxdesign/core bump
 - Before closing an issue, verify its acceptance criteria and merged PR. Preserve any explicit user requirement to confirm closure first.
 - Keep independently testable fixes separate from unfinished feature work. Never include local operator notes, secrets, or unrelated changes in a PR.
 - Use `gh` CLI for GitHub operations.
+
+## Final formatting and CI parity gate
+
+- Before publishing any commit, read the repository CI workflow and identify its formatting, lint, type, build, and test commands. Run the formatter for changed files, then the formatter's check mode. `git diff --check` alone is not a formatting check.
+- Run final formatting checks after the last source/test edit, including edits from sub-agents and commit hooks. Stage and verify every required new helper/test file; do not publish an incomplete snapshot.
+- Use the CI tools and versions where available: Ruff format plus `ruff format --check` for Python, Prettier checks for changed web files, `cargo fmt --check` for Rust, and the configured C++ formatting/clang-tidy checks. Do not suppress a rule or weaken a test merely to pass CI.
+- Run the affected existing suites as well as new regression tests. Compatibility changes to package parsing require the full existing package/attachment suite, not only new multi-file tests.
+- Keep evidence tied to the final commit or staged snapshot. Distinguish passing checks from unavailable platform/sandbox checks. If a local gate is unavailable, record it explicitly and require the corresponding CI result before merge.

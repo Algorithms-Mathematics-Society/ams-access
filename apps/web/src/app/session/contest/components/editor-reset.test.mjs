@@ -73,7 +73,7 @@ function harness() {
         .props.onClick();
       h.render();
     },
-    dialog: () => all("AccessDialog")[0],
+    dialog: () => all("AccessDialog").find((node) => node.props.labelId === "reset-code-dialog"),
     button: (label) => all("Button", h.dialog()).find((node) => node.props.label === label),
     get resets() {
       return resets;

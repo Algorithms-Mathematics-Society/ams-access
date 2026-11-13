@@ -349,8 +349,10 @@ Settings shows the installed AMS Access version above its section tabs, using na
 app metadata rather than the latest server release. Browser previews or unavailable
 native metadata show “Version unavailable.”
 
-Submission retries keep their key only for the exact session, problem, language,
-and source snapshot. Finish waits for an outstanding solution request to settle,
+An unconfirmed submission freezes its full request and idempotency key for that
+session and problem. An explicit retry resends those bytes even if the candidate
+has edited since; later edits remain in the workspace for a new attempt after
+acknowledgement. Finish waits for an outstanding solution request to settle,
 not for judging. Unconfirmed finishes release device controls while retaining
 session recovery and offering Retry finish. Home keeps recovery data through
 transient verification failures and offers Retry verification.
@@ -360,6 +362,15 @@ per client, and output polling never changes the participant's selected tab.
 Accepted submission receipts remain visible while history refresh recovers.
 Reset code asks for confirmation, restores the current language's starter, and
 saves through the existing draft path without changing other questions or attempts.
+
+The multi-file editor is capability gated by the problem projection and remains
+off until the API and judge rollout is complete. When enabled, source and header
+tabs belong to one workspace with a named C++ entrypoint. Run, scored Submit,
+device drafts and server backups carry the entire editable file set plus its
+compilation units. New paths are bounded and validated before an attempt; all
+source files are compiled, while published reference documents open read-only
+and never enter drafts or attempts. A missing capability flag preserves the
+single-source workflow. This adds no polling or teammate fetches.
 
 The app does not scan, join or manage Wi-Fi networks and does not ask for Location
 permission. After 12 seconds of a continuous observed connection failure, the
@@ -552,15 +563,15 @@ full benchmark/flamegraph results remain a separate feature. No new polling is
 introduced; staging must still verify the existing lobby rate and five-member
 consensus under concurrency.
 
-Team workspaces load only the locked board's published part labels, with the
-candidate's part first. Teammate statements/samples and starter code are visible
-read-only; Run remains available, while scored Submit and editor mutation are
-blocked. The click-time scoring guard uses the shared server clock and deadline;
+Team workspaces load only the candidate's assigned published part. Teammate
+statements, samples, starter code, drafts, Run and Submit routes are inaccessible.
+The assigned part supports the capability-gated multi-file editor and read-only
+reference attachments. The click-time scoring guard uses the shared server clock and deadline;
 the API remains authoritative if allocation changes. A previous submitted team
 revision does not block a new part submission before the deadline. The own-part
 Submit warning explains that a new revision resets votes. Team progress and voting
 open from the compact TopBar Team control, reusing the existing board without new
-polling. Loading a team workspace fetches at most the board's five part projections
+polling. Loading a team workspace fetches only the assigned part projection
 and existing statement assets once per authorized workspace load; staging must
 measure this entry burst for 3,000 participants. Native layout remains unverified.
 

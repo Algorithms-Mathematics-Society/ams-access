@@ -9,6 +9,11 @@ export type Question = {
   order_index: number;
   question_type: string;
   starter_filename?: string | null;
+  multi_file_enabled?: boolean;
+  starter_files?: { path: string; content: string }[];
+  reference_docs?: { path: string; content: string }[];
+  entrypoint?: string;
+  compilation_units?: string[];
   points?: number;
   judge_engine?: "legacy" | "cxxprobe";
   time_limit_ms?: number | null;
