@@ -43,6 +43,24 @@ export const CONTEST_STYLES = `
  [data-contest-page] .contest-camera-tile[data-lobby-preview="true"] { margin:0; left:auto; max-width:calc(var(--spacing-10) * 8); }
 }
 
+/* Keep toolbar controls distinct without changing buttons inside their dialogs. */
+[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button) {
+ border:var(--border-width) solid var(--color-border-emphasized) !important;
+ border-radius:var(--radius-element);
+}
+[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]) {
+ background:var(--color-background-card) !important;
+}
+[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]):not(:disabled):not([aria-disabled="true"]):hover {
+ background:var(--color-background-muted) !important;
+}
+[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]):not(:disabled):not([aria-disabled="true"]):active {
+ background:var(--color-overlay-pressed) !important;
+}
+[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):focus-visible {
+ outline:var(--border-width) solid var(--color-text-accent) !important;
+ outline-offset:var(--spacing-0-5) !important;
+}
 [data-contest-page] { font-family: var(--font-family-body); }
 /* Override Astryx's high-specificity backdrop only for connection loss. */
 .contest-network-dialog::backdrop { backdrop-filter:blur(var(--spacing-2)) !important; -webkit-backdrop-filter:blur(var(--spacing-2)) !important; }
@@ -97,7 +115,8 @@ export const CONTEST_STYLES = `
 @media(max-width:1000px) {
  [data-contest-page] .contest-body[data-editor-focus="true"] .contest-problem-pane { display:none; }
  [data-contest-page] .contest-topbar { flex-wrap:wrap; gap:var(--spacing-3); padding:var(--spacing-3) var(--spacing-4); }
- [data-contest-page] .contest-topbar-actions { flex:none !important; }
+ [data-contest-page] .contest-topbar-actions { flex:none !important; flex-wrap:wrap !important; }
+ [data-contest-page] .contest-topbar-voice { flex-wrap:wrap !important; }
  [data-contest-page] .contest-footer { flex-wrap:wrap; gap:var(--spacing-2); padding:var(--spacing-3) var(--spacing-4); }
  [data-contest-page] .contest-footer-statuses { flex-wrap:wrap; gap:var(--spacing-2) var(--spacing-3); }
  [data-contest-page] .contest-footer-summary { white-space:normal; }

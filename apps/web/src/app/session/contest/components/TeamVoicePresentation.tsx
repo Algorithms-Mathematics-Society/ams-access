@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Mic, MicOff } from "lucide-react";
+import { Mic, MicOff, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { Popover } from "@astryxdesign/core/Popover";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import type { TeamVoiceSnapshot } from "@/lib/team-voice-engine";
-import { voiceStatusText } from "@/lib/team-voice-presentation";
 import { acquireOrdinaryEscape } from "../escape-ownership";
 
 function hasVisiblePriorityDialog() {
@@ -31,6 +30,9 @@ export function TeamVoicePresentation({
   snapshot,
   notice,
   onToggleMute,
+  onRequestJoin,
+  onDismiss,
+  canJoin,
   children,
 }: {
   compact: boolean;
@@ -40,6 +42,9 @@ export function TeamVoicePresentation({
   snapshot: TeamVoiceSnapshot | null;
   notice?: string | null;
   onToggleMute: () => void;
+  onRequestJoin: () => void;
+  onDismiss: () => void;
+  canJoin: boolean;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -47,7 +52,10 @@ export function TeamVoicePresentation({
   const suspendedRef = useRef(suspended);
   suspendedRef.current = suspended;
   useEffect(() => {
-    if (suspended || !compact) setExpanded(false);
+    if (suspended || !compact) {
+      setExpanded(false);
+      onDismiss();
+    }
   }, [suspended, compact]);
   useEffect(() => {
     if (!expanded || suspended || !compact || !toolbarTarget) return;
@@ -58,6 +66,7 @@ export function TeamVoicePresentation({
         if (hasVisiblePriorityDialog()) return;
         event.preventDefault();
         setExpanded(false);
+        onDismiss();
         triggerRef.current?.focus({ preventScroll: true });
       }
     };
@@ -70,13 +79,10 @@ export function TeamVoicePresentation({
   if (!compact) return lobbyTarget ? createPortal(children, lobbyTarget) : null;
   if (!toolbarTarget) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
-  const status = notice
-    ? notice
-    : snapshot?.error
-      ? "Audio needs attention · open Voice"
-      : snapshot && snapshot.status !== "connected"
-        ? voiceStatusText(snapshot.status)
-        : null;
+  const busy = snapshot?.status === "connecting";
+  const reconnecting = snapshot?.status === "reconnecting";
+  const attention = Boolean(notice || snapshot?.error);
+  const settingsLabel = reconnecting ? "Reconnecting…" : attention ? "Audio issue" : "Voice";
   return createPortal(
     <HStack
       gap={2}
@@ -86,44 +92,25 @@ export function TeamVoicePresentation({
       inert={suspended || undefined}
       aria-label="Team voice"
     >
-      <Button
-        size="sm"
-        label={!connected ? "Mic off" : snapshot?.muted ? "Muted" : "Live"}
-        aria-label={
-          !connected
-            ? "Team microphone off"
-            : snapshot?.muted
-              ? "Unmute team microphone"
-              : "Mute team microphone"
-        }
-        aria-pressed={Boolean(connected && !snapshot?.muted)}
-        aria-keyshortcuts="Control+Shift+M"
-        tooltip={
-          connected
-            ? `${snapshot?.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`
-            : "Join team voice in Voice settings to enable your microphone"
-        }
-        icon={
-          !connected || snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />
-        }
-        style={{
-          background: !connected || snapshot?.muted ? undefined : "var(--color-success-muted)",
-          borderColor: !connected || snapshot?.muted ? undefined : "var(--color-border-green)",
-          color:
-            !connected || snapshot?.muted
-              ? "var(--color-text-secondary)"
-              : "var(--color-text-green)",
-        }}
-        onClick={onToggleMute}
-        isDisabled={suspended || !connected}
-      />
-      {status && (
-        <Text role="status" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-          {status}
-        </Text>
-      )}
-      {snapshot?.muted && (snapshot.inputLevel ?? 0) > 0.02 && (
-        <Text role="status">You are muted</Text>
+      {connected && (
+        <Button
+          size="sm"
+          label={snapshot?.muted ? "Muted" : "Live"}
+          aria-label={
+            snapshot?.muted ? "Muted: unmute team microphone" : "Live: mute team microphone"
+          }
+          aria-pressed={!snapshot?.muted}
+          aria-keyshortcuts="Control+Shift+M"
+          tooltip={`${snapshot?.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`}
+          icon={snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+          style={{
+            background: snapshot?.muted ? undefined : "var(--color-success-muted)",
+            borderColor: snapshot?.muted ? undefined : "var(--color-border-green)",
+            color: snapshot?.muted ? "var(--color-text-secondary)" : "var(--color-text-green)",
+          }}
+          onClick={onToggleMute}
+          isDisabled={suspended}
+        />
       )}
       {snapshot?.peers.map((peer) => (
         <Text
@@ -153,6 +140,7 @@ export function TeamVoicePresentation({
             document.activeElement?.closest('[role="dialog"][aria-label="Team voice settings"]')
           )
             triggerRef.current?.focus({ preventScroll: true });
+          if (!open) onDismiss();
           setExpanded(open);
         }}
         isEnabled={!suspended}
@@ -161,9 +149,21 @@ export function TeamVoicePresentation({
         <Button
           ref={triggerRef}
           size="sm"
-          variant="ghost"
-          label="Voice"
-          aria-label="Open team voice settings"
+          variant="secondary"
+          label={
+            !connected && canJoin && !busy ? "Join voice" : busy ? "Connecting…" : settingsLabel
+          }
+          icon={
+            reconnecting ? (
+              <RefreshCw aria-hidden="true" />
+            ) : attention ? (
+              <AlertCircle aria-hidden="true" />
+            ) : undefined
+          }
+          tooltip={notice || snapshot?.error || "Open team voice settings"}
+          onClick={() => {
+            if (!suspended && !connected && canJoin && !busy) onRequestJoin();
+          }}
           isDisabled={suspended}
         />
       </Popover>

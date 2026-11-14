@@ -30,3 +30,17 @@ test("no production web source mounts service status or polls its endpoint", () 
     assert.doesNotMatch(readFileSync(file, "utf8"), /ServiceStatus|\/client\/status/, file);
   }
 });
+
+test("compact toolbar keeps battery state accessible and preserves dialog button styling", () => {
+  const battery = read("./components/BatteryStatus.tsx");
+  assert.match(battery, /aria-label=\{label\}/);
+  assert.match(battery, /Tooltip content=\{label\}/);
+  assert.match(battery, /tabIndex=\{0\}/);
+  assert.match(battery, /\{battery.percentage\}%/);
+  assert.doesNotMatch(battery, /\{state\}|>Charging</);
+  const css = read("./components/workspace-styles.ts");
+  assert.ok(css.includes('button:not([role="dialog"] button, [role="alertdialog"] button)'));
+  assert.ok(css.includes(':not([aria-pressed="true"])'));
+  assert.match(css, /contest-topbar-actions \{ flex:none !important; flex-wrap:wrap !important;/);
+  for (const state of [":hover", ":active", ":focus-visible"]) assert.ok(css.includes(state));
+});

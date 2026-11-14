@@ -1,10 +1,10 @@
 "use client";
 
 import { Mic, MicOff } from "lucide-react";
-import { createVoiceAutoJoinGate } from "@/lib/team-voice-input";
 import { useVoiceEndedNotice } from "./VoiceEndedNotice";
 import { LeaveTeamVoice } from "./LeaveTeamVoice";
 import { TeamVoicePresentation } from "./TeamVoicePresentation";
+import { acquireOrdinaryEscape } from "../escape-ownership";
 import { voiceStatusText, voiceErrorAdvice } from "@/lib/team-voice-presentation";
 import { supportsTeamDesktopWebView } from "@/lib/team-platform";
 
@@ -84,7 +84,26 @@ export function TeamVoiceControls({
   const [snapshot, setSnapshot] = useState<TeamVoiceSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
-  const autoJoin = useRef(createVoiceAutoJoinGate());
+  const [confirmJoin, setConfirmJoin] = useState(false);
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
+  useEffect(() => {
+    if (suspended) setConfirmJoin(false);
+  }, [suspended]);
+  useEffect(() => {
+    if (!confirmJoin || compact || suspended) return;
+    const releaseEscape = acquireOrdinaryEscape();
+    const cancelJoin = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || suspendedRef.current) return;
+      event.preventDefault();
+      setConfirmJoin(false);
+    };
+    window.addEventListener("keydown", cancelJoin, true);
+    return () => {
+      window.removeEventListener("keydown", cancelJoin, true);
+      releaseEscape();
+    };
+  }, [confirmJoin, compact, suspended]);
   const session = useRef<TeamVoiceSession | null>(null);
   const current = useRef<() => boolean>(() => false);
   const unsubscribeSession = useRef<(() => void) | null>(null);
@@ -110,7 +129,7 @@ export function TeamVoiceControls({
   }, [linuxNative]);
 
   useEffect(() => {
-    autoJoin.current.reset();
+    setConfirmJoin(false);
     setSnapshot(null);
     setMessage(null);
     setOutputs([]);
@@ -181,7 +200,7 @@ export function TeamVoiceControls({
       session.current?.stop();
       session.current = null;
       setSnapshot(null);
-    } else if (resumeAfterPoll.current || autoJoin.current.take(current.current())) {
+    } else if (resumeAfterPoll.current) {
       resumeAfterPoll.current = false;
       setResumePending(false);
       void connectCurrent.current();
@@ -191,11 +210,11 @@ export function TeamVoiceControls({
   async function connect() {
     const authorized = current.current;
     const lifecycle = lifecycleAbort.current;
-    if (!authorized() || !open.current) return;
+    if (!authorized() || !open.current || suspendedRef.current) return;
     if (connectPending.current) return;
     connectPending.current = true;
     const available = linuxNative ? await (nativeProbe.current ?? probeLinuxVoice()) : supportsRtc;
-    if (!authorized() || !open.current) {
+    if (!authorized() || !open.current || suspendedRef.current) {
       connectPending.current = false;
       return;
     }
@@ -207,7 +226,6 @@ export function TeamVoiceControls({
       return;
     }
     if (linuxNative) setNativeSupported(true);
-    autoJoin.current.take(true);
     if (session.current?.getSnapshot().status === "connecting") {
       connectPending.current = false;
       return;
@@ -344,11 +362,10 @@ export function TeamVoiceControls({
         lobbyTarget={lobbyTarget}
         suspended={suspended}
         snapshot={snapshot}
-        notice={
-          !supportsRtc
-            ? "Voice unavailable in this app"
-            : projectionMessage || (message ? "Audio needs attention · open Voice" : null)
-        }
+        notice={!supportsRtc ? "Voice unavailable in this app" : projectionMessage || message}
+        onRequestJoin={() => setConfirmJoin(true)}
+        onDismiss={() => setConfirmJoin(false)}
+        canJoin={Boolean(team?.phase.voice_open && voiceOpen && supportsRtc)}
         onToggleMute={toggleMute}
       >
         <VStack
@@ -380,25 +397,30 @@ export function TeamVoiceControls({
                       : "Voice has ended for this round"}
               </Text>
             )}
-            {team?.phase.voice_open && !connected && snapshot?.status !== "closed" && (
-              <Button
-                label={
-                  busy
-                    ? "Connecting…"
-                    : snapshot?.status === "replaced"
-                      ? "Move voice back to this window"
-                      : snapshot?.status === "unavailable"
-                        ? "Retry voice"
-                        : "Join voice"
-                }
-                isDisabled={!supportsRtc || busy || !voiceOpen || suspended}
-                onClick={() => void connect()}
-              />
-            )}
+            {team?.phase.voice_open &&
+              !connected &&
+              !confirmJoin &&
+              snapshot?.status !== "closed" && (
+                <Button
+                  label={
+                    busy
+                      ? "Connecting…"
+                      : snapshot?.status === "replaced"
+                        ? "Move voice back to this window"
+                        : snapshot?.status === "unavailable"
+                          ? "Retry voice"
+                          : "Join voice"
+                  }
+                  isDisabled={!supportsRtc || busy || !voiceOpen || suspended}
+                  onClick={() => setConfirmJoin(true)}
+                />
+              )}
             {connected && !compact && (
               <Button
                 label={snapshot?.muted ? "Muted" : "Live"}
-                aria-label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}
+                aria-label={
+                  snapshot?.muted ? "Muted: unmute team microphone" : "Live: mute team microphone"
+                }
                 aria-pressed={!snapshot?.muted}
                 aria-keyshortcuts="Control+Shift+M"
                 tooltip={`${snapshot?.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`}
@@ -445,6 +467,24 @@ export function TeamVoiceControls({
                 />
               )}
           </HStack>
+          {confirmJoin && !connected && !busy && (
+            <VStack gap={2}>
+              <Text>Join team voice? Your microphone starts muted. You can unmute when ready.</Text>
+              <HStack gap={2} wrap="wrap">
+                <Button label="Cancel" onClick={() => setConfirmJoin(false)} />
+                <Button
+                  label="Confirm join voice"
+                  variant="primary"
+                  isDisabled={!supportsRtc || !voiceOpen || suspended}
+                  onClick={() => {
+                    if (suspendedRef.current) return;
+                    setConfirmJoin(false);
+                    void connect();
+                  }}
+                />
+              </HStack>
+            </VStack>
+          )}
           {(!supportsRtc || message || projectionMessage || snapshot?.error) && (
             <Text role="status">
               {!supportsRtc

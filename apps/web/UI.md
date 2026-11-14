@@ -532,9 +532,10 @@ without IDs and interrupted signaling show remote status unavailable rather than
 misidentifying duplicate names. This adds no requests or polling. Deploy the API
 member-ID addition first; real two/five-member native acceptance remains required.
 
-Team voice attempts to join once when the authorized voice window first opens,
-starting muted. Failed joins, intentional leaves, and replaced sessions require
-an explicit action; polling never repeatedly requests microphone access. The
+Team voice starts only after the participant chooses Join voice and confirms,
+starting muted. Canceling or dismissing the confirmation never captures audio.
+Failed joins, intentional leaves, and replaced sessions require an explicit action;
+only a previously joined call can resume after a transient polling failure. The
 mic control reads Muted/Live. A local-only analysis clone provides input level
 and a muted-speech hint at four samples per second; it is never attached to a
 peer connection or audio output and is stopped with the voice session. If the
@@ -608,7 +609,12 @@ contest start/security gates permit entry, the participant clicks Ready to open
 their part. Choosing-phase Ready still records team readiness; it does not grant
 workspace entry. Audio stays owned by the same session across this handoff, with
 the microphone and Voice controls in the workspace toolbar. Reconnection and audio
-errors remain visible even when Voice settings are closed.
+errors use concise button states with details inside Voice settings or tooltips.
+The compact toolbar keeps controls on one row at desktop widths, with a wrapping
+fallback for small windows. Buttons have distinct surfaces, borders and focus states.
+Battery charging is conveyed by its icon and accessible description, without a
+duplicate visible label. Approval state is conveyed by Approve/Withdraw; revision
+zero leaves approval disabled with a reason on demand, not an extra empty-state sentence.
 Help and Exit remain usable when editor
 actions are locked, while mandatory overlays still suspend interaction.
 

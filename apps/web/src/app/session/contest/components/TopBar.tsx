@@ -162,10 +162,10 @@ export function TopBar({
     <HStack
       as="header"
       className="contest-topbar"
-      gap={5}
+      gap={3}
       align="center"
       wrap="wrap"
-      paddingInline={5}
+      paddingInline={4}
       minHeight="calc(var(--spacing-8) * 2)"
       style={{
         flexShrink: 0,
@@ -174,7 +174,7 @@ export function TopBar({
         paddingBlock: "var(--spacing-2)",
       }}
     >
-      <HStack gap={3} align="center" style={{ flex: 1, minWidth: 0 }}>
+      <HStack gap={2} align="center" style={{ flex: "1 1 0", minWidth: 0 }}>
         <AccessMark />
         <Text type="label" maxLines={1}>
           {contest?.title ?? "Contest"}
@@ -186,15 +186,16 @@ export function TopBar({
         gap={2}
         align="center"
         justify="end"
-        wrap="wrap"
+        wrap="nowrap"
         className="contest-topbar-actions"
-        style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "100%", marginInlineStart: "auto" }}
+        style={{ flex: "0 0 auto", minWidth: 0, maxWidth: "100%", marginInlineStart: "auto" }}
       >
         <HStack
           ref={voiceToolbarRef}
+          className="contest-topbar-voice"
           gap={2}
           align="center"
-          wrap="wrap"
+          wrap="nowrap"
           style={{ flexShrink: 0, maxWidth: "100%" }}
         />
         <ThemeToggle />
@@ -215,7 +216,7 @@ export function TopBar({
         <Button
           label="Help"
           aria-label="Request support"
-          variant="ghost"
+          variant="secondary"
           icon={<Headset size={16} />}
           onClick={() => setShowSupportModal(true)}
         />

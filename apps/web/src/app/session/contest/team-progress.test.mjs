@@ -142,13 +142,14 @@ test("approvals use the displayed revision and expose own state without individu
   };
   let tree = render(props);
   assert.match(text(tree).replaceAll(/\s+/g, " "), /Revision 4 · 2 \/ 3 approvals/);
-  assert.match(text(tree), /You have not approved this revision/);
+  assert.equal(nodes(tree).find((n) => n.type === "Button").props.label, "Approve revision 4");
+  assert.doesNotMatch(text(tree), /You have not approved this revision/);
   nodes(tree)
     .find((n) => n.type === "Button")
     .props.onClick();
   s.board.submission.mine = true;
   tree = render(props);
-  assert.match(text(tree), /You approved this revision/);
+  assert.doesNotMatch(text(tree), /You approved this revision/);
   const withdraw = nodes(tree).find((n) => n.type === "Button");
   assert.equal(withdraw.props.label, "Withdraw approval");
   withdraw.props.onClick();
@@ -187,6 +188,13 @@ test("unsafe vote states stay disabled and expiry waits for server confirmation"
     patch(s);
     const tree = render({ state: s });
     assert.equal(nodes(tree).find((n) => n.type === "Button").props.isDisabled, true);
+    if (s.board.submission.revision === 0) {
+      assert.doesNotMatch(text(tree), /Nothing to submit yet/);
+      assert.equal(
+        nodes(tree).find((n) => n.type === "Button").props.tooltip,
+        "Submit your part before approving a team revision."
+      );
+    }
     if (s.error)
       assert.ok(nodes(tree).some((n) => n.props?.role === "alert" && text(n) === s.error));
     if (s.board.submission.deadline === s.board.server_time)

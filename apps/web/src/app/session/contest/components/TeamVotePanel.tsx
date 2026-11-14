@@ -69,9 +69,6 @@ export function TeamVotePanel({
         Revision {vote.revision} · {vote.votes} / {vote.needed} approvals
       </Heading>
       {seen?.message && <Text role="status">{seen.message}</Text>}
-      <Text type="supporting">
-        {vote.mine ? "You approved this revision." : "You have not approved this revision."}
-      </Text>
       <HStack gap={2} wrap="wrap">
         <Button
           label={
@@ -82,15 +79,18 @@ export function TeamVotePanel({
                 : `Approve revision ${vote.revision}`
           }
           isDisabled={disabled}
+          tooltip={
+            vote.revision === 0 ? "Submit your part before approving a team revision." : undefined
+          }
           onClick={() => (vote.mine ? onWithdraw(vote.revision) : onApprove(vote.revision))}
         />
-        <Text>
-          {vote.revision === 0
-            ? "Nothing to submit yet."
-            : remaining > 0
+        {vote.revision > 0 && (
+          <Text>
+            {remaining > 0
               ? `Deadline in ${duration(remaining)}`
               : "Deadline reached. Waiting for server confirmation."}
-        </Text>
+          </Text>
+        )}
       </HStack>
       {!submitted && remaining > 0 && vote.revision > 0 && (
         <Text type="supporting">

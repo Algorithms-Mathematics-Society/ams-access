@@ -239,7 +239,11 @@ Action feedback reserves its space, and readiness guidance and part action width
 stay stable across Ready, claim and release updates. Help and Exit remain reachable when editor actions lock.
 After allocation locks, Ready explicitly opens the assigned part only when server
 start and security gates allow it; timer expiry never navigates automatically.
-Workspace audio controls retain visible connection/error feedback outside settings.
+Workspace audio controls express connection/error states in their buttons, with
+details in settings and tooltips. Joining requires explicit confirmation before
+microphone capture. Toolbar controls use distinct bordered surfaces and a compact
+desktop row; small windows retain a reachable wrapping fallback. Charging and
+approval labels do not repeat information already conveyed by icons and actions.
 The mounted media owners stay unchanged across lobby/workspace transitions.
 Missing native WebRTC remains an explicit unavailable state with recovery advice,
 not a claim that the layout change enables Linux audio.

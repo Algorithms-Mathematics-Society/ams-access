@@ -222,6 +222,9 @@ test("voice presentation moves between reserved lobby region and toolbar without
     suspended: false,
     snapshot: null,
     onToggleMute() {},
+    onRequestJoin() {},
+    onDismiss() {},
+    canJoin: true,
     children: { id: "settings" },
   };
   const lobby = exports.TeamVoicePresentation(props);
@@ -229,16 +232,23 @@ test("voice presentation moves between reserved lobby region and toolbar without
   assert.equal(lobby.node, props.children);
   const workspace = exports.TeamVoicePresentation({ ...props, compact: true });
   assert.equal(workspace.target, props.toolbarTarget);
-  assert.equal(workspace.node.props.children[0].props.label, "Mic off");
-  assert.equal(workspace.node.props.children[0].props.isDisabled, true);
+  assert.equal(workspace.node.props.children[0], false);
+  const trigger = (view) => view.node.props.children.at(-1).props.children;
+  assert.equal(trigger(workspace).props.label, "Join voice");
   for (const status of ["connecting", "reconnecting", "unavailable", "closed", "replaced"]) {
     const state = exports.TeamVoicePresentation({
       ...props,
       compact: true,
       snapshot: { status, muted: true, peers: [] },
     });
-    assert.equal(state.node.props.children[1].props.role, "status");
-    assert.equal(state.node.props.children[1].props.children, `Voice status: ${status}`);
+    assert.equal(
+      trigger(state).props.label,
+      status === "connecting"
+        ? "Connecting…"
+        : status === "reconnecting"
+          ? "Reconnecting…"
+          : "Join voice"
+    );
   }
   for (const notice of [null, "Team status is reconnecting. Your work is safe."]) {
     const state = exports.TeamVoicePresentation({
@@ -251,10 +261,8 @@ test("voice presentation moves between reserved lobby region and toolbar without
         peers: [],
       },
     });
-    assert.equal(
-      state.node.props.children[1].props.children,
-      notice ?? "Audio needs attention · open Voice"
-    );
+    assert.equal(trigger(state).props.label, "Audio issue");
+    assert.equal(trigger(state).props.tooltip, notice ?? "Allow audio playback to hear your team.");
   }
   for (const muted of [true, false]) {
     let toggles = 0;
@@ -268,6 +276,7 @@ test("voice presentation moves between reserved lobby region and toolbar without
     });
     const mic = joined.node.props.children[0];
     assert.equal(mic.props.label, muted ? "Muted" : "Live");
+    assert.ok(mic.props["aria-label"].includes(mic.props.label));
     assert.equal(mic.props["aria-keyshortcuts"], "Control+Shift+M");
     assert.match(mic.props.tooltip, /Ctrl\+Shift\+M/);
     assert.equal(mic.props.isDisabled, false);
