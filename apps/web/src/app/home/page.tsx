@@ -184,6 +184,7 @@ export default function HomePage() {
     };
   }, []);
   const [signingOut, setSigningOut] = useState(false);
+  const signOutInFlightRef = useRef(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [contestSearch, setContestSearch] = useState("");
   const [homeHelpOpen, setHomeHelpOpen] = useState(false);
@@ -1059,6 +1060,9 @@ export default function HomePage() {
   }
 
   async function signOut() {
+    // Own cleanup immediately, before React can disable the invoking control.
+    if (signOutInFlightRef.current) return;
+    signOutInFlightRef.current = true;
     setConfirmDiscardOpen(false);
     setSigningOut(true);
     recoveryEpochRef.current += 1;
@@ -1074,6 +1078,7 @@ export default function HomePage() {
         );
       }
     } catch {
+      signOutInFlightRef.current = false;
       setSigningOut(false);
       setActiveNav("overview");
       setResumeStatus(

@@ -860,9 +860,9 @@ export default function ContestPageClient() {
   }
   const micEnabledRef = useRef(false);
   const mediaInitialStateLoggedRef = useRef(false);
-  const [hasToggledMedia, setHasToggledMedia] = useState(false);
+  const hasToggledMediaRef = useRef(false);
   const [showMediaToggleWarning, setShowMediaToggleWarning] = useState(false);
-  const [pendingMediaToggle, setPendingMediaToggle] = useState<{
+  const pendingMediaToggleRef = useRef<{
     type: "camera" | "mic";
     value: boolean;
   } | null>(null);
@@ -1210,6 +1210,10 @@ export default function ContestPageClient() {
   }
 
   function applyMediaToggle(type: "camera" | "mic", value: boolean) {
+    // Repeated events can retain the previous render’s target value. Only a
+    // real transition owns a track update and its audit event.
+    const enabled = type === "camera" ? cameraEnabledRef : micEnabledRef;
+    if (enabled.current === value) return;
     if (type === "camera") {
       setCameraEnabled(value);
       cameraEnabledRef.current = value;
@@ -1237,10 +1241,13 @@ export default function ContestPageClient() {
   }
 
   function handleToggleMedia(type: "camera" | "mic", value: boolean) {
+    const enabled = type === "camera" ? cameraEnabledRef : micEnabledRef;
+    if (enabled.current === value) return;
     // The one-time confirmation only applies when turning a device OFF —
     // enabling the (default-off) microphone needs no proctoring warning.
-    if (!hasToggledMedia && !value) {
-      setPendingMediaToggle({ type, value });
+    if (pendingMediaToggleRef.current) return;
+    if (!hasToggledMediaRef.current && !value) {
+      pendingMediaToggleRef.current = { type, value };
       setShowMediaToggleWarning(true);
       return;
     }
@@ -1248,17 +1255,17 @@ export default function ContestPageClient() {
   }
 
   function confirmMediaToggle() {
-    setHasToggledMedia(true);
+    const pending = pendingMediaToggleRef.current;
+    if (!pending) return;
+    pendingMediaToggleRef.current = null;
+    hasToggledMediaRef.current = true;
     setShowMediaToggleWarning(false);
-    if (pendingMediaToggle) {
-      applyMediaToggle(pendingMediaToggle.type, pendingMediaToggle.value);
-      setPendingMediaToggle(null);
-    }
+    applyMediaToggle(pending.type, pending.value);
   }
 
   const cancelMediaToggle = useCallback(() => {
     setShowMediaToggleWarning(false);
-    setPendingMediaToggle(null);
+    pendingMediaToggleRef.current = null;
   }, []);
 
   useEffect(() => {

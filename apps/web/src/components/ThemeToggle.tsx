@@ -16,7 +16,16 @@ export function ThemeToggle({ className }: { className?: string }) {
   return (
     <IconButton
       type="button"
-      onClick={toggle}
+      onClick={(event) => {
+        // One pointer click sequence is one change. The theme store applies
+        // synchronously, but React and the palette settle over two frames.
+        if (event.detail > 1 || document.documentElement.classList.contains("theme-changing"))
+          return;
+        toggle();
+      }}
+      onKeyDown={(event) => {
+        if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault();
+      }}
       className={className}
       label={mounted ? `Switch to ${isLight ? "dark" : "light"} theme` : "Toggle theme"}
       tooltip={mounted ? `Switch to ${isLight ? "dark" : "light"} theme` : "Toggle theme"}

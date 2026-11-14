@@ -71,6 +71,7 @@ export const SettingsPanel = memo(function SettingsPanel({
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [micError, setMicError] = useState<string | null>(null);
   const micResources = useRef(createMediaRequestOwner());
+  const micOpeningRef = useRef(false);
 
   const [speakerActive, setSpeakerActive] = useState(false);
   const [speakerVolume, setSpeakerVolume] = useState(50);
@@ -94,6 +95,7 @@ export const SettingsPanel = memo(function SettingsPanel({
     return () => {
       cameraRequestOwner.current.cancel();
       micResources.current.cancel(cancelAnimationFrame);
+      micOpeningRef.current = false;
       if (cameraOpeningRef.current) cameraSession.releaseVideo();
       else if (camStreamRef.current) cameraSession.releaseVideo(camStreamRef.current);
       camStreamRef.current = null;
@@ -162,6 +164,7 @@ export const SettingsPanel = memo(function SettingsPanel({
     if (activeTab !== "hardware") {
       cameraRequestOwner.current.cancel();
       micResources.current.cancel(cancelAnimationFrame);
+      micOpeningRef.current = false;
       if (cameraOpeningRef.current) cameraSession.releaseVideo();
       else if (camStreamRef.current) cameraSession.releaseVideo(camStreamRef.current);
       cameraOpeningRef.current = false;
@@ -191,6 +194,8 @@ export const SettingsPanel = memo(function SettingsPanel({
   }
 
   async function startCameraTest(deviceId = selectedCam) {
+    if (cameraOpeningRef.current) return;
+    setSelectedCam(deviceId);
     const request = cameraRequestOwner.current.begin();
     cameraStartedAt.current = performance.now();
     cameraOpeningRef.current = true;
@@ -240,6 +245,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 
   async function toggleMicMonitor() {
     if (micActive || micPending) {
+      micOpeningRef.current = false;
       micResources.current.cancel(cancelAnimationFrame);
       setMicStream(null);
       setMicLevel(0);
@@ -247,6 +253,9 @@ export const SettingsPanel = memo(function SettingsPanel({
       setMicPending(false);
       onSecurityEvent("HARDWARE: Microphone monitor stopped");
     } else {
+      // React state has not necessarily rendered when another activation arrives.
+      if (micOpeningRef.current) return;
+      micOpeningRef.current = true;
       const request = micResources.current.begin(cancelAnimationFrame);
       setMicPending(true);
       try {
@@ -257,6 +266,7 @@ export const SettingsPanel = memo(function SettingsPanel({
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
+        micOpeningRef.current = false;
         micResources.current.setStream(stream);
         setMicStream(stream);
 
@@ -298,6 +308,7 @@ export const SettingsPanel = memo(function SettingsPanel({
         onSecurityEvent("HARDWARE: Microphone stream verified");
       } catch (err) {
         if (!micResources.current.owns(request)) return;
+        micOpeningRef.current = false;
         micResources.current.cancel(cancelAnimationFrame);
         setMicPending(false);
         setMicStream(null);
@@ -488,7 +499,6 @@ export const SettingsPanel = memo(function SettingsPanel({
                         label="Camera"
                         value={selectedCam}
                         onChange={(deviceId) => {
-                          setSelectedCam(deviceId);
                           void startCameraTest(deviceId);
                         }}
                         isDisabled={cameraBusy}
