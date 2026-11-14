@@ -21,6 +21,7 @@ import { ArrowLeft, BookOpen, CornerUpLeft, Search, X } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import { HOME_PAGE, type Hit, labelOf, readPage, resolveHref, search } from "../cppref";
 import {
   labelBoost,
@@ -389,44 +390,26 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         {/* Leaving is the commonest thing anyone does here, so it is the
             leftmost control and it says where it goes. Moving back through
             pages is the rarer action and sits with the page name it acts on. */}
-        <button
+        <Button
           type="button"
+          label="Back to contest"
+          variant="secondary"
+          size="sm"
+          icon={<ArrowLeft size={16} aria-hidden />}
           onClick={onClose}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "4px 6px",
-            color: "inherit",
-            font: "inherit",
-          }}
-        >
-          <ArrowLeft size={16} aria-hidden />
-          <Text size="sm">Back to contest</Text>
-        </button>
+        />
 
         <span style={{ width: 1, alignSelf: "stretch", background: "var(--color-border)" }} />
 
         {history.length > 0 ? (
-          <button
+          <IconButton
             type="button"
             onClick={back}
-            aria-label="Previous reference page"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 4,
-              color: "inherit",
-            }}
-          >
-            <CornerUpLeft size={15} />
-          </button>
+            label="Previous reference page"
+            variant="secondary"
+            size="sm"
+            icon={<CornerUpLeft size={15} aria-hidden />}
+          />
         ) : null}
         <BookOpen size={15} aria-hidden />
         <Button
@@ -477,18 +460,18 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
             }}
           />
           {query ? (
-            <button
+            <IconButton
               type="button"
+              label="Clear search"
+              variant="secondary"
+              size="sm"
+              icon={<X size={15} aria-hidden />}
               onClick={() => {
                 setQuery("");
                 setHits([]);
                 inputRef.current?.focus();
               }}
-              aria-label="Clear search"
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}
-            >
-              <X size={15} />
-            </button>
+            />
           ) : null}
         </HStack>
       </HStack>
@@ -502,14 +485,15 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           <Text size="xsm">
             {`"${blocked}" points outside the reference, so it is not available during the exam.`}
           </Text>
-          <button
+          <IconButton
             type="button"
             onClick={() => setBlocked(null)}
-            style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer" }}
-            aria-label="Dismiss"
-          >
-            <X size={14} />
-          </button>
+            style={{ marginLeft: "auto" }}
+            label="Dismiss"
+            variant="secondary"
+            size="sm"
+            icon={<X size={14} aria-hidden />}
+          />
         </HStack>
       ) : null}
 

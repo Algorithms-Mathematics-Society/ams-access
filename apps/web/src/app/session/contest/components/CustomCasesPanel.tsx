@@ -97,7 +97,7 @@ export function CustomCasesPanel({
                 </Text>
                 <IconButton
                   label={`Remove case ${index + 1}`}
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   isDisabled={readOnly}
                   icon={<Trash2 size={14} aria-hidden="true" />}

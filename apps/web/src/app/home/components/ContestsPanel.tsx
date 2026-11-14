@@ -89,7 +89,7 @@ export const ContestsPanel = memo(function ContestsPanel({
             <Button
               label="Refresh"
               aria-label="Refresh contests"
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={onRefresh}
               isLoading={refreshing}

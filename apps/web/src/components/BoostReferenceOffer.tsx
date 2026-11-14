@@ -123,8 +123,7 @@ export function BoostReferenceOffer() {
             {pack.title} · {pack.release}
           </Text>
           <Text type="supporting">
-            The download is saved on this device. You can continue without it and download it on a
-            later launch.
+            Downloads stay on this device. You can download it on a later launch.
           </Text>
           {busy && <Text role="status">Downloading and verifying the reference pack…</Text>}
           {error && <Text role="alert">{error}</Text>}
@@ -135,7 +134,11 @@ export function BoostReferenceOffer() {
               isDisabled={busy}
               onClick={() => void download()}
             />
-            <Button label={busy ? "Cancel download" : "Not now"} variant="ghost" onClick={cancel} />
+            <Button
+              label={busy ? "Cancel download" : "Not now"}
+              variant="secondary"
+              onClick={cancel}
+            />
           </HStack>
         </VStack>
       </Card>

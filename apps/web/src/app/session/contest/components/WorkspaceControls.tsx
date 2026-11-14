@@ -57,7 +57,7 @@ export function WorkspaceControls({
       <Button
         ref={trigger}
         label="Workspace"
-        variant="ghost"
+        variant="secondary"
         icon={<PanelsTopLeft size={16} />}
         aria-expanded={open}
         aria-controls="workspace-controls"
@@ -85,7 +85,7 @@ export function WorkspaceControls({
             <Text type="label">Workspace</Text>
             <Button
               label={focused ? "Restore workspace" : "Focus editor"}
-              variant="ghost"
+              variant="secondary"
               onClick={() => action(onFocus)}
             />
             <Button

@@ -397,7 +397,7 @@ export const SettingsPanel = memo(function SettingsPanel({
           </HStack>
           <Button
             label="Manage microphone"
-            variant="ghost"
+            variant="secondary"
             onClick={() => {
               setActiveTab("hardware");
               requestAnimationFrame(() =>
@@ -548,7 +548,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                         />
                         <Button
                           label="Refresh cameras"
-                          variant="ghost"
+                          variant="secondary"
                           onClick={refreshCameras}
                           isDisabled={cameraListing.status === "loading"}
                         />
@@ -724,7 +724,7 @@ export const SettingsPanel = memo(function SettingsPanel({
                       />
                       <Button
                         label="I heard the tone"
-                        variant="ghost"
+                        variant="secondary"
                         onClick={() => setSpeakerSuccess(true)}
                       />
                     </HStack>

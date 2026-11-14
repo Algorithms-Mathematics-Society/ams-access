@@ -135,7 +135,7 @@ export function CameraTile({
           tooltip={
             cameraEnabled ? "Camera on — click to turn off" : "Camera off — click to turn on"
           }
-          variant="ghost"
+          variant="secondary"
           size="sm"
           isIconOnly
           icon={cameraEnabled ? <Video size={16} /> : <VideoOff size={16} />}
@@ -162,7 +162,7 @@ export function CameraTile({
             type="button"
             label="Change camera"
             tooltip="Change camera"
-            variant="ghost"
+            variant="secondary"
             size="sm"
             isIconOnly
             icon={<SwitchCamera size={16} />}
@@ -176,7 +176,7 @@ export function CameraTile({
             tooltip={
               micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
             }
-            variant="ghost"
+            variant="secondary"
             size="sm"
             isIconOnly
             icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}

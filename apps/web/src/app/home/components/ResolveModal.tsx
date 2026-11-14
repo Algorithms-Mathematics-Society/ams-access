@@ -92,7 +92,6 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         problem: "AMS Access cannot confirm a working camera for this session.",
         steps: winCamera
           ? [
-              "Click the button below to open Windows camera privacy settings.",
               "Turn on “Camera access” and “Let desktop apps access your camera”.",
               "Close Zoom, Meet, OBS, or any other app that may be using the camera, then run the camera test again.",
             ]
@@ -117,7 +116,6 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
         problem: "AMS Access cannot confirm a working microphone for this session.",
         steps: winMic
           ? [
-              "Click the button below to open Windows microphone privacy settings.",
               "Turn on “Microphone access” and “Let desktop apps access your microphone”.",
               "Check that the microphone is connected and not muted, then run the test again.",
             ]
@@ -204,7 +202,6 @@ function buildFlow(checkKey: string, telemetry?: TelemetryQueryState): ResolveFl
           problem:
             "AMS Access needs Administrator privileges on Windows to enable full exam lockdown (firewall and keyboard protection).",
           steps: [
-            "Click “Relaunch as Administrator” below.",
             "Choose “Yes” on the Windows confirmation prompt that appears.",
             "The app restarts with the required privileges — then sign in again.",
           ],

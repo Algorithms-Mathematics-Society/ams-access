@@ -47,6 +47,10 @@ components instead of copying palette literals.
 
 Primary actions use inverted neutral surfaces. Purple remains a UI accent for
 focus, compact active markers and the Submit variant; it is not a logo color.
+Standalone secondary actions use Astryx's filled `secondary` variant without
+visible borders. Reserve ghost treatment for navigation, tabs and integrated
+list controls. Avoid helper sentences that merely repeat an adjacent action;
+retain permissions, consequences, recovery guidance and actionable errors.
 Success, warning and error describe actual state and must also have a text label.
 An unavailable readiness probe must not be presented as passed.
 

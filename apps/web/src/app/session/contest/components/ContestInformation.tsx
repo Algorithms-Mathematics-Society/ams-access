@@ -42,7 +42,7 @@ export const ContestInformation = memo(function ContestInformation({
         label="Contest info"
         tooltip="Contest info"
         icon={<Info size={16} aria-hidden="true" />}
-        variant="ghost"
+        variant="secondary"
         isDisabled={suspended}
         onClick={() => {
           setClockMessage(clockDifferenceMessage(clockIsSynchronised(), serverNow(), Date.now()));
@@ -81,7 +81,8 @@ export const ContestInformation = memo(function ContestInformation({
             </Text>
             <Text>
               Finish ends the attempt after the server confirms it. Recovery exits restore device
-              controls without confirming a finish. Returning depends on the contest’s current entry rules.
+              controls without confirming a finish. Returning depends on the contest’s current entry
+              rules.
             </Text>
             <Heading level={3}>Rules and reference</Heading>
             <Text>

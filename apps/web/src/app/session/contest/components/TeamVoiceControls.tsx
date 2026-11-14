@@ -505,7 +505,7 @@ export function TeamVoiceControls({
               {!linuxNative && snapshot?.inputLevel == null && (
                 <Button
                   label="Enable microphone meter"
-                  variant="ghost"
+                  variant="secondary"
                   onClick={() => void session.current?.retryPlayback().catch(() => {})}
                 />
               )}

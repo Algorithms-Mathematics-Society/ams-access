@@ -275,7 +275,7 @@ export default function LoginPage() {
                 <Button
                   type="button"
                   label="Can't sign in? Get help"
-                  variant="ghost"
+                  variant="secondary"
                   onClick={() => setHelpOpen(true)}
                 />
               </VStack>

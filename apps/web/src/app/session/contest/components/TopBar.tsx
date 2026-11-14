@@ -312,7 +312,7 @@ export function TopBar({
                     <Button
                       label="Review"
                       aria-label={`Review question ${index + 1}: ${question.title}`}
-                      variant="ghost"
+                      variant="secondary"
                       size="sm"
                       onClick={() => {
                         cancelReview();

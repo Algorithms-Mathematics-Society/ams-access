@@ -5901,7 +5901,7 @@ export default function ContestPageClient() {
               />
               <Button
                 label="Check results status"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)}
               />
             </HStack>
@@ -6015,7 +6015,7 @@ export default function ContestPageClient() {
               </HStack>
             </>
           )}
-          <Button label="Leave contest" variant="ghost" onClick={requestLeave} />
+          <Button label="Leave contest" variant="secondary" onClick={requestLeave} />
           {sentReports.some((report) => report.sessionId === sessionId) && (
             <VStack
               as="section"

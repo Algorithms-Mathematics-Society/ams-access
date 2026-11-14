@@ -97,8 +97,8 @@ export const CONTEST_STYLES = `
 [data-contest-page] .pb-body pre code { background:none; border:none; padding:0; color:var(--color-text-primary); }
 [data-contest-page] .pb-sample-block { position:relative; margin:var(--spacing-4) 0; }
 [data-contest-page] .pb-sample-block pre { margin:0; padding-top:var(--spacing-10); }
-[data-contest-page] .pb-copy-button { position:absolute; top:var(--spacing-2); right:var(--spacing-2); min-height:var(--spacing-6); padding:var(--spacing-1) var(--spacing-2); border-radius:var(--radius-element); border:var(--border-width) solid var(--color-border); background:var(--color-background-muted); color:var(--color-text-primary); font-family:var(--font-family-body); font-size:var(--font-size-xs); cursor:pointer; }
-[data-contest-page] .pb-copy-button:hover { background:var(--color-background-muted); }
+[data-contest-page] .pb-copy-button { position:absolute; top:var(--spacing-2); right:var(--spacing-2); min-height:var(--spacing-6); padding:var(--spacing-1) var(--spacing-2); border-radius:var(--radius-element); border:var(--border-width) solid transparent; background:var(--color-background-muted); color:var(--color-text-primary); font-family:var(--font-family-body); font-size:var(--font-size-xs); cursor:pointer; }
+[data-contest-page] .pb-copy-button:hover { background:linear-gradient(var(--color-overlay-hover),var(--color-overlay-hover)),var(--color-background-muted); }
 [data-contest-page] .pb-copy-button:focus-visible { outline:var(--border-width) solid var(--color-text-primary); outline-offset:var(--spacing-0-5); }
 [data-contest-page] .pb-body ul,[data-contest-page] .pb-body ol { padding-left:var(--spacing-5); margin:0 0 var(--spacing-4); }
 [data-contest-page] .pb-body li { margin-bottom:var(--spacing-1); }
