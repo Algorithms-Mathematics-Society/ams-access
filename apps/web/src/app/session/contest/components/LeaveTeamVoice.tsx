@@ -7,7 +7,7 @@ import { Text } from "@astryxdesign/core/Text";
 export function LeaveTeamVoice({ onLeave }: { onLeave: () => void }) {
   const [confirming, setConfirming] = useState(false);
   if (!confirming)
-    return <Button label="Leave voice" variant="ghost" onClick={() => setConfirming(true)} />;
+    return <Button label="Leave voice" variant="secondary" onClick={() => setConfirming(true)} />;
   return (
     <HStack gap={2} align="center" wrap="wrap">
       <Text role="status">Leave team voice?</Text>

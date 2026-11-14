@@ -1666,12 +1666,11 @@ export default function OnboardingPage() {
             />
           </HStack>
         </HStack>
-        <Text type="supporting" role="status">
-          {exitError ??
-            (exitingSetup
-              ? "Leaving setup and restoring device controls…"
-              : "Exit setup restores device controls. It does not finish an open attempt or pause its timer.")}
-        </Text>
+        {(exitError || exitingSetup) && (
+          <Text type="supporting" role="status">
+            {exitError ?? "Leaving setup and restoring device controls…"}
+          </Text>
+        )}
         <Divider />
 
         {setupLeaving ? (
@@ -2195,11 +2194,7 @@ export default function OnboardingPage() {
                       )}
                     </VStack>
                   </Card>
-                  {wideLayout ? (
-                    <Text type="supporting" color="secondary">
-                      Need to leave? Exit setup is always available at the top of this page.
-                    </Text>
-                  ) : (
+                  {!wideLayout && (
                     <HStack gap={2} align="center" wrap="wrap">
                       <Text type="supporting" color="secondary">
                         Exit setup at the top, or press

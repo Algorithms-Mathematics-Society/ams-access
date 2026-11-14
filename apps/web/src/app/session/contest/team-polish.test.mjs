@@ -455,6 +455,7 @@ test("leave confirmation keeps Stay primary and only confirms a deliberate leave
         leaves++;
       },
     });
+  assert.equal(render().props.variant, "secondary");
   render().props.onClick();
   assert.equal(leaves, 0, "opening confirmation never disconnects voice");
   const stay = render().props.children[1];
