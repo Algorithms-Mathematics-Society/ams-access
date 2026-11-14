@@ -10,11 +10,14 @@ const counts = (passed: number | null, total: number | null) =>
 export function TeamIntegrationResult({ result }: { result: TeamIntegrationSummary | null }) {
   if (!result) return <Text>No finished integration result yet.</Text>;
   const detail = result.details;
+  const pending = ["queued", "pending", "running", "judging"].includes(result.status);
   return (
     <VStack gap={3}>
       <Heading level={3}>Integration result · revision {result.revision}</Heading>
       <Text>{integrationStatus(result)}</Text>
-      {!detail ? (
+      {pending ? (
+        <Text>Part and suite results will appear after judging finishes.</Text>
+      ) : !detail ? (
         <Text>Detailed part results are unavailable. A pass cannot be confirmed.</Text>
       ) : (
         <>

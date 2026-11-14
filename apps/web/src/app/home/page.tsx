@@ -1189,7 +1189,7 @@ export default function HomePage() {
             {activeNav === "overview" ? (
               <AstryxButton
                 label="Get help"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => setHomeHelpOpen(true)}
               />
             ) : activeNav === "settings" ? (
@@ -1266,7 +1266,7 @@ export default function HomePage() {
           <HStack gap={3} justify="end" wrap="wrap">
             <AstryxButton
               label="Stay signed in"
-              variant="ghost"
+              variant="secondary"
               onClick={() => setConfirmDiscardOpen(false)}
             />
             <AstryxButton label="Discard and sign out" variant="destructive" onClick={signOut} />

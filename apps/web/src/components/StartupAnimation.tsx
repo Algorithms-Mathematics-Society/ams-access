@@ -79,7 +79,7 @@ export function StartupAnimation({ children }: { children: ReactNode }) {
           </Text>
           <Button
             label="Skip intro"
-            variant="ghost"
+            variant="secondary"
             size="sm"
             className={styles.skip}
             onClick={finish}

@@ -284,7 +284,7 @@ export function EditorPanel({
           {!readOnly && activeFileId.endsWith(":main") && (
             <Button
               label="Reset code"
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={() => setResetTarget(resetContext)}
             />
@@ -296,7 +296,7 @@ export function EditorPanel({
             <IconButton
               label="Format code"
               {...{ title: "Format code (Ctrl+S)" }}
-              variant="ghost"
+              variant="secondary"
               icon={<AlignLeft size={16} aria-hidden="true" />}
               onClick={() => formatActiveEditor()}
             />
@@ -306,7 +306,7 @@ export function EditorPanel({
               id="contest-editor-settings-trigger"
               label="Editor settings"
               {...{ title: "Editor settings" }}
-              variant="ghost"
+              variant="secondary"
               aria-expanded={themeMenuOpen}
               aria-controls="contest-editor-themes"
               icon={<Settings2 size={16} aria-hidden="true" />}
@@ -344,7 +344,7 @@ export function EditorPanel({
                     </Text>
                     <IconButton
                       label="Close editor preferences"
-                      variant="ghost"
+                      variant="secondary"
                       size="sm"
                       icon={<X size={14} aria-hidden="true" />}
                       onClick={closeSettings}
@@ -436,7 +436,7 @@ export function EditorPanel({
                     </Text>
                     <Button
                       label="Reset editor preferences"
-                      variant="ghost"
+                      variant="secondary"
                       size="sm"
                       onClick={() => {
                         setPreferences({ ...DEFAULT_EDITOR_PREFERENCES });
@@ -552,7 +552,7 @@ export function EditorPanel({
               label="Add source file"
               icon={<Plus size={14} aria-hidden="true" />}
               size="sm"
-              variant="ghost"
+              variant="secondary"
               onClick={() => {
                 setNewFilePath("");
                 setNewFileError(null);
@@ -571,7 +571,7 @@ export function EditorPanel({
                 label={`Delete ${activeFile.name}`}
                 icon={<Trash2 size={14} aria-hidden="true" />}
                 size="sm"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => setRemoveTarget(activeFile)}
               />
             )}
@@ -582,7 +582,7 @@ export function EditorPanel({
             activeFile.name !== entrypoint && (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="secondary"
                 label="Set as entrypoint"
                 onClick={() => onSetEntrypoint?.(activeFile.name)}
               />

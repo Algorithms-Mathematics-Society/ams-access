@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Battery, BatteryCharging, BatteryLow, Plug } from "lucide-react";
 import { HStack } from "@astryxdesign/core/Stack";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Text } from "@astryxdesign/core/Text";
 
 interface BatterySnapshot {
@@ -60,32 +61,29 @@ export function BatteryStatus() {
 
   if (!battery) return null;
 
-  // The state is spelled out, not left to the icon: a candidate glancing at
-  // the bar should not have to tell a bolt from a plain battery at 16px.
   const pluggedIn = battery.plugged_in ?? battery.charging;
   const low = !pluggedIn && battery.percentage <= LOW_BATTERY_PERCENT;
-  const state = battery.charging ? "Charging" : pluggedIn ? "Plugged in" : "On battery";
   const Icon = battery.charging ? BatteryCharging : pluggedIn ? Plug : low ? BatteryLow : Battery;
   const label = `Battery ${battery.percentage} percent, ${
     battery.charging ? "charging" : pluggedIn ? "plugged in, not charging" : "on battery"
   }${low ? ", low" : ""}`;
   return (
-    <HStack
-      gap={1}
-      align="center"
-      aria-label={label}
-      style={{
-        flexShrink: 0,
-        color: low ? "var(--color-text-orange)" : "var(--color-text-secondary)",
-      }}
-    >
-      <Icon size={16} aria-hidden="true" />
-      <Text type="code" color="inherit" hasTabularNumbers>
-        {battery.percentage}%
-      </Text>
-      <Text type="supporting" color="inherit" textWrap="nowrap">
-        {state}
-      </Text>
-    </HStack>
+    <Tooltip content={label} placement="below">
+      <HStack
+        gap={1}
+        align="center"
+        aria-label={label}
+        tabIndex={0}
+        style={{
+          flexShrink: 0,
+          color: low ? "var(--color-text-orange)" : "var(--color-text-secondary)",
+        }}
+      >
+        <Icon size={16} aria-hidden="true" />
+        <Text type="code" color="inherit" hasTabularNumbers>
+          {battery.percentage}%
+        </Text>
+      </HStack>
+    </Tooltip>
   );
 }

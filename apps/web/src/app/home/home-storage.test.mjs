@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { approvalMessage } from "./components/approval-feedback.ts";
-const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8").replaceAll(
+  "\r\n",
+  "\n"
+);
 const requestStart = source.indexOf("  async function submitResumeRequest(");
 const requestEnd = source.indexOf("\n  async function validateStoredActiveSession(", requestStart);
 assert.ok(requestStart >= 0 && requestEnd > requestStart);

@@ -30,7 +30,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       label={mounted ? `Switch to ${isLight ? "dark" : "light"} theme` : "Toggle theme"}
       tooltip={mounted ? `Switch to ${isLight ? "dark" : "light"} theme` : "Toggle theme"}
       aria-pressed={mounted ? isLight : undefined}
-      variant="ghost"
+      variant="secondary"
       size="md"
       icon={
         <svg

@@ -98,7 +98,7 @@ export const ProblemPane = memo(function ProblemPane({
                   label={marked ? "Marked for later" : "Mark for later"}
                   aria-pressed={marked}
                   tooltip={marked ? "Marked for later — remove reminder" : "Mark for later"}
-                  variant={marked ? "secondary" : "ghost"}
+                  variant="secondary"
                   size="sm"
                   icon={
                     <Bookmark

@@ -129,7 +129,7 @@ export const ReferenceSheetButton = memo(function ReferenceSheetButton({
       <Button
         ref={triggerRef}
         label="Reference"
-        variant="ghost"
+        variant="secondary"
         icon={<FileText size={16} aria-hidden="true" />}
         aria-haspopup="dialog"
         aria-expanded={active}

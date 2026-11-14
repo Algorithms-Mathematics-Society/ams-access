@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-const ui = readFileSync(new URL("./components/TeamVoiceControls.tsx", import.meta.url), "utf8");
-const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
+const ui = readFileSync(
+  new URL("./components/TeamVoiceControls.tsx", import.meta.url),
+  "utf8"
+).replaceAll("\r\n", "\n");
+const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8").replaceAll(
+  "\r\n",
+  "\n"
+);
 test("Desktop adapter retains lifecycle boundaries and mandatory overlay priority", () => {
   assert.match(
     ui.replace(/\s+/g, " "),
@@ -33,6 +39,7 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   let microphones = 0;
   const messages = [];
   const run = new Function(
+    "suspendedRef",
     "supportsRtc",
     "linuxNative",
     "nativeProbe",
@@ -46,6 +53,7 @@ test("missing WebRTC blocks connection before session creation or microphone cap
     `return (async function () { ${body} })();`
   );
   await run(
+    { current: false },
     false,
     false,
     { current: null },
@@ -100,6 +108,7 @@ test("Windows output enumeration failure leaves connected voice usable", async (
     subscribe: () => () => {},
   };
   const scope = {
+    suspendedRef: { current: false },
     current: { current: () => true },
     lifecycleAbort: { current: { signal: {} } },
     open: { current: true },
@@ -404,4 +413,79 @@ test("reopening the voice window updates rendered Join state without another pol
   assert.deepEqual(resumeStates, [false]);
   assert.equal(open.current, true);
   assert.match(ui, /connected \|\| busy \|\| resumePending/);
+});
+
+test("joining requires explicit confirmation and yields to mandatory overlays", () => {
+  assert.doesNotMatch(ui, /autoJoin/);
+  assert.match(ui, /else if \(resumeAfterPoll.current\)/);
+  assert.match(ui, /onRequestJoin=\{\(\) => setConfirmJoin\(true\)\}/);
+  const handler = ui.match(
+    /label="Confirm join voice"[\s\S]*?onClick=\{\(\) => \{([\s\S]*?)\}\}/
+  )[1];
+  let connects = 0;
+  const updates = [];
+  const run = new Function("suspendedRef", "setConfirmJoin", "connect", handler);
+  run(
+    { current: true },
+    (value) => updates.push(value),
+    () => connects++
+  );
+  assert.equal(connects, 0);
+  assert.deepEqual(updates, []);
+  run(
+    { current: false },
+    (value) => updates.push(value),
+    () => connects++
+  );
+  assert.equal(connects, 1);
+  assert.deepEqual(updates, [false]);
+  assert.match(ui, /if \(suspended\) setConfirmJoin\(false\)/);
+  assert.match(ui, /!authorized\(\) \|\| !open.current \|\| suspendedRef.current/);
+});
+
+test("lobby join confirmation owns Escape only while active and yields when suspended", () => {
+  const body = ui.match(
+    /useEffect\(\(\) => \{\n    if \(!confirmJoin \|\| compact \|\| suspended\) return;([\s\S]*?)\n  \}, \[confirmJoin, compact, suspended\]\);/
+  )[1];
+  let listener;
+  let released = 0;
+  const updates = [];
+  const suspendedRef = { current: false };
+  const run = new Function(
+    "acquireOrdinaryEscape",
+    "window",
+    "suspendedRef",
+    "setConfirmJoin",
+    body.replace(": KeyboardEvent", "")
+  );
+  const cleanup = run(
+    () => () => released++,
+    {
+      addEventListener(_name, callback) {
+        listener = callback;
+      },
+      removeEventListener() {
+        listener = null;
+      },
+    },
+    suspendedRef,
+    (value) => updates.push(value)
+  );
+  let prevented = 0;
+  const event = {
+    key: "Escape",
+    preventDefault() {
+      prevented++;
+    },
+  };
+  suspendedRef.current = true;
+  listener(event);
+  assert.deepEqual(updates, []);
+  suspendedRef.current = false;
+  listener(event);
+  assert.deepEqual(updates, [false]);
+  assert.equal(prevented, 1);
+  cleanup();
+  assert.equal(listener, null);
+  assert.equal(released, 1);
 });

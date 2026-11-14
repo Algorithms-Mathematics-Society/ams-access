@@ -65,44 +65,43 @@ export function TeamVotePanel({
   const result = vote.integration ?? vote.last_result;
   return (
     <VStack gap={3}>
-      <Heading level={3}>Team submission · revision {vote.revision}</Heading>
-      <Heading level={2} aria-label={`${vote.votes} of ${vote.needed} approvals`}>
-        {vote.votes} / {vote.needed}
+      <Heading level={3}>
+        Revision {vote.revision} · {vote.votes} / {vote.needed} approvals
       </Heading>
       {seen?.message && <Text role="status">{seen.message}</Text>}
-      <Text>
-        {vote.mine ? "You voted on this revision." : "You have not voted on this revision."}{" "}
-        Individual teammate approvals are not published.
-      </Text>
       <HStack gap={2} wrap="wrap">
         <Button
           label={
             state.pending
               ? "Updating approval…"
               : vote.mine
-                ? "Withdraw"
+                ? "Withdraw approval"
                 : `Approve revision ${vote.revision}`
           }
           isDisabled={disabled}
+          tooltip={
+            vote.revision === 0 ? "Submit your part before approving a team revision." : undefined
+          }
           onClick={() => (vote.mine ? onWithdraw(vote.revision) : onApprove(vote.revision))}
         />
-        <Text>
-          {vote.revision === 0
-            ? "Nothing to submit yet."
-            : remaining > 0
+        {vote.revision > 0 && (
+          <Text>
+            {remaining > 0
               ? `Deadline in ${duration(remaining)}`
               : "Deadline reached. Waiting for server confirmation."}
-        </Text>
+          </Text>
+        )}
       </HStack>
-      <Text>At the deadline your team’s current revision is submitted whatever the count.</Text>
+      {!submitted && remaining > 0 && vote.revision > 0 && (
+        <Text type="supporting">
+          The server submits the current revision at the deadline, regardless of approvals.
+        </Text>
+      )}
       {vote.submitted_revision !== null && (
         <Text role="status">
           Revision {vote.submitted_revision} submitted{" "}
           {vote.submitted_by === "deadline" ? "at the deadline" : "by vote"}.
         </Text>
-      )}
-      {state.status === "error" && (
-        <Text role="status">Team status is reconnecting. Approval actions are paused.</Text>
       )}
       {state.error && <Text role="alert">{state.error}</Text>}
       {result && (

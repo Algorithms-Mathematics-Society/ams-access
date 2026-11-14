@@ -583,7 +583,7 @@ export function HelpRequestModal({
               {pendingStart && (
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="secondary"
                   label="Edit message"
                   isDisabled={busy}
                   onClick={editPendingRequest}
@@ -739,7 +739,7 @@ export function HelpRequestModal({
             {secondaryAction}
             <Button
               label="Forget chat / new request"
-              variant="ghost"
+              variant="secondary"
               onClick={forget}
               isDisabled={busy}
             />
