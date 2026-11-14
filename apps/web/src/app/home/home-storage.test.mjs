@@ -299,6 +299,7 @@ test("sign-out prevents an earlier verification response from restoring saved re
     delete storage[key];
     h.state.stored = null;
   };
+  h.context.signOutInFlightRef = { current: false };
   h.context.setConfirmDiscardOpen = () => {};
   h.context.setSigningOut = () => {};
   h.context.logout = () => {};
@@ -516,4 +517,86 @@ test("Enter owns one navigation and cannot reuse an old attempt when fresh persi
     assert.equal(context.entryNavigationRef.current, !deny);
     if (deny) assert.match(calls.at(-1), /Could not start a new setup attempt/);
   }
+});
+
+function signOutHarness() {
+  const start = source.indexOf("  async function signOut() {");
+  const end = source.indexOf("\n  // Match the existing resume guards", start);
+  let resolveCleanup, rejectCleanup;
+  const calls = { cleanup: 0, logout: 0, timers: [], navigation: [] };
+  const context = {
+    signOutInFlightRef: { current: false },
+    recoveryEpochRef: { current: 0 },
+    setConfirmDiscardOpen() {},
+    setSigningOut() {},
+    setActiveNav() {},
+    setResumeStatus() {},
+    logout() {
+      calls.logout++;
+    },
+    clearQueryCache() {},
+    hasNativeBridge: () => true,
+    withTelemetryTimeout: (promise) => promise,
+    invoke: () => {
+      calls.cleanup++;
+      return new Promise((resolve, reject) => {
+        resolveCleanup = resolve;
+        rejectCleanup = reject;
+      });
+    },
+    localStorage: {
+      ams_draft: "saved",
+      removeItem(key) {
+        delete this[key];
+      },
+    },
+    DEVICE_SCOPED_KEYS: new Set(),
+    setTimeout(callback) {
+      calls.timers.push(callback);
+    },
+    router: { push: (path) => calls.navigation.push(path) },
+  };
+  vm.runInNewContext(
+    ts.transpileModule(source.slice(start, end), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText,
+    context
+  );
+  return {
+    context,
+    calls,
+    complete: () => resolveCleanup(),
+    fail: () => rejectCleanup(new Error("native cleanup failed")),
+  };
+}
+
+test("repeated sign-out activation owns native cleanup and navigation once", async () => {
+  const h = signOutHarness();
+  const first = h.context.signOut();
+  const repeats = Array.from({ length: 100 }, () => h.context.signOut());
+  assert.equal(h.calls.cleanup, 1);
+  assert.equal(h.calls.logout, 1);
+  h.complete();
+  await first;
+  await Promise.all(repeats);
+  await h.context.signOut();
+  assert.equal(h.calls.cleanup, 1, "guard remains held through delayed navigation");
+  assert.equal(h.calls.timers.length, 1);
+  h.calls.timers[0]();
+  assert.deepEqual(h.calls.navigation, ["/"]);
+});
+
+test("failed sign-out cleanup preserves drafts and permits one deliberate retry", async () => {
+  const h = signOutHarness();
+  const first = h.context.signOut();
+  h.fail();
+  await first;
+  assert.equal(h.context.localStorage.ams_draft, "saved");
+  assert.equal(h.calls.timers.length, 0);
+  const retry = h.context.signOut();
+  assert.equal(h.calls.cleanup, 2);
+  h.complete();
+  await retry;
+  assert.equal(h.context.localStorage.ams_draft, undefined);
+  assert.equal(h.calls.timers.length, 1);
 });

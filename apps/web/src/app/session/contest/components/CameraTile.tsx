@@ -139,7 +139,14 @@ export function CameraTile({
           size="sm"
           isIconOnly
           icon={cameraEnabled ? <Video size={16} /> : <VideoOff size={16} />}
-          onClick={() => handleToggleMedia("camera", !cameraEnabled)}
+          onClick={(event) => {
+            if (event.detail > 1) return;
+            handleToggleMedia("camera", !cameraEnabled);
+          }}
+          onKeyDown={(event) => {
+            if (event.repeat && (event.key === "Enter" || event.key === " "))
+              event.preventDefault();
+          }}
         />
         {/* Changing camera without leaving the exam.
          *
@@ -173,7 +180,14 @@ export function CameraTile({
             size="sm"
             isIconOnly
             icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
-            onClick={() => handleToggleMedia("mic", !micEnabled)}
+            onClick={(event) => {
+              if (event.detail > 1) return;
+              handleToggleMedia("mic", !micEnabled);
+            }}
+            onKeyDown={(event) => {
+              if (event.repeat && (event.key === "Enter" || event.key === " "))
+                event.preventDefault();
+            }}
           />
         )}
       </HStack>

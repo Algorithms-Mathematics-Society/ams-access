@@ -223,6 +223,7 @@ function micHandlerHarness(t, getUserMedia, AudioCtx) {
   const handler = componentFunction("toggleMicMonitor", {
     state,
     micResources: { current: resources },
+    micOpeningRef: { current: false },
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
     setMicStream: (value) => {
       state.stream = value;
@@ -396,10 +397,12 @@ test("actual hardware-tab effect releases microphone resources", async (t) => {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
 
+  const micOpeningRef = { current: true };
   const effect = new Function(
     "activeTab",
     "cameraRequestOwner",
     "micResources",
+    "micOpeningRef",
     "cancelAnimationFrame",
     "setMicStream",
     "setMicActive",
@@ -415,6 +418,7 @@ test("actual hardware-tab effect releases microphone resources", async (t) => {
     "security",
     { current: { cancel() {} } },
     { current: resources },
+    micOpeningRef,
     () => {},
     () => {},
     () => {},
@@ -431,6 +435,7 @@ test("actual hardware-tab effect releases microphone resources", async (t) => {
   await Promise.resolve();
   assert.equal(stopped, 1);
   assert.equal(closed, 1);
+  assert.equal(micOpeningRef.current, false);
 });
 
 test("missing mediaDevices produces an unavailable report rather than an unhandled rejection", async (t) => {
@@ -532,4 +537,49 @@ test("actual Settings camera handler surfaces preference persistence failure and
   assert.equal(harness.state.selected, "previous-camera");
   assert.match(harness.state.error, /could not be saved/i);
   assert.deepEqual(harness.state.readiness, ["fail"]);
+});
+
+test("same-render microphone activations request permission once", async (t) => {
+  let resolve;
+  let requests = 0;
+  const harness = micHandlerHarness(
+    t,
+    () => {
+      requests += 1;
+      return new Promise((done) => {
+        resolve = done;
+      });
+    },
+    fakeAudioContext()
+  );
+  const first = harness.handler();
+  // Simulate two callbacks from the same React render: state setters have not
+  // changed the values captured by that render yet.
+  harness.state.pending = false;
+  await harness.handler();
+  assert.equal(requests, 1);
+  resolve({ getTracks: () => [{ stop() {} }] });
+  await first;
+  assert.equal(harness.state.active, true);
+  harness.resources.cancel(cancelAnimationFrame);
+});
+
+test("camera acquisition ignores duplicate activations but allows a later retry", async () => {
+  let resolve;
+  let requests = 0;
+  const harness = cameraHandlerHarness(() => {
+    requests += 1;
+    return new Promise((done) => {
+      resolve = done;
+    });
+  });
+  const first = harness.handler("rgb-camera");
+  await harness.handler("rgb-camera");
+  assert.equal(requests, 1);
+  resolve({ getTracks: () => [] });
+  await first;
+  const retry = harness.handler("rgb-camera");
+  assert.equal(requests, 2);
+  resolve({ getTracks: () => [] });
+  await retry;
 });
