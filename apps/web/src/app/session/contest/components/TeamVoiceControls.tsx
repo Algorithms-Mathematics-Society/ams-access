@@ -8,7 +8,8 @@ import { TeamVoicePresentation } from "./TeamVoicePresentation";
 import { voiceStatusText, voiceErrorAdvice } from "@/lib/team-voice-presentation";
 import { supportsTeamDesktopWebView } from "@/lib/team-platform";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -42,7 +43,16 @@ export function TeamVoiceControls({
   compact = false,
   toolbarTarget = null,
   lobbyTarget = null,
+  membersTarget = null,
+  renderMembers,
+  onMembersReady,
 }: {
+  onMembersReady?: (ready: boolean) => void;
+  membersTarget?: HTMLElement | null;
+  renderMembers?: (
+    snapshot: TeamVoiceSnapshot | null,
+    onVolume: (uid: string, volume: number) => void
+  ) => ReactNode;
   compact?: boolean;
   toolbarTarget?: HTMLElement | null;
   lobbyTarget?: HTMLElement | null;
@@ -51,6 +61,12 @@ export function TeamVoiceControls({
   suspended?: boolean;
   projection: { board: VoiceTeam | null; status: string; error: string | null };
 }) {
+  const hasMembersRenderer = Boolean(renderMembers);
+  useEffect(() => {
+    if (!membersTarget || !hasMembersRenderer) return;
+    onMembersReady?.(true);
+    return () => onMembersReady?.(false);
+  }, [membersTarget, hasMembersRenderer, onMembersReady]);
   const team = projection.board;
   const endedNotice = useVoiceEndedNotice({
     contestUid,
@@ -298,18 +314,41 @@ export function TeamVoiceControls({
         ? "Team status is reconnecting. Your work is safe."
         : "Team status is unavailable."
       : null;
-  if (!enabled || (!team && !message && !projectionMessage)) return endedNotice;
+  const members =
+    membersTarget && renderMembers
+      ? createPortal(
+          <VStack gap={0} inert={suspended || undefined}>
+            {renderMembers(enabled ? snapshot : null, (uid, volume) =>
+              session.current?.setMemberVolume(uid, volume)
+            )}
+          </VStack>,
+          membersTarget
+        )
+      : null;
+  if (!enabled || (!team && !message && !projectionMessage))
+    return (
+      <>
+        {endedNotice}
+        {members}
+      </>
+    );
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   const busy = snapshot?.status === "connecting";
   return (
     <>
       {endedNotice}
+      {members}
       <TeamVoicePresentation
         compact={compact}
         toolbarTarget={toolbarTarget}
         lobbyTarget={lobbyTarget}
         suspended={suspended}
         snapshot={snapshot}
+        notice={
+          !supportsRtc
+            ? "Voice unavailable in this app"
+            : projectionMessage || (message ? "Audio needs attention · open Voice" : null)
+        }
         onToggleMute={toggleMute}
       >
         <VStack
@@ -435,13 +474,8 @@ export function TeamVoiceControls({
               )}
             </VStack>
           )}
-          {team && (compact || connected) && (
-            <VStack as={compact ? "section" : "details"} gap={2}>
-              {!compact && (
-                <summary>
-                  <Text as="span">Member audio settings</Text>
-                </summary>
-              )}
+          {team && compact && (
+            <VStack as="section" gap={2}>
               <List header="Team members" density="compact" hasDividers>
                 {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
                   <ListItem

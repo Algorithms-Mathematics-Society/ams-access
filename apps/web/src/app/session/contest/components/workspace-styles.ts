@@ -13,14 +13,14 @@ export const CONTEST_STYLES = `
  to { opacity:1; transform:translateY(0); }
 }
 
-/* Lobby: flexible full-width selection/voice column + 320px camera/member rail. The
+/* Lobby: flexible full-width selection/voice column + compact camera/member rail. The
    single camera stays a direct child of this stable region across workspace entry. */
 [data-contest-page] .contest-camera-region[data-team-lobby="true"] {
- display:grid; grid-template-columns:minmax(0,1fr) calc(var(--spacing-10) * 8);
+ display:grid; grid-template-columns:minmax(0,1fr) calc(var(--spacing-10) * 7);
  grid-template-areas:"main preview" "main members"; grid-template-rows:auto 1fr;
- align-content:start; align-items:start; gap:var(--spacing-4) var(--spacing-6);
+ align-content:start; align-items:start; gap:var(--spacing-3) var(--spacing-4);
  width:100%;
- padding:var(--spacing-6); overflow:auto !important;
+ padding:var(--spacing-3) var(--spacing-4); overflow:auto !important;
 }
 [data-contest-page] .contest-camera-tile[data-lobby-preview="true"] { margin:0; left:auto; }
 [data-contest-page] .team-lobby-main { grid-area:main; }
@@ -28,9 +28,13 @@ export const CONTEST_STYLES = `
 [data-contest-page] .team-lobby-content .astryx-list-item { min-width:0; }
 [data-contest-page] .team-lobby-content .astryx-list-item > :first-child { min-width:0; }
 [data-contest-page] .team-lobby-part { flex-wrap:wrap; }
-[data-contest-page] .team-lobby-part > :last-child { flex-shrink:0; }
-[data-contest-page] .team-lobby-voice summary { cursor:pointer; padding-block:var(--spacing-2); }
-[data-contest-page] .team-lobby-voice summary:focus-visible { outline:var(--border-width) solid var(--color-text-accent); outline-offset:var(--spacing-1); }
+[data-contest-page] .team-lobby-part > :last-child { flex-shrink:0; min-width:calc(var(--spacing-10) * 2); }
+[data-contest-page] .team-lobby-part > :last-child button { width:100%; }
+[data-contest-page] .team-lobby-feedback { min-height:var(--spacing-6); justify-content:center; }
+[data-contest-page] .team-lobby-readiness { padding-block:var(--spacing-2); }
+[data-contest-page] .team-lobby-part-summary summary { cursor:pointer; color:var(--color-text-secondary); }
+[data-contest-page] .team-lobby-part-summary summary:focus-visible { outline:var(--border-width) solid var(--color-text-accent); outline-offset:var(--spacing-1); }
+[data-contest-page] .team-lobby-content .astryx-list-item { padding-block:var(--spacing-2); }
 @media(max-width:900px) {
  [data-contest-page] .contest-camera-region[data-team-lobby="true"] {
   grid-template-columns:minmax(0,1fr); grid-template-areas:"main" "preview" "members";

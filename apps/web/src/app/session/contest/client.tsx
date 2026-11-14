@@ -428,6 +428,8 @@ export default function ContestPageClient() {
   const lobbyController = useRef<ReturnType<typeof createTeamLobbyController> | null>(null);
   const [voiceToolbarTarget, setVoiceToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [lobbyVoiceTarget, setLobbyVoiceTarget] = useState<HTMLElement | null>(null);
+  const [lobbyMembersTarget, setLobbyMembersTarget] = useState<HTMLElement | null>(null);
+  const [voiceMembersReady, setVoiceMembersReady] = useState(false);
   const [enteredTeamPart, setEnteredTeamPart] = useState(false);
   const loadedTeamWorkspace = useRef<WorkspaceIdentity | null>(null);
   const paperAssets = useRef<string[]>([]);
@@ -5290,6 +5292,11 @@ export default function ContestPageClient() {
               compact={!renderTeamLobby}
               toolbarTarget={voiceToolbarTarget}
               lobbyTarget={lobbyVoiceTarget}
+              membersTarget={renderTeamLobby ? lobbyMembersTarget : null}
+              onMembersReady={setVoiceMembersReady}
+              renderMembers={(snapshot, onVolume) => (
+                <TeamLobbyMembers state={lobbyState} snapshot={snapshot} onVolume={onVolume} />
+              )}
               contestUid={contestId}
               projection={lobbyState}
               enabled={
@@ -5597,7 +5604,12 @@ export default function ContestPageClient() {
             </>
           )}
           {cameraTile}
-          {renderTeamLobby && <TeamLobbyMembers state={lobbyState} />}
+          {renderTeamLobby && (
+            <VStack gap={0} style={{ minWidth: 0, gridArea: "members" }}>
+              {!voiceMembersReady && <TeamLobbyMembers state={lobbyState} />}
+              <VStack ref={setLobbyMembersTarget} gap={0} />
+            </VStack>
+          )}
         </VStack>
         {!renderTeamLobby && (
           <FooterTrustStrip

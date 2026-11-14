@@ -587,13 +587,22 @@ staging verification of visible-board polling and result artifact costs remain.
 
 ## Team lobby layout and Linux runtime verification
 
-The lobby fills the available window width. Phase guidance and voice controls stay
-above part selection in the flexible main column; a 320px right column places the
-camera at the top and Members directly below it. The shared page scroll region
-reaches the right window edge, without a centered maximum width or separate member
-scrollbar. The locked assignment action appears before the parts list. Member
-audio settings are disclosed after joining; the assignment roster remains visible
-without a second idle voice roster. Help and Exit remain usable when editor
+The lobby fills the available window width. Compact phase guidance and voice controls stay
+above part selection in the flexible main column; a 280px right column places the
+camera at the top and Members directly below it. The member roster also shows voice
+presence, without a second member list or a member-list toggle. Voice updates render
+from the existing voice owner without rerendering the whole contest shell or adding
+polls. Ready, claim and release retain a reserved feedback row and stable action widths
+so ordinary pending updates do not move the parts list. Long part descriptions can
+be expanded when needed. The locked assignment action appears before the parts list.
+Allocation locking, timer expiry and unanimous team readiness never navigate the
+participant automatically. Once the server has locked their assignment and the
+contest start/security gates permit entry, the participant clicks Ready to open
+their part. Choosing-phase Ready still records team readiness; it does not grant
+workspace entry. Audio stays owned by the same session across this handoff, with
+the microphone and Voice controls in the workspace toolbar. Reconnection and audio
+errors remain visible even when Voice settings are closed.
+Help and Exit remain usable when editor
 actions are locked, while mandatory overlays still suspend interaction.
 
 Narrow windows stack main content, camera, then Members. The camera occupies a

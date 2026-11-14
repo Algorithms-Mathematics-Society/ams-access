@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { voiceMemberRows } from "../../../lib/team-voice-members.ts";
 function harness() {
   const source = readFileSync(
     new URL("./components/VoiceEndedNotice.tsx", import.meta.url),
@@ -133,6 +134,7 @@ test("part rows render real descriptions as wrapping text and preserve legacy ro
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "react")
         return { useEffect() {}, useState: (v) => [typeof v === "function" ? v() : v, () => {}] };
+      if (name === "@/lib/team-voice-members") return { voiceMemberRows };
       if (name === "@/lib/team-lobby")
         return { countdownMs: () => 60000, contestStartRemaining: () => 60000 };
       return Object.fromEntries(
@@ -168,18 +170,21 @@ test("part rows render real descriptions as wrapping text and preserve legacy ro
   };
   const old = render({});
   assert.equal(old.props.label, "Part 1 · P1");
-  assert.equal(old.props.description.type, "Text");
-  assert.equal(old.props.description.props.children, "Alice");
+  assert.equal(old.props.description.type, "HStack");
+  assert.equal(old.props.description.props.children[0].props.children, "Alice");
   const title = "VeryLongUnbrokenAuthoredTitle".repeat(8);
-  const next = render({ title, summary: "<b>Authored text, not HTML</b>" });
+  const summary = "<b>Authored text, not HTML</b>";
+  const next = render({ title, summary });
+  assert.equal(next.props.label, `Part 1 · ${title}`);
   const description = next.props.description;
-  assert.equal(description.type, "VStack");
+  assert.equal(description.type, "HStack");
   assert.equal(description.props.style.minWidth, 0);
   assert.equal(description.props.style.overflowWrap, "anywhere");
-  assert.equal(description.props.children[0].type, "Heading");
-  assert.equal(description.props.children[0].props.children, title);
-  assert.equal(description.props.children[1].props.children, "<b>Authored text, not HTML</b>");
-  assert.equal(description.props.children[2].props.children, "Alice");
+  assert.equal(description.props.children[0].props.children, "Alice");
+  const details = description.props.children[1];
+  assert.equal(details.type, "details");
+  assert.equal(details.props.children[1].props.children, "P1");
+  assert.equal(details.props.children[2].props.children, summary);
 });
 
 test("voice presentation moves between reserved lobby region and toolbar without a second owner", () => {
@@ -204,6 +209,8 @@ test("voice presentation moves between reserved lobby region and toolbar without
       };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name === "react-dom") return { createPortal: (node, target) => ({ node, target }) };
+    if (name === "@/lib/team-voice-presentation")
+      return { voiceStatusText: (status) => `Voice status: ${status}` };
     return Object.fromEntries(
       ["Button", "Popover", "HStack", "Text", "Mic", "MicOff"].map((n) => [n, n])
     );
@@ -224,6 +231,31 @@ test("voice presentation moves between reserved lobby region and toolbar without
   assert.equal(workspace.target, props.toolbarTarget);
   assert.equal(workspace.node.props.children[0].props.label, "Mic off");
   assert.equal(workspace.node.props.children[0].props.isDisabled, true);
+  for (const status of ["connecting", "reconnecting", "unavailable", "closed", "replaced"]) {
+    const state = exports.TeamVoicePresentation({
+      ...props,
+      compact: true,
+      snapshot: { status, muted: true, peers: [] },
+    });
+    assert.equal(state.node.props.children[1].props.role, "status");
+    assert.equal(state.node.props.children[1].props.children, `Voice status: ${status}`);
+  }
+  for (const notice of [null, "Team status is reconnecting. Your work is safe."]) {
+    const state = exports.TeamVoicePresentation({
+      ...props,
+      compact: true,
+      notice,
+      snapshot: {
+        status: "connected",
+        error: "Allow audio playback to hear your team.",
+        peers: [],
+      },
+    });
+    assert.equal(
+      state.node.props.children[1].props.children,
+      notice ?? "Audio needs attention · open Voice"
+    );
+  }
   for (const muted of [true, false]) {
     let toggles = 0;
     const joined = exports.TeamVoicePresentation({
@@ -257,6 +289,10 @@ function renderVoiceSettings({
   connected = false,
   muted = true,
   status = "connected",
+  enabled = true,
+  membersTarget = null,
+  renderMembers,
+  suspended = false,
 } = {}) {
   const source = readFileSync(
     new URL("./components/TeamVoiceControls.tsx", import.meta.url),
@@ -286,6 +322,10 @@ function renderVoiceSettings({
         },
       };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (name === "react-dom")
+      return {
+        createPortal: (children, target) => ({ type: "portal", props: { children, target } }),
+      };
     if (name === "@/lib/team-voice-input") return { createVoiceAutoJoinGate: () => ({}) };
     if (name === "./VoiceEndedNotice") return { useVoiceEndedNotice: () => null };
     if (name === "@/lib/team-voice-members")
@@ -312,41 +352,31 @@ function renderVoiceSettings({
   }, exports);
   const tree = exports.TeamVoiceControls({
     contestUid: "contest",
-    enabled: true,
+    enabled,
     compact,
+    membersTarget,
+    renderMembers,
+    suspended,
     projection: {
       status: "team",
       error: null,
       board: { team: { name: "Team" }, phase: { voice_open: true }, members: [] },
     },
   });
-  const settings = tree.props.children[1].props.children;
-  const roster = settings.props.children.find((n) => n?.type === "VStack" && n.props.as);
-  return { settings, roster };
+  const settings = tree.props.children.find((node) => node?.props?.onToggleMute)?.props.children;
+  const roster = settings?.props.children.find((n) => n?.type === "VStack" && n.props.as);
+  return { settings, roster, tree };
 }
 
-test("lobby keeps one visible assignment roster, with member audio settings disclosed after joining", () => {
-  const idle = renderVoiceSettings();
-  assert.equal(idle.roster, undefined, "idle voice does not duplicate the lobby members list");
-  assert.equal(
-    idle.settings.props.style.maxHeight,
-    undefined,
-    "lobby uses the page scroll instead of a nested 30vh strip"
-  );
-  const joined = renderVoiceSettings({ connected: true });
-  assert.equal(joined.roster.props.as, "details");
-  assert.equal(
-    joined.roster.props.open,
-    undefined,
-    "member audio settings are initially collapsed"
-  );
-  assert.equal(joined.roster.props.children[0].type, "summary");
+test("lobby has no duplicate audio roster and workspace retains member settings", () => {
+  for (const connected of [false, true]) {
+    const lobby = renderVoiceSettings({ connected });
+    assert.equal(lobby.roster, undefined);
+    assert.equal(lobby.settings.props.style.maxHeight, undefined);
+    assert.doesNotMatch(JSON.stringify(lobby.settings), /Member audio settings/);
+  }
   const workspace = renderVoiceSettings({ compact: true, connected: true });
-  assert.equal(
-    workspace.roster.props.as,
-    "section",
-    "workspace popover keeps the audio roster visible"
-  );
+  assert.equal(workspace.roster.props.as, "section");
   assert.equal(workspace.settings.props.style.maxHeight, "60vh");
 });
 
@@ -445,6 +475,7 @@ test("recovery actions remain reachable when editing is locked, and locked entry
     if (name === "react")
       return { useEffect() {}, useState: (v) => [typeof v === "function" ? v() : v, () => {}] };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (name === "@/lib/team-voice-members") return { voiceMemberRows };
     if (name === "@/lib/team-lobby")
       return { countdownMs: () => 60000, contestStartRemaining: () => 0 };
     return Object.fromEntries(
@@ -497,9 +528,7 @@ test("recovery actions remain reachable when editing is locked, and locked entry
   const entry = locked.props.children.findIndex(
     (n) =>
       n?.type === "VStack" &&
-      n.props.children?.some?.(
-        (child) => child?.type === "Button" && child.props.label === "Go to your part"
-      )
+      n.props.children?.some?.((child) => child?.type === "Button" && child.props.label === "Ready")
   );
   const partList = locked.props.children.findIndex((n) => n?.type === "List");
   assert.ok(entry > 0 && entry < partList, "primary workspace entry is adjacent to phase guidance");
@@ -545,6 +574,7 @@ test("assignment roster renders once in its own rail with authoritative member a
     if (name === "react")
       return { useEffect() {}, useState: (v) => [typeof v === "function" ? v() : v, () => {}] };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (name === "@/lib/team-voice-members") return { voiceMemberRows };
     if (name === "@/lib/team-lobby")
       return { countdownMs: () => 60000, contestStartRemaining: () => 0 };
     return Object.fromEntries(
@@ -599,8 +629,26 @@ test("assignment roster renders once in its own rail with authoritative member a
   assert.equal(rows[0].props.label, "Same name (you)");
   assert.equal(rows[0].props.description.props.children, "Part A");
   assert.equal(rows[1].props.description.props.children, "Part B");
-  assert.equal(rows[1].props.endContent.props.label, "Auto-assigned");
+  assert.equal(rows[1].props.endContent.props.children[2].props.label, "Auto-assigned");
   assert.equal(rows[2].props.description.props.children, "No part selected");
+  const snapshot = {
+    status: "connected",
+    muted: true,
+    peers: [{ memberUid: "peer", muted: false, speaking: true, volume: 0.6 }],
+  };
+  const changes = [];
+  const liveRows = exports.TeamLobbyMembers({
+    state,
+    snapshot,
+    onVolume: (...change) => changes.push(change),
+  }).props.children.props.children;
+  const presence = (row) => row.props.endContent.props.children[0].props.children;
+  assert.equal(presence(liveRows[0]).props["aria-label"], "Same name: muted");
+  assert.equal(presence(liveRows[1]).props["aria-label"], "Same name: speaking");
+  assert.equal(presence(liveRows[2]).props["aria-label"], "Waiting member: not in voice");
+  liveRows[1].props.endContent.props.children[1].props.onChange(35);
+  assert.deepEqual(changes, [["peer", 0.35]]);
+  assert.equal(presence(rows[1]).props["aria-label"], "Same name: voice status unavailable");
   const main = exports.TeamLobby({
     state,
     contestUid: "contest",
@@ -613,4 +661,37 @@ test("assignment roster renders once in its own rail with authoritative member a
     1,
     "main content contains only the parts list"
   );
+});
+
+test("lobby keeps action feedback mounted and readiness guidance stable", () => {
+  const source = readFileSync(new URL("./components/TeamLobby.tsx", import.meta.url), "utf8");
+  assert.match(source, /<VStack gap=\{0\} className="team-lobby-feedback">/);
+  assert.doesNotMatch(source, /board.readiness\?\.mine\s*\?/);
+  assert.match(source, /label="Claim"/);
+  const styles = readFileSync(new URL("./components/workspace-styles.ts", import.meta.url), "utf8");
+  assert.match(styles, /team-lobby-feedback \{ min-height:var\(--spacing-6\)/);
+  assert.match(styles, /team-lobby-part > :last-child \{[^}]*min-width:/);
+});
+
+test("voice owner portals the rail even when disabled and suspends its controls", () => {
+  const target = {};
+  for (const enabled of [false, true]) {
+    const seen = [];
+    const { tree } = renderVoiceSettings({
+      enabled,
+      connected: true,
+      suspended: true,
+      membersTarget: target,
+      renderMembers: (snapshot, volume) => {
+        seen.push(snapshot);
+        assert.equal(typeof volume, "function");
+        return { type: "roster" };
+      },
+    });
+    const portal = tree.props.children.find((node) => node?.type === "portal");
+    assert.equal(portal.props.target, target);
+    assert.equal(portal.props.children.props.inert, true);
+    assert.equal(portal.props.children.props.children.type, "roster");
+    assert.equal(seen[0]?.status ?? null, enabled ? "connected" : null);
+  }
 });

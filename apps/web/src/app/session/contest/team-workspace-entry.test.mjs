@@ -118,7 +118,7 @@ test("Finish review includes only owned team work while solo keeps every questio
   assert.equal(finishReviewQuestions(questions, { status: "solo", board: null }), questions);
 });
 
-// Render the lobby's public controls and execute only its entry effect. Media and
+// Render the lobby's public controls and effects. Media and
 // contest authorization stay owned by the shell, and no real timer/network starts.
 async function renderReadyLobby({
   phase = "choosing",
@@ -127,6 +127,8 @@ async function renderReadyLobby({
   own = true,
   canEnter = true,
   futureStart = false,
+  pending = false,
+  status = "team",
 } = {}) {
   const { readFileSync } = await import("node:fs");
   const { default: ts } = await import("typescript");
@@ -170,27 +172,40 @@ async function renderReadyLobby({
     members: [{ display_name: "Me", is_me: true, ready: false, part_label: own ? "A" : null }],
     parts: [{ label: "A", problem_label: "A", holder: own ? "Me" : null, holder_is_me: own }],
   };
-  const tree = exports.TeamLobby({
-    state: { status: "team", sampledAt: 0, pending: false, board },
+  const props = {
+    state: { status, sampledAt: 0, pending, board },
     contestUid: "contest",
     canEnter,
     onClaim() {},
     onRelease() {},
     onReady: () => readies++,
     onEnter: () => enters++,
-  });
-  effects.at(-1)();
+  };
   const nodes = [];
   const visit = (node) => {
     if (!node || typeof node !== "object") return;
     nodes.push(node);
     for (const child of [node.props?.children, node.props?.endContent].flat(Infinity)) visit(child);
   };
-  visit(tree);
+  let tree;
+  const render = () => {
+    nodes.length = 0;
+    effects.length = 0;
+    tree = exports.TeamLobby(props);
+    // The clock is the only interval; clean it up immediately after running effects.
+    for (const effect of effects) effect()?.();
+    visit(tree);
+  };
+  render();
   return {
     tree,
     nodes,
     board,
+    render,
+    start: () => {
+      futureStart = false;
+      render();
+    },
     get enters() {
       return enters;
     },
@@ -221,30 +236,49 @@ test("choosing offers Ready for an assigned part and never enters before the boa
   }
 });
 
-test("server locked assignments autoenter only after schedule and shell security gates permit", async () => {
+test("locked arrival requires an explicit Ready click, including older servers", async () => {
   const patch = { phase: "locked", locked: true };
-  assert.equal((await renderReadyLobby(patch)).enters, 1);
+  for (const supports of [true, false]) {
+    const lobby = await renderReadyLobby({ ...patch, supports });
+    assert.equal(lobby.enters, 0);
+    const ready = lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+    assert.equal(ready.props.isDisabled, false);
+    ready.props.onClick();
+    assert.equal(lobby.enters, 1);
+    lobby.render();
+    assert.equal(lobby.enters, 1, "board rerenders never reenter");
+  }
   for (const blocked of [
     { canEnter: false },
     { futureStart: true },
     { own: false },
     { locked: false },
+    { pending: true },
+    { status: "denied" },
   ]) {
-    assert.equal((await renderReadyLobby({ ...patch, ...blocked })).enters, 0);
+    const lobby = await renderReadyLobby({ ...patch, ...blocked });
+    const ready = lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+    assert.equal(ready.props.isDisabled, true);
+    ready.props.onClick();
+    assert.equal(lobby.enters, 0, "entry handler also enforces disabled gates");
   }
-  const oldServer = await renderReadyLobby({ ...patch, supports: false });
-  assert.equal(oldServer.enters, 0);
-  const legacyEntry = oldServer.nodes.find(
-    (n) => n.type === "Button" && n.props.label === "Go to your part"
-  );
-  assert.equal(
-    legacyEntry.props.isDisabled,
-    false,
-    "older API retains a usable explicit entry path"
-  );
 });
 
-test("automatic lobby entry preserves setup, expiry and overlay fences and exposes the shared theme control", async () => {
+test("allocation lock and contest start transitions leave entry waiting for Ready", async () => {
+  const lobby = await renderReadyLobby({ futureStart: true });
+  lobby.board.phase.name = "locked";
+  lobby.board.allocation.locked = true;
+  lobby.render();
+  assert.equal(lobby.enters, 0);
+  lobby.start();
+  assert.equal(lobby.enters, 0);
+  const ready = lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+  assert.equal(ready.props.isDisabled, false);
+  ready.props.onClick();
+  assert.equal(lobby.enters, 1);
+});
+
+test("explicit lobby entry preserves setup, expiry and overlay fences and exposes the shared theme control", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
   const gate = source.match(/const canEnterTeamPart =([\s\S]*?);/)[1];

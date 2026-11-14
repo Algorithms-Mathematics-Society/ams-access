@@ -6,6 +6,7 @@ import { Popover } from "@astryxdesign/core/Popover";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import type { TeamVoiceSnapshot } from "@/lib/team-voice-engine";
+import { voiceStatusText } from "@/lib/team-voice-presentation";
 import { acquireOrdinaryEscape } from "../escape-ownership";
 
 function hasVisiblePriorityDialog() {
@@ -28,6 +29,7 @@ export function TeamVoicePresentation({
   lobbyTarget,
   suspended,
   snapshot,
+  notice,
   onToggleMute,
   children,
 }: {
@@ -36,6 +38,7 @@ export function TeamVoicePresentation({
   lobbyTarget?: HTMLElement | null;
   suspended: boolean;
   snapshot: TeamVoiceSnapshot | null;
+  notice?: string | null;
   onToggleMute: () => void;
   children: ReactNode;
 }) {
@@ -67,12 +70,19 @@ export function TeamVoicePresentation({
   if (!compact) return lobbyTarget ? createPortal(children, lobbyTarget) : null;
   if (!toolbarTarget) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
+  const status = notice
+    ? notice
+    : snapshot?.error
+      ? "Audio needs attention · open Voice"
+      : snapshot && snapshot.status !== "connected"
+        ? voiceStatusText(snapshot.status)
+        : null;
   return createPortal(
     <HStack
       gap={2}
       align="center"
       wrap="wrap"
-      style={{ flexShrink: 0, minWidth: 0 }}
+      style={{ flexShrink: 0, minWidth: 0, maxWidth: "100%" }}
       inert={suspended || undefined}
       aria-label="Team voice"
     >
@@ -107,6 +117,11 @@ export function TeamVoicePresentation({
         onClick={onToggleMute}
         isDisabled={suspended || !connected}
       />
+      {status && (
+        <Text role="status" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+          {status}
+        </Text>
+      )}
       {snapshot?.muted && (snapshot.inputLevel ?? 0) > 0.02 && (
         <Text role="status">You are muted</Text>
       )}

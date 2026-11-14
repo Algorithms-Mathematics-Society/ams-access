@@ -228,14 +228,18 @@ and judge rollout is complete.
 ### Team lobby layout
 
 The team lobby fills the window with a flexible phase, voice, and part-selection
-column beside a 320px right rail. The camera sits at the top right with Members
+column beside a 280px right rail. The camera sits at the top right with Members
 immediately below it. One page scroll region reaches the window's right edge;
 there is no centered maximum-width frame or independently scrolling member rail.
 Narrow windows stack main content, camera, and Members in that order. The camera
 does not float over lobby actions. The locked assignment action appears directly
-after voice guidance, before the parts list. The assignment roster stays visible;
-member audio settings use a disclosure after joining to avoid a
-duplicate idle roster. Help and Exit remain reachable when editor actions lock.
+after voice guidance, before the parts list. The assignment roster stays visible
+and includes compact voice presence; there is no separate member-list disclosure.
+Action feedback reserves its space, and readiness guidance and part action widths
+stay stable across Ready, claim and release updates. Help and Exit remain reachable when editor actions lock.
+After allocation locks, Ready explicitly opens the assigned part only when server
+start and security gates allow it; timer expiry never navigates automatically.
+Workspace audio controls retain visible connection/error feedback outside settings.
 The mounted media owners stay unchanged across lobby/workspace transitions.
 Missing native WebRTC remains an explicit unavailable state with recovery advice,
 not a claim that the layout change enables Linux audio.

@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-const ui = readFileSync(new URL("./components/TeamVoiceControls.tsx", import.meta.url), "utf8");
-const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
+const ui = readFileSync(
+  new URL("./components/TeamVoiceControls.tsx", import.meta.url),
+  "utf8"
+).replaceAll("\r\n", "\n");
+const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8").replaceAll(
+  "\r\n",
+  "\n"
+);
 test("Desktop adapter retains lifecycle boundaries and mandatory overlay priority", () => {
   assert.match(
     ui.replace(/\s+/g, " "),
