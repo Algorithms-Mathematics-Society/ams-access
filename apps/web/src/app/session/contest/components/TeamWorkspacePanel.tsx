@@ -25,20 +25,18 @@ export default function TeamWorkspacePanel({
   suspended: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState(false);
+  const [section, setSection] = useState<"progress" | "integration" | "live" | "benchmarks">(
+    "progress"
+  );
   useEffect(() => {
     if (suspended || !state.board) setOpen(false);
   }, [suspended, state.board]);
   const board = state.board;
   if (!board) return null;
-  const submission = board.submission;
-  const label = submission
-    ? `Team r${submission.revision} · ${submission.votes}/${submission.needed}`
-    : "Team status";
   return (
     <>
       <Button
-        label={label}
+        label="Team progress"
         size="sm"
         variant="secondary"
         isDisabled={suspended}
@@ -48,7 +46,7 @@ export default function TeamWorkspacePanel({
         <AccessDialog
           open
           onClose={() => setOpen(false)}
-          title="Team progress and submission"
+          title="Team progress"
           width="min(calc(100vw - var(--spacing-8)), calc(var(--spacing-10) * 16))"
           labelId="team-workspace-dialog"
           shouldRestoreFocus={() => !suspended}
@@ -57,20 +55,26 @@ export default function TeamWorkspacePanel({
             {state.status === "error" && (
               <Text role="status">Reconnecting. Showing the last confirmed team progress.</Text>
             )}
-            <HStack gap={2} wrap="wrap">
-              <Button
-                label="Progress and approval"
-                variant={results ? "secondary" : "primary"}
-                onClick={() => setResults(false)}
-              />
-              <Button
-                label="Results and live board"
-                variant={results ? "primary" : "secondary"}
-                onClick={() => setResults(true)}
-              />
+            <HStack gap={2} wrap="wrap" aria-label="Team sections">
+              {(["progress", "integration", "live", "benchmarks"] as const).map((value) => (
+                <Button
+                  key={value}
+                  label={
+                    {
+                      progress: "Progress",
+                      integration: "Integration",
+                      live: "Live board",
+                      benchmarks: "Benchmarks",
+                    }[value]
+                  }
+                  variant={section === value ? "primary" : "secondary"}
+                  aria-pressed={section === value}
+                  onClick={() => setSection(value)}
+                />
+              ))}
             </HStack>
-            {results ? (
-              <TeamResultsView contestUid={contestUid} board={board} />
+            {section !== "progress" ? (
+              <TeamResultsView contestUid={contestUid} board={board} section={section} />
             ) : (
               <>
                 <List aria-label="Team part progress">
@@ -90,7 +94,9 @@ export default function TeamWorkspacePanel({
                             {part.verdict ? ` · ${part.verdict}` : ""}
                           </Text>
                           <Text type="supporting">
-                            Last integration:{" "}
+                            {board.submission?.last_result
+                              ? `Integration r${board.submission.last_result.revision}: `
+                              : "Integration: "}
                             {integrationPartStatus(board.submission?.last_result, part.label)}
                           </Text>
                         </VStack>
@@ -103,8 +109,9 @@ export default function TeamWorkspacePanel({
                   onApprove={onApprove}
                   onWithdraw={onWithdraw}
                   suspended={suspended}
-                  onResults={() => setResults(true)}
+                  onResults={() => setSection("integration")}
                 />
+                <Text type="supporting">Your submissions: open Attempts below the editor.</Text>
               </>
             )}
           </VStack>

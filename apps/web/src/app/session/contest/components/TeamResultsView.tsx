@@ -1,7 +1,6 @@
-import { useState } from "react";
 import dynamic from "next/dynamic";
-import { VStack, HStack } from "@astryxdesign/core/Stack";
-import { Button } from "@astryxdesign/core/Button";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import type { TeamLobbyBoard } from "@/lib/team-lobby";
 import { TeamIntegrationResult } from "./TeamIntegrationResult";
 const TeamLiveBoard = dynamic(() => import("./TeamLiveBoard"), { ssr: false });
@@ -11,32 +10,29 @@ const TeamBenchmarks = dynamic(() => import("./TeamBenchmarks").then((m) => m.Te
 export default function TeamResultsView({
   contestUid,
   board,
+  section = "integration",
 }: {
   contestUid: string;
   board: TeamLobbyBoard;
+  section?: "integration" | "live" | "benchmarks";
 }) {
-  const [section, setSection] = useState<"integration" | "board" | "benchmarks">("integration");
+  const current = board.submission?.integration ?? null;
+  const previous = board.submission?.last_result ?? null;
   return (
     <VStack gap={4}>
-      <HStack gap={2} wrap="wrap" aria-label="Results sections">
-        {(["integration", "board", "benchmarks"] as const).map((value) => (
-          <Button
-            key={value}
-            variant={section === value ? "primary" : "secondary"}
-            aria-pressed={section === value}
-            label={
-              { integration: "Integration", board: "Live board", benchmarks: "Benchmarks" }[value]
-            }
-            onClick={() => setSection(value)}
-          />
-        ))}
-      </HStack>
       {section === "integration" && (
-        <TeamIntegrationResult
-          result={board.submission?.last_result ?? board.submission?.integration ?? null}
-        />
+        <>
+          <Text>
+            Current integration and the last finished result are shown here. Earlier integration
+            revisions are not available in this view.
+          </Text>
+          <TeamIntegrationResult result={current ?? previous} />
+          {current && previous && current.revision !== previous.revision && (
+            <TeamIntegrationResult result={previous} />
+          )}
+        </>
       )}
-      {section === "board" && (
+      {section === "live" && (
         <TeamLiveBoard contestUid={contestUid} ownTeamUid={board.team.uid} visible />
       )}
       {section === "benchmarks" && <TeamBenchmarks contestUid={contestUid} visible />}

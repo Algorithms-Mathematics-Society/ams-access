@@ -553,7 +553,7 @@ This uses the existing board projection and adds no requests or polling.
 Unsupported native platforms show the team-round restriction on Home and in device readiness. Selecting a contest makes one abortable, eight-second team probe before setup state or navigation; only an authoritative solo result proceeds. Other results remain on Home with explicit retry advice. There is no per-card polling, automatic retry, or extra request on supported platforms/browser.
 
 Team submission approval uses the shared lobby controller and the exact displayed
-revision. The Team dialog shows the aggregate approval count and only the
+revision. The Team progress dialog shows the revision, aggregate approval count and only the
 candidate's own vote state; the API does not publish individual teammate votes.
 Changing revision invalidates previous approvals visibly. Conflicts refresh once
 without replaying a vote; pending, expired, unavailable and submitted revisions
@@ -570,12 +570,19 @@ reference attachments. The click-time scoring guard uses the shared server clock
 the API remains authoritative if allocation changes. A previous submitted team
 revision does not block a new part submission before the deadline. The own-part
 Submit warning explains that a new revision resets votes. Team progress and voting
-open from the compact TopBar Team control, reusing the existing board without new
+open from the compact TopBar Team progress control, reusing the existing board without new
 polling. Loading a team workspace fetches only the assigned part projection
 and existing statement assets once per authorized workspace load; staging must
 measure this entry burst for 3,000 participants. Native layout remains unverified.
 
-Team results are reached from the existing Team dialog and lazy-load per section.
+Team progress uses one navigation row: Progress, Integration, Live board and Benchmarks.
+The toolbar label stays Team progress; revision numbers belong inside the panel.
+Individual submission history remains under Attempts below the editor: each
+attempt expands to its available per-test verdict, time and memory details.
+Integration shows the current run and a distinct last finished result; the API
+does not expose a complete archive of team integrations. Benchmark history lists
+the returned measurements, with per-run profiles when available.
+Team results lazy-load per section.
 Integration detail reuses the lobby projection, separates individual verdicts from
 the integration suite, and never presents substituted/reference parts as a team
 pass. Missing or malformed details fail closed rather than displaying a raw AC.
