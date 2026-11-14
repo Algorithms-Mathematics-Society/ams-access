@@ -41,6 +41,18 @@ test("compact toolbar keeps battery state accessible and preserves dialog button
   const css = read("./components/workspace-styles.ts");
   assert.ok(css.includes('button:not([role="dialog"] button, [role="alertdialog"] button)'));
   assert.ok(css.includes(':not([aria-pressed="true"])'));
+  const toolbar = css.slice(
+    css.indexOf("/* Keep toolbar controls"),
+    css.indexOf("[data-contest-page] { font-family")
+  );
+  assert.ok(toolbar.includes("border:var(--border-width) solid transparent !important"));
+  assert.ok(toolbar.includes("background:var(--color-background-muted) !important"));
+  for (const overlay of ["hover", "pressed"])
+    assert.ok(
+      toolbar.includes(
+        `background:linear-gradient(var(--color-overlay-${overlay}),var(--color-overlay-${overlay})),var(--color-background-muted) !important`
+      )
+    );
   assert.match(css, /contest-topbar-actions \{ flex:none !important; flex-wrap:wrap !important;/);
   for (const state of [":hover", ":active", ":focus-visible"]) assert.ok(css.includes(state));
 });

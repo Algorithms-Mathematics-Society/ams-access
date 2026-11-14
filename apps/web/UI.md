@@ -611,7 +611,7 @@ workspace entry. Audio stays owned by the same session across this handoff, with
 the microphone and Voice controls in the workspace toolbar. Reconnection and audio
 errors use concise button states with details inside Voice settings or tooltips.
 The compact toolbar keeps controls on one row at desktop widths, with a wrapping
-fallback for small windows. Buttons have distinct surfaces, borders and focus states.
+fallback for small windows. Buttons have subtly contrasting filled surfaces without visible borders, with hover, pressed and focus states.
 Battery charging is conveyed by its icon and accessible description, without a
 duplicate visible label. Approval state is conveyed by Approve/Withdraw; revision
 zero leaves approval disabled with a reason on demand, not an extra empty-state sentence.

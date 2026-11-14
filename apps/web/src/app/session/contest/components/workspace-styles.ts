@@ -45,17 +45,17 @@ export const CONTEST_STYLES = `
 
 /* Keep toolbar controls distinct without changing buttons inside their dialogs. */
 [data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button) {
- border:var(--border-width) solid var(--color-border-emphasized) !important;
+ border:var(--border-width) solid transparent !important;
  border-radius:var(--radius-element);
 }
 [data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]) {
- background:var(--color-background-card) !important;
-}
-[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]):not(:disabled):not([aria-disabled="true"]):hover {
  background:var(--color-background-muted) !important;
 }
+[data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]):not(:disabled):not([aria-disabled="true"]):hover {
+ background:linear-gradient(var(--color-overlay-hover),var(--color-overlay-hover)),var(--color-background-muted) !important;
+}
 [data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):not([aria-pressed="true"]):not(:disabled):not([aria-disabled="true"]):active {
- background:var(--color-overlay-pressed) !important;
+ background:linear-gradient(var(--color-overlay-pressed),var(--color-overlay-pressed)),var(--color-background-muted) !important;
 }
 [data-contest-page] .contest-topbar-actions button:not([role="dialog"] button, [role="alertdialog"] button):focus-visible {
  outline:var(--border-width) solid var(--color-text-accent) !important;
